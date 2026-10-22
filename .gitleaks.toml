@@ -1,0 +1,27 @@
+# Secret scanning for the pre-commit hook (.githooks/pre-commit) and for the full-history scan before the repo
+# goes public (Architecture 04 §1.7). gitleaks' default rules (cloud keys, Anthropic, GitHub, JWTs, generic
+# key/secret/token/password assignments) plus three rules for this project's own secrets.
+title = "finance-terminal"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "supabase-secret-key"
+description = "Supabase secret API key (server-side only; lives in Vercel)"
+regex = '''\bsb_secret_[A-Za-z0-9_-]{16,}'''
+keywords = ["sb_secret_"]
+
+[[rules]]
+id = "postgres-url-with-password"
+description = "Postgres connection URL with a real password (job_writer, sql_reader, postgres)"
+regex = '''postgres(?:ql)?://[^:@/\s<>]+:([^@\s<>]{6,})@'''
+secretGroup = 1
+keywords = ["postgres://", "postgresql://"]
+
+[[rules]]
+id = "supabase-s3-secret"
+description = "Storage S3 secret access key assigned in an env file or script"
+regex = '''STORAGE_SECRET_ACCESS_KEY\s*[=:]\s*['"]?([A-Za-z0-9/+=]{20,})'''
+secretGroup = 1
+keywords = ["storage_secret_access_key"]

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Blocks a commit whose staged changes contain a secret (CLAUDE.md §4: secrets never go in commits).
+# Enable once per clone:  git config core.hooksPath .githooks      Needs gitleaks:  brew install gitleaks
+# A false positive goes into .gitleaks.toml's allowlist (with a reason); don't bypass with --no-verify.
+GITLEAKS="$(command -v gitleaks || true)"
+[ -z "$GITLEAKS" ] && [ -x /opt/homebrew/bin/gitleaks ] && GITLEAKS=/opt/homebrew/bin/gitleaks
+if [ -z "$GITLEAKS" ]; then
+  echo "pre-commit: gitleaks isn't installed, so this commit can't be checked for secrets." >&2
+  echo "Install it with: brew install gitleaks" >&2
+  exit 1
+fi
+ROOT="$(git rev-parse --show-toplevel)"
+exec "$GITLEAKS" git --pre-commit --staged --redact --no-banner --verbose --config "$ROOT/.gitleaks.toml" "$ROOT"
