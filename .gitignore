@@ -12,3 +12,7 @@ node_modules/
 .DS_Store
 data/
 raw/
+
+# Supabase CLI local state (written by `supabase link`)
+supabase/.temp/
+supabase/.branches/

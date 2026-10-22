@@ -24,7 +24,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10          # pin to a commit SHA before the repo goes public
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0, pinned by SHA (setup-uv publishes no v8+ major tags)
         with:
           enable-cache: true
           cache-dependency-glob: py/uv.lock
