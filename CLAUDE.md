@@ -192,7 +192,9 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   run in Claude's workspace (on a local Postgres with pgvector) or in CI. Anything that touches a live source or
   the real project runs on GitHub's runners or in Anand's Terminal on the Mac, and Claude reads the results from
   the run status, the Mac folder or what Anand pastes. Anand starts workflow runs (they cost Actions minutes and
-  API credits) unless he has said Claude may.
+  API credits), with one standing exception (Anand, 22 Oct 2026): Claude may open, update and close GitHub
+  issues, and start `ci` and manual check workflows against the **dev** project. Claude never pushes code, and
+  never starts production runs, backfills or anything that spends AI credits without asking.
 - The Mac's shell can't run macOS virtual environments, and deleting files there needs Anand's permission.
 - **Campus Wi-Fi (Sophos, from 26 Oct):** `UV_SYSTEM_CERTS=true` for uv, `NODE_EXTRA_CA_CERTS` for npm and the
   Vercel CLI, `http.sslCAInfo` for git. Production (GitHub, Vercel) is unaffected.

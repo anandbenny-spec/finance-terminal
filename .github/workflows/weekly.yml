@@ -15,7 +15,7 @@ defaults:
     working-directory: py
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026; the audit's G1/S1 ran on 24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
