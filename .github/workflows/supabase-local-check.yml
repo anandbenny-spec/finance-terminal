@@ -1,0 +1,39 @@
+# Day-1 check 5 (Architecture 01 §8 item 5; GitHub issue #1): the SQL tests against a local Supabase database on
+# GitHub's runner (Docker), where `postgres` isn't a superuser and the roles and grants are Supabase's own.
+# Manual only. It touches no hosted project, reads no secret and spends only Actions minutes.
+name: supabase-local-check
+on:
+  workflow_dispatch: {}
+concurrency:
+  group: supabase-local-check
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026; the audit's G1/S1 ran on 24.04
+    timeout-minutes: 30
+    env:
+      SUPABASE_CLI_VERSION: 2.121.0   # the Mac's CLI (Setup 01 §2)
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the Supabase CLI (release package, checksum checked)
+        run: |
+          base="https://github.com/supabase/cli/releases/download/v${SUPABASE_CLI_VERSION}"
+          deb="supabase_${SUPABASE_CLI_VERSION}_linux_amd64.deb"
+          curl -fsSLO "$base/$deb"
+          curl -fsSL "$base/checksums.txt" -o checksums.txt
+          grep " $deb\$" checksums.txt | sha256sum --check -
+          sudo dpkg -i "$deb"
+          supabase --version
+      - name: Start the local database
+        run: supabase db start
+      - name: Apply the migrations (as the CLI does on the hosted projects)
+        run: |
+          supabase migration up --local
+          supabase migration list --local
+      - name: SQL tests
+        run: supabase/tests/run_on_supabase_local.sh
+      - name: Stop
+        if: always()
+        run: supabase stop --no-backup || true
