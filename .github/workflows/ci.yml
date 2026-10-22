@@ -1,15 +1,38 @@
-# Lint, the 70 SQL tests and the Python tests on every push and pull request (Architecture 04 §1.5).
+# Lint, the SQL tests and the Python tests on every push and pull request (Architecture 04 §1.5).
+# Failing tests and the counts are written as annotations, which Claude reads through the API (CLAUDE.md §6).
 name: ci
 on:
   push:
     branches: [main]
   pull_request: {}
+  workflow_dispatch: {}
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 permissions:
   contents: read
 jobs:
+  secrets:
+    # Secret scan of the full history on every push (CLAUDE.md §4). Claude's cloud clones and Anand's Mac also run
+    # the same scan as a pre-commit hook; this is the check that can't be skipped.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GITLEAKS_VERSION: 8.24.2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks (release archive, checksum checked)
+        run: |
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          tgz="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLO "$base/$tgz"
+          curl -fsSL "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o checksums.txt
+          grep " $tgz\$" checksums.txt | sha256sum --check -
+          tar xzf "$tgz" gitleaks
+      - name: Scan the full history
+        run: ./gitleaks git --config .gitleaks.toml --redact --no-banner --verbose .
   test:
     runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026; the audit's G1/S1 ran on 24.04
     timeout-minutes: 15
@@ -35,9 +58,22 @@ jobs:
         env:
           PGHOST: localhost
           PGPORT: '5432'
-        run: supabase/tests/run_all.sh
+        run: |
+          supabase/tests/run_all.sh 2>&1 | tee sql.log
+          status=${PIPESTATUS[0]}
+          grep -E '^(FAIL|migration failed)' sql.log | head -10 | sed 's/^/::error title=SQL test::/'
+          grep -E '^psql:.*ERROR' sql.log | head -3 | sed 's/^/::error title=SQL error::/'
+          p=$(grep -oE 'passed [0-9]+' sql.log | awk '{s+=$2} END {print s+0}')
+          f=$(grep -oE 'failed [0-9]+' sql.log | awk '{s+=$2} END {print s+0}')
+          echo "::notice title=SQL tests::passed $p, failed $f"
+          exit "$status"
       - name: Python tests
         working-directory: py
         env:
           TEST_PG_CONNINFO: host=localhost port=5432 dbname=ft
-        run: uv run --locked pytest -q
+        run: |
+          uv run --locked pytest -q -rfE 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          grep -E '^(FAILED|ERROR) ' pytest.log | head -10 | sed 's/^/::error title=pytest::/'
+          echo "::notice title=pytest::$(tail -1 pytest.log)"
+          exit "$status"

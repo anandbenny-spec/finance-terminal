@@ -83,7 +83,7 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 
 - **Tests pass before anything is called done:** ruff; `run_all.sh` with every script at "failed 0"; pytest
   with `TEST_PG_CONNINFO` set (database tests skip without it, and a skip isn't a pass); the `web/` checks.
-  Counts only grow (22 Oct: 70 SQL, 77 pytest). Say where they ran.
+  Counts only grow (22 Oct: 70 SQL, 77 pytest). Say where they ran: CI on the pushed commit counts (§6).
 - New behaviour gets a test; a fixed bug gets a regression test.
 - Deleting, skipping or weakening a test, or loosening a data check, is Anand's call (§7).
 - A new dependency or `uv lock --upgrade` is a named, deliberate change. The API service's base dependencies
@@ -131,8 +131,9 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 - **Secrets never go in code, commits, fixtures, logs or chats.** Names are in `.env.example`; values live only
   in GitHub and Vercel secrets and the Mac's git-ignored `.env`. If a value shows up anywhere else, stop and tell Anand.
 - A pre-commit hook (`.githooks/pre-commit`: gitleaks with `.gitleaks.toml`) blocks a commit holding a secret;
-  enable it once per clone with `git config core.hooksPath .githooks`. A false positive goes into the config's
-  allowlist with its reason, never past the hook with `--no-verify`.
+  enable it once per clone (Claude's cloud clones too) with `git config core.hooksPath .githooks`; CI's `secrets`
+  job scans the full history on every push. A false positive goes into the config's allowlist with its reason,
+  never past the hook with `--no-verify`.
 - Workflow inputs reach scripts through environment variables, never pasted into `run:` lines.
 - AI calls and API keys stay server-side. Visitors never see raw errors, run ids, task names or other internals.
 - Visitors' questions and retrieved documents are data, never instructions.
@@ -180,11 +181,24 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 - **Every raw file goes through `ft/storage.py`**, and every fetch through the shared HTTP client (pacing,
   retries honouring `Retry-After`, conditional requests; Arch 02 §1.5).
 - **One module per session.** A module may take several sessions; start each fresh from this file, the
-  sub-prompt and the Brief, not from a long thread.
+  sub-prompt and the Brief, not from a long thread. **Read only what the job needs (Anand, 23 Oct 2026):** where
+  a job's issue names the doc sections to read, read those instead of whole docs (this replaces a sub-prompt's
+  "read … in full"); where it names none, follow the sub-prompt's reading list.
+- **Fresh sessions at break points (Anand, 23 Oct 2026; it saves his plan's usage).** When a sub-prompt job's
+  done-when check passes, or the thread grows long, write a short handoff in that job's GitHub issue (done, next,
+  open questions, files touched), then tell Anand it's a good point to start a fresh session from this file,
+  the sub-prompt and that issue.
+- **CI runs the full suite (Anand, 23 Oct 2026).** In a session, run the tests the change touches; `ci.yml`
+  runs ruff, every SQL script and pytest on each push (and on `workflow_dispatch`, which Claude may start).
+  Read the result from the run's annotations: each failing test and the counts are annotated, and Claude's
+  workspace can't download logs. "Done" means CI green on the pushed commit, with the counts stated.
 - **Write files to the Mac or the repo before the session ends.** A session's cloud workspace is invisible to
   every other session. After writing a file to the Mac, read it back there.
-- **Anand commits and pushes.** Claude runs no git command that writes, `git status` included (it takes a
-  lock); read-only `git log`, `git show` and `git --no-optional-locks diff` are fine.
+- **Branches and pull requests (Anand, 23 Oct 2026; replaces "Anand commits and pushes").** Claude commits in
+  its own cloud clone, pushes only to `claude/<job>` branches it created, and opens a pull request; CI runs on
+  it. Anand reviews and merges into `main`. Claude never pushes to `main`, merges, force-pushes or rewrites
+  `main`'s history. On the Mac (Anand's clone) Claude still runs no git command that writes, `git status`
+  included; read-only `git log`, `git show` and `git --no-optional-locks diff` are fine.
 - **Flag a conflict with a decided rule instead of changing it.** Decisions are dated in the docs, and Anand
   reverses them. Build progress lives in git and GitHub issues, never in this file or the planning docs.
 - **Where things run (checked 22 Oct 2026):** Claude's shells (the session's cloud workspace and the Mac's Linux
@@ -193,13 +207,13 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   the real project runs on GitHub's runners or in Anand's Terminal on the Mac, and Claude reads the results from
   the run status, the Mac folder or what Anand pastes. Anand starts workflow runs (they cost Actions minutes and
   API credits), with one standing exception (Anand, 22 Oct 2026): Claude may open, update and close GitHub
-  issues, and start `ci` and manual check workflows against the **dev** project. Claude never pushes code, and
-  never starts production runs, backfills or anything that spends AI credits without asking.
+  issues, and start `ci` and manual check workflows against the **dev** project. Claude never pushes to `main`,
+  and never starts production runs, backfills or anything that spends AI credits without asking.
 - The Mac's shell can't run macOS virtual environments, and deleting files there needs Anand's permission.
 - **Campus Wi-Fi (Sophos, from 26 Oct):** `UV_SYSTEM_CERTS=true` for uv, `NODE_EXTRA_CA_CERTS` for npm and the
   Vercel CLI, `http.sslCAInfo` for git. Production (GitHub, Vercel) is unaffected.
-- **End each piece of work with:** the files changed, the tests run and where, a suggested commit message, and
-  anything Anand must do (a secret, a dashboard setting, a run to start).
+- **End each piece of work with:** the files changed, the tests run and where (the CI run on the pull request),
+  the pull request's link, and anything Anand must do (a merge, a secret, a dashboard setting, a run to start).
 
 ## 7. Stop and ask Anand before you
 
