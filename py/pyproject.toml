@@ -1,0 +1,58 @@
+[project]
+name = "finance-terminal"
+version = "0.1.0"
+description = "Finance Terminal: data jobs, AI layer and API (Architecture 01-04)"
+requires-python = ">=3.13,<3.14"
+# What the live API service needs (Vercel installs only these, so its bundle stays small).
+dependencies = [
+    "anthropic",
+    "voyageai",
+    "psycopg[binary]",
+    "pglast",
+    "fastapi",
+    "pydantic",
+    "boto3",
+    "httpx",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+# Fetching and parsing, used only by the GitHub Actions jobs and the Mac.
+jobs = [
+    "curl_cffi",
+    "lxml",
+    "pandas",
+    "yfinance",
+    "pypdf",
+    "feedparser",
+    "openpyxl",
+    "truststore",
+]
+# Second model for evaluation comparison (never publishes).
+eval = ["google-genai"]
+
+[dependency-groups]
+dev = ["pytest", "ruff", "moto[server]"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ft"]
+
+[tool.uv]
+# One lock for the Mac (Apple silicon) and GitHub's Linux runners; nothing else.
+environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
+
+[tool.vercel]
+entrypoint = "main:app"          # same as vercel.json; main.py works whether or not the package is installed
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+markers = ["db: needs the test database built by supabase/tests/run_all.sh"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"

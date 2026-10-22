@@ -1,0 +1,29 @@
+# Source of truth for what runs when (Architecture 02 §1.3). Each run upserts this into ops.task.
+policy.calendar:
+  description: FOMC and MPC meeting calendars
+  workflows: {weekly: every 25 days}
+  overdue_after: 40 days
+policy.fed_documents:
+  description: FOMC statements, minutes, press-conference transcripts
+  workflows: {daily: every 20 hours, watch: fomc_decision_day}
+  run_after: [policy.calendar]
+  overdue_after: 3 days
+policy.rbi_documents:
+  description: MPC resolutions, Governor's statements, minutes, transcripts (old site + RSS)
+  workflows: {daily: every 20 hours, watch: mpc_decision_day}
+  run_after: [policy.calendar]
+  overdue_after: 3 days
+policy.market_series:
+  description: FRED and yfinance series for the policy tracker and ticker tape
+  workflows: {daily: every 20 hours}
+  overdue_after: 4 days
+policy.reactions:
+  description: Market reactions around each decision
+  workflows: {daily: every 20 hours}
+  run_after: [policy.market_series, policy.fed_documents, policy.rbi_documents]
+  overdue_after: 4 days
+policy.ai_batch:
+  description: Summaries, diffs, stance, scores and projections for new documents
+  workflows: {daily: every 20 hours, watch: after_decision_document}
+  run_after: [policy.fed_documents, policy.rbi_documents]
+  overdue_after: 3 days

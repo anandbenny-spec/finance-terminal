@@ -1,0 +1,43 @@
+# Lint, the 70 SQL tests and the Python tests on every push and pull request (Architecture 04 §1.5).
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust      # throwaway test database only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10          # pin to a commit SHA before the repo goes public
+        with:
+          enable-cache: true
+          cache-dependency-glob: py/uv.lock
+      - name: Lint
+        working-directory: py
+        run: uv run --locked ruff check src tests
+      - name: Migrations and SQL tests
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+        run: supabase/tests/run_all.sh
+      - name: Python tests
+        working-directory: py
+        env:
+          TEST_PG_CONNINFO: host=localhost port=5432 dbname=ft
+        run: uv run --locked pytest -q

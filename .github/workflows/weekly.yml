@@ -1,0 +1,38 @@
+# Architecture 02 §1.1. Runs only the tasks that are due in this workflow.
+name: weekly
+on:
+  schedule:
+    - cron: '23 9 * * 0'
+      timezone: 'Asia/Kolkata'
+  workflow_dispatch: {}
+concurrency:
+  group: jobs-weekly
+  cancel-in-progress: false
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: py
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10          # pin to a commit SHA before the repo goes public
+        with:
+          enable-cache: true
+          cache-dependency-glob: py/uv.lock
+      - run: uv sync --locked --extra jobs
+      - name: Run
+        run: uv run --locked python -m ft.jobs.run --workflow weekly --runner github --github-run-id ${{ github.run_id }} --git-sha ${{ github.sha }}
+        env:
+          JOB_DATABASE_URL: ${{ secrets.JOB_DATABASE_URL }}
+          STORAGE_ENDPOINT: ${{ secrets.STORAGE_ENDPOINT }}
+          STORAGE_BUCKET: ${{ secrets.STORAGE_BUCKET }}
+          STORAGE_ACCESS_KEY_ID: ${{ secrets.STORAGE_ACCESS_KEY_ID }}
+          STORAGE_SECRET_ACCESS_KEY: ${{ secrets.STORAGE_SECRET_ACCESS_KEY }}
+          STORAGE_REGION: ${{ secrets.STORAGE_REGION }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}

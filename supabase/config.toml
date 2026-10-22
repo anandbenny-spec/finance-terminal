@@ -1,0 +1,15 @@
+# Only the settings this project depends on; `supabase init` in the slice adds the rest of the defaults.
+# The hosted project must match these (Data API and Auth settings in the dashboard): Architecture 04 §2.
+project_id = "finance-terminal"
+
+[api]
+enabled = true
+schemas = ["api"]                 # the only schema the Data API exposes (Architecture 01 §1.1)
+extra_search_path = ["extensions"]
+max_rows = 1000
+
+[auth]
+enable_signup = false             # one admin, created by hand
+
+[storage]
+file_size_limit = "50MiB"

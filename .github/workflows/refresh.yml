@@ -1,0 +1,53 @@
+# Architecture 02 §1.1. Runs only the tasks that are due in this workflow.
+name: refresh
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Task key, e.g. policy.market_series
+        required: true
+        type: string
+      request_id:
+        description: ops.refresh_request id (blank when run by hand)
+        required: false
+        type: string
+      trigger:
+        required: true
+        type: choice
+        options: [admin, visitor, cli]
+        default: cli
+concurrency:
+  group: jobs-refresh
+  cancel-in-progress: false
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: py
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10          # pin to a commit SHA before the repo goes public
+        with:
+          enable-cache: true
+          cache-dependency-glob: py/uv.lock
+      - run: uv sync --locked --extra jobs
+      - name: Run
+        run: uv run --locked python -m ft.jobs.run --workflow refresh --task "$INPUT_TASK" --trigger "$INPUT_TRIGGER" --request-id "$INPUT_REQUEST_ID" --runner github --github-run-id ${{ github.run_id }} --git-sha ${{ github.sha }}
+        env:
+          # inputs go through the environment, never pasted into the script (injection)
+          INPUT_TASK: ${{ inputs.task }}
+          INPUT_TRIGGER: ${{ inputs.trigger }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+          JOB_DATABASE_URL: ${{ secrets.JOB_DATABASE_URL }}
+          STORAGE_ENDPOINT: ${{ secrets.STORAGE_ENDPOINT }}
+          STORAGE_BUCKET: ${{ secrets.STORAGE_BUCKET }}
+          STORAGE_ACCESS_KEY_ID: ${{ secrets.STORAGE_ACCESS_KEY_ID }}
+          STORAGE_SECRET_ACCESS_KEY: ${{ secrets.STORAGE_SECRET_ACCESS_KEY }}
+          STORAGE_REGION: ${{ secrets.STORAGE_REGION }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
