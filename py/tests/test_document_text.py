@@ -1,6 +1,6 @@
 """The versioned text extractor and the sentence splitter (Prompt 01 B2; Spec 01 §1.1, "Canonical text")."""
 import pytest
-from policy_docs import rbi_minutes_body, rbi_page, rbi_resolution_body, transcript_pages
+from policy_docs import rbi_minutes_body, rbi_page, rbi_resolution_body, tiny_pdf, transcript_pages
 
 from ft.engines.document.text import (
     Extracted,
@@ -134,36 +134,13 @@ def test_pdf_text_drops_page_furniture_and_rebuilds_paragraphs():
     assert ex.extractor_version == "pdf-1"
 
 
-def _tiny_pdf(pages: list[list[str]]) -> bytes:
-    """A minimal PDF with one text line per entry, for pypdf to read back."""
-    def esc(s):
-        return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-    objs = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
-    kids = []
-    for lines in pages:
-        content = "BT /F1 11 Tf 14 TL 72 740 Td " + " ".join(f"({esc(ln)}) Tj T*" for ln in lines) + " ET"
-        objs.append(f"<< /Length {len(content)} >>\nstream\n{content}\nendstream")
-        objs.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> "
-                    f"/Contents {len(objs)} 0 R >>")
-        kids.append(len(objs))
-    objs[1] = f"<< /Type /Pages /Kids [{' '.join(f'{k} 0 R' for k in kids)}] /Count {len(kids)} >>"
-    out, offsets = b"%PDF-1.4\n", []
-    for i, o in enumerate(objs, 1):
-        offsets.append(len(out))
-        out += f"{i} 0 obj\n{o}\nendobj\n".encode("latin-1")
-    xref = len(out)
-    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
-    out += b"".join(f"{o:010d} 00000 n \n".encode() for o in offsets)
-    return out + f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
-
-
 def test_extract_pdf_reads_a_real_pdf():
     pages = [p.split("\n") for p in transcript_pages()]
-    ex = extract_pdf(_tiny_pdf(pages))
+    ex = extract_pdf(tiny_pdf(pages))
     assert ex.extractor_version == "pdf-1"
     assert ex.text == pdf_text(transcript_pages()).text
     with pytest.raises(ExtractError):
-        extract_pdf(_tiny_pdf([[""]]))
+        extract_pdf(tiny_pdf([[""]]))
 
 
 # ------------------------------------------------------------------ sentences and words
