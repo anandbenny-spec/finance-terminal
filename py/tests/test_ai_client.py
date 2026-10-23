@@ -210,6 +210,20 @@ def test_a_broken_results_stream_raises_after_the_results_before_it():
     assert sorted(r.custom_id for r in c.batch_results(info)) == ["a", "b"]   # a second read is whole
 
 
+def test_results_of_a_batch_without_them_raise_call_errors():
+    """The SDK raises its base AnthropicError when a batch has no results_url; a batch the API no longer has is a
+    404. Both come out as CallError (the 404 with its status), never as an SDK exception."""
+    fake = FakeClaude(ends_after=None)
+    c = claude(fake)
+    info = c.create_batch([("a", req())])
+    with pytest.raises(CallError, match="ResultsStream"):
+        list(c.batch_results(info))
+    del fake.batches[info.id]
+    with pytest.raises(CallError) as e:
+        list(c.batch_results(info))
+    assert e.value.status == 404
+
+
 # ---------------------------------------------------------------------------------------------- prices
 def test_cost_from_the_dated_price_table():
     u = Usage(input=1_000_000, output=1_000_000, cache_write_5m=1_000_000, cache_write_1h=1_000_000,

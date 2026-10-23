@@ -723,6 +723,14 @@ class AiBatch(Task):
                         f.outcome(e[0], status, f"batch {res.error or res.kind}")
                 changed += 1
         except CallError as e:
+            if e.status == 404:                             # results gone (archived after 29 days): resend the rest
+                with db.transaction():
+                    db.execute("update ops.ai_batch set status = 'failed' where id = %s", (bid,))
+                    changed += db.execute("""update ops.ai_request set status = 'errored',
+                                                    reject_reason = 'batch results not found'
+                                              where ai_batch_id = %s and status = 'pending'""", (bid,)).rowcount
+                f.batch.errors.append(f"results {info.id}: {e}")
+                return changed, True
             f.batch.read_errors[info.id] = f"results {info.id}: {e}"
             return changed, False                           # the batch stays 'ended': the next read finishes it
         f.batch.read_errors.pop(info.id, None)              # an earlier broken read, finished now
