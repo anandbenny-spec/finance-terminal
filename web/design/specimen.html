@@ -1,0 +1,840 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design specimen · Finance Terminal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Same values as web/app/globals.css (Design 01 §2.6). Plain CSS so it opens anywhere. */
+:root{
+  color-scheme:dark;
+  --canvas:#08090b;--panel:#12161b;--raised:#1a1f26;--active:#232931;
+  --line:#252a31;--line-strong:#343b45;--line-input:#646c78;
+  --ink-1:#e6e8eb;--ink-2:#afb5be;--ink-3:#8c939e;
+  --amber:#edb84a;--amber-ink:#111418;--amber-wash:rgb(237 184 74 / .12);
+  --up:#45c16a;--down:#f26b6b;--flat:var(--ink-2);--warn:#f0913e;
+  --ins-ink:#8fdda4;--ins-wash:rgb(69 193 106 / .14);--del-ink:#f59a9a;--del-wash:rgb(242 107 107 / .14);
+  --series-1:#1aa3b5;--series-2:#9085e9;--series-3:#d55181;
+  --sans:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --meta:12px/16px var(--sans);--data:13px/18px var(--sans);--ui:14px/20px var(--sans);--read:16px/26px var(--sans);
+}
+*{box-sizing:border-box;border-color:var(--line)}
+html{background:var(--canvas);color:var(--ink-1);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+body{margin:0;font:var(--ui);font-variant-numeric:tabular-nums}
+a{color:inherit;text-underline-offset:3px;text-decoration-color:var(--line-strong)}
+a:hover{text-decoration-color:var(--amber)}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px;border-radius:2px}
+::selection{background:var(--amber-wash)}
+ins{color:var(--ins-ink);background:var(--ins-wash);text-decoration:underline;text-decoration-thickness:1px}
+del{color:var(--del-ink);background:var(--del-wash);text-decoration:line-through;text-decoration-thickness:1px}
+mark{color:var(--ink-1);background:var(--amber-wash);box-shadow:inset 0 -2px 0 var(--amber)}
+.mono{font-family:var(--mono)}
+svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.skip{position:absolute;left:-999px;top:8px}.skip:focus{left:8px;z-index:99;background:var(--amber);color:var(--amber-ink);padding:6px 10px}
+
+/* ---------- shell ---------- */
+.shell{display:grid;min-height:100vh;grid-template-columns:232px 1fr;grid-template-rows:48px 32px 1fr 28px;
+  grid-template-areas:"top top" "tape tape" "nav main" "status status"}
+.topbar{grid-area:top;display:flex;align-items:center;gap:16px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.wordmark{display:flex;align-items:center;gap:8px;font:500 14px/20px var(--mono);white-space:nowrap;min-width:200px}
+.wordmark::before{content:"";width:8px;height:8px;background:var(--amber)}
+.cmd{flex:1;max-width:640px;margin:0 auto;display:flex;align-items:center;gap:8px;height:36px;padding:0 10px;background:var(--raised);border:1px solid var(--line-input);border-radius:4px;color:var(--ink-3)}
+.cmd span.ph{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+kbd{font:500 12px/16px var(--mono);color:var(--ink-2);border:1px solid var(--line-strong);border-radius:2px;padding:1px 5px}
+.topright{min-width:200px;display:flex;justify-content:flex-end;color:var(--ink-3);font:var(--meta)}
+.topbar .menu-btn,.topbar .search-btn{display:none}
+
+.tape{grid-area:tape;display:flex;align-items:center;gap:0;background:var(--panel);border-bottom:1px solid var(--line);font:12px/16px var(--mono);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tape .eod{padding:0 10px;color:var(--ink-3);border-right:1px solid var(--line);height:100%;display:flex;align-items:center}
+.tape .it{display:flex;align-items:center;gap:8px;padding:0 14px;border-right:1px solid var(--line);height:100%}
+.tape .n{color:var(--ink-2)}.tape .v{color:var(--ink-1)}
+.tag{font:var(--meta);color:var(--ink-2);border:1px dashed var(--line-strong);border-radius:2px;padding:0 5px;white-space:nowrap}
+
+.delta{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.delta svg{width:7px;height:7px;fill:currentColor}
+.up{color:var(--up)}.down{color:var(--down)}.flat{color:var(--flat)}
+.down svg{transform:rotate(180deg)}
+
+nav.sidebar{grid-area:nav;background:var(--panel);border-right:1px solid var(--line);padding:12px 8px;font:var(--ui)}
+.sidebar h2{font:var(--meta);color:var(--ink-3);margin:16px 8px 6px}
+.sidebar h2:first-child{margin-top:4px}
+.sidebar a{display:flex;align-items:center;gap:10px;height:32px;padding:0 10px;color:var(--ink-2);text-decoration:none;border-radius:4px;border-left:2px solid transparent}
+.sidebar a:hover{background:var(--raised);color:var(--ink-1)}
+.sidebar a[aria-current]{background:var(--amber-wash);color:var(--ink-1);border-left-color:var(--amber);border-radius:0 4px 4px 0}
+
+main{grid-area:main;min-width:0;padding:20px 24px 32px}
+.wrap{max-width:1280px;margin:0 auto}
+.banner{font:var(--meta);color:var(--ink-2);border:1px dashed var(--line-strong);border-radius:4px;padding:6px 10px;margin-bottom:16px}
+.crumb{font:var(--meta);color:var(--ink-3);margin:0 0 6px}
+h1{font:600 22px/28px var(--sans);margin:0}
+.desc{color:var(--ink-2);margin:4px 0 8px}
+.meta{font:var(--meta);color:var(--ink-3);display:flex;gap:16px;flex-wrap:wrap}
+
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px}
+.sec{margin-top:32px}.sec:first-of-type{margin-top:20px}
+.sech{display:flex;align-items:center;gap:12px;font:600 18px/26px var(--sans);margin:0 0 12px}
+.sech::after{content:"";flex:1;height:1px;background:var(--line-strong)}
+.sech small{font:var(--meta);color:var(--ink-3);font-weight:400}
+.s12{grid-column:span 12}.s8{grid-column:span 8}.s6{grid-column:span 6}.s4{grid-column:span 4}
+
+.panel{background:var(--panel);border:1px solid var(--line-strong);border-radius:4px;display:flex;flex-direction:column;min-width:0}
+.ph{display:flex;align-items:center;gap:8px;height:40px;padding:0 8px 0 12px;background:var(--raised);border-radius:3px 3px 0 0;border-bottom:1px solid var(--line-strong)}
+.panel.us{border-top:3px solid var(--series-1)}.panel.in{border-top:3px solid var(--series-2)}
+.stat.us{box-shadow:inset 0 3px 0 var(--series-1)}.stat.in{box-shadow:inset 0 3px 0 var(--series-2)}
+.ph h2{font:600 13px/18px var(--sans);margin:0}
+.ph .act{margin-left:auto;display:flex;gap:2px}
+.ib{width:28px;height:28px;display:grid;place-items:center;border-radius:4px;color:var(--ink-2);background:none;border:0;cursor:pointer}
+.ib:hover{background:var(--raised);color:var(--ink-1)}
+.sub{font:var(--meta);color:var(--ink-2);padding:8px 12px 0}
+.pb{padding:12px}.pb.flush{padding:0}
+.pf{margin-top:auto;display:flex;gap:12px;flex-wrap:wrap;justify-content:space-between;padding:8px 12px;border-top:1px solid var(--line);font:var(--meta);color:var(--ink-3)}
+.pf .t{font-family:var(--mono)}
+
+.stats{display:grid;grid-template-columns:repeat(4,1fr)}
+.stat{padding:12px;border-right:1px solid var(--line)}.stat:last-child{border-right:0}
+.stat .l{font:var(--meta);color:var(--ink-2)}
+.stat .v{font:600 28px/34px var(--sans);margin:4px 0 2px}
+.stat .v small{font:400 14px/20px var(--sans);color:var(--ink-2);margin-left:4px}
+.stat .c{font:var(--data);color:var(--ink-1)}
+.stat .a{font:var(--meta);color:var(--ink-3);margin-top:2px}
+
+.chart-top{display:flex;align-items:center;gap:16px;padding:10px 12px 0;flex-wrap:wrap}
+.legend{display:flex;gap:16px;font:var(--data);color:var(--ink-2);flex-wrap:wrap}
+.legend .k{display:inline-block;width:14px;height:2px;vertical-align:middle;margin-right:6px}
+.legend b{font-weight:600;color:var(--ink-1);margin-right:4px}
+.ranges{margin-left:auto;display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.ranges button{font:var(--meta);color:var(--ink-2);background:none;border:0;border-right:1px solid var(--line);padding:4px 9px;cursor:pointer}
+.ranges button:last-child{border-right:0}
+.ranges button[aria-pressed=true]{background:var(--active);color:var(--ink-1)}
+.chartbox{padding:8px 12px 4px;overflow-x:auto}
+.chartbox svg{display:block;width:100%;min-width:640px;height:auto}
+
+.decision{font:600 16px/24px var(--sans);margin:0 0 2px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;font:var(--data);margin:10px 0 0}
+.kv dt{color:var(--ink-2)}.kv dd{margin:0}
+.ai{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.aih{display:flex;align-items:center;gap:6px;font:500 13px/18px var(--sans);color:var(--ink-1)}
+.aih .i{color:var(--amber)}
+.aih .info{color:var(--ink-3);margin-left:2px}
+.ai ul{margin:8px 0 0;padding-left:18px;font:var(--ui)}
+.ai li{margin:6px 0}
+.cite{display:inline-grid;place-items:center;min-width:24px;height:24px;font:500 12px/16px var(--sans);color:var(--amber);background:none;border:0;cursor:pointer;padding:0 2px;vertical-align:baseline;border-radius:2px}
+.nw{white-space:nowrap} /* a citation chip never wraps onto a line alone */
+.cite:hover{background:var(--amber-wash)}
+.pop{position:relative}
+.popover{white-space:normal;position:absolute;z-index:40;top:28px;left:-40px;width:340px;background:var(--raised);border:1px solid var(--line-strong);border-radius:4px;box-shadow:0 8px 24px rgb(0 0 0/.5);padding:12px;font:var(--data);color:var(--ink-1)}
+.popover blockquote{margin:0 0 10px;padding-left:10px;border-left:2px solid var(--amber);color:var(--ink-1)}
+.popover .src{color:var(--ink-3);font:var(--meta)}
+.popover .links{display:flex;gap:14px;margin-top:8px;font:var(--meta)}
+.note{display:flex;gap:8px;align-items:flex-start;font:var(--data);color:var(--ink-2);background:var(--canvas);border:1px solid var(--line);border-radius:4px;padding:8px 10px;margin-top:12px}
+.note .i{color:var(--ink-3);margin-top:1px}
+.note.delayed{color:var(--ink-1)}.note.delayed .i{color:var(--warn)}
+
+.vblock{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.vh{font:500 13px/18px var(--sans)}
+.vs{font:var(--meta);color:var(--ink-2);margin:2px 0 6px}
+.votes{display:block;width:100%;max-width:480px;height:auto}
+.votes .vt{font:12px var(--mono)}
+.sq{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;margin-right:6px}
+.strip{display:block;width:100%;min-width:640px;height:auto}.strip .vt{font:12px var(--mono)}
+.seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:4px;overflow:hidden}
+.seg button{font:var(--meta);color:var(--ink-2);background:none;border:0;padding:5px 10px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--line-strong)}
+.seg button[aria-selected=true]{background:var(--active);color:var(--ink-1)}
+.pairs{margin-top:12px;table-layout:fixed}
+.pairs th[scope=row]{font:500 12px/16px var(--sans);color:var(--ink-2);width:96px;vertical-align:top;padding-top:8px;background:none;position:static;border-bottom:1px solid var(--line);white-space:normal;height:auto}
+.pairs thead th:first-child{width:96px}
+.pairs td{white-space:normal;vertical-align:top;padding:8px 12px;height:auto;font:var(--data);line-height:20px}
+.pairs tr:hover td{background:none}
+.pairs .gone{color:var(--ink-3);font-style:italic}
+a.para{font:12px var(--mono);color:var(--ink-3);text-decoration:none;white-space:nowrap}
+a.para:hover{color:var(--amber)}
+.minih{font:500 13px/18px var(--sans);margin:14px 0 6px}
+.nums td{height:30px}
+.nums td,.nums th{white-space:normal;padding:4px 8px}
+.nums td:last-child{white-space:nowrap}
+.more{font:var(--meta);color:var(--ink-3);margin:8px 0 0}
+@media (max-width:767px){
+  .pairs thead{display:none}.pairs,.pairs tbody,.pairs tr,.pairs th,.pairs td{display:block;width:auto!important}
+  .pairs tr{border-bottom:1px solid var(--line);padding:6px 0}.pairs th[scope=row]{border:0;padding:4px 0 2px}
+  .pairs td{border:0;padding:2px 0}
+  .pairs td:nth-of-type(1)::before{content:"Before  ";font:12px var(--mono);color:var(--ink-3)}
+  .pairs td:nth-of-type(2)::before{content:"Now  ";font:12px var(--mono);color:var(--ink-3)}
+}
+.meter{display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px;font:var(--meta);color:var(--ink-3)}
+.cells{display:inline-flex;gap:2px}.cells i{width:12px;height:8px;background:var(--line-strong)}.cells i.on{background:var(--ink-1)}
+
+.redline{font:var(--read);max-width:68ch;margin:0}
+.redline p{margin:0 0 12px}
+.rl-legend{display:flex;gap:12px;align-items:center;font:var(--meta);color:var(--ink-2);margin-bottom:10px;flex-wrap:wrap}
+.sw{display:inline-flex;gap:6px;align-items:center}
+.toggle{margin-left:auto;display:inline-flex;align-items:center;gap:6px;color:var(--ink-2)}
+.switch{width:28px;height:16px;border-radius:8px;background:var(--amber);position:relative}
+.switch::after{content:"";position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:var(--amber-ink)}
+.fold{font:var(--meta);color:var(--ink-3);border:1px dashed var(--line-strong);border-radius:2px;padding:2px 8px;display:inline-block;margin:0 0 12px}
+
+table{width:100%;border-collapse:collapse;font:var(--data)}
+th{position:sticky;top:0;background:var(--raised);font:500 12px/16px var(--sans);color:var(--ink-2);text-align:left;height:32px;padding:0 12px;border-bottom:1px solid var(--line-strong);white-space:nowrap}
+td{height:32px;padding:0 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+tr:hover td{background:var(--raised)}
+.r{text-align:right}
+th .sort{display:inline-block;margin-left:4px;color:var(--amber)}
+.tablebox{overflow-x:auto}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+
+.cmdopen{background:var(--raised);border:1px solid var(--line-strong);border-radius:4px;box-shadow:0 8px 24px rgb(0 0 0/.5)}
+.cmdopen .q{display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border-bottom:1px solid var(--line);color:var(--ink-1)}
+.cmdopen .stage{font:var(--meta);color:var(--ink-3);padding:8px 12px 0}
+.cmdopen .ans{padding:8px 12px 12px}
+.sql{font:12px/18px var(--mono);background:var(--canvas);border:1px solid var(--line);border-radius:4px;padding:8px 10px;color:var(--ink-2);white-space:pre-wrap;margin:8px 0 0}
+details summary{cursor:pointer;font:var(--meta);color:var(--ink-2);margin-top:10px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;padding:0 12px 12px}
+.chip{font:var(--data);color:var(--ink-2);border:1px solid var(--line);border-radius:2px;padding:4px 8px}
+
+.key{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.swatch{border:1px solid var(--line);border-radius:4px;overflow:hidden;font:var(--meta)}
+.swatch .c{height:36px}
+.swatch .t{padding:6px 8px;color:var(--ink-2)}.swatch .t b{display:block;color:var(--ink-1);font-weight:500}
+.types div{display:flex;gap:16px;align-items:baseline;border-bottom:1px solid var(--line);padding:6px 0}
+.types code{font:12px var(--mono);color:var(--ink-3);min-width:110px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.btn{font:500 13px/18px var(--sans);height:32px;padding:0 12px;border-radius:4px;border:1px solid var(--line-input);background:var(--raised);color:var(--ink-1)}
+.btn.primary{background:var(--amber);color:var(--amber-ink);border-color:var(--amber)}
+
+.foot{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);font:var(--meta);color:var(--ink-3);display:flex;gap:16px;flex-wrap:wrap}
+.statusbar{grid-area:status;display:flex;align-items:center;gap:24px;padding:0 12px;background:var(--panel);border-top:1px solid var(--line);font:12px/16px var(--mono);color:var(--ink-2);position:sticky;bottom:0;z-index:20;white-space:nowrap;overflow-x:auto}
+.statusbar .okdot{width:8px;height:8px;border-radius:50%;background:var(--up);display:inline-block;margin-right:6px}
+.statusbar .right{margin-left:auto;color:var(--ink-3)}
+
+/* ---------- responsive (Design 01 §5.5) ---------- */
+@media (max-width:1279px){ .shell{grid-template-columns:56px 1fr} .sidebar h2,.sidebar .lbl{display:none} .sidebar a{justify-content:center;padding:0} }
+@media (max-width:1023px){
+  .shell{grid-template-columns:1fr;grid-template-areas:"top" "tape" "main" "status"} nav.sidebar{display:none}
+  .topbar .menu-btn{display:grid}.wordmark{min-width:0}.topright{display:none}
+  .s8,.s4{grid-column:span 12}
+}
+@media (max-width:767px){
+  main{padding:16px}
+  .cmd{display:none}.topbar .search-btn{display:grid;margin-left:auto}
+  .s6{grid-column:span 12}
+  .stats{grid-template-columns:1fr 1fr}.stat:nth-child(2){border-right:0}.stat:nth-child(-n+2){border-bottom:1px solid var(--line)}
+  .shell{grid-template-rows:48px 32px 1fr auto}
+  .statusbar{position:static;flex-wrap:wrap;gap:6px 16px;padding:8px 12px;white-space:normal}
+  .statusbar .right{margin-left:0}
+  .pop{display:block}.popover{position:static;display:block;width:auto;margin-top:6px} /* phones: the build uses a bottom sheet */
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="tri" viewBox="0 0 8 8"><path d="M4 0.5 7.6 7.5H0.4Z"/></symbol>
+  <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="spark" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
+  <symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></symbol>
+  <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 10h18M3 15h18M9 10v10"/></symbol>
+  <symbol id="expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+  <symbol id="refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></symbol>
+  <symbol id="menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="home" viewBox="0 0 24 24"><path d="M3 11 12 4l9 7v9H3z"/></symbol>
+  <symbol id="bank" viewBox="0 0 24 24"><path d="M3 10 12 4l9 6M5 10v8M10 10v8M14 10v8M19 10v8M3 20h18"/></symbol>
+  <symbol id="grid" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></symbol>
+  <symbol id="hold" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></symbol>
+  <symbol id="ext" viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></symbol>
+</svg>
+
+<div class="shell">
+  <header class="topbar">
+    <button class="ib menu-btn" aria-label="Open menu"><svg class="i"><use href="#menu"/></svg></button>
+    <div class="wordmark">Finance Terminal</div>
+    <div class="cmd" role="search"><svg class="i"><use href="#search"/></svg><span class="ph">Search meetings, or ask about Fed and RBI policy</span><kbd>⌘K</kbd></div>
+    <button class="ib search-btn" aria-label="Search"><svg class="i"><use href="#search"/></svg></button>
+    <div class="topright"></div>
+  </header>
+
+  <div class="tape" aria-label="End-of-day market values">
+    <span class="eod" title="End-of-day values; each item shows its date">EOD</span>
+    <span class="it" title="Nifty 50 · 17 Oct 2026 · Source: NSE indices via Yahoo Finance"><span class="n">Nifty 50</span><span class="v">25,104.30</span><span class="delta up"><svg><use href="#tri"/></svg>+0.42%</span></span>
+    <span class="it"><span class="n">Sensex</span><span class="v">82,036.15</span><span class="delta up"><svg><use href="#tri"/></svg>+0.37%</span></span>
+    <span class="it"><span class="n">S&amp;P 500</span><span class="v">6,812.40</span><span class="delta down"><svg><use href="#tri"/></svg>−0.18%</span></span>
+    <span class="it"><span class="n">USD/INR</span><span class="v">88.27</span><span class="delta flat">0.00%</span></span>
+    <span class="it"><span class="n">US 10Y</span><span class="v">4.08%</span><span class="delta down"><svg><use href="#tri"/></svg>−3 bps</span></span>
+    <span class="it"><span class="n">IN 10Y</span><span class="v">6.41%</span><span class="tag" title="Monthly series (OECD via FRED); latest month Sep 2026">monthly</span></span>
+  </div>
+
+  <nav class="sidebar" aria-label="Main">
+    <h2>Overview</h2>
+    <a href="#"><svg class="i"><use href="#home"/></svg><span class="lbl">Start here</span></a>
+    <h2>Macro and policy</h2>
+    <a href="#" aria-current="page"><svg class="i"><use href="#bank"/></svg><span class="lbl">Fed vs RBI</span></a>
+    <h2>Workspace</h2>
+    <a href="#"><svg class="i"><use href="#grid"/></svg><span class="lbl">Policy Day</span></a>
+  </nav>
+
+  <main id="main">
+   <div class="wrap">
+    <div class="banner">Design specimen (Design 01). Every value on this page is invented for judging colour, type and density; none of it matches real decisions.</div>
+    <p class="crumb">Macro and policy › Fed vs RBI</p>
+    <h1>Fed vs RBI policy tracker</h1>
+    <p class="desc">Every FOMC and MPC decision since 2019: the rate, the vote, what changed in the statement, and how markets moved.</p>
+    <div class="meta"><span>Sources: Federal Reserve · Reserve Bank of India · FRED</span><span class="mono">Checked 20 Oct, 06:41 IST</span></div>
+
+    <section class="sec" aria-labelledby="h-rates"><h2 class="sech" id="h-rates">Where rates stand</h2>
+    <div class="grid">
+      <section class="panel s12" aria-label="Where policy rates stand">
+        <div class="stats">
+          <div class="stat us"><div class="l">Fed funds target range</div><div class="v">3.25–3.50<small>%</small></div><div class="c">Cut 25 bps on 17 Sep 2026</div><div class="a">Next FOMC 9 Dec · in 50 days</div></div>
+          <div class="stat in"><div class="l">RBI repo rate</div><div class="v">5.00<small>%</small></div><div class="c">Cut 25 bps on 1 Oct 2026</div><div class="a">Next MPC 3 Dec · in 44 days</div></div>
+          <div class="stat us"><div class="l">US 2-year yield, decision day</div><div class="v">3.41<small>%</small></div><div class="c"><span class="delta down"><svg><use href="#tri"/></svg>−6 bps</span> on 17 Sep</div><div class="a">The Fed surprise measure</div></div>
+          <div class="stat"><div class="l">Rate gap: RBI repo − Fed upper bound</div><div class="v">1.50<small>pp</small></div><div class="c">2.00 pp a year earlier</div><div class="a">Percentage points</div></div>
+        </div>
+      </section>
+
+      <section class="panel s12">
+        <div class="ph"><h2>Policy rates since 2019</h2>
+          <div class="act"><button class="ib" aria-label="View as table"><svg class="i"><use href="#table"/></svg></button><button class="ib" aria-label="Expand"><svg class="i"><use href="#expand"/></svg></button><button class="ib" aria-label="Refresh (admin)"><svg class="i"><use href="#refresh"/></svg></button></div></div>
+        <div class="sub">How far each bank has moved, decision by decision. Bands: the Fed's target range and the RBI's SDF–MSF corridor.</div>
+        <div class="chart-top">
+          <div class="legend" aria-label="Readout at 6 Jun 2025">
+            <span class="mono" style="color:var(--ink-3)">06 Jun 2025</span>
+            <span><i class="k" style="background:var(--series-1)"></i><b>4.25–4.50%</b>Fed target range</span>
+            <span><i class="k" style="background:var(--series-2)"></i><b>5.50%</b>RBI repo</span>
+          </div>
+          <div class="ranges" role="group" aria-label="Range"><button>1Y</button><button>3Y</button><button>5Y</button><button aria-pressed="true">Since 2019</button></div>
+        </div>
+        <div class="chartbox"><svg viewBox="0 0 1000 260" role="img" aria-label="Policy rates since 2019 (sample values): Fed target range and RBI repo rate">
+<style>.g{stroke:var(--line);stroke-width:1} .ax{fill:var(--ink-3);font:12px var(--mono);} </style>
+<line x1="8" x2="944" y1="232.0" y2="232.0" class="g"/><text x="952" y="236.0" class="ax">0.00</text><line x1="8" x2="944" y1="200.6" y2="200.6" class="g"/><text x="952" y="204.6" class="ax">1.00</text><line x1="8" x2="944" y1="169.1" y2="169.1" class="g"/><text x="952" y="173.1" class="ax">2.00</text><line x1="8" x2="944" y1="137.7" y2="137.7" class="g"/><text x="952" y="141.7" class="ax">3.00</text><line x1="8" x2="944" y1="106.3" y2="106.3" class="g"/><text x="952" y="110.3" class="ax">4.00</text><line x1="8" x2="944" y1="74.9" y2="74.9" class="g"/><text x="952" y="78.9" class="ax">5.00</text><line x1="8" x2="944" y1="43.4" y2="43.4" class="g"/><text x="952" y="47.4" class="ax">6.00</text><line x1="8" x2="944" y1="12.0" y2="12.0" class="g"/><text x="952" y="16.0" class="ax">7.00</text>
+<line x1="8" x2="944" y1="232.0" y2="232.0" stroke="var(--line-strong)"/>
+<text x="10.0" y="252" class="ax">2019</text><text x="129.9" y="252" class="ax">2020</text><text x="250.2" y="252" class="ax">2021</text><text x="370.1" y="252" class="ax">2022</text><text x="490.0" y="252" class="ax">2023</text><text x="609.9" y="252" class="ax">2024</text><text x="730.2" y="252" class="ax">2025</text><text x="850.1" y="252" class="ax">2026</text>
+<path d="M8.0,153.4 H77.6 V161.3 H93.7 V169.1 H107.5 V177.0 H148.6 V192.7 H152.6 V224.1 H392.7 V216.3 H408.8 V200.6 H422.6 V177.0 H436.4 V153.4 H454.8 V129.9 H468.6 V106.3 H482.4 V90.6 H498.5 V82.7 H514.6 V74.9 H528.4 V67.0 H556.0 V59.1 H694.0 V74.9 H710.4 V82.7 H723.9 V90.6 H813.6 V98.4 H827.4 V106.3 H841.2 V114.1 H933.2 V122.0 H944.0 V129.9 H933.2 V122.0 H841.2 V114.1 H827.4 V106.3 H813.6 V98.4 H723.9 V90.6 H710.4 V82.7 H694.0 V67.0 H556.0 V74.9 H528.4 V82.7 H514.6 V90.6 H498.5 V98.4 H482.4 V114.1 H468.6 V137.7 H454.8 V161.3 H436.4 V184.9 H422.6 V208.4 H408.8 V224.1 H392.7 V232.0 H152.6 V200.6 H148.6 V184.9 H107.5 V177.0 H93.7 V169.1 H77.6 V161.3 H8.0 Z" fill="var(--series-1)" fill-opacity="0.12"/>
+<path d="M8.0,153.4 H77.6 V161.3 H93.7 V169.1 H107.5 V177.0 H148.6 V192.7 H152.6 V224.1 H392.7 V216.3 H408.8 V200.6 H422.6 V177.0 H436.4 V153.4 H454.8 V129.9 H468.6 V106.3 H482.4 V90.6 H498.5 V82.7 H514.6 V74.9 H528.4 V67.0 H556.0 V59.1 H694.0 V74.9 H710.4 V82.7 H723.9 V90.6 H813.6 V98.4 H827.4 V106.3 H841.2 V114.1 H933.2 V122.0 H944.0" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round"/>
+<path d="M8.0,161.3 H77.6 V169.1 H93.7 V177.0 H107.5 V184.9 H148.6 V200.6 H152.6 V232.0 H392.7 V224.1 H408.8 V208.4 H422.6 V184.9 H436.4 V161.3 H454.8 V137.7 H468.6 V114.1 H482.4 V98.4 H498.5 V90.6 H514.6 V82.7 H528.4 V74.9 H556.0 V67.0 H694.0 V82.7 H710.4 V90.6 H723.9 V98.4 H813.6 V106.3 H827.4 V114.1 H841.2 V122.0 H933.2 V129.9 H944.0" fill="none" stroke="var(--series-1)" stroke-width="1" stroke-opacity="0.6"/>
+<path d="M399.9,98.4 H408.5 V85.9 H420.0 V70.1 H439.0 V54.4 H457.4 V38.7 H479.8 V27.7 H500.5 V19.9 H740.3 V27.7 H760.3 V35.6 H779.4 V51.3 H839.2 V59.1 H937.8 V67.0 H944.0 V82.7 H937.8 V74.9 H839.2 V67.0 H779.4 V51.3 H760.3 V43.4 H740.3 V35.6 H500.5 V43.4 H479.8 V54.4 H457.4 V70.1 H439.0 V85.9 H420.0 V101.6 H408.5 V114.1 H399.9 Z" fill="var(--series-2)" fill-opacity="0.12"/>
+<path d="M8.0,27.7 H20.2 V35.6 H38.6 V43.4 H59.3 V51.3 H79.6 V62.3 H98.7 V70.1 H156.2 V93.7 H174.6 V106.3 H408.5 V93.7 H420.0 V78.0 H439.0 V62.3 H457.4 V46.6 H479.8 V35.6 H500.5 V27.7 H740.3 V35.6 H760.3 V43.4 H779.4 V59.1 H839.2 V67.0 H937.8 V74.9 H944.0" fill="none" stroke="var(--series-2)" stroke-width="2" stroke-linejoin="round"/>
+<line x1="779.4" x2="779.4" y1="12" y2="232" stroke="var(--line-strong)" stroke-width="1"/>
+<circle cx="779.4" cy="59.1" r="4" fill="var(--series-2)" stroke="var(--panel)" stroke-width="2"/>
+<circle cx="779.4" cy="90.6" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"/>
+</svg>
+</div>
+        <div class="pf"><span>Source: Federal Reserve · Reserve Bank of India</span><span class="t">Data to 1 Oct 2026 · checked 20 Oct, 06:41 IST</span></div>
+      </section>
+
+    </div></section>
+    <section class="sec" aria-labelledby="h-latest"><h2 class="sech" id="h-latest">Latest decisions</h2>
+    <div class="grid">
+      <section class="panel s6 us">
+        <div class="ph"><h2>Latest Fed decision</h2><span class="tag">17 Sep 2026</span></div>
+        <div class="pb">
+          <p class="decision">Cut 25 bps to 3.25–3.50%</p>
+          <dl class="kv">
+            <dt>Statement</dt><dd class="mono">14:00 ET (23:30 IST)</dd>
+            <dt>Vote</dt><dd>11–1 · <span class="tag">Dissent</span> one member preferred −50 bps</dd>
+            <dt>Guidance</dt><dd>Easing bias <span class="tag" title="Extracted by AI from the statement; quote checked against the text">AI-extracted</span></dd>
+          </dl>
+          <div class="vblock"><div class="vh">How members voted</div><div class="vs">11 for a 25 bps cut · 1 preferred a 50 bps cut</div>
+<svg viewBox="0 0 480 162" role="img" aria-label="FOMC votes, sample: 11 for a 25 bps cut, 1 preferred a 50 bps cut" class="votes">
+<line x1="28" x2="452" y1="122" y2="122" stroke="var(--line-strong)"/>
+<line x1="40.0" x2="40.0" y1="122" y2="126" stroke="var(--line-strong)"/>
+<text x="40.0" y="139" text-anchor="middle" fill="var(--ink-3)" class="vt">−50</text>
+<line x1="140.0" x2="140.0" y1="122" y2="126" stroke="var(--line-strong)"/>
+<text x="140.0" y="139" text-anchor="middle" fill="var(--ink-1)" font-weight="500" class="vt">−25</text>
+<text x="140.0" y="153" text-anchor="middle" fill="var(--ink-2)" class="vt">decision</text>
+<line x1="240.0" x2="240.0" y1="122" y2="126" stroke="var(--line-strong)"/>
+<text x="240.0" y="139" text-anchor="middle" fill="var(--ink-3)" class="vt">Hold</text>
+<line x1="340.0" x2="340.0" y1="122" y2="126" stroke="var(--line-strong)"/>
+<text x="340.0" y="139" text-anchor="middle" fill="var(--ink-3)" class="vt">+25</text>
+<line x1="440.0" x2="440.0" y1="122" y2="126" stroke="var(--line-strong)"/>
+<text x="440.0" y="139" text-anchor="middle" fill="var(--ink-3)" class="vt">+50</text>
+<text x="0" y="153" fill="var(--ink-3)" class="vt">← cut</text>
+<text x="480" y="153" text-anchor="end" fill="var(--ink-3)" class="vt">hike →</text>
+<circle cx="140.0" cy="114" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"><title>Member A: −25 bps</title></circle>
+<circle cx="140.0" cy="104" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"><title>Member B: −25 bps</title></circle>
+<circle cx="140.0" cy="94" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"><title>Member C: −25 bps</title></circle>
+<circle cx="140.0" cy="84" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"><title>Member D: −25 bps</title></circle>
+<circle cx="140.0" cy="74" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"><title>Member E: −25 bps</title></circle>
+<circle cx="140.0" cy="64" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"><title>Member F: −25 bps</title></circle>
+<circle cx="140.0" cy="54" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"><title>Member G: −25 bps</title></circle>
+<circle cx="140.0" cy="44" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"><title>Member H: −25 bps</title></circle>
+<circle cx="140.0" cy="34" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"><title>Member I: −25 bps</title></circle>
+<circle cx="140.0" cy="24" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"><title>Member J: −25 bps</title></circle>
+<circle cx="140.0" cy="14" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"><title>Member K: −25 bps</title></circle>
+<circle cx="40.0" cy="114" r="4" fill="var(--series-1)" stroke="var(--panel)" stroke-width="2"><title>Member L: −50 bps</title></circle>
+<text x="49.0" y="118" fill="var(--ink-2)" class="vt">Member L</text>
+</svg>
+          </div>
+          <div class="ai">
+            <div class="aih"><svg class="i"><use href="#spark"/></svg>AI summary<svg class="i info" aria-label="Haiku 5.5 · prompt v1 · generated 18 Sep, 00:02 IST"><use href="#info"/></svg></div>
+            <ul>
+              <li>The Committee lowered the target range by a quarter point, citing a softer labour <span class="nw">market <span class="pop"><button class="cite" aria-expanded="true">[1]</button>
+                <span class="popover" role="dialog" aria-label="Cited passage">
+                  <blockquote>… the Committee decided to lower the target range for the federal funds rate by 1/4 percentage point …</blockquote>
+                  <span class="src">FOMC statement · 17 Sep 2026 (sample)</span>
+                  <span class="links"><a href="#">Open in document</a><a href="#">Official source ↗</a></span>
+                </span></span></span></li>
+              <li>Inflation is described as "somewhat elevated", unchanged from <span class="nw">July <button class="cite">[2]</button></span></li>
+              <li>One member dissented in favour of a larger <span class="nw">cut <button class="cite">[3]</button></span></li>
+            </ul>
+          </div>
+          <div class="note"><svg class="i"><use href="#info"/></svg><span>Hawk/dove score held back until it passes evaluation (at least 80% on 30 hand-labelled statements).</span></div>
+        </div>
+        <div class="pf"><span>Source: Federal Reserve</span><span class="t">Checked 20 Oct, 06:41 IST</span></div>
+      </section>
+
+      <section class="panel s6 in">
+        <div class="ph"><h2>Latest RBI decision</h2><span class="tag">1 Oct 2026</span></div>
+        <div class="pb">
+          <p class="decision">Cut 25 bps to 5.00%</p>
+          <dl class="kv">
+            <dt>Resolution</dt><dd class="mono">10:00 IST</dd>
+            <dt>Vote</dt><dd>5–1 on the rate · <span class="tag">Dissent</span> one member voted to hold</dd>
+            <dt>Stance</dt><dd>Neutral <span class="tag">AI-extracted</span></dd>
+            <dt>Corridor</dt><dd>SDF 4.75% · MSF 5.25%</dd>
+          </dl>
+          <div class="vblock"><div class="vh">How members voted</div><div class="vs">5 for a 25 bps cut · 1 for a hold</div>
+<svg viewBox="0 0 480 102" role="img" aria-label="MPC votes, sample: 5 for a 25 bps cut, 1 for a hold" class="votes">
+<line x1="28" x2="452" y1="62" y2="62" stroke="var(--line-strong)"/>
+<line x1="40.0" x2="40.0" y1="62" y2="66" stroke="var(--line-strong)"/>
+<text x="40.0" y="79" text-anchor="middle" fill="var(--ink-3)" class="vt">−50</text>
+<line x1="140.0" x2="140.0" y1="62" y2="66" stroke="var(--line-strong)"/>
+<text x="140.0" y="79" text-anchor="middle" fill="var(--ink-1)" font-weight="500" class="vt">−25</text>
+<text x="140.0" y="93" text-anchor="middle" fill="var(--ink-2)" class="vt">decision</text>
+<line x1="240.0" x2="240.0" y1="62" y2="66" stroke="var(--line-strong)"/>
+<text x="240.0" y="79" text-anchor="middle" fill="var(--ink-3)" class="vt">Hold</text>
+<line x1="340.0" x2="340.0" y1="62" y2="66" stroke="var(--line-strong)"/>
+<text x="340.0" y="79" text-anchor="middle" fill="var(--ink-3)" class="vt">+25</text>
+<line x1="440.0" x2="440.0" y1="62" y2="66" stroke="var(--line-strong)"/>
+<text x="440.0" y="79" text-anchor="middle" fill="var(--ink-3)" class="vt">+50</text>
+<text x="0" y="93" fill="var(--ink-3)" class="vt">← cut</text>
+<text x="480" y="93" text-anchor="end" fill="var(--ink-3)" class="vt">hike →</text>
+<circle cx="140.0" cy="54" r="4" fill="var(--series-2)" stroke="var(--panel)" stroke-width="2"><title>Member A: −25 bps</title></circle>
+<circle cx="140.0" cy="44" r="4" fill="var(--series-2)" stroke="var(--panel)" stroke-width="2"><title>Member B: −25 bps</title></circle>
+<circle cx="140.0" cy="34" r="4" fill="var(--series-2)" stroke="var(--panel)" stroke-width="2"><title>Member C: −25 bps</title></circle>
+<circle cx="140.0" cy="24" r="4" fill="var(--series-2)" stroke="var(--panel)" stroke-width="2"><title>Member D: −25 bps</title></circle>
+<circle cx="140.0" cy="14" r="4" fill="var(--series-2)" stroke="var(--panel)" stroke-width="2"><title>Member E: −25 bps</title></circle>
+<circle cx="240.0" cy="54" r="4" fill="var(--series-2)" stroke="var(--panel)" stroke-width="2"><title>Member F: Hold bps</title></circle>
+<text x="249.0" y="58" fill="var(--ink-2)" class="vt">Member F</text>
+</svg>
+          </div>
+          <div class="ai">
+            <div class="aih"><svg class="i"><use href="#spark"/></svg>What changed<svg class="i info"><use href="#info"/></svg></div>
+            <ul>
+              <li>The stance stayed neutral; the resolution dropped its reference to "elevated food <span class="nw">prices" <button class="cite">[1]</button></span></li>
+              <li>The CPI projection for the year was <span class="nw">lowered <button class="cite">[2]</button></span></li>
+            </ul>
+          </div>
+          <div class="note delayed"><svg class="i"><use href="#clock"/></svg><span>Minutes update delayed; showing data to 1 Oct. (Sample of the delayed state.)</span></div>
+          <div style="margin-top:12px" class="meter" aria-label="Hawk/dove meter, sample of the shown state: Hawkish plus 1">Dovish <span class="cells"><i></i><i></i><i></i><i class="on"></i><i></i></span> Hawkish <span style="color:var(--ink-1)">Hawkish (+1)</span> <span class="tag">shown state, sample</span></div>
+        </div>
+        <div class="pf"><span>Source: Reserve Bank of India</span><span class="t">Checked 20 Oct, 06:41 IST</span></div>
+      </section>
+
+    </div></section>
+    <section class="sec" aria-labelledby="h-changed"><h2 class="sech" id="h-changed">What changed</h2>
+    <div class="grid">
+      <section class="panel s12">
+        <div class="ph"><h2>How much each statement changed</h2><div class="act"><button class="ib" aria-label="View as table"><svg class="i"><use href="#table"/></svg></button></div></div>
+        <div class="sub">Share of each statement's words added (above the line) and removed (below), against the previous one. Spikes mark turning points; select a bar to open that meeting.</div>
+        <div class="chart-top"><div class="legend"><span><i class="sq" style="background:var(--ins-ink)"></i>Added</span><span><i class="sq" style="background:var(--del-ink)"></i>Removed</span></div></div>
+        <div class="chartbox"><svg viewBox="0 0 1000 200" role="img" aria-label="Share of each statement changed since the previous one, per meeting, Fed and RBI (invented values)" class="strip">
+<text x="0" y="54" class="vt" fill="var(--ink-2)">Fed</text>
+<line x1="64" x2="960" y1="50" y2="50" stroke="var(--line-strong)"/>
+<rect x="70.4" y="44.3" width="5" height="5.7" rx="1" fill="var(--ins-ink)"><title>Fed 30 Jan 2019: +10% of words added</title></rect>
+<rect x="70.4" y="51" width="5" height="5.7" rx="1" fill="var(--del-ink)"><title>Fed 30 Jan 2019: −10% of words removed</title></rect>
+<rect x="84.5" y="46.0" width="5" height="4.0" rx="1" fill="var(--ins-ink)"><title>Fed 17 Mar 2019: +7% of words added</title></rect>
+<rect x="84.5" y="51" width="5" height="5.7" rx="1" fill="var(--del-ink)"><title>Fed 17 Mar 2019: −10% of words removed</title></rect>
+<rect x="96.8" y="46.0" width="5" height="4.0" rx="1" fill="var(--ins-ink)"><title>Fed 26 Apr 2019: +7% of words added</title></rect>
+<rect x="96.8" y="51" width="5" height="4.5" rx="1" fill="var(--del-ink)"><title>Fed 26 Apr 2019: −8% of words removed</title></rect>
+<rect x="111.5" y="45.5" width="5" height="4.5" rx="1" fill="var(--ins-ink)"><title>Fed 13 Jun 2019: +8% of words added</title></rect>
+<rect x="111.5" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 13 Jun 2019: −5% of words removed</title></rect>
+<rect x="128.7" y="46.0" width="5" height="4.0" rx="1" fill="var(--ins-ink)"><title>Fed 08 Aug 2019: +7% of words added</title></rect>
+<rect x="128.7" y="51" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>Fed 08 Aug 2019: −9% of words removed</title></rect>
+<rect x="140.0" y="45.5" width="5" height="4.5" rx="1" fill="var(--ins-ink)"><title>Fed 14 Sep 2019: +8% of words added</title></rect>
+<rect x="140.0" y="51" width="5" height="5.7" rx="1" fill="var(--del-ink)"><title>Fed 14 Sep 2019: −10% of words removed</title></rect>
+<rect x="151.7" y="44.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>Fed 22 Oct 2019: +9% of words added</title></rect>
+<rect x="151.7" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 22 Oct 2019: −5% of words removed</title></rect>
+<rect x="167.9" y="45.5" width="5" height="4.5" rx="1" fill="var(--ins-ink)"><title>Fed 14 Dec 2019: +8% of words added</title></rect>
+<rect x="167.9" y="51" width="5" height="3.4" rx="1" fill="var(--del-ink)"><title>Fed 14 Dec 2019: −6% of words removed</title></rect>
+<rect x="179.9" y="46.6" width="5" height="3.4" rx="1" fill="var(--ins-ink)"><title>Fed 22 Jan 2020: +6% of words added</title></rect>
+<rect x="179.9" y="51" width="5" height="4.0" rx="1" fill="var(--del-ink)"><title>Fed 22 Jan 2020: −7% of words removed</title></rect>
+<rect x="194.3" y="33.6" width="5" height="16.4" rx="1" fill="var(--ins-ink)"><title>Fed 09 Mar 2020: +29% of words added</title></rect>
+<rect x="194.3" y="51" width="5" height="15.9" rx="1" fill="var(--del-ink)"><title>Fed 09 Mar 2020: −28% of words removed</title></rect>
+<rect x="210.9" y="43.2" width="5" height="6.8" rx="1" fill="var(--ins-ink)"><title>Fed 02 May 2020: +12% of words added</title></rect>
+<rect x="210.9" y="51" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>Fed 02 May 2020: −9% of words removed</title></rect>
+<rect x="222.2" y="45.5" width="5" height="4.5" rx="1" fill="var(--ins-ink)"><title>Fed 08 Jun 2020: +8% of words added</title></rect>
+<rect x="222.2" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 08 Jun 2020: −5% of words removed</title></rect>
+<rect x="238.2" y="47.2" width="5" height="2.8" rx="1" fill="var(--ins-ink)"><title>Fed 30 Jul 2020: +5% of words added</title></rect>
+<rect x="238.2" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 30 Jul 2020: −5% of words removed</title></rect>
+<rect x="251.1" y="44.3" width="5" height="5.7" rx="1" fill="var(--ins-ink)"><title>Fed 10 Sep 2020: +10% of words added</title></rect>
+<rect x="251.1" y="51" width="5" height="2.3" rx="1" fill="var(--del-ink)"><title>Fed 10 Sep 2020: −4% of words removed</title></rect>
+<rect x="262.4" y="43.8" width="5" height="6.2" rx="1" fill="var(--ins-ink)"><title>Fed 17 Oct 2020: +11% of words added</title></rect>
+<rect x="262.4" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 17 Oct 2020: −5% of words removed</title></rect>
+<rect x="274.1" y="46.0" width="5" height="4.0" rx="1" fill="var(--ins-ink)"><title>Fed 24 Nov 2020: +7% of words added</title></rect>
+<rect x="274.1" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 24 Nov 2020: −5% of words removed</title></rect>
+<rect x="289.1" y="44.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>Fed 12 Jan 2021: +9% of words added</title></rect>
+<rect x="289.1" y="51" width="5" height="4.5" rx="1" fill="var(--del-ink)"><title>Fed 12 Jan 2021: −8% of words removed</title></rect>
+<rect x="304.1" y="46.0" width="5" height="4.0" rx="1" fill="var(--ins-ink)"><title>Fed 02 Mar 2021: +7% of words added</title></rect>
+<rect x="304.1" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 02 Mar 2021: −5% of words removed</title></rect>
+<rect x="315.8" y="43.8" width="5" height="6.2" rx="1" fill="var(--ins-ink)"><title>Fed 09 Apr 2021: +11% of words added</title></rect>
+<rect x="315.8" y="51" width="5" height="5.7" rx="1" fill="var(--del-ink)"><title>Fed 09 Apr 2021: −10% of words removed</title></rect>
+<rect x="329.0" y="44.3" width="5" height="5.7" rx="1" fill="var(--ins-ink)"><title>Fed 22 May 2021: +10% of words added</title></rect>
+<rect x="329.0" y="51" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>Fed 22 May 2021: −9% of words removed</title></rect>
+<rect x="340.6" y="45.5" width="5" height="4.5" rx="1" fill="var(--ins-ink)"><title>Fed 29 Jun 2021: +8% of words added</title></rect>
+<rect x="340.6" y="51" width="5" height="5.7" rx="1" fill="var(--del-ink)"><title>Fed 29 Jun 2021: −10% of words removed</title></rect>
+<rect x="356.9" y="43.2" width="5" height="6.8" rx="1" fill="var(--ins-ink)"><title>Fed 21 Aug 2021: +12% of words added</title></rect>
+<rect x="356.9" y="51" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>Fed 21 Aug 2021: −9% of words removed</title></rect>
+<rect x="371.9" y="44.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>Fed 09 Oct 2021: +9% of words added</title></rect>
+<rect x="371.9" y="51" width="5" height="3.4" rx="1" fill="var(--del-ink)"><title>Fed 09 Oct 2021: −6% of words removed</title></rect>
+<rect x="383.3" y="45.5" width="5" height="4.5" rx="1" fill="var(--ins-ink)"><title>Fed 15 Nov 2021: +8% of words added</title></rect>
+<rect x="383.3" y="51" width="5" height="4.0" rx="1" fill="var(--del-ink)"><title>Fed 15 Nov 2021: −7% of words removed</title></rect>
+<rect x="399.8" y="45.5" width="5" height="4.5" rx="1" fill="var(--ins-ink)"><title>Fed 08 Jan 2022: +8% of words added</title></rect>
+<rect x="399.8" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 08 Jan 2022: −5% of words removed</title></rect>
+<rect x="411.8" y="43.2" width="5" height="6.8" rx="1" fill="var(--ins-ink)"><title>Fed 16 Feb 2022: +12% of words added</title></rect>
+<rect x="411.8" y="51" width="5" height="4.0" rx="1" fill="var(--del-ink)"><title>Fed 16 Feb 2022: −7% of words removed</title></rect>
+<rect x="425.0" y="40.4" width="5" height="9.6" rx="1" fill="var(--ins-ink)"><title>Fed 31 Mar 2022: +17% of words added</title></rect>
+<rect x="425.0" y="51" width="5" height="14.2" rx="1" fill="var(--del-ink)"><title>Fed 31 Mar 2022: −25% of words removed</title></rect>
+<rect x="442.2" y="40.4" width="5" height="9.6" rx="1" fill="var(--ins-ink)"><title>Fed 26 May 2022: +17% of words added</title></rect>
+<rect x="442.2" y="51" width="5" height="14.2" rx="1" fill="var(--del-ink)"><title>Fed 26 May 2022: −25% of words removed</title></rect>
+<rect x="459.3" y="44.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>Fed 21 Jul 2022: +9% of words added</title></rect>
+<rect x="459.3" y="51" width="5" height="5.7" rx="1" fill="var(--del-ink)"><title>Fed 21 Jul 2022: −10% of words removed</title></rect>
+<rect x="475.9" y="44.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>Fed 13 Sep 2022: +9% of words added</title></rect>
+<rect x="475.9" y="51" width="5" height="2.3" rx="1" fill="var(--del-ink)"><title>Fed 13 Sep 2022: −4% of words removed</title></rect>
+<rect x="487.3" y="46.6" width="5" height="3.4" rx="1" fill="var(--ins-ink)"><title>Fed 20 Oct 2022: +6% of words added</title></rect>
+<rect x="487.3" y="51" width="5" height="3.4" rx="1" fill="var(--del-ink)"><title>Fed 20 Oct 2022: −6% of words removed</title></rect>
+<rect x="503.8" y="44.3" width="5" height="5.7" rx="1" fill="var(--ins-ink)"><title>Fed 13 Dec 2022: +10% of words added</title></rect>
+<rect x="503.8" y="51" width="5" height="5.7" rx="1" fill="var(--del-ink)"><title>Fed 13 Dec 2022: −10% of words removed</title></rect>
+<rect x="520.4" y="44.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>Fed 05 Feb 2023: +9% of words added</title></rect>
+<rect x="520.4" y="51" width="5" height="4.0" rx="1" fill="var(--del-ink)"><title>Fed 05 Feb 2023: −7% of words removed</title></rect>
+<rect x="535.1" y="47.2" width="5" height="2.8" rx="1" fill="var(--ins-ink)"><title>Fed 25 Mar 2023: +5% of words added</title></rect>
+<rect x="535.1" y="51" width="5" height="4.0" rx="1" fill="var(--del-ink)"><title>Fed 25 Mar 2023: −7% of words removed</title></rect>
+<rect x="546.5" y="43.2" width="5" height="6.8" rx="1" fill="var(--ins-ink)"><title>Fed 01 May 2023: +12% of words added</title></rect>
+<rect x="546.5" y="51" width="5" height="4.0" rx="1" fill="var(--del-ink)"><title>Fed 01 May 2023: −7% of words removed</title></rect>
+<rect x="559.7" y="46.0" width="5" height="4.0" rx="1" fill="var(--ins-ink)"><title>Fed 13 Jun 2023: +7% of words added</title></rect>
+<rect x="559.7" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 13 Jun 2023: −5% of words removed</title></rect>
+<rect x="571.0" y="43.8" width="5" height="6.2" rx="1" fill="var(--ins-ink)"><title>Fed 20 Jul 2023: +11% of words added</title></rect>
+<rect x="571.0" y="51" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>Fed 20 Jul 2023: −9% of words removed</title></rect>
+<rect x="587.3" y="45.5" width="5" height="4.5" rx="1" fill="var(--ins-ink)"><title>Fed 11 Sep 2023: +8% of words added</title></rect>
+<rect x="587.3" y="51" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>Fed 11 Sep 2023: −9% of words removed</title></rect>
+<rect x="599.5" y="44.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>Fed 21 Oct 2023: +9% of words added</title></rect>
+<rect x="599.5" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 21 Oct 2023: −5% of words removed</title></rect>
+<rect x="613.3" y="43.2" width="5" height="6.8" rx="1" fill="var(--ins-ink)"><title>Fed 05 Dec 2023: +12% of words added</title></rect>
+<rect x="613.3" y="51" width="5" height="3.4" rx="1" fill="var(--del-ink)"><title>Fed 05 Dec 2023: −6% of words removed</title></rect>
+<rect x="628.4" y="44.3" width="5" height="5.7" rx="1" fill="var(--ins-ink)"><title>Fed 23 Jan 2024: +10% of words added</title></rect>
+<rect x="628.4" y="51" width="5" height="5.7" rx="1" fill="var(--del-ink)"><title>Fed 23 Jan 2024: −10% of words removed</title></rect>
+<rect x="640.6" y="43.8" width="5" height="6.2" rx="1" fill="var(--ins-ink)"><title>Fed 03 Mar 2024: +11% of words added</title></rect>
+<rect x="640.6" y="51" width="5" height="3.4" rx="1" fill="var(--del-ink)"><title>Fed 03 Mar 2024: −6% of words removed</title></rect>
+<rect x="656.9" y="44.3" width="5" height="5.7" rx="1" fill="var(--ins-ink)"><title>Fed 25 Apr 2024: +10% of words added</title></rect>
+<rect x="656.9" y="51" width="5" height="2.3" rx="1" fill="var(--del-ink)"><title>Fed 25 Apr 2024: −4% of words removed</title></rect>
+<rect x="668.9" y="43.8" width="5" height="6.2" rx="1" fill="var(--ins-ink)"><title>Fed 03 Jun 2024: +11% of words added</title></rect>
+<rect x="668.9" y="51" width="5" height="4.0" rx="1" fill="var(--del-ink)"><title>Fed 03 Jun 2024: −7% of words removed</title></rect>
+<rect x="685.4" y="43.2" width="5" height="6.8" rx="1" fill="var(--ins-ink)"><title>Fed 27 Jul 2024: +12% of words added</title></rect>
+<rect x="685.4" y="51" width="5" height="3.4" rx="1" fill="var(--del-ink)"><title>Fed 27 Jul 2024: −6% of words removed</title></rect>
+<rect x="699.2" y="38.7" width="5" height="11.3" rx="1" fill="var(--ins-ink)"><title>Fed 10 Sep 2024: +20% of words added</title></rect>
+<rect x="699.2" y="51" width="5" height="13.6" rx="1" fill="var(--del-ink)"><title>Fed 10 Sep 2024: −24% of words removed</title></rect>
+<rect x="715.5" y="44.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>Fed 02 Nov 2024: +9% of words added</title></rect>
+<rect x="715.5" y="51" width="5" height="4.5" rx="1" fill="var(--del-ink)"><title>Fed 02 Nov 2024: −8% of words removed</title></rect>
+<rect x="728.1" y="44.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>Fed 13 Dec 2024: +9% of words added</title></rect>
+<rect x="728.1" y="51" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>Fed 13 Dec 2024: −9% of words removed</title></rect>
+<rect x="740.0" y="43.8" width="5" height="6.2" rx="1" fill="var(--ins-ink)"><title>Fed 21 Jan 2025: +11% of words added</title></rect>
+<rect x="740.0" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 21 Jan 2025: −5% of words removed</title></rect>
+<rect x="756.6" y="46.6" width="5" height="3.4" rx="1" fill="var(--ins-ink)"><title>Fed 16 Mar 2025: +6% of words added</title></rect>
+<rect x="756.6" y="51" width="5" height="3.4" rx="1" fill="var(--del-ink)"><title>Fed 16 Mar 2025: −6% of words removed</title></rect>
+<rect x="773.1" y="43.8" width="5" height="6.2" rx="1" fill="var(--ins-ink)"><title>Fed 09 May 2025: +11% of words added</title></rect>
+<rect x="773.1" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 09 May 2025: −5% of words removed</title></rect>
+<rect x="790.3" y="45.5" width="5" height="4.5" rx="1" fill="var(--ins-ink)"><title>Fed 04 Jul 2025: +8% of words added</title></rect>
+<rect x="790.3" y="51" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>Fed 04 Jul 2025: −9% of words removed</title></rect>
+<rect x="803.2" y="42.6" width="5" height="7.4" rx="1" fill="var(--ins-ink)"><title>Fed 15 Aug 2025: +13% of words added</title></rect>
+<rect x="803.2" y="51" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>Fed 15 Aug 2025: −9% of words removed</title></rect>
+<rect x="817.6" y="45.5" width="5" height="4.5" rx="1" fill="var(--ins-ink)"><title>Fed 01 Oct 2025: +8% of words added</title></rect>
+<rect x="817.6" y="51" width="5" height="2.8" rx="1" fill="var(--del-ink)"><title>Fed 01 Oct 2025: −5% of words removed</title></rect>
+<rect x="829.6" y="44.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>Fed 09 Nov 2025: +9% of words added</title></rect>
+<rect x="829.6" y="51" width="5" height="3.4" rx="1" fill="var(--del-ink)"><title>Fed 09 Nov 2025: −6% of words removed</title></rect>
+<rect x="845.8" y="43.8" width="5" height="6.2" rx="1" fill="var(--ins-ink)"><title>Fed 01 Jan 2026: +11% of words added</title></rect>
+<rect x="845.8" y="51" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>Fed 01 Jan 2026: −9% of words removed</title></rect>
+<rect x="857.5" y="46.0" width="5" height="4.0" rx="1" fill="var(--ins-ink)"><title>Fed 08 Feb 2026: +7% of words added</title></rect>
+<rect x="857.5" y="51" width="5" height="6.2" rx="1" fill="var(--del-ink)"><title>Fed 08 Feb 2026: −11% of words removed</title></rect>
+<rect x="874.1" y="47.2" width="5" height="2.8" rx="1" fill="var(--ins-ink)"><title>Fed 03 Apr 2026: +5% of words added</title></rect>
+<rect x="874.1" y="51" width="5" height="2.3" rx="1" fill="var(--del-ink)"><title>Fed 03 Apr 2026: −4% of words removed</title></rect>
+<rect x="885.4" y="45.5" width="5" height="4.5" rx="1" fill="var(--ins-ink)"><title>Fed 10 May 2026: +8% of words added</title></rect>
+<rect x="885.4" y="51" width="5" height="3.4" rx="1" fill="var(--del-ink)"><title>Fed 10 May 2026: −6% of words removed</title></rect>
+<rect x="902.3" y="45.5" width="5" height="4.5" rx="1" fill="var(--ins-ink)"><title>Fed 04 Jul 2026: +8% of words added</title></rect>
+<rect x="902.3" y="51" width="5" height="6.2" rx="1" fill="var(--del-ink)"><title>Fed 04 Jul 2026: −11% of words removed</title></rect>
+<rect x="915.2" y="44.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>Fed 15 Aug 2026: +9% of words added</title></rect>
+<rect x="915.2" y="51" width="5" height="2.3" rx="1" fill="var(--del-ink)"><title>Fed 15 Aug 2026: −4% of words removed</title></rect>
+<rect x="930.8" y="28.5" width="5" height="21.5" rx="1" fill="var(--ins-ink)"><title>Fed 05 Oct 2026: +38% of words added</title></rect>
+<rect x="930.8" y="51" width="5" height="10.8" rx="1" fill="var(--del-ink)"><title>Fed 05 Oct 2026: −19% of words removed</title></rect>
+<text x="968" y="26" class="vt" fill="var(--ink-3)">+60%</text>
+<text x="968" y="84" class="vt" fill="var(--ink-3)">−60%</text>
+<text x="0" y="144" class="vt" fill="var(--ink-2)">RBI</text>
+<line x1="64" x2="960" y1="140" y2="140" stroke="var(--line-strong)"/>
+<rect x="72.8" y="130.4" width="5" height="9.6" rx="1" fill="var(--ins-ink)"><title>RBI 07 Feb 2019: +17% of words added</title></rect>
+<rect x="72.8" y="141" width="5" height="9.6" rx="1" fill="var(--del-ink)"><title>RBI 07 Feb 2019: −17% of words removed</title></rect>
+<rect x="92.8" y="134.3" width="5" height="5.7" rx="1" fill="var(--ins-ink)"><title>RBI 13 Apr 2019: +10% of words added</title></rect>
+<rect x="92.8" y="141" width="5" height="6.2" rx="1" fill="var(--del-ink)"><title>RBI 13 Apr 2019: −11% of words removed</title></rect>
+<rect x="114.0" y="129.8" width="5" height="10.2" rx="1" fill="var(--ins-ink)"><title>RBI 21 Jun 2019: +18% of words added</title></rect>
+<rect x="114.0" y="141" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>RBI 21 Jun 2019: −9% of words removed</title></rect>
+<rect x="133.9" y="128.1" width="5" height="11.9" rx="1" fill="var(--ins-ink)"><title>RBI 25 Aug 2019: +21% of words added</title></rect>
+<rect x="133.9" y="141" width="5" height="6.8" rx="1" fill="var(--del-ink)"><title>RBI 25 Aug 2019: −12% of words removed</title></rect>
+<rect x="152.9" y="130.4" width="5" height="9.6" rx="1" fill="var(--ins-ink)"><title>RBI 26 Oct 2019: +17% of words added</title></rect>
+<rect x="152.9" y="141" width="5" height="4.5" rx="1" fill="var(--del-ink)"><title>RBI 26 Oct 2019: −8% of words removed</title></rect>
+<rect x="171.3" y="127.5" width="5" height="12.5" rx="1" fill="var(--ins-ink)"><title>RBI 25 Dec 2019: +22% of words added</title></rect>
+<rect x="171.3" y="141" width="5" height="9.1" rx="1" fill="var(--del-ink)"><title>RBI 25 Dec 2019: −16% of words removed</title></rect>
+<rect x="189.1" y="113.4" width="5" height="26.6" rx="1" fill="var(--ins-ink)"><title>RBI 21 Feb 2020: +47% of words added</title></rect>
+<rect x="189.1" y="141" width="5" height="28.9" rx="1" fill="var(--del-ink)"><title>RBI 21 Feb 2020: −51% of words removed</title></rect>
+<rect x="206.3" y="134.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>RBI 17 Apr 2020: +9% of words added</title></rect>
+<rect x="206.3" y="141" width="5" height="4.5" rx="1" fill="var(--del-ink)"><title>RBI 17 Apr 2020: −8% of words removed</title></rect>
+<rect x="224.1" y="127.5" width="5" height="12.5" rx="1" fill="var(--ins-ink)"><title>RBI 14 Jun 2020: +22% of words added</title></rect>
+<rect x="224.1" y="141" width="5" height="4.0" rx="1" fill="var(--del-ink)"><title>RBI 14 Jun 2020: −7% of words removed</title></rect>
+<rect x="240.3" y="130.4" width="5" height="9.6" rx="1" fill="var(--ins-ink)"><title>RBI 06 Aug 2020: +17% of words added</title></rect>
+<rect x="240.3" y="141" width="5" height="6.8" rx="1" fill="var(--del-ink)"><title>RBI 06 Aug 2020: −12% of words removed</title></rect>
+<rect x="261.5" y="130.4" width="5" height="9.6" rx="1" fill="var(--ins-ink)"><title>RBI 14 Oct 2020: +17% of words added</title></rect>
+<rect x="261.5" y="141" width="5" height="7.9" rx="1" fill="var(--del-ink)"><title>RBI 14 Oct 2020: −14% of words removed</title></rect>
+<rect x="279.9" y="130.4" width="5" height="9.6" rx="1" fill="var(--ins-ink)"><title>RBI 13 Dec 2020: +17% of words added</title></rect>
+<rect x="279.9" y="141" width="5" height="6.8" rx="1" fill="var(--del-ink)"><title>RBI 13 Dec 2020: −12% of words removed</title></rect>
+<rect x="300.5" y="128.1" width="5" height="11.9" rx="1" fill="var(--ins-ink)"><title>RBI 18 Feb 2021: +21% of words added</title></rect>
+<rect x="300.5" y="141" width="5" height="4.5" rx="1" fill="var(--del-ink)"><title>RBI 18 Feb 2021: −8% of words removed</title></rect>
+<rect x="320.7" y="130.9" width="5" height="9.1" rx="1" fill="var(--ins-ink)"><title>RBI 25 Apr 2021: +16% of words added</title></rect>
+<rect x="320.7" y="141" width="5" height="4.0" rx="1" fill="var(--del-ink)"><title>RBI 25 Apr 2021: −7% of words removed</title></rect>
+<rect x="339.4" y="128.7" width="5" height="11.3" rx="1" fill="var(--ins-ink)"><title>RBI 25 Jun 2021: +20% of words added</title></rect>
+<rect x="339.4" y="141" width="5" height="9.1" rx="1" fill="var(--del-ink)"><title>RBI 25 Jun 2021: −16% of words removed</title></rect>
+<rect x="359.3" y="134.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>RBI 29 Aug 2021: +9% of words added</title></rect>
+<rect x="359.3" y="141" width="5" height="9.1" rx="1" fill="var(--del-ink)"><title>RBI 29 Aug 2021: −16% of words removed</title></rect>
+<rect x="377.8" y="134.3" width="5" height="5.7" rx="1" fill="var(--ins-ink)"><title>RBI 28 Oct 2021: +10% of words added</title></rect>
+<rect x="377.8" y="141" width="5" height="10.8" rx="1" fill="var(--del-ink)"><title>RBI 28 Oct 2021: −19% of words removed</title></rect>
+<rect x="399.2" y="133.8" width="5" height="6.2" rx="1" fill="var(--ins-ink)"><title>RBI 06 Jan 2022: +11% of words added</title></rect>
+<rect x="399.2" y="141" width="5" height="10.2" rx="1" fill="var(--del-ink)"><title>RBI 06 Jan 2022: −18% of words removed</title></rect>
+<rect x="415.5" y="124.7" width="5" height="15.3" rx="1" fill="var(--ins-ink)"><title>RBI 28 Feb 2022: +27% of words added</title></rect>
+<rect x="415.5" y="141" width="5" height="16.4" rx="1" fill="var(--del-ink)"><title>RBI 28 Feb 2022: −29% of words removed</title></rect>
+<rect x="432.0" y="131.5" width="5" height="8.5" rx="1" fill="var(--ins-ink)"><title>RBI 23 Apr 2022: +15% of words added</title></rect>
+<rect x="432.0" y="141" width="5" height="9.1" rx="1" fill="var(--del-ink)"><title>RBI 23 Apr 2022: −16% of words removed</title></rect>
+<rect x="452.6" y="116.8" width="5" height="23.2" rx="1" fill="var(--ins-ink)"><title>RBI 29 Jun 2022: +41% of words added</title></rect>
+<rect x="452.6" y="141" width="5" height="24.4" rx="1" fill="var(--del-ink)"><title>RBI 29 Jun 2022: −43% of words removed</title></rect>
+<rect x="472.2" y="128.7" width="5" height="11.3" rx="1" fill="var(--ins-ink)"><title>RBI 01 Sep 2022: +20% of words added</title></rect>
+<rect x="472.2" y="141" width="5" height="4.0" rx="1" fill="var(--del-ink)"><title>RBI 01 Sep 2022: −7% of words removed</title></rect>
+<rect x="489.4" y="129.2" width="5" height="10.8" rx="1" fill="var(--ins-ink)"><title>RBI 27 Oct 2022: +19% of words added</title></rect>
+<rect x="489.4" y="141" width="5" height="10.2" rx="1" fill="var(--del-ink)"><title>RBI 27 Oct 2022: −18% of words removed</title></rect>
+<rect x="508.1" y="129.8" width="5" height="10.2" rx="1" fill="var(--ins-ink)"><title>RBI 27 Dec 2022: +18% of words added</title></rect>
+<rect x="508.1" y="141" width="5" height="9.6" rx="1" fill="var(--del-ink)"><title>RBI 27 Dec 2022: −17% of words removed</title></rect>
+<rect x="525.0" y="131.5" width="5" height="8.5" rx="1" fill="var(--ins-ink)"><title>RBI 20 Feb 2023: +15% of words added</title></rect>
+<rect x="525.0" y="141" width="5" height="9.6" rx="1" fill="var(--del-ink)"><title>RBI 20 Feb 2023: −17% of words removed</title></rect>
+<rect x="545.2" y="128.1" width="5" height="11.9" rx="1" fill="var(--ins-ink)"><title>RBI 27 Apr 2023: +21% of words added</title></rect>
+<rect x="545.2" y="141" width="5" height="4.5" rx="1" fill="var(--del-ink)"><title>RBI 27 Apr 2023: −8% of words removed</title></rect>
+<rect x="564.9" y="134.3" width="5" height="5.7" rx="1" fill="var(--ins-ink)"><title>RBI 30 Jun 2023: +10% of words added</title></rect>
+<rect x="564.9" y="141" width="5" height="7.4" rx="1" fill="var(--del-ink)"><title>RBI 30 Jun 2023: −13% of words removed</title></rect>
+<rect x="580.8" y="128.1" width="5" height="11.9" rx="1" fill="var(--ins-ink)"><title>RBI 21 Aug 2023: +21% of words added</title></rect>
+<rect x="580.8" y="141" width="5" height="9.1" rx="1" fill="var(--del-ink)"><title>RBI 21 Aug 2023: −16% of words removed</title></rect>
+<rect x="597.1" y="130.4" width="5" height="9.6" rx="1" fill="var(--ins-ink)"><title>RBI 13 Oct 2023: +17% of words added</title></rect>
+<rect x="597.1" y="141" width="5" height="9.1" rx="1" fill="var(--del-ink)"><title>RBI 13 Oct 2023: −16% of words removed</title></rect>
+<rect x="617.9" y="134.3" width="5" height="5.7" rx="1" fill="var(--ins-ink)"><title>RBI 20 Dec 2023: +10% of words added</title></rect>
+<rect x="617.9" y="141" width="5" height="4.5" rx="1" fill="var(--del-ink)"><title>RBI 20 Dec 2023: −8% of words removed</title></rect>
+<rect x="639.1" y="130.4" width="5" height="9.6" rx="1" fill="var(--ins-ink)"><title>RBI 27 Feb 2024: +17% of words added</title></rect>
+<rect x="639.1" y="141" width="5" height="4.5" rx="1" fill="var(--del-ink)"><title>RBI 27 Feb 2024: −8% of words removed</title></rect>
+<rect x="657.8" y="134.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>RBI 28 Apr 2024: +9% of words added</title></rect>
+<rect x="657.8" y="141" width="5" height="8.5" rx="1" fill="var(--del-ink)"><title>RBI 28 Apr 2024: −15% of words removed</title></rect>
+<rect x="676.5" y="130.9" width="5" height="9.1" rx="1" fill="var(--ins-ink)"><title>RBI 28 Jun 2024: +16% of words added</title></rect>
+<rect x="676.5" y="141" width="5" height="7.4" rx="1" fill="var(--del-ink)"><title>RBI 28 Jun 2024: −13% of words removed</title></rect>
+<rect x="695.5" y="106.0" width="5" height="34.0" rx="1" fill="var(--ins-ink)"><title>RBI 29 Aug 2024: +60% of words added</title></rect>
+<rect x="695.5" y="141" width="5" height="32.3" rx="1" fill="var(--del-ink)"><title>RBI 29 Aug 2024: −57% of words removed</title></rect>
+<rect x="717.0" y="134.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>RBI 07 Nov 2024: +9% of words added</title></rect>
+<rect x="717.0" y="141" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>RBI 07 Nov 2024: −9% of words removed</title></rect>
+<rect x="737.3" y="134.9" width="5" height="5.1" rx="1" fill="var(--ins-ink)"><title>RBI 12 Jan 2025: +9% of words added</title></rect>
+<rect x="737.3" y="141" width="5" height="4.5" rx="1" fill="var(--del-ink)"><title>RBI 12 Jan 2025: −8% of words removed</title></rect>
+<rect x="758.4" y="131.5" width="5" height="8.5" rx="1" fill="var(--ins-ink)"><title>RBI 22 Mar 2025: +15% of words added</title></rect>
+<rect x="758.4" y="141" width="5" height="4.0" rx="1" fill="var(--del-ink)"><title>RBI 22 Mar 2025: −7% of words removed</title></rect>
+<rect x="778.4" y="128.1" width="5" height="11.9" rx="1" fill="var(--ins-ink)"><title>RBI 26 May 2025: +21% of words added</title></rect>
+<rect x="778.4" y="141" width="5" height="4.0" rx="1" fill="var(--del-ink)"><title>RBI 26 May 2025: −7% of words removed</title></rect>
+<rect x="794.6" y="132.6" width="5" height="7.4" rx="1" fill="var(--ins-ink)"><title>RBI 18 Jul 2025: +13% of words added</title></rect>
+<rect x="794.6" y="141" width="5" height="10.8" rx="1" fill="var(--del-ink)"><title>RBI 18 Jul 2025: −19% of words removed</title></rect>
+<rect x="810.9" y="130.4" width="5" height="9.6" rx="1" fill="var(--ins-ink)"><title>RBI 09 Sep 2025: +17% of words added</title></rect>
+<rect x="810.9" y="141" width="5" height="5.1" rx="1" fill="var(--del-ink)"><title>RBI 09 Sep 2025: −9% of words removed</title></rect>
+<rect x="829.0" y="133.2" width="5" height="6.8" rx="1" fill="var(--ins-ink)"><title>RBI 07 Nov 2025: +12% of words added</title></rect>
+<rect x="829.0" y="141" width="5" height="7.4" rx="1" fill="var(--del-ink)"><title>RBI 07 Nov 2025: −13% of words removed</title></rect>
+<rect x="849.2" y="128.7" width="5" height="11.3" rx="1" fill="var(--ins-ink)"><title>RBI 12 Jan 2026: +20% of words added</title></rect>
+<rect x="849.2" y="141" width="5" height="7.4" rx="1" fill="var(--del-ink)"><title>RBI 12 Jan 2026: −13% of words removed</title></rect>
+<rect x="865.5" y="133.2" width="5" height="6.8" rx="1" fill="var(--ins-ink)"><title>RBI 06 Mar 2026: +12% of words added</title></rect>
+<rect x="865.5" y="141" width="5" height="7.4" rx="1" fill="var(--del-ink)"><title>RBI 06 Mar 2026: −13% of words removed</title></rect>
+<rect x="881.4" y="128.1" width="5" height="11.9" rx="1" fill="var(--ins-ink)"><title>RBI 27 Apr 2026: +21% of words added</title></rect>
+<rect x="881.4" y="141" width="5" height="10.2" rx="1" fill="var(--del-ink)"><title>RBI 27 Apr 2026: −18% of words removed</title></rect>
+<rect x="899.8" y="128.1" width="5" height="11.9" rx="1" fill="var(--ins-ink)"><title>RBI 26 Jun 2026: +21% of words added</title></rect>
+<rect x="899.8" y="141" width="5" height="10.2" rx="1" fill="var(--del-ink)"><title>RBI 26 Jun 2026: −18% of words removed</title></rect>
+<rect x="921.6" y="120.2" width="5" height="19.8" rx="1" fill="var(--ins-ink)"><title>RBI 05 Sep 2026: +35% of words added</title></rect>
+<rect x="921.6" y="141" width="5" height="22.1" rx="1" fill="var(--del-ink)"><title>RBI 05 Sep 2026: −39% of words removed</title></rect>
+<text x="968" y="116" class="vt" fill="var(--ink-3)">+60%</text>
+<text x="968" y="174" class="vt" fill="var(--ink-3)">−60%</text>
+<text x="66.0" y="196" class="vt" fill="var(--ink-3)">2019</text>
+<text x="178.0" y="196" class="vt" fill="var(--ink-3)">2020</text>
+<text x="290.2" y="196" class="vt" fill="var(--ink-3)">2021</text>
+<text x="402.2" y="196" class="vt" fill="var(--ink-3)">2022</text>
+<text x="514.2" y="196" class="vt" fill="var(--ink-3)">2023</text>
+<text x="626.1" y="196" class="vt" fill="var(--ink-3)">2024</text>
+<text x="738.4" y="196" class="vt" fill="var(--ink-3)">2025</text>
+<text x="850.3" y="196" class="vt" fill="var(--ink-3)">2026</text>
+</svg></div>
+        <div class="pf"><span>Source: Federal Reserve · Reserve Bank of India (diffs computed here)</span><span class="t">Data to 7 Oct 2026</span></div>
+      </section>
+
+      <section class="panel s6 us">
+        <div class="ph"><h2>Key changes in the Fed statement</h2><span class="tag">17 Sep vs 30 Jul</span></div>
+        <div class="pb">
+          <div class="seg" role="tablist"><button role="tab" aria-selected="true">Key changes</button><button role="tab">Full redline</button></div>
+          <div class="ai" style="margin-top:12px;border-top:0;padding-top:0">
+            <div class="aih"><svg class="i"><use href="#spark"/></svg>What changed<svg class="i info"><use href="#info"/></svg></div>
+            <ul>
+              <li>The labour market is now described as softening, where July called it <span class="nw">solid <button class="cite">[1]</button></span></li>
+              <li>The Committee moved from holding to a quarter-point <span class="nw">cut <button class="cite">[2]</button></span></li>
+            </ul>
+          </div>
+          <table class="pairs">
+            <thead><tr><th>Topic</th><th>Before · 30 Jul</th><th>Now · 17 Sep</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Economy</th><td>Job gains have <del>remained solid</del>. <a class="para" href="#">¶1</a></td><td>Job gains have <ins>slowed, and the unemployment rate has edged up but remains low</ins>. <a class="para" href="#">¶1</a></td></tr>
+              <tr><th scope="row">Decision</th><td>…decided to <del>maintain</del> the target range <del>at 3-1/2 to 3-3/4</del> percent. <a class="para" href="#">¶3</a></td><td>…decided to <ins>lower</ins> the target range <ins>by 1/4 percentage point to 3-1/4 to 3-1/2</ins> percent. <a class="para" href="#">¶3</a></td></tr>
+              <tr><th scope="row">Votes</th><td>Approved <del>12–0</del>. <a class="para" href="#">¶6</a></td><td>Approved <ins>11–1; Member L preferred a 1/2-point cut</ins>. <a class="para" href="#">¶6</a></td></tr>
+            </tbody>
+          </table>
+          <p class="more">3 other sentences changed · 2 paragraphs unchanged · <a href="#">Full redline</a></p>
+        </div>
+        <div class="pf"><span>Source: Federal Reserve (invented text)</span><span class="t">Data to 17 Sep 2026</span></div>
+      </section>
+
+      <section class="panel s6 in">
+        <div class="ph"><h2>Key changes in the RBI resolution</h2><span class="tag">1 Oct vs 6 Aug</span></div>
+        <div class="pb">
+          <div class="seg" role="tablist"><button role="tab" aria-selected="true">Key changes</button><button role="tab">Full redline</button></div>
+          <h3 class="minih">Numbers that changed</h3>
+          <div class="tablebox"><table class="nums">
+            <thead><tr><th>Item</th><th class="r">6 Aug</th><th class="r">1 Oct</th><th class="r">Change</th></tr></thead>
+            <tbody>
+              <tr><td>Repo rate</td><td class="r">5.25%</td><td class="r">5.00%</td><td class="r">−25 bps</td></tr>
+              <tr><td>SDF · MSF</td><td class="r">5.00 · 5.50%</td><td class="r">4.75 · 5.25%</td><td class="r">−25 bps</td></tr>
+              <tr><td>CPI inflation, 2026-27</td><td class="r">3.1%</td><td class="r">2.6%</td><td class="r">−0.5 pp</td></tr>
+              <tr><td>Real GDP growth, 2026-27</td><td class="r">6.5%</td><td class="r">6.8%</td><td class="r">+0.3 pp</td></tr>
+            </tbody>
+          </table></div>
+          <p class="more">Unchanged: CRR 3.00% · stance neutral <span class="tag">AI-extracted</span></p>
+          <h3 class="minih">Wording that changed</h3>
+          <table class="pairs">
+            <thead><tr><th>Topic</th><th>Before · 6 Aug</th><th>Now · 1 Oct</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Inflation outlook</th><td><del>Food prices remain elevated and warrant close monitoring.</del> <a class="para" href="#">¶14</a></td><td class="gone">removed</td></tr>
+              <tr><th scope="row">Growth outlook</th><td>Growth is expected to <del>moderate</del> in the second half. <a class="para" href="#">¶16</a></td><td>Growth is expected to <ins>stay resilient</ins> in the second half. <a class="para" href="#">¶16</a></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pf"><span>Source: Reserve Bank of India (invented text)</span><span class="t">Data to 1 Oct 2026</span></div>
+      </section>
+    </div></section>
+
+    <section class="sec" aria-labelledby="h-other"><h2 class="sech" id="h-other">Other views <small>shown open for the specimen only</small></h2>
+    <div class="grid">
+      <section class="panel s8 us">
+        <div class="ph"><h2>Full redline: Fed statement</h2><span class="tag">17 Sep vs 30 Jul</span></div>
+        <div class="pb">
+          <div class="rl-legend"><span class="sw"><ins>Added</ins> +48 words</span><span class="sw"><del>Removed</del> −31 words</span><span class="toggle">Changes only <span class="switch" role="switch" aria-checked="true"></span></span></div>
+          <div class="redline">
+            <p>Recent indicators suggest that growth of economic activity <del>has moderated</del> <ins>moderated in the first half of the year</ins>. Job gains have <ins>slowed, and the unemployment rate has edged up but remains low</ins><del>remained solid</del>.</p>
+            <span class="fold">3 unchanged paragraphs</span>
+            <p>In support of its goals, the Committee decided to <del>maintain</del> <ins>lower</ins> the target range for the federal funds rate <ins>by 1/4 percentage point</ins> to <ins>3-1/4 to 3-1/2</ins><del>3-1/2 to 3-3/4</del> percent.</p>
+          </div>
+        </div>
+        <div class="pf"><span>Source: Federal Reserve (sample text)</span><span class="t">Data to 17 Sep 2026</span></div>
+      </section>
+
+      <section class="panel s4" aria-label="Command bar, open state">
+        <div class="ph"><h2>Command bar (open state)</h2></div>
+        <div class="pb">
+          <div class="cmdopen">
+            <div class="q"><svg class="i" style="color:var(--amber)"><use href="#spark"/></svg><span>How many RBI cuts since 2024?</span></div>
+            <div class="stage" aria-live="polite">Done · 2.1 s · read policy_meetings</div>
+            <div class="ans">
+              <div style="font:var(--ui)">The RBI cut the repo rate at 5 meetings since 1 Jan 2024. <span class="tag">AI summary</span></div>
+              <table style="margin-top:8px"><thead><tr><th>Date</th><th class="r">Change (bps)</th><th class="r">Repo (%)</th></tr></thead>
+                <tbody><tr><td>07 Feb 2025</td><td class="r">−25</td><td class="r">6.25</td></tr><tr><td>09 Apr 2025</td><td class="r">−25</td><td class="r">6.00</td></tr><tr><td>06 Jun 2025</td><td class="r">−50</td><td class="r">5.50</td></tr><tr><td>05 Dec 2025</td><td class="r">−25</td><td class="r">5.25</td></tr><tr><td>01 Oct 2026</td><td class="r">−25</td><td class="r">5.00</td></tr></tbody></table>
+              <details open><summary>Show SQL</summary><pre class="sql">SELECT meeting_date, policy_rate_change_bps, policy_rate_pct
+FROM policy_meetings
+WHERE bank = 'RBI' AND policy_rate_change_bps &lt; 0
+  AND meeting_date &gt;= DATE '2024-01-01'
+ORDER BY meeting_date
+LIMIT 200</pre></details>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div></section>
+    <section class="sec" aria-labelledby="h-hist"><h2 class="sech" id="h-hist">History</h2>
+    <div class="grid">
+      <section class="panel s12">
+        <div class="ph"><h2>All decisions since 2019</h2><div class="act"><button class="ib" aria-label="Refresh (admin)"><svg class="i"><use href="#refresh"/></svg></button></div></div>
+        <div class="pb flush tablebox">
+          <table>
+            <thead><tr><th aria-sort="descending">Date <span class="sort">↓</span></th><th>Bank</th><th>Decision</th><th class="r">Rate (%)</th><th class="r">Change (bps)</th><th>Vote</th><th class="r">US 2Y, 1 day (bps)</th><th class="r">Nifty 50, 1 day</th></tr></thead>
+            <tbody>
+              <tr><td><a href="#">01 Oct 2026</a></td><td><i class="dot" style="background:var(--series-2)"></i>RBI</td><td>Cut</td><td class="r">5.00</td><td class="r">−25</td><td>6–0</td><td class="r">—</td><td class="r"><span class="delta up"><svg><use href="#tri"/></svg>+0.61%</span></td></tr>
+              <tr><td><a href="#">17 Sep 2026</a></td><td><i class="dot" style="background:var(--series-1)"></i>Fed</td><td>Cut</td><td class="r">3.25–3.50</td><td class="r">−25</td><td>11–1</td><td class="r"><span class="delta down"><svg><use href="#tri"/></svg>−6</span></td><td class="r"><span class="delta down"><svg><use href="#tri"/></svg>−0.22%</span></td></tr>
+              <tr><td><a href="#">06 Aug 2026</a></td><td><i class="dot" style="background:var(--series-2)"></i>RBI</td><td>Hold</td><td class="r">5.25</td><td class="r">0</td><td>6–0</td><td class="r">—</td><td class="r"><span class="delta flat">0.00%</span></td></tr>
+              <tr><td><a href="#">30 Jul 2026</a></td><td><i class="dot" style="background:var(--series-1)"></i>Fed</td><td>Hold</td><td class="r">3.50–3.75</td><td class="r">0</td><td>12–0</td><td class="r"><span class="delta up"><svg><use href="#tri"/></svg>+4</span></td><td class="r"><span class="delta up"><svg><use href="#tri"/></svg>+0.18%</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pf"><span>Source: Federal Reserve · Reserve Bank of India · FRED · NSE indices via Yahoo Finance</span><span class="t">Checked 20 Oct, 06:41 IST</span></div>
+      </section>
+
+    </div></section>
+    <section class="sec" aria-labelledby="h-key"><h2 class="sech" id="h-key">Specimen key</h2>
+    <div class="grid">
+      <section class="panel s12" aria-label="Specimen key">
+        <div class="ph"><h2>Specimen key: tokens and states</h2></div>
+        <div class="pb">
+          <div class="key">
+            <div class="swatch"><div class="c" style="background:var(--canvas)"></div><div class="t"><b>canvas</b>#08090b</div></div>
+            <div class="swatch"><div class="c" style="background:var(--panel)"></div><div class="t"><b>panel</b>#12161b</div></div>
+            <div class="swatch"><div class="c" style="background:var(--raised)"></div><div class="t"><b>raised · panel headers</b>#1a1f26</div></div>
+            <div class="swatch"><div class="c" style="background:var(--active)"></div><div class="t"><b>active</b>#232931</div></div>
+            <div class="swatch"><div class="c" style="background:var(--amber)"></div><div class="t"><b>amber</b>#edb84a</div></div>
+            <div class="swatch"><div class="c" style="background:var(--up)"></div><div class="t"><b>up</b>#45c16a</div></div>
+            <div class="swatch"><div class="c" style="background:var(--down)"></div><div class="t"><b>down</b>#f26b6b</div></div>
+            <div class="swatch"><div class="c" style="background:var(--warn)"></div><div class="t"><b>warn</b>#f0913e</div></div>
+            <div class="swatch"><div class="c" style="background:var(--series-1)"></div><div class="t"><b>series-1 · US, Fed</b>#1aa3b5</div></div>
+            <div class="swatch"><div class="c" style="background:var(--series-2)"></div><div class="t"><b>series-2 · India, RBI</b>#9085e9</div></div>
+            <div class="swatch"><div class="c" style="background:var(--series-3)"></div><div class="t"><b>series-3</b>#d55181</div></div>
+            <div class="swatch"><div class="c" style="background:var(--panel);display:flex;gap:8px;align-items:center;padding:0 8px"><span style="color:var(--ink-1)">ink-1</span><span style="color:var(--ink-2)">ink-2</span><span style="color:var(--ink-3)">ink-3</span></div><div class="t"><b>ink</b>e6e8eb · afb5be · 8c939e</div></div>
+          </div>
+          <div class="types" style="margin-top:16px">
+            <div><code>text-figure 28</code><span style="font:600 28px/34px var(--sans)">₹12,345 cr · 1,23,456.70 · −25 bps</span></div>
+            <div><code>text-page 22</code><span style="font:600 22px/28px var(--sans)">Fed vs RBI policy tracker</span></div>
+            <div><code>text-read 16</code><span style="font:var(--read)">AI summaries and documents read at 16 px, capped at 68 characters a line.</span></div>
+            <div><code>text-ui 14</code><span>Default interface text and panel bodies.</span></div>
+            <div><code>text-data 13</code><span style="font:var(--data)">Table cells 0123456789 align: 5.25 · 13.00 · 108.40</span></div>
+            <div><code>text-meta 12</code><span style="font:var(--meta);color:var(--ink-3)">Source: FRED · <span class="mono">checked 20 Oct, 06:41 IST</span></span></div>
+            <div><code>mono 12</code><span class="mono" style="font-size:12px">EOD Nifty 50 25,104.30 · ⌘K · SELECT …</span></div>
+          </div>
+          <div class="row" style="margin-top:16px">
+            <span class="tag">AI-extracted</span><span class="tag">monthly</span><span class="tag">annualised</span><span class="tag">proxy</span><span class="tag">back-calculated</span><span class="tag">from Feb 2023</span>
+            <span class="delta up"><svg><use href="#tri"/></svg>+0.42%</span><span class="delta down"><svg><use href="#tri"/></svg>−0.18%</span><span class="delta flat">0.00%</span>
+            <button class="btn primary">Primary</button><button class="btn">Secondary</button><button class="btn" style="outline:2px solid var(--amber);outline-offset:2px">Focused</button>
+            <span>Missing: <span title="Not available">—</span> · Doesn't apply: N/A</span>
+          </div>
+        </div>
+      </section>
+    </div></section>
+
+    <div class="foot"><span>Informational only, not investment advice.</span><span>Sources: Federal Reserve · Reserve Bank of India · FRED</span><a href="https://www.tradingview.com/">Charts: TradingView Lightweight Charts</a><a href="#">How it's built</a></div>
+   </div>
+  </main>
+
+  <footer class="statusbar">
+    <span><span class="okdot" aria-hidden="true"></span>All data current · checked 06:41 IST</span>
+    <span>Next FOMC 9 Dec · in 50 days</span>
+    <span>Next MPC 3 Dec · in 44 days</span>
+    <span class="right">Not investment advice</span>
+  </footer>
+</div>
+</body>
+</html>

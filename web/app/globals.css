@@ -1,130 +1,221 @@
+/* web/app/globals.css — Finance Terminal design tokens (Design 01, 20 Oct 2026).
+   Dark only. Every colour below was contrast-checked (Design 01 §8); change one only by re-running that check.
+   shadcn/ui reads the role variables (--background, --primary, …); our components read the finance
+   variables (--canvas, --up, --series-1, …). Note the name clash: in shadcn, "accent" is the HOVER SURFACE,
+   not a brand colour. The amber is "primary". */
 @import "tailwindcss";
+/* keep any other @import lines `shadcn init` adds (e.g. tw-animate-css) */
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+:root {
+  color-scheme: dark;
+
+  /* ---- surfaces ---- */
+  --canvas: #08090b;          /* page background */
+  --panel: #12161b;           /* panels, top bar, sidebar */
+  --raised: #1a1f26;          /* panel header bars, table headers, popovers, inputs, row hover */
+  --active: #232931;          /* selected row, pressed, active nav item */
+
+  /* ---- lines ---- */
+  --line: #252a31;            /* hairline: panel borders, row dividers, chart grid (decorative) */
+  --line-strong: #343b45;     /* panel outlines, header rules, section rules, axis baselines, qualifier borders */
+  --line-input: #646c78;      /* input and control boundaries (>= 3:1 on panel and raised) */
+
+  /* ---- ink (text) ---- */
+  --ink-1: #e6e8eb;           /* primary text, values */
+  --ink-2: #afb5be;           /* secondary text, labels */
+  --ink-3: #8c939e;           /* meta: timestamps, sources, axis labels (still >= 4.5:1 everywhere) */
+
+  /* ---- amber: the one accent ---- */
+  --amber: #edb84a;           /* focus ring, active nav bar, citation chips, primary button, links on hover */
+  --amber-ink: #111418;       /* text on an amber fill */
+  --amber-wash: rgb(237 184 74 / 0.12);  /* active nav background, cited-passage highlight */
+
+  /* ---- market direction (number went up / down; never a value judgement) ---- */
+  --up: #45c16a;
+  --down: #f26b6b;
+  --flat: var(--ink-2);
+
+  /* ---- status (always icon + label, never colour alone) ---- */
+  --ok: var(--up);
+  --warn: #f0913e;
+  --error: var(--down);
+
+  /* ---- redline (always with <ins>/<del>, underline / strike-through) ---- */
+  --ins-ink: #8fdda4;
+  --ins-wash: rgb(69 193 106 / 0.14);
+  --del-ink: #f59a9a;
+  --del-wash: rgb(242 107 107 / 0.14);
+
+  /* ---- chart series: validated as a set (all pairs, dark, on --panel) — max 3 per chart ---- */
+  --series-1: #1aa3b5;        /* US / Fed (cyan) */
+  --series-2: #9085e9;        /* India / RBI (violet) */
+  --series-3: #d55181;        /* third series (magenta) */
+  --band-alpha: 0.12;         /* range bands: series colour at this opacity */
+
+  /* ---- sizes ---- */
+  --topbar-h: 48px;
+  --tape-h: 32px;
+  --statusbar-h: 28px;
+  --sidebar-w: 232px;
+  --rail-w: 56px;
+  --row-h: 32px;
+  --row-h-dense: 28px;
+  --panel-pad: 12px;
+  --gap: 16px;                /* between panels */
+  --section-gap: 32px;        /* between page sections */
+  --market-edge: 3px;         /* top edge in the market's series colour (Design 01 §1.15) */
+  --reading-width: 68ch;
+
+  /* ---- shadcn/ui roles, mapped onto the tokens above ---- */
+  --background: var(--canvas);
+  --foreground: var(--ink-1);
+  --card: var(--panel);
+  --card-foreground: var(--ink-1);
+  --popover: var(--raised);
+  --popover-foreground: var(--ink-1);
+  --primary: var(--amber);
+  --primary-foreground: var(--amber-ink);
+  --secondary: var(--raised);
+  --secondary-foreground: var(--ink-1);
+  --muted: var(--raised);
+  --muted-foreground: var(--ink-2);
+  --accent: var(--active);              /* hover surface in shadcn's vocabulary */
+  --accent-foreground: var(--ink-1);
+  --destructive: var(--down);
+  --border: var(--line);
+  --input: var(--line-input);
+  --ring: var(--amber);
+  --radius: 4px;
+  --chart-1: var(--series-1);
+  --chart-2: var(--series-2);
+  --chart-3: var(--series-3);
+}
 
 @theme inline {
+  /* colours -> utilities such as bg-panel, text-ink-2, border-line, text-up */
+  --color-canvas: var(--canvas);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-active: var(--active);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-line-input: var(--line-input);
+  --color-ink-1: var(--ink-1);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-amber: var(--amber);
+  --color-amber-ink: var(--amber-ink);
+  --color-amber-wash: var(--amber-wash);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-flat: var(--flat);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-error: var(--error);
+  --color-ins-ink: var(--ins-ink);
+  --color-ins-wash: var(--ins-wash);
+  --color-del-ink: var(--del-ink);
+  --color-del-wash: var(--del-wash);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  /* shadcn roles */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* type: Plex via next/font (web/app/fonts.ts) */
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", monospace;
 }
 
-:root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-}
+/* Plain @theme (not inline) so these are also emitted as CSS variables for the base styles below. */
+@theme {
+  /* type scale by role (use these, not Tailwind's text-sm/base/lg) */
+  --text-meta: 0.75rem;       --text-meta--line-height: 1rem;        /* 12/16 timestamps, sources, qualifiers, axis */
+  --text-data: 0.8125rem;     --text-data--line-height: 1.125rem;    /* 13/18 tables, panel titles, dense UI */
+  --text-ui: 0.875rem;        --text-ui--line-height: 1.25rem;       /* 14/20 default UI and panel body */
+  --text-read: 1rem;          --text-read--line-height: 1.625rem;    /* 16/26 AI summaries, documents, redlines on pages */
+  --text-title: 1.125rem;     --text-title--line-height: 1.625rem;   /* 18/26 section titles */
+  --text-page: 1.375rem;      --text-page--line-height: 1.75rem;     /* 22/28 page titles */
+  --text-figure: 1.75rem;     --text-figure--line-height: 2.125rem;  /* 28/34 stat values */
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* radius: two only */
+  --radius-sm: 2px;           /* tags, chips, inputs' inner parts */
+  --radius-md: 4px;           /* panels, popovers, buttons, inputs */
+
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
 }
 
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
+  html {
+    background: var(--canvas);
+    color: var(--ink-1);
+    font-family: var(--font-sans);
+    font-size: 100%;                       /* rem = 16px; respect the reader's zoom */
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
   body {
-    @apply bg-background text-foreground;
+    font-size: var(--text-ui);
+    line-height: var(--text-ui--line-height);
+    font-variant-numeric: tabular-nums;    /* Plex digits are already tabular; this keeps fallbacks aligned */
   }
-  html {
-    @apply font-sans;
+  *, ::before, ::after { border-color: var(--line); }
+  ::selection { background: var(--amber-wash); color: var(--ink-1); }
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; border-radius: 2px; }
+  a { text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+  a:hover { text-decoration-color: var(--amber); }
+  ins { color: var(--ins-ink); background: var(--ins-wash); text-decoration: underline; text-decoration-thickness: 1px; }
+  del { color: var(--del-ink); background: var(--del-wash); text-decoration: line-through; text-decoration-thickness: 1px; }
+  mark { color: var(--ink-1); background: var(--amber-wash); box-shadow: inset 0 -2px 0 var(--amber); }
+  code, kbd, samp, pre { font-family: var(--font-mono); }
+  * { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
+}
+
+/* ==== End of Design 01 §2.6. ====
+   shadcn compatibility (C1, 23 Oct 2026; not in §2.6, which was written before `shadcn init` chose the Nova style).
+   Neither part changes a colour or a §2.6 value; each keeps a decided rule that shadcn's primitives would otherwise
+   break. tests/globals-css.test.ts checks both, and web/README.md says why. */
+
+/* 1. The `dark:` variant, as `shadcn init` wrote it. Without this line Tailwind's `dark:` follows the viewer's OS
+   setting (prefers-color-scheme), so a primitive would look different on a Mac set to light mode. The site is dark
+   only, so app/layout.tsx puts `dark` on <html> and shadcn's dark styling always applies (its controls then take
+   --input, which is --line-input, as their border: the control boundary of Design 01 §2.5). */
+@custom-variant dark (&:is(.dark *));
+
+/* 2. Radius: Design 01 §2.5 allows 2 px and 4 px only. Nova's primitives use rounded-lg … rounded-4xl, which
+   Tailwind's defaults make 8–32 px, so every step above md is held at 4 px. */
+@theme {
+  --radius-lg: 4px;
+  --radius-xl: 4px;
+  --radius-2xl: 4px;
+  --radius-3xl: 4px;
+  --radius-4xl: 4px;
 }
