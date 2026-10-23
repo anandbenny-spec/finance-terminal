@@ -45,6 +45,15 @@ def key(name: str) -> str:
     return " ".join(re.sub(r"[.,]", " ", name).casefold().split())
 
 
+_TITLE = re.compile(r"^\s*(?:Dr|Prof|Professor|Shri|Smt|Mr|Ms|Mrs)\.?\s+", re.IGNORECASE)
+
+
+def strip_title(name: str) -> str:
+    """'Prof. Jayanth R. Varma' -> 'Jayanth R. Varma': the RBI's documents put a title before every member's name
+    (Dr., Prof., Prof, Professor, Shri, Smt.), and the roster keeps names without one."""
+    return _TITLE.sub("", name).strip()
+
+
 @dataclass(frozen=True)
 class Term:
     role: str
@@ -79,7 +88,7 @@ class Roster:
     members: dict[str, Member]     # by slug
 
     def match(self, bank: str, name: str) -> Member | None:
-        k = key(name)
+        k = key(strip_title(name) if bank == "RBI" else name)
         found = [m for m in self.members.values() if m.bank == bank and k in {key(m.name), *map(key, m.aliases)}]
         return found[0] if len(found) == 1 else None
 

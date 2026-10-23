@@ -6,7 +6,7 @@ import random
 RBI_TITLE = "Monetary Policy Statement, 2026-27 Resolution of the Monetary Policy Committee (MPC) October 5-7, 2026"
 
 
-def rbi_page(body: str, *, title: str = RBI_TITLE, charset: str = "utf-8") -> str:
+def rbi_page(body: str, *, title: str = RBI_TITLE, charset: str = "utf-8", day: str = "Oct 07, 2026") -> str:
     """The RBI's old press-release template around a body (BS_PressReleaseDisplay.aspx, checked 23 Oct 2026)."""
     return f"""<!DOCTYPE html><html><head><meta charset="{charset}"><title>Reserve Bank of India</title>
 <style>table.tablebg td {{ border: 1px solid #efd1aa; }}</style><script>var theForm = document.forms['form1'];</script>
@@ -15,7 +15,7 @@ def rbi_page(body: str, *, title: str = RBI_TITLE, charset: str = "utf-8") -> st
 <table width="100%" border="0" role="presentation">
 <table class="tablebg" cellpadding="0" cellspacing="0" width="100%">
 <tr><td class="tableheader"><a href="https://rbidocs.rbi.org.in/rdocs/PressRelease/PDFs/PR1.PDF"><img alt="PDF - {title}" src="../Images/pdf.gif"></a> (<span aria-hidden="true">322 kb</span>)</td></tr>
-<tr><td align="right" class="tableheader"><b> Date : Oct 07, 2026</b></td></tr>
+<tr><td align="right" class="tableheader"><b> Date : {day}</b></td></tr>
 <tr><td align="center" class="tableheader"><b>{title}</b></td></tr>
 <tr class="tablecontent1"><td><table width="100%" border="0" align="center" class="td"><tr><td>
 {body}
@@ -220,3 +220,65 @@ def fed_rss(*items: tuple[str, str, str]) -> str:
     return ('\ufeff<?xml version="1.0" encoding="utf-8" ?><rss version="2.0"><channel>'
             "<title>FRB: Press Release - Monetary Policy</title><link><![CDATA[https://www.federalreserve.gov/feeds/"
             "feeds.htm]]></link><language>en</language>" + body + "</channel></rss>")
+
+
+# ---------------------------------------------------------------------------------------------- MPC resolutions (B6)
+# Synthetic resolutions in the shapes of the saved ones (Dec 2018 to Oct 2026): the old era's "decided to:" list
+# (to Dec 2024) and the new era's attendance paragraph (from Feb 2025). The wording of each part is the caller's.
+_FILLER = ["Global growth has held up, though trade frictions weigh on the outlook.",
+           "Domestic demand remained firm, supported by private consumption and fixed investment.",
+           "Financial conditions eased and the rupee traded in a narrow range.",
+           "Liquidity in the banking system stayed in surplus through the period.",
+           "Services activity strengthened on buoyant domestic and external demand."]
+
+
+def _fill(k: int, n: int = 4) -> str:
+    return " ".join(_FILLER[(k + i) % len(_FILLER)] for i in range(n))
+
+
+def mpc_title(days: str, fy: str = "2040-41") -> str:
+    return f"Monetary Policy Statement, {fy} Resolution of the Monetary Policy Committee (MPC) {days}"
+
+
+def mpc_old(*, decision: str, consequently: str, stance: str, votes: list[str], projections: list[str] = (),
+            today: str = "May 4, 2040", minutes: str = "May 18, 2040", nxt: str = "June 4 to 6, 2040") -> str:
+    """The old era's body: the decision list, the consequences, the stance, then numbered paragraphs."""
+    paras = [f"<p>{k}. {_fill(k, 5)}</p>" for k in range(2, 6)]
+    k = 6
+    for p in projections:
+        paras.append(f"<p>{k}. {_fill(k, 2)} {p}</p>")
+        k += 1
+    paras.append(f"<p>{k}. {_fill(k)}</p>")
+    k += 1
+    for v in votes:
+        paras.append(f"<p>{k}. {v}</p>")
+        k += 1
+    paras += [f"<p>{k}. The minutes of the MPC's meeting will be published on {minutes}.</p>",
+              f"<p>{k + 1}. The next meeting of the MPC is scheduled during {nxt}.</p>"]
+    return (f"<p>On the basis of an assessment of the current and evolving macroeconomic situation, the Monetary Policy "
+            f"Committee (MPC) at its meeting today ({today}) decided to:</p><ul><li>{decision}</li></ul>"
+            f"<p>{consequently}</p><p>{stance}</p><p>These decisions are in consonance with the objective of achieving "
+            "the medium-term target for consumer price index (CPI) inflation of 4 per cent within a band of +/- 2 per "
+            "cent, while supporting growth.</p><p><b>Assessment</b></p>" + "".join(paras)
+            + '<p align="right"><span class="head">(Ira Sen)</span><br>Chief General Manager</p>'
+            + '<p class="head">Press Release: 2040-2041/123</p>')
+
+
+def mpc_new(*, no: int, days: str, chair: str, members: list[str], decision: str, stance: str,
+            rationale: list[str] = (), projections: list[str] = (), nxt: str = "December 3 to 5, 2040") -> str:
+    """The new era's body: the attendance paragraph, the decision paragraph, the outlook and the rationale."""
+    listed = ", ".join(members[:-1]) + f" and {members[-1]}"
+    paras = [f"<p>{k}. {_fill(k, 5)}</p>" for k in range(3, 7)]
+    paras += [f"<p>{k}. {_fill(k, 2)} {p}</p>" for k, p in enumerate(projections, start=7)]
+    k = 7 + len(projections)
+    for r in rationale:
+        paras.append(f"<p>{k}. {r}</p>")
+        k += 1
+    return ("<p><b>Monetary Policy Decisions</b></p>"
+            f"<p>The Monetary Policy Committee (MPC) held its {no}th meeting from {days} under the chairmanship of "
+            f"{chair}, Governor, Reserve Bank of India. The MPC members {listed} attended the meeting.</p>"
+            f"<p>2. After a detailed assessment of the evolving macroeconomic and financial developments and the outlook, "
+            f"the MPC {decision} The MPC also decided to {stance}</p><p><b>Growth and Inflation Outlook</b></p>"
+            f"<p><b>Global Outlook</b></p>" + "".join(paras)
+            + f"<p>{k}. The next meeting of the MPC is scheduled for {nxt}.</p>"
+            + '<p align="right"><span class="head">(Ira Sen)</span><br>Chief General Manager</p>')
