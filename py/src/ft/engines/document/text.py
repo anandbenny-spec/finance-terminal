@@ -104,6 +104,18 @@ PROFILES: dict[str, HtmlProfile] = {
         "/tbody/tr[contains(concat(' ', normalize-space(@class), ' '), ' tablecontent1 ')]/td",
         "RBI's old site (BS_PressReleaseDisplay.aspx): the row below the PDF link, date and title rows. Checked on the "
         "module 1 kit's nine saved press-release pages, 2019-2025 (23 Oct 2026)."),
+    "fed_press_release": HtmlProfile(
+        "fed_press_release",
+        "//div[@id='article']/div[contains(concat(' ', normalize-space(@class), ' '), ' col-sm-8 ')]"
+        "[not(contains(concat(' ', normalize-space(@class), ' '), ' heading '))]"
+        "/*[not(starts-with(normalize-space(.), 'For media inquiries'))]"
+        "[not(starts-with(normalize-space(.), 'Implementation Note issued'))]"
+        "[not(contains(concat(' ', normalize-space(@class), ' '), ' panel-attachments '))]",
+        "The Fed's press releases (/newsevents/pressreleases/*.htm): the body column of div#article, without the "
+        "heading column (date, title, release time: read from the page by ft.policy.fed_statement) and without the "
+        "closing lines: the media contact (its address is a Cloudflare placeholder), the implementation-note link and "
+        "the related-links panel (15 Mar 2020). Checked on the 69 saved monetary-policy releases, Dec 2018 to Sep 2026 "
+        "(B5, 23 Oct 2026)."),
 }
 
 _BLOCK = {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "ul", "ol", "dl", "dt", "dd", "blockquote", "pre",
