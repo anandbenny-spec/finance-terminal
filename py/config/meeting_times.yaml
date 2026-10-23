@@ -1,0 +1,124 @@
+# Curated meeting facts the calendar pages don't state (Spec 01 D8; Prompt 01 B3), read by policy.calendar
+# (ft/policy/meetings.py). One row per meeting that differs from the calendar's defaults, keyed by its decision date
+# (the slug's date), each with a source note and checked against its release. Besides the unscheduled and off-cycle
+# meetings D8 names, the RBI rows include scheduled meetings released at another time than 10:00 (Anand, 23 Oct 2026).
+#   kind           scheduled (default) | unscheduled (also the RBI's off-cycle meetings) | special
+#   rate_decision  false for a meeting that sets no rate (default true)
+#   release        HH:MM, the decision's release in the bank's own time zone (America/New_York, Asia/Kolkata);
+#                  needed for every unscheduled decision. Defaults: FOMC 14:00, MPC 10:00
+#   held           the calendar's date when the decision came out on a later day
+#   meeting_no     MPC number, where it anchors the count (below)
+# Every unscheduled FOMC meeting on the calendar must have a row here, or the task fails (fail closed).
+
+fed:
+  "2019-10-04":
+    kind: unscheduled
+    rate_decision: false
+    source: >-
+      Fed calendar, fomchistorical2019.htm: "October 4 (unscheduled) - 2019", its statement released October 11, 2019
+      (monetary20191011a.htm, "Statement Regarding Monetary Policy Implementation", 11:00 a.m. EDT): Treasury bill
+      purchases and repo operations approved by notation vote; no change to the target range.
+  "2020-03-03":
+    kind: unscheduled
+    held: "2020-03-02"
+    release: "10:00"
+    source: >-
+      Fed calendar, fomchistorical2020.htm: "March 2 (unscheduled) Meeting - 2020", "Statement (Released March 3,
+      2020)"; the statement (monetary20200303a.htm) reads "For release at 10:00 a.m. EST" (target range cut by
+      1/2 percentage point to 1 to 1-1/4 percent).
+  "2020-03-15":
+    kind: unscheduled
+    release: "17:00"
+    source: >-
+      Fed calendar, fomchistorical2020.htm: "March 15 (unscheduled) Meeting - 2020"; the statement
+      (monetary20200315a.htm) reads "For release at 5:00 p.m. EDT".
+
+rbi:
+  # Scheduled meetings released at another time than 10:00 (decided by Anand, 23 Oct 2026, GitHub issue #12: the
+  # spec's 10:00 holds from Oct 2020; before that the RBI's own pre-meeting notices give these times).
+  "2018-12-05":
+    release: "14:30"
+    source: >-
+      RBI press release 2018-2019/1249, Nov 30, 2018 (prid=45607): "The resolution of the MPC will be placed on the
+      website at 2.30 pm on December 5, 2018."
+  "2019-02-07":
+    release: "11:45"
+    source: >-
+      RBI press release 2018-2019/1828, Feb 4, 2019 (prid=46187): "The resolution of the MPC will be placed on the
+      website at 11.45 AM on February 7, 2019."
+  "2019-04-04":
+    release: "11:45"
+    source: >-
+      RBI press release 2018-2019/2336, Apr 1, 2019 (prid=46694): "... will be placed on the website at 11.45 AM on
+      April 4, 2019."
+  "2019-06-06":
+    release: "11:45"
+    source: >-
+      RBI press release 2018-2019/2839, Jun 3, 2019 (prid=47197): "... will be placed on the website at 11.45 AM on
+      June 6, 2019."
+  "2019-08-07":
+    release: "11:45"
+    source: >-
+      RBI press release 2019-2020/332, Aug 2, 2019 (prid=47782): "... will be placed on the website at 11.45 AM on
+      August 7, 2019."
+  "2019-10-04":
+    release: "11:45"
+    source: >-
+      RBI press release 2019-2020/824, Sep 30, 2019 (prid=48272): "... will be placed on the website at 11.45 AM on
+      October 4, 2019."
+  "2019-12-05":
+    release: "11:45"
+    source: >-
+      RBI press release 2019-2020/1321, Dec 2, 2019 (prid=48774): "... will be placed on the website at 11.45 AM on
+      December 5, 2019."
+  "2020-02-06":
+    release: "11:45"
+    source: >-
+      RBI press release 2019-2020/1862, Feb 3, 2020 (prid=49314): "... will be placed on the website at 11.45 AM on
+      February 6, 2020."
+  "2020-08-06":
+    release: "12:00"
+    source: >-
+      No RBI notice states a time after Feb 2020. Business Today live blog, Aug 6, 2020 (story 412179): "RBI Governor
+      Shaktikanta Das, during a presser at 12 noon today" (the policy announcement).
+  # Off-cycle meetings and the special meeting (Spec 01 D8).
+  "2020-03-27":
+    kind: unscheduled
+    release: "10:00"
+    source: >-
+      Off-cycle (the MPC met on March 24, 26 and 27, 2020, ahead of its schedule): Annual Policy page 2019-20,
+      "Seventh Bi-monthly Monetary Policy Statement, 2019-20", resolution prid=49581. Time: ANI, Mar 27, 2020
+      (LatestLY): "RBI Governor Shaktikanta Das will address the media at 10 am on Friday."
+  "2020-05-22":
+    kind: unscheduled
+    release: "10:00"
+    source: >-
+      Off-cycle (the MPC met on May 20 to 22, 2020; the 2020-21 schedule had June 3 to 5): Annual Policy page
+      2020-21, resolution prid=49843. Time: the RBI's post quoted by ETV Bharat, May 22, 2020: "Watch out for RBI
+      Governor @DasShaktikanta live address at 10:00 am today".
+  "2022-05-04":
+    kind: unscheduled
+    release: "14:00"
+    source: >-
+      Off-cycle (the MPC met on May 2 and 4, 2022): Annual Policy page 2022-23, "Monetary Policy Statement, 2022-23
+      Resolution of the Monetary Policy Committee (MPC) May 2 and 4, 2022", prid=53652. Time: Business Standard,
+      May 4, 2022: the Governor "is set to make an unscheduled statement on YouTube at 2 PM on Wednesday".
+  "2022-11-03":
+    kind: special
+    rate_decision: false
+    meeting_no: 39
+    source: >-
+      RBI press release 2022-2023/1141, November 3, 2022 (prid=54639): "A separate meeting of the Monetary Policy
+      Committee (MPC) was held on November 3, 2022 to discuss and draft the report to be sent to the Government ...
+      under the provisions of Section 45ZN of the RBI Act, 1934"; announced October 27, 2022 (prid=54597). No policy
+      decision, no minutes. MPC no. 39 (Spec 01 §2; Data Audit 01 #8).
+
+# MPC meetings are numbered from the first (October 2016); the count runs on from this anchor over every meeting
+# the calendars list, special meetings included, so no. 39 must land on 3 Nov 2022 (checked on every run).
+rbi_numbering:
+  anchor: "2018-12-05"
+  meeting_no: 14
+  source: >-
+    Minutes of the MPC meeting of December 3 to 5, 2018 (prid=45769), parsed as meeting no. 14 by Data Audit 01's
+    test R2, which read numbers 10-38 and 40-62 from every minutes from April 2018 to August 2026 (no. 39 has
+    none).
