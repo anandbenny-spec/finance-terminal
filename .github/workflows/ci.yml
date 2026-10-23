@@ -1,6 +1,6 @@
 # Lint, the SQL tests, the Python tests and the web/ checks on every push and pull request (Architecture 04 §1.5,
 # §1.6 item 4). Failing tests and the counts are written as annotations, which Claude reads through the API
-# (CLAUDE.md §6).
+# (CLAUDE.md §6); the test job fails if either count falls below main's (CLAUDE.md §2).
 name: ci
 on:
   push:
@@ -8,7 +8,8 @@ on:
   pull_request: {}
   workflow_dispatch: {}
 concurrency:
-  group: ci-${{ github.ref }}
+  # A run on main is never cancelled: its counts are the next commit's baseline.
+  group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
   cancel-in-progress: true
 permissions:
   contents: read
@@ -37,6 +38,10 @@ jobs:
   test:
     runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026; the audit's G1/S1 ran on 24.04
     timeout-minutes: 15
+    permissions:
+      contents: read        # checkout; the baseline commit (parent or merge base)
+      checks: read          # main's counts, from its test job's annotations
+      pull-requests: read   # who added counts-drop-approved
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -56,6 +61,7 @@ jobs:
         working-directory: py
         run: uv run --locked ruff check src tests
       - name: Migrations and SQL tests
+        id: sql
         env:
           PGHOST: localhost
           PGPORT: '5432'
@@ -67,8 +73,10 @@ jobs:
           p=$(grep -oE 'passed [0-9]+' sql.log | awk '{s+=$2} END {print s+0}')
           f=$(grep -oE 'failed [0-9]+' sql.log | awk '{s+=$2} END {print s+0}')
           echo "::notice title=SQL tests::passed $p, failed $f"
+          echo "summary=passed $p, failed $f" >> "$GITHUB_OUTPUT"
           exit "$status"
       - name: Python tests
+        id: pytest
         working-directory: py
         env:
           TEST_PG_CONNINFO: host=localhost port=5432 dbname=ft
@@ -78,7 +86,18 @@ jobs:
           status=${PIPESTATUS[0]}
           grep -E '^(FAILED|ERROR) ' pytest.log | head -10 | sed 's/^/::error title=pytest::/'
           echo "::notice title=pytest::$(tail -1 pytest.log)"
+          echo "summary=$(tail -1 pytest.log)" >> "$GITHUB_OUTPUT"
           exit "$status"
+      - name: Counts against main
+        # CLAUDE.md §2: neither pass count may fall below main's, read from the annotations of ci's test job on the
+        # pull request's base commit (on a push to main, the parent). No baseline fails too. The only override is
+        # the counts-drop-approved label, added by Anand himself (CLAUDE.md §7). Logic and tests: ft/ci_counts.py.
+        working-directory: py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SQL_SUMMARY: ${{ steps.sql.outputs.summary }}
+          PYTEST_SUMMARY: ${{ steps.pytest.outputs.summary }}
+        run: uv run --locked python -m ft.ci_counts
   web:
     # The front end (Architecture 04 §1.6 item 4; added in A0, 23 Oct 2026): lint, typecheck, unit tests and the
     # production build, on the Node version web/package.json's engines field names. setup-node's problem matchers
