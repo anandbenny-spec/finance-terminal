@@ -25,9 +25,11 @@ sentence's span, the votes, the CPI and GDP projections (core.forecast, vintage 
 marked `held` and published with its document. If the previous meeting's resolution isn't stored, it's stored too,
 unpublished, as the diff's base and for the change. The baseline's changes come from its own decision sentences.
 The first SDF row's change is measured against the reverse repo it replaced as the corridor floor (+40 bps on 8 Apr
-2022), with a `crosscheck` note. A floor the resolution says it moved "from" a value other than the previous
-meeting's was moved between meetings (17 Apr 2020: D5, Pass 2): the row keeps the change against the previous
-meeting, with a `crosscheck` note, and `between_meetings` (W) lists it.
+2022), with a `crosscheck` note. A corridor rate the resolution says it moved "from" a value other than the
+previous meeting's (or by a different amount) was moved between meetings (17 Apr 2020: D5, Pass 2): the row's change
+is against the rate in force before this meeting, as the resolution states it (−40 bps on 22 May 2020, not −65), with
+a `crosscheck` note naming what the previous meeting set, and `between_meetings` (W) lists it. The repo never moves
+between meetings: a repo that does fails `repo_change` (B).
 
 **Votes** (Spec 01 §2; Anand's decisions of 23 Oct 2026, issue #15): what rbi_resolution.member_votes reads, the
 names matched to config/members.yaml. A resolution that names none of its members (only the Dec 2018 baseline)
@@ -438,25 +440,31 @@ class RbiDocuments(Task):
                 changes[name] = chg
                 continue
             prev = previous.get(name)
-            if prev is None and name == "sdf" and "reverse_repo" in previous:
+            first_sdf = prev is None and name == "sdf" and "reverse_repo" in previous
+            if first_sdf:
                 prev = previous["reverse_repo"]
                 notes[name] = f"{SDF_NOTE}: reverse repo {previous['reverse_repo']:g} per cent"
             if prev is None:
                 self._fail("previous_rates", f"{m.slug}: the previous meeting has no {name} rate", checks)
-            chg = _bps(r.value - Decimal(prev))
-            changes[name] = chg
-            if r.stated_from is not None and r.stated_from != Decimal(prev):
-                if name == "repo":
+            prev = Decimal(prev)
+            chg = _bps(r.value - prev)
+            if name == "repo":
+                if r.stated_from is not None and r.stated_from != prev:
                     odd.append(f"repo from {r.stated_from} per cent, the previous meeting {prev}")
-                else:
-                    notes[name] = (f"the resolution states from {r.stated_from:g} per cent; the previous MPC meeting "
-                                   f"set {Decimal(prev):g} (moved between meetings: Spec 01 D5)")
-            if r.stated_bps is not None and r.stated_bps != chg:
-                if name == "repo":
+                if r.stated_bps is not None and r.stated_bps != chg:
                     odd.append(f"repo by {r.stated_bps:+d} bps, computed {chg:+d}")
-                else:
-                    notes.setdefault(name, f"the resolution states {r.stated_bps:+d} bps; computed {chg:+d} against "
-                                     "the previous MPC meeting (moved between meetings: Spec 01 D5)")
+            elif not first_sdf:
+                # A corridor rate moved between meetings (17 Apr 2020: D5): the change is against the rate in force
+                # before this meeting, as the resolution states it (Arch 01a: "vs the previous setting"; decided by
+                # Claude, Anand delegated, issue #15, 23 Oct 2026), and the note keeps what the last meeting set.
+                stated = (_bps(r.value - r.stated_from) if r.stated_from is not None
+                          else r.stated_bps if r.stated_bps is not None else chg)
+                if stated != chg:
+                    notes[name] = (f"{stated:+d} bps from the rate in force, as the resolution states; the previous MPC "
+                                   f"meeting set {prev.normalize():f} per cent ({chg:+d} bps from it): moved between meetings "
+                                   "(Spec 01 D5)")
+                    chg = stated
+            changes[name] = chg
         repo = res.repo
         chg = changes["repo"]
         if repo.direction is not None and (chg > 0) - (chg < 0) != repo.direction:
