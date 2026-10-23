@@ -1,0 +1,29 @@
+# Model prices for the cost of every AI call (Architecture 03 §1.1, §1.10), read by ft/ai/client.py.
+# USD per million tokens. Each entry holds from its `from` date until a later entry's; a price change is a new
+# dated entry, never an edit of an old one, so a past run's cost can be recomputed. A model with no price here is
+# refused before anything is sent (the wrapper can't record a cost it can't compute).
+#   standard: prompts up to `long_context_over` input tokens (cache reads and writes count towards it); `long`
+#   above that. The wrapper keeps every request under 100,000 tokens (CLAUDE.md §6), so `long` is only a guard.
+#   batch: the Batch API's discount on every component (Claude's batch prices are half the real-time ones).
+
+anthropic:
+  - from: 2026-10-23
+    source: https://platform.claude.com/docs/en/about-claude/pricing (checked 23 Oct 2026)
+    batch: 0.5
+    models:
+      claude-haiku-5-5:
+        long_context_over: 100000
+        standard: {input: 0.10, cache_write_5m: 0.125, cache_write_1h: 0.20, cache_read: 0.01, output: 0.50}
+        long: {input: 0.50, cache_write_5m: 0.625, cache_write_1h: 1.00, cache_read: 0.05, output: 2.50}
+      claude-sonnet-5-5:
+        standard: {input: 2.00, cache_write_5m: 2.50, cache_write_1h: 4.00, cache_read: 0.10, output: 10.00}
+
+# Embeddings: the first 200M tokens per model are free (Architecture 03 §1.5); tokens are counted per run in the
+# policy.ai_batch task's `embeddings` check, and no cost is recorded while the allowance lasts.
+voyage:
+  - from: 2026-10-20
+    source: https://docs.voyageai.com/docs/pricing (checked 20 Oct 2026; Architecture 03 Sources)
+    free_tokens_per_model: 200000000
+    models:
+      voyage-4: {input: 0.06}
+      voyage-4-lite: {input: 0.02}
