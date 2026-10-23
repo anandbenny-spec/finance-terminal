@@ -1,7 +1,16 @@
 """policy.ai_batch (Prompt 01 B7; Architecture 03 §1.1-§1.5, §1.10; Spec 01 §3.2-§3.3): the cited summaries of
-published documents (`doc_summary`, `statement_diff_summary`) and the chunk embeddings. Part 1 built real time on
-decision days; part 2's first half (this) the Batch API path. RBI stance and projection extraction (they need B6's
-documents) and the AI backfill run are the rest of part 2.
+published documents (`doc_summary`, `statement_diff_summary`), the RBI stance of each MPC resolution
+(`stance_extraction`), the projection fallback where the regex couldn't read a resolution's projection sentence
+(`projection_extraction`), and the chunk embeddings. Part 1 built real time on decision days; part 2 the Batch API
+path, then the two extractions (ft/ai/extraction.py). The AI backfill run is Anand's to start.
+
+**Extractions** (JSON route): only on MPC resolutions, so no Fed stance label exists anywhere (Spec 01 D2). The stance
+is the meeting's output (core.ai_output.event_id, which the views read), cited to the resolution; it's published only
+if it agrees with the stance B6's parser reads in the same resolution (its raw file parsed again; Anand, 24 Oct 2026,
+issue #16). A projection output's targets become core.forecast rows (method 'ai_extracted', the quote as the span); a
+target the regex stored must agree. `other` and any disagreement are held: the output stays a draft, the request
+counts as answered (never resent for the same input), `ai_held:<task>:<document>` is raised, and each run checks the
+held answer again, so a fixed parser or a corrected figure publishes it without a new request.
 
 **When it sends what:**
 - watch, on a decision day (`after_decision_document`), with `ai_realtime_on_decision_days` on: the meeting's newly
@@ -79,11 +88,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from functools import cache
 from zoneinfo import ZoneInfo
 
 import psycopg
 
-from ft.ai import summaries
+from ft.ai import extraction, summaries
 from ft.ai.client import (
     CHARS_PER_TOKEN,
     MAX_REQUEST_TOKENS,
@@ -101,22 +111,30 @@ from ft.ai.client import (
     batch_custom_id,
     halfvec_literal,
     load_prompt,
+    load_schema,
     maybe_created,
     price_entry,
 )
 from ft.ai.summaries import Checked, Doc
+from ft.engines.document.text import ExtractError
 from ft.jobs import due as due_rules
 from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
+from ft.policy import rbi_resolution
 
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v1"}
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v1", "stance_extraction": "v1",
+                  "projection_extraction": "v1"}
 REALTIME_DOC_TYPES = ("fomc_statement", "mpc_resolution", "rbi_governor_statement")
+EXTRACTION_DOC_TYPE = "mpc_resolution"   # the stance and projection fallback run on MPC resolutions only (Spec 01 D2)
 EMBED_MODEL_KEY = "voyage-4@512"
 RUN_LIMIT_USD = Decimal(5)            # CLAUDE.md §7: an AI run estimated above $5 is Anand's call
 INTEGRITY_LIMIT = Decimal("0.10")     # citation_integrity: rejections stay under 10% (Architecture 03 §1.9)
 INTEGRITY_MIN_TARGETS = 10            # the month's rate is judged once it covers this many targets
 BANK_TZ = {"fed": ZoneInfo("America/New_York"), "rbi": ZoneInfo("Asia/Kolkata")}
 SUMMARY_TASKS = ("doc_summary", "statement_diff_summary")
+EXTRACTION_TASKS = extraction.TASKS
+AI_TASKS = SUMMARY_TASKS + EXTRACTION_TASKS
+PROJECTION_SERIES = {"cpi": "rbi.proj_cpi", "gdp": "rbi.proj_gdp"}   # as policy.rbi_documents
 
 BATCH_POLL_SECONDS = 15 * 60          # Architecture 03 §1.3: polled for up to 15 minutes in the run
 BATCH_WAITS = (30.0, 60.0)            # the first wait between reads, then every later one
@@ -133,13 +151,23 @@ class _Skip(Exception):
     """The request isn't pending any more: another run stored its reply."""
 
 
+@cache
+def _schema(task: str) -> dict:
+    return load_schema(task)
+
+
 @dataclass
 class Work:
-    """One target: a task on a document (and, for the diff summary, its base and the redline)."""
+    """One target: a task on a document (for the diff summary, also its base and the redline; for the projection
+    fallback, the sentences the regex couldn't read). An extraction's cross-check reads B6's parse (`parse`) lazily:
+    once, and only when a reply is checked."""
     task: str
     doc: Doc
     base: Doc | None = None
     segments: dict | None = None
+    sentences: tuple[tuple[int, int], ...] = ()
+    parse: Callable[[], extraction.Parsed] | None = field(default=None, repr=False)
+    _parsed: extraction.Parsed | None = field(default=None, repr=False)
 
     @property
     def target(self) -> str:
@@ -148,9 +176,27 @@ class Work:
     def request(self, prompt, note: str | None = None) -> Request:
         if self.task == "doc_summary":
             return summaries.doc_summary_request(self.doc, prompt, note=note)
-        return summaries.diff_summary_request(self.doc, self.base, self.segments, prompt, note=note)
+        if self.task == "statement_diff_summary":
+            return summaries.diff_summary_request(self.doc, self.base, self.segments, prompt, note=note)
+        if self.task == "stance_extraction":
+            return extraction.stance_request(self.doc, prompt, _schema(self.task), note=note)
+        return extraction.projection_request(self.doc, self.sentences, prompt, _schema(self.task), note=note)
 
-    def check(self, req: Request, reply: Reply) -> Checked:
+    def parsed(self) -> extraction.Parsed:
+        """B6's reading for the cross-check (read once; storage errors propagate, so nothing is held for them)."""
+        if self._parsed is None:
+            self._parsed = self.parse() if self.parse is not None else extraction.Parsed()
+        return self._parsed
+
+    def recheck(self, answer) -> extraction.Checked:
+        """An extraction's checks on an answer (a reply's, or a held draft's stored one)."""
+        if self.task == "stance_extraction":
+            return extraction.check_stance(answer, self.doc.text, self.doc.document_id, self.parsed())
+        return extraction.check_projections(answer, self.doc.text, self.doc.document_id, self.sentences, self.parsed())
+
+    def check(self, req: Request, reply: Reply) -> Checked | extraction.Checked:
+        if self.task in EXTRACTION_TASKS:
+            return self.recheck(extraction.answer_of(reply))
         changed = None
         if self.task == "statement_diff_summary":
             old, new = summaries.changed_spans(self.segments)
@@ -173,6 +219,7 @@ class Plan:
     why: str
     built: list[tuple[str, Request, int]]   # the requests built for it: (custom_id, request, attempt)
     in_batch: Request | None = None   # the request waiting in an open batch
+    held: tuple[int, dict] | None = None    # an extraction held as a draft: (its output's id, its content)
 
     @property
     def custom_id(self) -> str:       # the step's request
@@ -186,7 +233,7 @@ class Call:
     request: Request
     attempt: int
     reply: Reply | None = None
-    checked: Checked | None = None
+    checked: Checked | extraction.Checked | None = None
     failed: str | None = None         # the stop reason of a reply that didn't end its turn
     error: str | None = None          # CallError: not billed, no output
     output_id: int | None = None
@@ -195,6 +242,13 @@ class Call:
     def ok(self) -> bool:
         return self.checked is not None and self.checked.ok and self.failed is None
 
+    @property
+    def held(self) -> bool:
+        """An extraction whose checks passed but that is held as a draft with an alert (`other`, or a disagreement
+        with B6's parse): never retried."""
+        c = self.checked
+        return self.failed is None and isinstance(c, extraction.Checked) and c.hold is not None and not c.problems
+
     def reasons(self) -> list[str]:
         if self.failed:
             return [f"the reply stopped with {self.failed}"]
@@ -202,13 +256,14 @@ class Call:
 
     def note(self) -> str:
         """The retry's note about this reply."""
-        return "; ".join(self.reasons()) + "." if self.failed else summaries.retry_note(self.checked)
+        return "; ".join(self.reasons()) + "." if self.failed else self.checked.note()
 
 
 @dataclass
 class Outcome:
     work: Work
-    # real time: published | rejected | errored | done | waiting | too_long | budget
+    # real time: published | rejected | held (an extraction kept as a draft with an alert) | errored | done | waiting |
+    # too_long | budget
     # batch, also: in_batch (waiting in an earlier run's batch) | submitted | retrying (its retry is next) | expired |
     # left (sendable, but already sent once in this run: the next run)
     status: str
@@ -243,6 +298,7 @@ class Fetched:
     budget: Decimal = Decimal(0)
     stopped: str | None = None        # 'budget' | 'run_estimate'
     run_estimate: Decimal = Decimal(0)
+    rechecked: list = field(default_factory=list)   # held drafts published on a re-check: (work, output id, checked)
     embeds: list[tuple[int, int, str, list[float]]] = field(default_factory=list)   # doc, chunk_no, body md5, vector
     embed_pending: int = 0            # chunks still without an embedding after this run's attempt
     embed_tokens: int = 0
@@ -284,6 +340,8 @@ class AiBatch(Task):
 
     def __init__(self):
         self._last: Fetched | None = None
+        self._fetcher = None                  # the run's fetcher: the stance cross-check reads raw files through it
+        self._parsed_stances: dict[int, extraction.Parsed] = {}
 
     # ------------------------------------------------------------------ reading what's there
     def _docs(self, db, *, ids: list[int] | None = None, event_id: int | None = None,
@@ -301,7 +359,8 @@ class AiBatch(Task):
         rows = db.execute(
             f"""select d.id, d.doc_type, dt.label, d.title, n.short_name, n.slug, d.published_at,
                        coalesce(e.ends_on, e.starts_on), d.char_count,
-                       (select string_agg(c.body, '' order by c.chunk_no) from core.chunk c where c.document_id = d.id)
+                       (select string_agg(c.body, '' order by c.chunk_no) from core.chunk c where c.document_id = d.id),
+                       d.event_id, d.raw_file_id, d.source_url
                   from core.document d
                   join core.doc_type dt on dt.key = d.doc_type
                   join core.entity n on n.id = d.entity_id
@@ -309,20 +368,66 @@ class AiBatch(Task):
                  where {' and '.join(where)}
                  order by d.published_at nulls last, d.id""", args).fetchall()
         out = []
-        for did, dtype, label, title, bank, bank_slug, published_at, event_day, chars, text in rows:
+        for did, dtype, label, title, bank, bank_slug, published_at, event_day, chars, text, eid, raw, url in rows:
             if text is None or len(text) != chars:
                 continue                                       # the database refuses this at commit; never send it
             tz = BANK_TZ.get(bank_slug)
             day = published_at.astimezone(tz).date() if published_at and tz else event_day
-            out.append(Doc(did, dtype, label, title, bank or bank_slug, day, text))
+            out.append(Doc(did, dtype, label, title, bank or bank_slug, day, text, eid, event_day, raw, url))
         return out
 
     def _work(self, db, docs: list[Doc]) -> list[Work]:
         work = [Work("doc_summary", d) for d in docs]
         diffable = {r[0] for r in db.execute("select key from core.doc_type where diffable").fetchall()}
         ids = [d.document_id for d in docs if d.doc_type in diffable]
-        if not ids:
-            return work
+        if ids:
+            work += self._diff_work(db, docs, ids)
+        # MPC resolutions only (Spec 01 D2: no Fed stance label anywhere): the stance, and the projection fallback
+        # where the regex couldn't fully read a projection sentence (re-read from the stored text).
+        for d in docs:
+            if d.doc_type != EXTRACTION_DOC_TYPE or d.event_id is None:
+                continue
+            work.append(Work("stance_extraction", d, parse=lambda d=d: self._parsed_stance(d)))
+            unparsed = rbi_resolution.read_projections(d.text)[1]
+            if unparsed:
+                work.append(Work("projection_extraction", d, sentences=unparsed,
+                                 parse=lambda d=d: self._stored_projections(db, d)))
+        return work
+
+    def _parsed_stance(self, d: Doc) -> extraction.Parsed:
+        """The stance B6's parser reads in this resolution (its raw file, parsed again: the decision part needs the
+        page's headings): what the AI's label must equal (Anand, 24 Oct 2026). A storage error propagates (the reply
+        stays pending: a real-time target fails its poll, a batch is read again by the next run)."""
+        if d.raw_file_id is None or self._fetcher is None:
+            return extraction.Parsed(error="the resolution has no stored raw file")
+        if d.document_id not in self._parsed_stances:
+            data = self._fetcher.read(d.raw_file_id)
+            try:
+                res = rbi_resolution.parse(data, d.source_url or "")
+            except (rbi_resolution.ResolutionError, ExtractError, ValueError) as e:
+                got = extraction.Parsed(error=f"{type(e).__name__}: {e}")
+            else:
+                if res.text.text != d.text:
+                    got = extraction.Parsed(error="its raw file no longer reads as the stored text")
+                else:
+                    label = res.stance.label if res.stance and res.stance.label in rbi_resolution.VOCABULARY else None
+                    got = extraction.Parsed(stance=label)
+            self._parsed_stances[d.document_id] = got
+        return self._parsed_stances[d.document_id]
+
+    @staticmethod
+    def _stored_projections(db, d: Doc) -> extraction.Parsed:
+        """The projections the regex stored for this meeting (policy.rbi_documents: method 'parsed', vintage = the
+        decision date), which an AI-extracted target must agree with."""
+        rows = db.execute("""select s.key, f.target_start, f.target_end, f.value, f.value_low, f.value_high
+                               from core.forecast f join core.series s on s.id = f.series_id
+                              where f.vintage_date = %s and s.key = any(%s) and f.method = 'parsed'""",
+                          (d.event_day, list(PROJECTION_SERIES.values()))).fetchall()
+        var = {v: k for k, v in PROJECTION_SERIES.items()}
+        return extraction.Parsed(stored={(var[k], s, e): (v, lo, hi) for k, s, e, v, lo, hi in rows})
+
+    def _diff_work(self, db, docs: list[Doc], ids: list[int]) -> list[Work]:
+        work: list[Work] = []
         rows = db.execute("""select x.document_id, x.base_document_id, x.segments, x.diff_version
                                from core.document_diff x where x.document_id = any(%s)""", (ids,)).fetchall()
         diffs = {r[0]: r[1:] for r in rows if r[3] == "2"}
@@ -350,9 +455,10 @@ class AiBatch(Task):
 
     @staticmethod
     def _request_row(db, custom_id: str):
-        """(status, batch id, reject reason, the output's content, the batch's status) of a request sent before, or
-        None."""
-        return db.execute("""select r.status, r.ai_batch_id, coalesce(r.reject_reason, ''), o.content, b.status
+        """(status, batch id, reject reason, the output's content, the batch's status, the output's id, the output's
+        status) of a request sent before, or None."""
+        return db.execute("""select r.status, r.ai_batch_id, coalesce(r.reject_reason, ''), o.content, b.status, o.id,
+                                    o.status
                                from ops.ai_request r left join core.ai_output o on o.id = r.ai_output_id
                                left join ops.ai_batch b on b.id = r.ai_batch_id
                               where r.custom_id = %s""", (custom_id,)).fetchone()
@@ -369,7 +475,7 @@ class AiBatch(Task):
         rule."""
         if row is None:
             return True
-        status, batch, reason, _, batch_status = row
+        status, batch, reason, _, batch_status = row[:5]
         if status in ("errored", "expired") or (status == "rejected" and reason.startswith("stale:")):
             return batch is None or batch_status in ("collected", "failed")
         return status == "pending" and batch is None
@@ -382,7 +488,7 @@ class AiBatch(Task):
         built = [(cid, req, 1)]
         if self._sendable(row):
             return Plan(w, Step(1), "not sent yet" if row is None else f"attempt 1 {row[0]}", built)
-        status, batch, reason, content, _ = row
+        status, batch, reason, content = row[:4]
         if batch is not None and status == "pending":
             return Plan(w, None, "in a batch", built, in_batch=req)
         if status == "rejected" and reason.startswith("retried:") and (content or {}).get("retry_note"):
@@ -395,8 +501,16 @@ class AiBatch(Task):
                 return Plan(w, Step(2, note), "the retry wasn't answered yet", built)
             if row2[1] is not None and row2[0] == "pending":
                 return Plan(w, None, "the retry is in a batch", built, in_batch=req2)
-            return Plan(w, None, f"attempt 2 {row2[0]}", built)
-        return Plan(w, None, f"attempt 1 {status}", built)
+            return self._held_plan(Plan(w, None, f"attempt 2 {row2[0]}", built), row2)
+        return self._held_plan(Plan(w, None, f"attempt 1 {status}", built), row)
+
+    @staticmethod
+    def _held_plan(p: Plan, row) -> Plan:
+        """An extraction whose answer was held as a draft (`succeeded`, its output still a draft with a hold)."""
+        status, _, _, content, _, out_id, out_status = row
+        if status == "succeeded" and out_status == "draft" and (content or {}).get("hold"):
+            p.why, p.held = f"held: {content['hold']}", (out_id, content)
+        return p
 
     def _claude(self) -> Client:
         if self.claude is None:
@@ -445,6 +559,7 @@ class AiBatch(Task):
         mode = "realtime" if meeting is not None and realtime_on else "batch"
         f = Fetched(mode, budget=budget, month_spend=self._month_spend(db))
         prompts = {t: load_prompt(t, v) for t, v in PROMPT_VERSION.items()}
+        self._fetcher, self._parsed_stances = ctx.fetcher, {}
 
         if meeting is not None:
             docs = self._docs(db, event_id=meeting.event_id, doc_types=REALTIME_DOC_TYPES)
@@ -461,16 +576,18 @@ class AiBatch(Task):
             todo: list[tuple[Work, Step]] = []
             for w in list(f.targets):
                 p = self._next_step(db, w, prompts[w.task])
-                if p.step is None:
+                if p.held is not None:
+                    self._recheck(ctx, f, p)
+                elif p.step is None:
                     f.outcome(w, "done", p.why)
                 else:
                     todo.append((w, p.step))
             if todo:
                 self._send(ctx, f, todo, prompts)
-                unfinished = [o for o in f.outcomes if o.status in ("errored", "waiting")]
-                if unfinished:
-                    # Fail the poll, so the next one tries again while the window is open. What finished is stored.
-                    raise CallError("Unfinished", None, "; ".join(f"{o.work.target}: {o.reason}" for o in unfinished))
+            unfinished = [o for o in f.outcomes if o.status in ("errored", "waiting")]
+            if unfinished:
+                # Fail the poll, so the next one tries again while the window is open. What finished is stored.
+                raise CallError("Unfinished", None, "; ".join(f"{o.work.target}: {o.reason}" for o in unfinished))
         self._embed(db, f, docs if meeting is not None else None)
         return f
 
@@ -540,6 +657,12 @@ class AiBatch(Task):
         for i, (w, step) in enumerate(todo):
             o = f.outcome(w, "rejected")
             attempt, note = step.attempt, step.note
+            if w.task in EXTRACTION_TASKS:
+                try:
+                    w.parsed()          # B6's reading, before anything is billed: a reply must be storable at once
+                except Exception as e:  # noqa: BLE001 - storage: this poll fails for the target and the next one retries
+                    o.status, o.reason = "errored", f"the resolution couldn't be read back: {type(e).__name__}: {e}"
+                    continue
             while True:
                 req = w.request(prompts[w.task], note=note)
                 cid = self.custom_id(req, w.doc.document_id)
@@ -573,13 +696,16 @@ class AiBatch(Task):
                            (f.spend.quantize(Decimal("0.0001")), ctx.task_run_id))
                 if call.failed is None:
                     call.checked = w.check(req, call.reply)
-                retry_note = None if call.ok or attempt == 2 else call.note()
+                retry_note = None if call.ok or call.held or attempt == 2 else call.note()
                 with db.transaction():                          # the reply is stored before anything else happens
                     self._store(db, w, call, ctx.task_run_id, retry_note)
                 if call.ok:
                     o.status = "published"
                     break
                 o.reason = "; ".join(call.reasons())
+                if call.held:
+                    o.status = "held"
+                    break
                 if attempt == 2:
                     o.status = "rejected"
                     break
@@ -590,37 +716,54 @@ class AiBatch(Task):
                     f.outcome(w2, "waiting" if o.status == "errored" else "budget", f"after {f.stopped or o.status}")
                 return
 
+    @staticmethod
+    def _target_of(w: Work) -> tuple[int | None, int | None]:
+        """(document_id, event_id) of the target's output: the stance is the meeting's (the views read it by event),
+        everything else its document's."""
+        return (None, w.doc.event_id) if w.task == "stance_extraction" else (w.doc.document_id, None)
+
+    def _on_target(self, w: Work) -> tuple[str, tuple]:
+        """A condition on core.ai_output matching the target's outputs (task and target), and its arguments."""
+        doc_id, event_id = self._target_of(w)
+        if event_id is not None:
+            return "task = %s and event_id = %s and document_id is null", (w.task, event_id)
+        return "task = %s and document_id = %s", (w.task, doc_id)
+
     def _store(self, tx, w: Work, call: Call, task_run_id: int, retry_note: str | None) -> None:
         """One billed reply: its output, and either its citations and publication (superseding the earlier published
-        output) or its rejection; the request's final status. One transaction."""
+        output; for projections, their core.forecast rows), its hold (an extraction kept as a draft, its request
+        succeeded: never sent again unless its input changes) or its rejection; the request's final status. One
+        transaction."""
         req, reply = call.request, call.reply
-        if call.checked is not None:
+        label = None
+        if call.checked is None:                       # the reply didn't end its turn
+            content, body, cites = {"attempt": call.attempt, "stop_reason": reply.stop_reason,
+                                    "problems": call.reasons()}, None, []
+            content.update({"bullets": []} if w.task in SUMMARY_TASKS else {"answer": None})
+        elif w.task in SUMMARY_TASKS:
             content, body, cites = summaries.content(call.checked, attempt=call.attempt, reply=reply)
         else:
-            content, body, cites = {"bullets": [], "attempt": call.attempt, "stop_reason": reply.stop_reason,
-                                    "problems": call.reasons()}, None, []
+            content, body, label = extraction.content(call.checked, attempt=call.attempt, reply=reply)
+            cites = call.checked.citations if call.ok else []
         content["message_id"] = reply.message_id
         if retry_note:
             content["retry_note"] = retry_note
+        doc_id, event_id = self._target_of(w)
         out_id = tx.execute(
-            """insert into core.ai_output (task, document_id, content, body, status, model, prompt_key, prompt_version,
-                                           input_sha256, input_tokens, output_tokens, cost_usd, task_run_id)
-               values (%s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
-            (req.task, w.doc.document_id, json.dumps(content, ensure_ascii=False), body, reply.model,
+            """insert into core.ai_output (task, document_id, event_id, content, body, label, status, model, prompt_key,
+                                           prompt_version, input_sha256, input_tokens, output_tokens, cost_usd,
+                                           task_run_id)
+               values (%s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+            (req.task, doc_id, event_id, json.dumps(content, ensure_ascii=False), body, label, reply.model,
              req.prompt.key, req.prompt.version, req.input_sha256, reply.usage.prompt_tokens, reply.usage.output,
              reply.cost_usd, task_run_id)).fetchone()[0]
         call.output_id = out_id
         if call.ok:
-            with tx.cursor() as cur:
-                cur.executemany(
-                    """insert into core.ai_citation (ai_output_id, citation_no, claim_path, kind, document_id,
-                                                     char_start, char_end, verified)
-                       values (%s, %s, %s, 'document_span', %s, %s, %s, true)""",
-                    [(out_id, i + 1, path, c.document_id, c.start, c.end) for i, (path, c) in enumerate(cites)])
-            tx.execute("""update core.ai_output set status = 'superseded', status_reason = %s
-                           where task = %s and document_id = %s and scope = '' and status = 'published'""",
-                       (f"superseded by output {out_id}", req.task, w.doc.document_id))
-            tx.execute("update core.ai_output set status = 'published' where id = %s", (out_id,))
+            self._publish(tx, w, out_id, cites, call.checked, task_run_id)
+            status, reason = "succeeded", None
+        elif call.held:
+            tx.execute("update core.ai_output set status_reason = %s where id = %s",
+                       (("held: " + call.checked.hold)[:1000], out_id))
             status, reason = "succeeded", None
         else:
             reason = (("retried: " if retry_note else "rejected: ") + "; ".join(call.reasons()))[:1000]
@@ -630,17 +773,99 @@ class AiBatch(Task):
         tx.execute("update ops.ai_request set status = %s, ai_output_id = %s, reject_reason = %s where custom_id = %s",
                    (status, out_id, reason, call.custom_id))
 
+    def _publish(self, tx, w: Work, out_id: int, cites, checked, task_run_id: int) -> None:
+        """A draft output's citations and its publication, superseding the target's earlier published output (one
+        published output per task and target: Architecture 01 §1.4); a projection output's forecast rows with it."""
+        with tx.cursor() as cur:
+            cur.executemany(
+                """insert into core.ai_citation (ai_output_id, citation_no, claim_path, kind, document_id,
+                                                 char_start, char_end, verified)
+                   values (%s, %s, %s, 'document_span', %s, %s, %s, true)""",
+                [(out_id, i + 1, path, c.document_id, c.start, c.end) for i, (path, c) in enumerate(cites)])
+        cond, args = self._on_target(w)
+        tx.execute(f"""update core.ai_output set status = 'superseded', status_reason = %s
+                        where {cond} and scope = '' and status = 'published' and id <> %s""",
+                   (f"superseded by output {out_id}", *args, out_id))
+        tx.execute("update core.ai_output set status = 'published' where id = %s", (out_id,))
+        if w.task == "projection_extraction":
+            self._forecasts(tx, w, out_id, checked.items, task_run_id)
+
+    def _forecasts(self, tx, w: Work, out_id: int, items: list[dict], task_run_id: int) -> None:
+        """The published projection output's targets as core.forecast rows (method 'ai_extracted', the quote as the
+        span, vintage = the decision date: as policy.rbi_documents writes the parsed ones). A target the regex stored
+        keeps its parsed row (the check made sure the two agree); rows of an output this one superseded move to it, and
+        its targets this output no longer lists are removed."""
+        series = dict(tx.execute("select key, id from core.series where key = any(%s)",
+                                 (list(PROJECTION_SERIES.values()),)).fetchall())
+        keep = set()
+        for it in items:
+            sid = series[PROJECTION_SERIES[it["variable"]]]
+            start, end = date.fromisoformat(it["target_start"]), date.fromisoformat(it["target_end"])
+            value, low, high = (None if it[k] is None else Decimal(it[k]) for k in ("value", "low", "high"))
+            keep.add((sid, start, end))
+            tx.execute(
+                """insert into core.forecast (series_id, vintage_date, target_start, target_end, target_label, value,
+                                              value_low, value_high, method, document_id, char_start, char_end,
+                                              ai_output_id, task_run_id)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, 'ai_extracted', %s, %s, %s, %s, %s)
+                   on conflict (series_id, vintage_date, target_start, target_end) do update set
+                     target_label = excluded.target_label, value = excluded.value, value_low = excluded.value_low,
+                     value_high = excluded.value_high, document_id = excluded.document_id,
+                     char_start = excluded.char_start, char_end = excluded.char_end,
+                     ai_output_id = excluded.ai_output_id, task_run_id = excluded.task_run_id
+                   where core.forecast.method = 'ai_extracted'""",
+                (sid, w.doc.event_day, start, end, it["target_label"], value, low, high,
+                 w.doc.document_id, it["span"][0], it["span"][1], out_id, task_run_id))
+        for sid, start, end in tx.execute(
+                """select series_id, target_start, target_end from core.forecast
+                    where vintage_date = %s and series_id = any(%s) and method = 'ai_extracted' and document_id = %s""",
+                (w.doc.event_day, list(series.values()), w.doc.document_id)).fetchall():
+            if (sid, start, end) not in keep:
+                tx.execute("""delete from core.forecast where series_id = %s and vintage_date = %s
+                               and target_start = %s and target_end = %s and method = 'ai_extracted'""",
+                           (sid, w.doc.event_day, start, end))
+        tx.execute("update core.series set is_published = true where key = any(%s) and not is_published",
+                   (sorted({PROJECTION_SERIES[it["variable"]] for it in items}),))
+
+    def _recheck(self, ctx: Context, f: Fetched, p: Plan) -> None:
+        """A held extraction's stored answer, checked again without a new request: a disagreement or an unreadable
+        parse that has since been resolved (a fixed parser, a corrected stored figure) publishes the draft; anything
+        else stays held. The answer is the one billed before, so nothing is spent."""
+        db, w = ctx.fetcher.db, p.work
+        out_id, content = p.held
+        try:
+            checked = w.recheck(content.get("answer"))
+        except Exception as e:  # noqa: BLE001 - storage: the next run checks it again
+            f.outcome(w, "errored" if f.mode == "realtime" else "held", f"{p.why}; not checked again: "
+                      f"{type(e).__name__}: {e}")
+            return
+        if not checked.ok:
+            f.outcome(w, "held", f"held: {checked.hold or '; '.join(checked.problems)}")
+            return
+        new, body, label = extraction.content(checked, attempt=content.get("attempt") or 1, reply=None)
+        new.update({k: content[k] for k in ("message_id", "stop_reason") if k in content})
+        new["rechecked"] = {"task_run_id": ctx.task_run_id, "was": content.get("hold")}
+        with db.transaction():
+            row = db.execute("select status from core.ai_output where id = %s for update", (out_id,)).fetchone()
+            if row is None or row[0] != "draft":
+                f.outcome(w, "done", "re-checked by another run")
+                return
+            db.execute("""update core.ai_output set content = %s, body = %s, label = %s, status_reason = null
+                           where id = %s""", (json.dumps(new, ensure_ascii=False), body, label, out_id))
+            self._publish(db, w, out_id, checked.citations, checked, ctx.task_run_id)
+        f.outcome(w, "published", f"re-checked: was held ({content.get('hold')})")
+        f.rechecked.append((w, out_id, checked))
+
     # ------------------------------------------------------------------ the Batch API (daily, refresh, backfill)
     def _batch_path(self, ctx: Context, f: Fetched, prompts, *, poll: float) -> None:
         """Collect what's ended, submit what's needed, and read the open batches until they end or `poll` seconds
         pass; a round that stored something plans again (retries, resends) and submits those too."""
-        db = ctx.fetcher.db
         deadline = self.monotonic() + poll
         wait = BATCH_WAITS[0]
-        todo = self._plan(db, f, prompts)
+        todo = self._plan(ctx, f, prompts)
         while True:
             if self._collect(ctx, f, prompts):
-                todo = self._plan(db, f, prompts)
+                todo = self._plan(ctx, f, prompts)
             if todo:
                 self._submit(ctx, f, todo, prompts)
                 todo = []
@@ -649,13 +874,17 @@ class AiBatch(Task):
             self.sleep(wait)
             wait = BATCH_WAITS[1]
 
-    def _plan(self, db, f: Fetched, prompts) -> list[tuple[Work, Step]]:
-        """Every target's next step; the worst case of what waits in open batches (for the budget)."""
+    def _plan(self, ctx: Context, f: Fetched, prompts) -> list[tuple[Work, Step]]:
+        """Every target's next step (a held extraction is checked again); the worst case of what waits in open
+        batches (for the budget)."""
+        db = ctx.fetcher.db
         todo: list[tuple[Work, Step]] = []
         f.batch.exposure = self._exposure(db)
         for w in list(f.targets):
             p = self._next_step(db, w, prompts[w.task])
-            if p.step is None:
+            if p.held is not None:
+                self._recheck(ctx, f, p)
+            elif p.step is None:
                 f.outcome(w, "in_batch" if p.in_batch is not None else "done", p.why, first=True)
             elif p.custom_id in f.batch.sent_ids:
                 f.outcome(w, "left", f"{p.why}; sent once in this run already: the next run sends it")
@@ -917,8 +1146,9 @@ class AiBatch(Task):
         if reply.stop_reason != "end_turn":
             call.failed = str(reply.stop_reason)
         else:
-            call.checked = w.check(req, reply)
-        retry_note = None if call.ok or attempt == 2 else call.note()
+            call.checked = w.check(req, reply)      # an extraction reads B6's parse here (a storage error fails the
+                                                    # run: the batch stays 'ended' and the next run reads it again)
+        retry_note = None if call.ok or call.held or attempt == 2 else call.note()
         try:
             with db.transaction():
                 if not self._pending(db, cid):
@@ -941,7 +1171,8 @@ class AiBatch(Task):
             return
         f.spend = spend
         reason = "; ".join(call.reasons())
-        o = f.outcome(w, "published" if call.ok else "rejected" if attempt == 2 else "retrying", reason)
+        o = f.outcome(w, "published" if call.ok else "held" if call.held else "rejected" if attempt == 2
+                      else "retrying", reason)
         o.calls.append(call)
 
     def _store_bare(self, db, cid: str, reply: Reply, task_run_id: int, spend: Decimal, reason: str, extra: dict,
@@ -961,17 +1192,24 @@ class AiBatch(Task):
     @staticmethod
     def _insert_bare(db, cid: str, reply: Reply, task_run_id: int, spend: Decimal, reason: str, extra: dict,
                      retry_note: str | None) -> None:
-        task, doc_id, sha, version = db.execute(
-            "select ai_task, document_id, input_sha256, prompt_version from ops.ai_request where custom_id = %s",
+        task, doc_id, sha, version, event_id = db.execute(
+            """select r.ai_task, r.document_id, r.input_sha256, r.prompt_version, d.event_id
+                 from ops.ai_request r left join core.document d on d.id = r.document_id where r.custom_id = %s""",
             (cid,)).fetchone()
-        content = {"bullets": [], **extra, "stop_reason": reply.stop_reason, "message_id": reply.message_id}
+        if task == "stance_extraction" and event_id is not None:
+            doc_id = None                               # the stance is the meeting's (`_target_of`)
+        else:
+            event_id = None
+        content = {**({"bullets": []} if task in SUMMARY_TASKS else {"answer": None}), **extra,
+                   "stop_reason": reply.stop_reason, "message_id": reply.message_id}
         if retry_note:
             content["retry_note"] = retry_note
         out_id = db.execute(
-            """insert into core.ai_output (task, document_id, content, body, status, model, prompt_key, prompt_version,
-                                           input_sha256, input_tokens, output_tokens, cost_usd, task_run_id)
-               values (%s, %s, %s, null, 'draft', %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
-            (task, doc_id, json.dumps(content), reply.model, task, version, sha, reply.usage.prompt_tokens,
+            """insert into core.ai_output (task, document_id, event_id, content, body, status, model, prompt_key,
+                                           prompt_version, input_sha256, input_tokens, output_tokens, cost_usd,
+                                           task_run_id)
+               values (%s, %s, %s, %s, null, 'draft', %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+            (task, doc_id, event_id, json.dumps(content), reply.model, task, version, sha, reply.usage.prompt_tokens,
              reply.usage.output, reply.cost_usd, task_run_id)).fetchone()[0]
         db.execute("update core.ai_output set status = 'rejected', status_reason = %s where id = %s", (reason, out_id))
         db.execute("""update ops.ai_request set status = 'rejected', ai_output_id = %s, reject_reason = %s
@@ -1040,18 +1278,31 @@ class AiBatch(Task):
     def checks(self, tx, f: Fetched, task_run_id) -> list[Check]:
         out: list[Check] = []
         wrong = []
-        published = [(o, c.output_id) for o in f.outcomes if o.status == "published" for c in o.calls if c.ok]
-        for o, out_id in published:
+        published = [(o.work, c.output_id, c.checked) for o in f.outcomes if o.status == "published" for c in o.calls
+                     if c.ok] + f.rechecked
+        for w, out_id, checked in published:
+            # A later run may have superseded it already; what matters is that it was published with every claim (a
+            # bullet, the stance's quote, each projection) cited, on its target, and a projection's rows stored.
             row = tx.execute(
-                """select o.status, jsonb_array_length(o.content -> 'bullets'),
+                """select o.status, o.document_id, o.event_id, o.label,
+                          jsonb_array_length(coalesce(o.content -> 'bullets', o.content -> 'items')),
                           (select count(distinct c.claim_path) from core.ai_citation c
                              join core.document d on d.id = c.document_id
-                            where c.ai_output_id = o.id and c.verified and d.is_published and c.char_end <= d.char_count)
+                            where c.ai_output_id = o.id and c.verified and d.is_published and c.char_end <= d.char_count),
+                          (select count(*) from core.forecast fc where fc.ai_output_id = o.id)
                      from core.ai_output o where o.id = %s""", (out_id,)).fetchone()
-            # A later run may have superseded it already; what matters is that it was published with every bullet cited.
-            if row is None or row[0] not in ("published", "superseded") or row[1] != row[2] or not row[1]:
-                wrong.append(f"{o.work.target}: {row}")
-        out.append(Check("outputs_stored", not wrong, "; ".join(wrong) or f"{len(published)} published, every bullet "
+            doc_id, event_id = self._target_of(w)
+            good = (row is not None and row[0] in ("published", "superseded") and row[4] and row[4] == row[5]
+                    and (row[1], row[2]) == (doc_id, event_id))
+            if good and w.task == "stance_extraction":
+                good = row[3] in rbi_resolution.VOCABULARY
+            if good and w.task == "projection_extraction" and row[0] == "published":
+                stored = self._stored_projections(tx, w.doc).stored   # the regex's targets keep their parsed rows
+                good = row[6] == sum((it["variable"], date.fromisoformat(it["target_start"]),
+                                      date.fromisoformat(it["target_end"])) not in stored for it in checked.items)
+            if not good:
+                wrong.append(f"{w.target}: {row}")
+        out.append(Check("outputs_stored", not wrong, "; ".join(wrong) or f"{len(published)} published, every claim "
                          "cited"))
 
         c = Counter(o.status for o in f.outcomes)
@@ -1065,7 +1316,7 @@ class AiBatch(Task):
             """select count(*) filter (where r.status = 'rejected' and r.reject_reason like 'rejected:%%'),
                       count(*) filter (where r.status = 'succeeded' or r.reject_reason like 'rejected:%%')
                  from ops.ai_request r where r.ai_task = any(%s) and r.created_at >= date_trunc('month', now())""",
-            (list(SUMMARY_TASKS),)).fetchone()
+            (list(AI_TASKS),)).fetchone()
         rate = Decimal(month[0]) / Decimal(month[1]) if month[1] else Decimal(0)
         detail = {"run": dict(sorted(c.items())), "citations": dict(sorted(mapping.items())),
                   "month": {"rejected": month[0], "targets": month[1], "rate": f"{rate:.3f}"},
@@ -1077,6 +1328,15 @@ class AiBatch(Task):
         too_long = [o for o in f.outcomes if o.status == "too_long"]
         out.append(Check("ai_calls", not too_long, "; ".join(f"{o.work.target}: {o.reason}" for o in too_long),
                          blocking=False))
+
+        # (W) The extractions (Spec 01 §2: "the stance label is in the vocabulary, else the output stays a draft with
+        # an alert"; the cross-check with B6's parse, Anand, 24 Oct 2026): what's held as a draft, and why.
+        ext = [o for o in f.outcomes if o.work.task in EXTRACTION_TASKS]
+        held = [o for o in ext if o.status == "held"]
+        out.append(Check("extractions_held", not held, json.dumps({
+            "published": sorted(o.work.target for o in ext if o.status == "published"),
+            "held": [f"{o.work.target}: {o.reason}" for o in held],
+            "projection_targets": sum(o.work.task == "projection_extraction" for o in ext)}), blocking=False))
         out.append(Check("ai_spend", f.stopped is None, json.dumps({
             "run_usd": str(f.spend), "month_usd": str(f.month_spend + f.spend), "budget_usd": str(f.budget),
             "in_batches_worst_usd": str(f.batch.exposure.quantize(Decimal("0.0001"))),
@@ -1101,8 +1361,10 @@ class AiBatch(Task):
 
     # ------------------------------------------------------------------ alerts (after the load)
     def alerts(self, db) -> list[Alert]:
-        """From the stored state, not just this run: a target whose request was finally rejected (citations, or too
-        long) and that has no published output raises `ai_rejected:<task>:<document>`; publishing resolves it."""
+        """From the stored state, not just this run, for each target: a request finally rejected (citations, or too
+        long) raises `ai_rejected:<task>:<document>`; an extraction held as a draft (`other`: extend the vocabulary;
+        a disagreement with B6's parse: Anand's call) raises `ai_held:<task>:<document>`. A published output for the
+        target resolves both."""
         f = self._last
         if f is None:
             return []
@@ -1110,25 +1372,31 @@ class AiBatch(Task):
         ids = sorted({w.doc.document_id for w in f.targets})
         if ids:
             rows = db.execute(
-                """select r.ai_task, r.document_id, max(r.reject_reason),
-                          exists (select 1 from core.ai_output o where o.task = r.ai_task
-                                    and o.document_id = r.document_id and o.status = 'published')
+                """select r.ai_task, r.document_id, max(r.reject_reason)
                      from ops.ai_request r
                     where r.document_id = any(%s) and r.ai_task = any(%s)
                       and r.status = 'rejected' and r.reject_reason like 'rejected:%%'
-                    group by r.ai_task, r.document_id""", (ids, list(SUMMARY_TASKS))).fetchall()
-            bad = {(t, d): reason for t, d, reason, has in rows if not has}
-            titles = {w.doc.document_id: w.doc.title for w in f.targets}
+                    group by r.ai_task, r.document_id""", (ids, list(AI_TASKS))).fetchall()
+            bad = {(t, d): reason for t, d, reason in rows}
+            held = {(t, d): reason for t, d, reason in db.execute(
+                """select r.ai_task, r.document_id, max(o.status_reason)
+                     from ops.ai_request r join core.ai_output o on o.id = r.ai_output_id
+                    where r.document_id = any(%s) and r.ai_task = any(%s) and r.status = 'succeeded'
+                      and o.status = 'draft' and o.status_reason like 'held:%%'
+                    group by r.ai_task, r.document_id""", (ids, list(EXTRACTION_TASKS))).fetchall()}
             for w in f.targets:
-                key = f"ai_rejected:{w.task}:{w.doc.document_id}"
-                if (w.task, w.doc.document_id) in bad:
-                    out.append(Alert(key, True, "warn", f"{w.target} ({titles[w.doc.document_id]}): "
-                                     f"{bad[(w.task, w.doc.document_id)]}"))
-                else:
-                    published = db.execute("""select 1 from core.ai_output where task = %s and document_id = %s
-                                                and status = 'published'""", (w.task, w.doc.document_id)).fetchone()
+                cond, args = self._on_target(w)
+                published = db.execute(f"select 1 from core.ai_output where {cond} and status = 'published'",
+                                       args).fetchone() is not None
+                kinds = (("ai_rejected", bad), ("ai_held", held)) if w.task in EXTRACTION_TASKS else \
+                    (("ai_rejected", bad),)
+                for kind, reasons in kinds:
+                    key = f"{kind}:{w.task}:{w.doc.document_id}"
                     if published:
                         out.append(Alert(key, False))
+                    elif (w.task, w.doc.document_id) in reasons:
+                        out.append(Alert(key, True, "warn", f"{w.target} ({w.doc.title}): "
+                                         f"{reasons[(w.task, w.doc.document_id)]}"))
         month = datetime.now(UTC).strftime("%Y-%m")
         if f.stopped == "budget":
             out.append(Alert(f"ai_budget:{month}", True, "error",

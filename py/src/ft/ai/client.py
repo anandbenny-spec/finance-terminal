@@ -203,6 +203,12 @@ def load_prompt(task: str, version: str = "v1", *, root: Path = PROMPTS) -> Prom
     return Prompt(task, version, text)
 
 
+def load_schema(task: str, *, root: Path = PROMPTS) -> dict:
+    """config/prompts/<task>/schema.json: the json route's JSON schema (structured outputs: no length or number
+    limits, so the task's checks hold those). It's part of every request's input hash."""
+    return json.loads((root / task / "schema.json").read_text(encoding="utf-8"))
+
+
 @dataclass(frozen=True)
 class Source:
     """A document (or a segment of one) sent with a request. Citations map back to the document through seg_start."""
