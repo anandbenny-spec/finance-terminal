@@ -202,6 +202,16 @@ export function formatTableDate(date: string | null | undefined): string {
   return `${String(day).padStart(2, "0")} ${monthName(month)} ${year}`;
 }
 
+/**
+ * A date in a short status line (the status bar's "Next FOMC 9 Dec"): `2026-12-09` → `9 Dec` when it falls in the
+ * current year in `zone`, else with its year, `2027-01-27` → `27 Jan 2027`, so a date is never read as the wrong
+ * year. Browser only, after first render, like the countdown it sits beside (the server sends `formatDate`).
+ */
+export function formatShortDate(date: string, now: Instant, zone: EventZone = IST): string {
+  const { year, month, day } = parseDate(date);
+  return year === inZone(toDate(now), zone).year ? `${day} ${monthName(month)}` : `${day} ${monthName(month)} ${year}`;
+}
+
 /** Month of a monthly series: `2026-09` (or its stored date, `2026-09-01`) → `Sep 2026`. */
 export function formatMonth(month: string | null | undefined): string {
   if (isMissing(month)) return NOT_AVAILABLE;
@@ -262,6 +272,12 @@ function sameDay(a: YMD, b: YMD): boolean {
 /** Whole calendar days from `from` to `to` (both calendar dates). */
 function daysBetween(from: YMD, to: YMD): number {
   return Math.round((Date.UTC(to.year, to.month - 1, to.day) - Date.UTC(from.year, from.month - 1, from.day)) / 86_400_000);
+}
+
+/** The instant's calendar date in `zone`, as `YYYY-MM-DD` (to compare with a stored `date`; not for display). */
+export function dateInZone(instant: Instant, zone: EventZone): string {
+  const { year, month, day } = inZone(toDate(instant), zone);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 /**
