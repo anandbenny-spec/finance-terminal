@@ -14,8 +14,10 @@ documents) and the AI backfill run are the rest of part 2.
   Each run first reads the batches still open (from any run) and collects the ended ones; a reply that needs its
   retry, or a request that errored or expired in an earlier run's batch, goes into a new batch in the same run while
   the poll lasts. A backfill's --since and --until don't apply: the step is idempotent, so a run's targets are every
-  published document still missing an output, the 2018 baselines included. Watch with the real-time switch off uses
-  this path too, without polling (the next run collects). These runs also embed every published document's chunks
+  published document still missing an output, the 2018 baselines included, except the decision documents of a
+  meeting whose watch window is open (with real time on, they're the watch's: a batch would hold them for an hour and
+  the watch never sends twice). Watch with the real-time switch off uses this path too, without polling (the next
+  run collects). Each run reads only this task's batches. These runs also embed every published document's chunks
   that lack an embedding.
 
 **Never twice, never lost.** Each request is keyed by its input hash (ft/ai/client.py) in ops.ai_request, written
@@ -26,19 +28,27 @@ status and, for a batch reply, the run's spend. Like the raw files a fetch regis
 reply is evidence that must survive a failed load, so it isn't held for the load's transaction; the database's own
 checks (a published output needs a verified citation inside a published document's text) run at each of these
 commits. A request `succeeded` or `rejected` is never sent again; one that `errored` or `expired` (not billed) may
-be, by a later request or batch (never twice in one batch run, so a request the API keeps refusing can't loop). A
-request waiting in a batch (`pending`, with its ops.ai_batch row) isn't sent again while the batch is open; an ended
-batch is collected once, and a read that breaks off is finished by the next read (each result is stored once). A
-batch the API no longer knows (404) is marked failed and its requests may be sent again. One window is accepted:
-if the run dies between the API creating a batch and its ops.ai_batch row being written, its requests stay `pending`
-outside a batch and a later run sends them again (as in real time, where a reply lost before it's stored is resent).
-The run's spend goes on ops.task_run.ai_cost_usd as each reply arrives; a batch's total goes on ops.ai_batch.cost_usd
-once it's collected. The load holds the embeddings.
+be, by a later request or batch, once the batch it was in has been read to the end (never twice in one batch run, so
+a request the API keeps refusing can't loop). A request waiting in a batch (`pending`, with its ops.ai_batch row)
+isn't sent again while the batch is open. An ended batch is collected once: each result is stored in a transaction
+that first locks its request's row and skips it unless it's still pending, and a read that breaks off, or ends short
+of the batch's count, is finished by the next read. A batch the API answers 404 for is given up (marked failed, its
+requests sendable) only once its results would have expired anyway (29 days); sooner, it stays open and the `batches`
+check fails, since its replies may have been billed. A create that fails ambiguously (a lost connection, a timeout, a
+5xx that isn't a refusal: `client.maybe_created`) is looked for among the workspace's newest batches and adopted if
+exactly one matches; otherwise its requests are marked errored. Two windows are accepted: an ambiguous create whose
+batch isn't found, and a run that dies between the API creating a batch and its ops.ai_batch row being written (each
+batch's id is printed to the run's log first). Either way a later run sends those requests again (as in real time,
+where a reply lost before it's stored is resent). The run's spend goes on ops.task_run.ai_cost_usd as each reply
+arrives; a batch's total goes on ops.ai_batch.cost_usd once it's collected. The load holds the embeddings.
 
 **Batch ids.** The Batch API takes only `^[a-zA-Z0-9_-]{1,64}$`, so each request goes with its stored custom_id's `:`
 replaced (`client.batch_custom_id`), and a result maps back through its batch's own ops.ai_request rows. A result
-whose request no longer matches its target's current input (a new prompt version or document version since it was
-sent) is still billed: it's stored rejected ("stale: …", outside the citation_integrity count) with its cost.
+whose request no longer matches a target that can be built now (a new prompt version or document version since it
+was sent, or a document unpublished meanwhile) is still billed: it's stored rejected ("stale: …", outside the
+citation_integrity count) with its cost, and sent again only if that same input comes back. A reply the database
+refuses (a character it can't hold) is stored bare, with its cost, as a failed attempt, so one bad reply never stalls
+the rest of the batch.
 
 **Checking** (ft/ai/summaries.py): a reply is published only when every bullet has a verified citation and only
 figures from its cited passages, nothing stands outside the bullets, and the count is in range. Otherwise the first
@@ -48,7 +58,8 @@ sent (an API error, the budget) is sent by a later run from the stored note. A "
 both documents are published, so every citation points into published text.
 
 **Spend:** before each request, the month's spend (ops.task_run.ai_cost_usd), plus in batch mode the worst case of
-the requests still waiting in batches, plus the request's own worst case must stay under `ai_monthly_budget_usd`
+every request of this task still waiting in an open batch (from its document's length, whatever its target is now),
+plus the request's own worst case must stay under `ai_monthly_budget_usd`
 (alert `ai_budget:<month>`). A run whose estimate (each request and its retry at their worst, at the batch price in a
 batch) passes $5 sends nothing more (CLAUDE.md §7; alert `ai_run_estimate`).
 
@@ -60,6 +71,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import time
 from collections import Counter
@@ -69,9 +81,16 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+import psycopg
+
 from ft.ai import summaries
 from ft.ai.client import (
+    CHARS_PER_TOKEN,
+    MAX_REQUEST_TOKENS,
     PRICES,
+    REQUEST_OVERHEAD_TOKENS,
+    TASKS,
+    BatchInfo,
     CallError,
     Client,
     Embedder,
@@ -82,9 +101,11 @@ from ft.ai.client import (
     batch_custom_id,
     halfvec_literal,
     load_prompt,
+    maybe_created,
     price_entry,
 )
 from ft.ai.summaries import Checked, Doc
+from ft.jobs import due as due_rules
 from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 
@@ -100,8 +121,16 @@ SUMMARY_TASKS = ("doc_summary", "statement_diff_summary")
 BATCH_POLL_SECONDS = 15 * 60          # Architecture 03 §1.3: polled for up to 15 minutes in the run
 BATCH_WAITS = (30.0, 60.0)            # the first wait between reads, then every later one
 BATCH_MAX_REQUESTS = 5_000            # per batch (the API allows 100,000)
-BATCH_MAX_BYTES = 100_000_000         # per batch, as JSON (the API allows 256 MB)
+BATCH_MAX_BYTES = 20_000_000          # per batch, as JSON (the API allows 256 MB; smaller uploads finish well inside
+                                      # the create timeout, so an accepted batch is rarely left unacknowledged)
 BATCH_STUCK = timedelta(hours=26)     # the API ends every batch within 24 hours: one open longer isn't being read
+BATCH_RESULTS_KEPT = timedelta(days=29)   # the API keeps results this long; a batch gone before then isn't given up
+CLOCK_SLACK = timedelta(minutes=2)    # between our clock and the API's, when looking for a batch after a lost create
+EXPOSURE_PROMPT_CHARS = 6_000         # the prompt, instruction and a retry note, for the open batches' worst case
+
+
+class _Skip(Exception):
+    """The request isn't pending any more: another run stored its reply."""
 
 
 @dataclass
@@ -191,6 +220,8 @@ class Outcome:
 class BatchLog:
     """What a batch-mode run did with the Batch API (the `batches` check)."""
     submitted: list[dict] = field(default_factory=list)   # {"batch", "requests"}
+    adopted: list[str] = field(default_factory=list)      # batches found after a create that failed ambiguously
+    held_for_watch: list[int] = field(default_factory=list)   # decision documents left to the open watch window
     collected: list[dict] = field(default_factory=list)   # {"batch", "requests", "turnaround_s"}
     open: list[tuple[int, str, datetime]] = field(default_factory=list)   # still processing: (row id, batch, sent)
     results: Counter = field(default_factory=Counter)     # succeeded, errored, canceled, expired, stale, unknown
@@ -319,9 +350,11 @@ class AiBatch(Task):
 
     @staticmethod
     def _request_row(db, custom_id: str):
-        """(status, batch id, reject reason, the output's content) of a request sent before, or None."""
-        return db.execute("""select r.status, r.ai_batch_id, coalesce(r.reject_reason, ''), o.content
+        """(status, batch id, reject reason, the output's content, the batch's status) of a request sent before, or
+        None."""
+        return db.execute("""select r.status, r.ai_batch_id, coalesce(r.reject_reason, ''), o.content, b.status
                                from ops.ai_request r left join core.ai_output o on o.id = r.ai_output_id
+                               left join ops.ai_batch b on b.id = r.ai_batch_id
                               where r.custom_id = %s""", (custom_id,)).fetchone()
 
     @staticmethod
@@ -330,9 +363,16 @@ class AiBatch(Task):
 
     @staticmethod
     def _sendable(row) -> bool:
-        """Never sent, or sent without an answer: errored or expired (not billed), or pending outside a batch (its
-        reply wasn't stored)."""
-        return row is None or row[0] in ("errored", "expired") or (row[0] == "pending" and row[1] is None)
+        """Never sent, or sent without a usable answer: errored or expired (not billed), or stale (its target couldn't
+        be built when the reply came: it's sent again only if that same input comes back), each once its batch, if
+        any, has been read to the end; or pending outside a batch (its reply wasn't stored). `_claim` holds the same
+        rule."""
+        if row is None:
+            return True
+        status, batch, reason, _, batch_status = row
+        if status in ("errored", "expired") or (status == "rejected" and reason.startswith("stale:")):
+            return batch is None or batch_status in ("collected", "failed")
+        return status == "pending" and batch is None
 
     def _next_step(self, db, w: Work, prompt) -> Plan:
         """What the target needs next, from its requests so far."""
@@ -342,7 +382,7 @@ class AiBatch(Task):
         built = [(cid, req, 1)]
         if self._sendable(row):
             return Plan(w, Step(1), "not sent yet" if row is None else f"attempt 1 {row[0]}", built)
-        status, batch, reason, content = row
+        status, batch, reason, content, _ = row
         if batch is not None and status == "pending":
             return Plan(w, None, "in a batch", built, in_batch=req)
         if status == "rejected" and reason.startswith("retried:") and (content or {}).get("retry_note"):
@@ -369,15 +409,25 @@ class AiBatch(Task):
     @staticmethod
     def _claim(db, w: Work, req: Request, cid: str) -> bool:
         """The request's 'pending' row, written before it's sent: inserted, or taken over from a row that may be sent
-        again (errored, expired, or pending outside a batch). False if it was answered (or batched) meanwhile."""
+        again (`_sendable`'s rule). False if it was answered (or batched) meanwhile."""
         return bool(db.execute(
             """insert into ops.ai_request (custom_id, ai_task, document_id, input_sha256, model, prompt_version, status)
                values (%s, %s, %s, %s, %s, %s, 'pending')
                on conflict (custom_id) do update set status = 'pending', reject_reason = null, ai_batch_id = null,
-                 created_at = now()
-               where ops.ai_request.status in ('errored', 'expired')
+                 ai_output_id = null, created_at = now()
+               where ((ops.ai_request.status in ('errored', 'expired')
+                       or (ops.ai_request.status = 'rejected' and ops.ai_request.reject_reason like 'stale:%%'))
+                      and (ops.ai_request.ai_batch_id is null
+                           or exists (select 1 from ops.ai_batch b where b.id = ops.ai_request.ai_batch_id
+                                         and b.status in ('collected', 'failed'))))
                   or (ops.ai_request.status = 'pending' and ops.ai_request.ai_batch_id is null)""",
             (cid, req.task, w.doc.document_id, req.input_sha256, req.model_id, req.prompt.version)).rowcount)
+
+    @staticmethod
+    def _pending(db, cid: str) -> bool:
+        """Lock the request's row for this transaction: is it still waiting for its reply?"""
+        row = db.execute("select status from ops.ai_request where custom_id = %s for update", (cid,)).fetchone()
+        return row is not None and row[0] == "pending"
 
     @staticmethod
     def _too_long(db, w: Work, req: Request, cid: str) -> None:
@@ -400,6 +450,10 @@ class AiBatch(Task):
             docs = self._docs(db, event_id=meeting.event_id, doc_types=REALTIME_DOC_TYPES)
         else:
             docs = self._docs(db)
+            if realtime_on:                 # a meeting's watch window is open: its decision documents are the watch's
+                held = self._watch_documents(db, ctx.now)
+                f.batch.held_for_watch = sorted(held & {d.document_id for d in docs})
+                docs = [d for d in docs if d.document_id not in held]
         f.targets = self._work(db, docs)
         if mode == "batch":
             self._batch_path(ctx, f, prompts, poll=0 if ctx.workflow == "watch" else BATCH_POLL_SECONDS)
@@ -420,16 +474,56 @@ class AiBatch(Task):
         self._embed(db, f, docs if meeting is not None else None)
         return f
 
-    def _worst_case(self, req: Request, *, batch: bool = False) -> Decimal:
-        """An upper bound on the request's cost: every input token at the dearest input rate (a cache write), and
+    @staticmethod
+    def _watch_documents(db, now: datetime) -> set[int]:
+        """The decision documents (statement, resolution, Governor's statement) of a meeting whose watch window is open
+        now: the watch summarises them in real time, so a batch run leaves them alone (they'd otherwise wait in a
+        batch, and the watch never sends a request twice). Once the window closes, batch runs take them over."""
+        ids: set[int] = set()
+        for bank in due_rules.BANKS.values():
+            m = due_rules.decision_meeting(db, bank, now.astimezone(bank.tz).date())
+            if m is not None and m.is_open(now):
+                ids |= {r[0] for r in db.execute("""select id from core.document where event_id = %s
+                                                      and doc_type = any(%s)""",
+                                                  (m.event_id, list(REALTIME_DOC_TYPES))).fetchall()}
+        return ids
+
+    def _bound(self, model: str, tokens: int, max_tokens: int, *, batch: bool) -> Decimal:
+        """An upper bound on a request's cost: every input token at the dearest input rate (a cache write), and
         max_tokens of output; in a batch, at the batch price."""
         today = self.claude.today() if self.claude is not None else datetime.now(UTC).date()
-        m, factor, _ = price_entry(req.model_id, today, path=self.claude.prices if self.claude is not None else PRICES)
+        m, factor, _ = price_entry(model, today, path=self.claude.prices if self.claude is not None else PRICES)
         p = m["standard"]
         rate_in = max(Decimal(str(p[k])) for k in ("input", "cache_write_5m", "cache_write_1h"))
-        cost = (Decimal(req.estimated_tokens()) * rate_in
-                + Decimal(req.spec.max_tokens) * Decimal(str(p["output"]))) / Decimal(1_000_000)
+        cost = (Decimal(tokens) * rate_in + Decimal(max_tokens) * Decimal(str(p["output"]))) / Decimal(1_000_000)
         return cost * factor if batch else cost
+
+    def _worst_case(self, req: Request, *, batch: bool = False) -> Decimal:
+        return self._bound(req.model_id, req.estimated_tokens(), req.spec.max_tokens, batch=batch)
+
+    def _exposure(self, db) -> Decimal:
+        """The worst case of every request of this task still waiting in an open batch, whatever its target is now
+        (a request whose prompt or document has changed since is still billed): its document's length (four times
+        over for a diff summary: both documents and the redline's quotes), plus the prompt, at the batch price."""
+        where, args = ["r.status = 'pending'", "b.status in ('submitted', 'ended')", "tr.task_key = %s"], [self.key]
+        if self.scope is not None:
+            where.append("""r.document_id in (select d.id from core.document d join core.event e on e.id = d.event_id
+                                               where e.slug = any(%s))""")
+            args.append(sorted(self.scope))
+        rows = db.execute(f"""select r.ai_task, r.model, coalesce(d.char_count, 0)
+                                from ops.ai_request r
+                                join ops.ai_batch b on b.id = r.ai_batch_id
+                                join ops.task_run tr on tr.id = b.task_run_id
+                                left join core.document d on d.id = r.document_id
+                               where {' and '.join(where)}""", args).fetchall()
+        total = Decimal(0)
+        for task, model, chars in rows:
+            k = 4 if task == "statement_diff_summary" else 1
+            tokens = min(MAX_REQUEST_TOKENS, math.ceil((k * chars + EXPOSURE_PROMPT_CHARS) / CHARS_PER_TOKEN)
+                         + REQUEST_OVERHEAD_TOKENS)
+            spec = TASKS.get(task)
+            total += self._bound(model, tokens, spec.max_tokens if spec else 8_000, batch=True)
+        return total
 
     # ------------------------------------------------------------------ real time (watch, on a decision day)
     def _send(self, ctx: Context, f: Fetched, todo: list[tuple[Work, Step]], prompts) -> None:
@@ -557,11 +651,9 @@ class AiBatch(Task):
     def _plan(self, db, f: Fetched, prompts) -> list[tuple[Work, Step]]:
         """Every target's next step; the worst case of what waits in open batches (for the budget)."""
         todo: list[tuple[Work, Step]] = []
-        f.batch.exposure = Decimal(0)
+        f.batch.exposure = self._exposure(db)
         for w in list(f.targets):
             p = self._next_step(db, w, prompts[w.task])
-            if p.in_batch is not None:
-                f.batch.exposure += self._worst_case(p.in_batch, batch=True)
             if p.step is None:
                 f.outcome(w, "in_batch" if p.in_batch is not None else "done", p.why, first=True)
             elif p.custom_id in f.batch.sent_ids:
@@ -620,15 +712,22 @@ class AiBatch(Task):
         for chunk in _chunks(chosen):
             cids = [cid for _, _, cid, _ in chunk]
             f.batch.sent_ids |= set(cids)
+            started = datetime.now(UTC)
             try:
                 info = claude.create_batch([(batch_custom_id(cid), req) for _, req, cid, _ in chunk])
             except CallError as e:
-                db.execute("update ops.ai_request set status = 'errored', reject_reason = %s where custom_id = any(%s)",
-                           ("batch " + e.kind + (f" {e.status}" if e.status else ""), cids))
-                f.batch.errors.append(f"create: {e}")
-                for w, *_ in chunk:
-                    f.outcome(w, "errored", str(e))
-                continue
+                info = self._find_created(db, f, claude, len(chunk), started, e) if maybe_created(e) else None
+                if info is None:
+                    db.execute("""update ops.ai_request set status = 'errored', reject_reason = %s
+                                   where custom_id = any(%s)""",
+                               ("batch " + e.kind + (f" {e.status}" if e.status else ""), cids))
+                    f.batch.errors.append(f"create: {e}")
+                    for w, *_ in chunk:
+                        f.outcome(w, "errored", str(e))
+                    continue
+                f.batch.adopted.append(info.id)
+            # In the run's log before it's recorded, so a batch whose row can't be written can still be found.
+            print(f"  policy.ai_batch: batch {info.id} holds {len(chunk)} requests")
             with db.transaction():
                 bid, at = db.execute("""insert into ops.ai_batch (provider_batch_id, task_run_id, request_count)
                                         values (%s, %s, %s) returning id, submitted_at""",
@@ -640,8 +739,30 @@ class AiBatch(Task):
             for w, *_ in chunk:
                 f.outcome(w, "submitted", info.id)
 
+    def _find_created(self, db, f: Fetched, claude: Client, n: int, started: datetime,
+                      err: CallError) -> BatchInfo | None:
+        """After a create that failed ambiguously (`client.maybe_created`): the batch it may have made, if exactly one
+        of the workspace's newest batches was created since, holds `n` requests and isn't one of ours already."""
+        try:
+            recent = claude.recent_batches()
+        except CallError as e:
+            f.batch.errors.append(f"create: {err}; looking for it: {e}")
+            return None
+        known = {r[0] for r in db.execute("select provider_batch_id from ops.ai_batch where submitted_at >= %s",
+                                          (started - timedelta(days=1),)).fetchall()}
+        found = [b for b in recent if b.id not in known and b.created_at >= started - CLOCK_SLACK
+                 and sum(b.counts.values()) == n]
+        if len(found) == 1:
+            return found[0]
+        if found:
+            f.batch.errors.append(f"create: {err}; {len(found)} batches could be it, none adopted")
+        return None
+
     def _open_batches(self, db) -> list[tuple[int, str, datetime]]:
-        where, args = ["b.status in ('submitted', 'ended')"], []
+        """This task's batches not yet collected (another task's batches are its own to read)."""
+        where, args = ["b.status in ('submitted', 'ended')",
+                       "exists (select 1 from ops.task_run tr where tr.id = b.task_run_id and tr.task_key = %s)"], \
+            [self.key]
         if self.scope is not None:          # tests: only batches holding requests for this task's meetings
             where.append("""exists (select 1 from ops.ai_request r join core.document d on d.id = r.document_id
                                      join core.event e on e.id = d.event_id
@@ -669,16 +790,15 @@ class AiBatch(Task):
             try:
                 info = claude.batch(provider_id)
             except CallError as e:
-                if e.status == 404:                             # gone: its requests may be sent again
-                    with db.transaction():
-                        db.execute("update ops.ai_batch set status = 'failed' where id = %s", (bid,))
-                        changed += db.execute("""update ops.ai_request set status = 'errored',
-                                                        reject_reason = 'batch not found'
-                                                  where ai_batch_id = %s and status = 'pending'""", (bid,)).rowcount
-                    f.batch.errors.append(f"read {provider_id}: {e}")
-                    continue
                 f.batch.errors.append(f"read {provider_id}: {e}")
-                f.batch.open.append((bid, provider_id, at))
+                if e.status == 404 and self._gone_for_good(at):
+                    changed += self._give_up(db, bid, "batch not found")
+                else:                           # perhaps passing (or the key's workspace changed): never resend yet
+                    f.batch.open.append((bid, provider_id, at))
+                continue
+            if info.archived_at is not None:    # its results can't be downloaded any more
+                f.batch.errors.append(f"read {provider_id}: archived")
+                changed += self._give_up(db, bid, "batch archived")
                 continue
             if not info.ended:
                 f.batch.open.append((bid, provider_id, at))
@@ -687,23 +807,40 @@ class AiBatch(Task):
             db.execute("""update ops.ai_batch set status = 'ended', succeeded = %s, errored = %s, expired = %s
                            where id = %s and status = 'submitted'""",
                        (c["succeeded"], c["errored"] + c["canceled"], c["expired"], bid))
-            n, finished = self._collect_one(ctx, f, prompts, claude, bid, info, index)
+            n, finished = self._collect_one(ctx, f, prompts, claude, bid, at, info, index)
             changed += n
             if not finished:                                    # the read broke off: read it again after the wait
                 f.batch.open.append((bid, provider_id, at))
         return changed
 
-    def _collect_one(self, ctx: Context, f: Fetched, prompts, claude: Client, bid: int, info,
-                     index: dict) -> tuple[int, bool]:
+    @staticmethod
+    def _gone_for_good(submitted_at: datetime) -> bool:
+        """A 404 counts as the batch being gone only once the API would have dropped its results anyway (29 days):
+        sooner, its replies may have been billed, so its requests aren't sent again (the `batches` check fails,
+        and an open batch past 26 hours is reported stuck: Anand's call)."""
+        return datetime.now(UTC) - submitted_at > BATCH_RESULTS_KEPT
+
+    @staticmethod
+    def _give_up(db, bid: int, why: str) -> int:
+        """Mark a batch failed and its unanswered requests errored, so they may be sent again."""
+        with db.transaction():
+            db.execute("update ops.ai_batch set status = 'failed' where id = %s", (bid,))
+            return db.execute("""update ops.ai_request set status = 'errored', reject_reason = %s
+                                  where ai_batch_id = %s and status = 'pending'""", (why, bid)).rowcount
+
+    def _collect_one(self, ctx: Context, f: Fetched, prompts, claude: Client, bid: int, at: datetime,
+                     info: BatchInfo, index: dict) -> tuple[int, bool]:
         """Store an ended batch's results that aren't stored yet. (Requests that changed state, whether every result
-        was read: a read that breaks off leaves the batch 'ended' for the next read.)"""
+        was read: a read that breaks off, or ends before the batch's count, leaves the batch 'ended' for the next
+        read, and its errored or expired requests wait for that before they may be sent again.)"""
         db = ctx.fetcher.db
         reqs = {batch_custom_id(cid): (cid, model, doc_id, status) for cid, model, doc_id, status in db.execute(
             "select custom_id, model, document_id, status from ops.ai_request where ai_batch_id = %s",
             (bid,)).fetchall()}
-        changed = 0
+        changed = seen = 0
         try:
             for res in claude.batch_results(info, model_of=lambda c: (reqs.get(c) or (None, None))[1]):
+                seen += 1
                 if res.custom_id not in reqs:
                     f.batch.results["unknown"] += 1                  # not a request we sent in this batch
                     continue
@@ -723,16 +860,14 @@ class AiBatch(Task):
                         f.outcome(e[0], status, f"batch {res.error or res.kind}")
                 changed += 1
         except CallError as e:
-            if e.status == 404:                             # results gone (archived after 29 days): resend the rest
-                with db.transaction():
-                    db.execute("update ops.ai_batch set status = 'failed' where id = %s", (bid,))
-                    changed += db.execute("""update ops.ai_request set status = 'errored',
-                                                    reject_reason = 'batch results not found'
-                                              where ai_batch_id = %s and status = 'pending'""", (bid,)).rowcount
+            if e.status == 404 and self._gone_for_good(at):
                 f.batch.errors.append(f"results {info.id}: {e}")
-                return changed, True
+                return changed + self._give_up(db, bid, "batch results not found"), True
             f.batch.read_errors[info.id] = f"results {info.id}: {e}"
             return changed, False                           # the batch stays 'ended': the next read finishes it
+        if seen < (total := sum(info.counts.values())):     # ended cleanly but short: read it again
+            f.batch.read_errors[info.id] = f"results {info.id}: the read ended after {seen} of {total} results"
+            return changed, False
         f.batch.read_errors.pop(info.id, None)              # an earlier broken read, finished now
         with db.transaction():
             changed += db.execute("""update ops.ai_request set status = 'errored', reject_reason = 'batch: no result'
@@ -763,14 +898,18 @@ class AiBatch(Task):
     def _store_result(self, ctx: Context, f: Fetched, prompts, cid: str, doc_id: int | None, reply: Reply,
                       index: dict) -> None:
         """One succeeded batch result: checked and stored like a real-time reply, with the run's spend, in one
-        transaction; or, if its target's input has changed since it was sent, stored rejected as stale."""
+        transaction that first locks the request's row and stores nothing unless it's still pending (another run may
+        have stored it). If its target can't be built from the request any more, it's stored rejected as stale. If the
+        database refuses the reply itself (a character it can't hold, say), it's stored bare, with its cost, as a
+        failed attempt: retried once like any other, so one bad reply never stalls the rest of the batch."""
         db = ctx.fetcher.db
         entry = self._entry(db, cid, doc_id, prompts, index)
         spend = f.spend + reply.cost_usd
         if entry is None:
-            f.batch.results["stale"] += 1
-            self._store_stale(db, cid, reply, ctx.task_run_id, spend)
-            f.spend = spend
+            if self._store_bare(db, cid, reply, ctx.task_run_id, spend,
+                                "stale: the target's input changed before its batch was collected", {"stale": True}):
+                f.batch.results["stale"] += 1
+                f.spend = spend
             return
         w, req, attempt = entry
         call = Call(cid, req, attempt, reply=reply)
@@ -779,36 +918,65 @@ class AiBatch(Task):
         else:
             call.checked = w.check(req, reply)
         retry_note = None if call.ok or attempt == 2 else call.note()
-        with db.transaction():
-            self._store(db, w, call, ctx.task_run_id, retry_note)
-            db.execute("update ops.task_run set ai_cost_usd = %s where id = %s",
-                       (spend.quantize(Decimal("0.0001")), ctx.task_run_id))
+        try:
+            with db.transaction():
+                if not self._pending(db, cid):
+                    raise _Skip
+                self._store(db, w, call, ctx.task_run_id, retry_note)
+                db.execute("update ops.task_run set ai_cost_usd = %s where id = %s",
+                           (spend.quantize(Decimal("0.0001")), ctx.task_run_id))
+        except _Skip:
+            return
+        except psycopg.Error as e:
+            if db.closed or db.broken:
+                raise
+            why = f"the reply couldn't be stored ({type(e).__name__})"
+            note = None if attempt == 2 else why + "."
+            if self._store_bare(db, cid, reply, ctx.task_run_id, spend, ("retried: " if note else "rejected: ") + why,
+                                {"attempt": attempt, "unstorable": type(e).__name__}, retry_note=note):
+                f.batch.results["unstorable"] += 1
+                f.spend = spend
+                f.outcome(w, "retrying" if note else "rejected", why)
+            return
         f.spend = spend
         reason = "; ".join(call.reasons())
         o = f.outcome(w, "published" if call.ok else "rejected" if attempt == 2 else "retrying", reason)
         o.calls.append(call)
 
+    def _store_bare(self, db, cid: str, reply: Reply, task_run_id: int, spend: Decimal, reason: str, extra: dict,
+                    *, retry_note: str | None = None) -> bool:
+        """A billed reply stored without its text (stale, or refused by the database): a rejected output with its
+        tokens and cost, the request rejected with `reason`, and the run's spend. False if the request wasn't pending
+        any more."""
+        try:
+            with db.transaction():
+                if not self._pending(db, cid):
+                    raise _Skip
+                self._insert_bare(db, cid, reply, task_run_id, spend, reason, extra, retry_note)
+        except _Skip:
+            return False
+        return True
+
     @staticmethod
-    def _store_stale(db, cid: str, reply: Reply, task_run_id: int, spend: Decimal) -> None:
-        reason = "stale: the target's input changed before its batch was collected"
-        with db.transaction():
-            task, doc_id, sha, version = db.execute(
-                "select ai_task, document_id, input_sha256, prompt_version from ops.ai_request where custom_id = %s",
-                (cid,)).fetchone()
-            content = {"bullets": [], "stale": True, "stop_reason": reply.stop_reason, "message_id": reply.message_id}
-            out_id = db.execute(
-                """insert into core.ai_output (task, document_id, content, body, status, model, prompt_key,
-                                               prompt_version, input_sha256, input_tokens, output_tokens, cost_usd,
-                                               task_run_id)
-                   values (%s, %s, %s, null, 'draft', %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
-                (task, doc_id, json.dumps(content), reply.model, task, version, sha, reply.usage.prompt_tokens,
-                 reply.usage.output, reply.cost_usd, task_run_id)).fetchone()[0]
-            db.execute("update core.ai_output set status = 'rejected', status_reason = %s where id = %s",
-                       (reason, out_id))
-            db.execute("""update ops.ai_request set status = 'rejected', ai_output_id = %s, reject_reason = %s
-                           where custom_id = %s""", (out_id, reason, cid))
-            db.execute("update ops.task_run set ai_cost_usd = %s where id = %s",
-                       (spend.quantize(Decimal("0.0001")), task_run_id))
+    def _insert_bare(db, cid: str, reply: Reply, task_run_id: int, spend: Decimal, reason: str, extra: dict,
+                     retry_note: str | None) -> None:
+        task, doc_id, sha, version = db.execute(
+            "select ai_task, document_id, input_sha256, prompt_version from ops.ai_request where custom_id = %s",
+            (cid,)).fetchone()
+        content = {"bullets": [], **extra, "stop_reason": reply.stop_reason, "message_id": reply.message_id}
+        if retry_note:
+            content["retry_note"] = retry_note
+        out_id = db.execute(
+            """insert into core.ai_output (task, document_id, content, body, status, model, prompt_key, prompt_version,
+                                           input_sha256, input_tokens, output_tokens, cost_usd, task_run_id)
+               values (%s, %s, %s, null, 'draft', %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+            (task, doc_id, json.dumps(content), reply.model, task, version, sha, reply.usage.prompt_tokens,
+             reply.usage.output, reply.cost_usd, task_run_id)).fetchone()[0]
+        db.execute("update core.ai_output set status = 'rejected', status_reason = %s where id = %s", (reason, out_id))
+        db.execute("""update ops.ai_request set status = 'rejected', ai_output_id = %s, reject_reason = %s
+                       where custom_id = %s""", (out_id, reason, cid))
+        db.execute("update ops.task_run set ai_cost_usd = %s where id = %s",
+                   (spend.quantize(Decimal("0.0001")), task_run_id))
 
     # ------------------------------------------------------------------ embeddings
     def _embed(self, db, f: Fetched, docs: list[Doc] | None) -> None:
@@ -858,7 +1026,7 @@ class AiBatch(Task):
     def load(self, tx, f: Fetched, task_run_id) -> int:
         self._last = f
         n = sum(1 for o in f.outcomes for c in o.calls if c.output_id is not None)   # stored as they came
-        n += f.batch.results["stale"]
+        n += f.batch.results["stale"] + f.batch.results["unstorable"]       # stored bare
         for did, no, md5, vec in f.embeds:
             n += tx.execute("""insert into core.chunk_embedding (document_id, chunk_no, model, embedding)
                                select c.document_id, c.chunk_no, %s, %s::extensions.halfvec(512)
@@ -917,14 +1085,14 @@ class AiBatch(Task):
             b = f.batch
             now = datetime.now(UTC)
             stuck = [pid for _, pid, at in b.open if now - at > BATCH_STUCK]
-            errors = b.errors + list(b.read_errors.values())
+            errors = list(dict.fromkeys(b.errors + list(b.read_errors.values())))   # a poll repeats its reads
             trouble = (errors or stuck or b.results["errored"] or b.results["canceled"] or b.results["expired"]
-                       or b.results["unknown"])
+                       or b.results["unknown"] or b.results["unstorable"])
             out.append(Check("batches", not trouble, json.dumps({
-                "submitted": b.submitted, "collected": b.collected, "open": [pid for _, pid, _ in b.open],
-                "stuck": stuck, "results": dict(sorted(b.results.items())),
-                "left_for_next_run": sum(1 for o in f.outcomes if o.status == "left"), "errors": errors}),
-                blocking=False))
+                "submitted": b.submitted, "adopted": b.adopted, "collected": b.collected,
+                "open": [pid for _, pid, _ in b.open], "stuck": stuck, "results": dict(sorted(b.results.items())),
+                "left_for_next_run": sum(1 for o in f.outcomes if o.status == "left"),
+                "held_for_watch": b.held_for_watch, "errors": errors}), blocking=False))
         out.append(Check("embeddings", f.embed_pending == 0 and f.embed_error is None, json.dumps({
             "embedded": len(f.embeds), "pending": f.embed_pending, "tokens": f.embed_tokens,
             "requests": f.embed_requests, "host": f.embed_host, "error": f.embed_error}), blocking=False))

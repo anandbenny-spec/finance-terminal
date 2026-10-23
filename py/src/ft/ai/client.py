@@ -32,9 +32,10 @@ same `Request.params(batch=True)` as real time (the 1-hour cache) under a batch 
 API allows only `^[a-zA-Z0-9_-]{1,64}$`, so ops.ai_request's `<task>:<target>:<hash16>` is sent with `_` for `:`
 and mapped back by the caller). `batch` reads its status; `batch_results` streams its results once it has ended, each
 succeeded reply priced at the batch rate on the batch's creation date. A batch is created only once: `create_batch` is
-retried only on 429, 503 and 529, where the API refused it, never after a lost connection or another 5xx, which might
-have created it (the caller marks its requests errored, and a later run sends them again). Reading a batch or its
-results is idempotent and retried like a real-time call.
+retried only on 429, 503 and 529, where the API refused it, never after a lost connection, a timeout or another 5xx,
+which might have created it (`maybe_created`: the caller then looks for it among `recent_batches` before its requests
+may be sent again). Its timeout is 10 minutes, so a large upload isn't cut off after the API has accepted it. Reading
+a batch, the list or the results is idempotent and retried like a real-time call.
 """
 from __future__ import annotations
 
@@ -64,6 +65,8 @@ CHARS_PER_TOKEN = 3.0                 # a deliberate over-estimate (English runs
 REQUEST_OVERHEAD_TOKENS = 1_500       # citations' own system additions, document framing
 RETRY_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504, 529})
 CREATE_RETRY_STATUS = frozenset({429, 503, 529})   # a batch create the API refused: safe to send again
+CREATE_REFUSED = frozenset({400, 401, 403, 404, 413, 422, 429, 503, 529})   # a create these answer didn't happen
+BATCH_CREATE_TIMEOUT = 600.0                        # seconds: a large upload mustn't time out after it's accepted
 BATCH_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")      # the Batch API's custom_id (docs, checked 23 Oct 2026)
 MILLION = Decimal(1_000_000)
 
@@ -335,6 +338,15 @@ def batch_custom_id(custom_id: str) -> str:
     return out
 
 
+def maybe_created(e: CallError) -> bool:
+    """Whether a batch create that raised `e` might still have created the batch: a lost connection or timeout, or a
+    5xx other than the refusals (503, 529), or 408/409. Then the caller looks for it (`Client.recent_batches`) before
+    letting its requests be sent again."""
+    if e.status is None:
+        return e.kind not in ("RetryAfterTooLong", "NoKey")
+    return e.status not in CREATE_REFUSED and (e.status >= 500 or e.status in (408, 409))
+
+
 @dataclass(frozen=True)
 class BatchInfo:
     """A batch as the API reports it."""
@@ -343,12 +355,14 @@ class BatchInfo:
     created_at: datetime
     ended_at: datetime | None
     counts: dict[str, int]            # processing, succeeded, errored, canceled, expired
+    archived_at: datetime | None = None   # set once its results can no longer be downloaded
 
     @classmethod
     def of(cls, b) -> BatchInfo:
         c = b.request_counts
         return cls(b.id, str(b.processing_status), b.created_at, b.ended_at,
-                   {k: int(getattr(c, k, 0) or 0) for k in ("processing", "succeeded", "errored", "canceled", "expired")})
+                   {k: int(getattr(c, k, 0) or 0) for k in ("processing", "succeeded", "errored", "canceled", "expired")},
+                   getattr(b, "archived_at", None))
 
     @property
     def ended(self) -> bool:
@@ -452,9 +466,15 @@ class Client:
             seen.add(cid)
             self.check(req)
             requests.append({"custom_id": cid, "params": req.params(batch=True)})
-        b = self._call(lambda: self._api.messages.batches.create(requests=requests),
+        b = self._call(lambda: self._api.messages.batches.create(requests=requests, timeout=BATCH_CREATE_TIMEOUT),
                        retry_status=CREATE_RETRY_STATUS, retry_lost=False)
         return BatchInfo.of(b)
+
+    def recent_batches(self, *, limit: int = 20) -> list[BatchInfo]:
+        """The workspace's most recently created batches, newest first (one page): to find a batch whose create
+        failed ambiguously (`maybe_created`)."""
+        page = self._call(lambda: self._api.messages.batches.list(limit=limit))
+        return [BatchInfo.of(b) for b in page.data]
 
     def batch(self, batch_id: str) -> BatchInfo:
         """A batch's status (idempotent)."""

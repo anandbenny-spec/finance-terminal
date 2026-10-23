@@ -80,17 +80,24 @@ class FakeClaude:
     time, or each request of a batch when its results are made; the last one repeats):
     'ok' · 'bad_number' (the first bullet writes '25 basis points', which its passage doesn't) · 'uncited' (the first
     bullet has no citation) · 'wrong_offsets' (offsets shifted, cited text right: found by search) · 'two_bullets' ·
-    'max_tokens' · 'refusal' · '400' · '429' (with Retry-After: 3) · '529' (no Retry-After). In a batch, a request's
-    '400' is an `errored` result, and 'expired' and 'canceled' are those results.
-    Batches: `creates` is a script for each batch create ('ok', '400', '429', '500', '503'); a batch ends on its
-    `ends_after`-th status read (None: never); `truncate` breaks the first results download after that many lines.
-    Results come back in reverse order (the API promises no order)."""
+    'max_tokens' · 'refusal' · 'nul' (the first bullet ends with a NUL character, which Postgres refuses) · '400' ·
+    '429' (with Retry-After: 3) · '529' (no Retry-After). In a batch, a request's '400' is an `errored` result, and
+    'expired' and 'canceled' are those results.
+    Batches: `creates` is a script for each batch create ('ok', '400', '429', '500', '503', 'lost': the batch is created
+    and then the connection times out, 'lost_before': it times out before anything is created); a batch ends on its
+    `ends_after`-th status read (None: never); `truncate` cuts the first results download after that many lines, mid
+    -line (`cut='mid'`) or cleanly (`cut='clean'`, a short read). `archive(id)` archives an ended batch. Results come
+    back in reverse order (the API promises no order). The list endpoint returns the newest batches first."""
 
-    def __init__(self, script=("ok",), *, creates=("ok",), ends_after: int | None = 1, truncate: int | None = None):
+    def __init__(self, script=("ok",), *, creates=("ok",), ends_after: int | None = 1, truncate: int | None = None,
+                 cut: str = "mid"):
         self.script, self.requests, self.n = list(script), [], 0
-        self.creates, self.ends_after, self.truncate = list(creates), ends_after, truncate
+        self.creates, self.ends_after, self.truncate, self.cut = list(creates), ends_after, truncate, cut
         self.batches: dict[str, dict] = {}          # id -> {"requests", "reads", "results", "created_at", ...}
         self.create_calls = 0                       # batch creates attempted, refused ones included
+
+    def archive(self, bid: str) -> None:
+        self.batches[bid]["archived_at"] = datetime.now(UTC)
 
     def _mode(self) -> str:
         mode = self.script[min(self.n, len(self.script) - 1)]
@@ -100,7 +107,13 @@ class FakeClaude:
     def __call__(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path
         if path == "/v1/messages/batches" and request.method == "POST":
-            return self._create(json.loads(request.content))
+            return self._create(json.loads(request.content), request)
+        if path == "/v1/messages/batches":
+            newest = sorted(self.batches, key=lambda k: self.batches[k]["created_at"], reverse=True)[:20]
+            data = [self._batch(k) for k in newest]
+            return httpx2.Response(200, json={"data": data, "has_more": False,
+                                              "first_id": data[0]["id"] if data else None,
+                                              "last_id": data[-1]["id"] if data else None})
         if m := re.fullmatch(r"/v1/messages/batches/([^/]+)/results", path):
             return self._results(m.group(1))
         if m := re.fullmatch(r"/v1/messages/batches/([^/]+)", path):
@@ -126,19 +139,25 @@ class FakeClaude:
                     c["end_char_index"] += 3
         elif mode == "two_bullets":
             blocks = blocks[:4]
+        elif mode == "nul":
+            blocks[1] = {**blocks[1], "text": blocks[1]["text"] + "\x00"}
         stop = mode if mode in ("max_tokens", "refusal") else "end_turn"
         chars = sum(len(t) for _, t in docs)
         return message(blocks, stop=stop, input_tokens=600 + chars // 4, mid=f"msg_{self.n}")
 
     # ---------------------------------------------------------------------------------------- batches
-    def _create(self, body: dict) -> httpx2.Response:
+    def _create(self, body: dict, request: httpx2.Request) -> httpx2.Response:
         mode = self.creates[min(self.create_calls, len(self.creates) - 1)]
         self.create_calls += 1
-        if mode != "ok":
+        if mode == "lost_before":
+            raise httpx2.ReadTimeout("fake timeout before the batch was created", request=request)
+        if mode not in ("ok", "lost"):
             return _error(mode)
         bid = f"msgbatch_{uuid.uuid4().hex[:24]}"           # unique: ops.ai_batch.provider_batch_id is
         self.batches[bid] = {"requests": body["requests"], "reads": 0, "results": None,
-                             "created_at": datetime.now(UTC), "ended_at": None, "downloads": 0}
+                             "created_at": datetime.now(UTC), "ended_at": None, "downloads": 0, "archived_at": None}
+        if mode == "lost":
+            raise httpx2.ReadTimeout("fake timeout after the batch was created", request=request)
         return httpx2.Response(200, json=self._batch(bid))
 
     def _retrieve(self, bid: str) -> httpx2.Response:
@@ -174,7 +193,8 @@ class FakeClaude:
         return {"id": bid, "type": "message_batch", "processing_status": "ended" if ended else "in_progress",
                 "request_counts": counts, "created_at": created.isoformat(),
                 "expires_at": (created + timedelta(hours=24)).isoformat(),
-                "ended_at": b["ended_at"].isoformat() if ended else None, "archived_at": None,
+                "ended_at": b["ended_at"].isoformat() if ended else None,
+                "archived_at": b["archived_at"].isoformat() if b.get("archived_at") else None,
                 "cancel_initiated_at": None,
                 "results_url": f"https://api.anthropic.com/v1/messages/batches/{bid}/results" if ended else None}
 
@@ -184,7 +204,9 @@ class FakeClaude:
         lines = [json.dumps(r) for r in reversed(b["results"])]
         body = "\n".join(lines) + "\n"
         if self.truncate is not None and b["downloads"] == 1:
-            body = "\n".join(lines[: self.truncate]) + "\n" + lines[self.truncate][:40]   # cut mid-line
+            body = "\n".join(lines[: self.truncate]) + "\n"
+            if self.cut == "mid":
+                body += lines[self.truncate][:40]                                       # cut mid-line
         return httpx2.Response(200, content=body.encode(), headers={"content-type": "application/binary"})
 
 

@@ -4,6 +4,7 @@ daily, refresh and backfill runs. The Messages and Message Batches APIs and Voya
 Anthropic SDK itself runs. The batch poll's clock is a fake too (`Ticker`). Meetings are synthetic: 2045 for the
 decision-day path with policy.fed_documents, 2046-2048 for part 1's tests, 2049-2051 for the batch path; the task sees
 only each test's meetings (`scope`), and only the batches holding their requests."""
+import json
 import re
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -331,18 +332,20 @@ def test_a_target_left_unfinished_fails_the_poll_and_the_finished_one_isnt_sent_
 
 @pytest.mark.db
 def test_a_daily_run_after_the_statement_doesnt_stand_in_for_the_decision_day_step():
-    """after_decision_document counts only watch runs: a daily run's batch doesn't make the watch's AI step skip. The
-    watch then finds the targets waiting in that batch and sends nothing in real time (never twice); the batch's
-    replies are published once each when a later run collects it."""
-    (s0, s1), _, new = two_statements(date(2048, 7, 26), date(2048, 9, 20))
-    fake = FakeClaude(["ok"], ends_after=None)
+    """after_decision_document counts only watch runs, and a batch run inside a meeting's watch window leaves that
+    meeting's decision documents to the watch (in a batch they'd wait up to an hour, and the watch never sends a
+    request twice): the daily run batches only the previous statement's summary, and the watch then summarises the
+    new statement in real time."""
+    (s0, s1), old, new = two_statements(date(2048, 7, 26), date(2048, 9, 20))
+    fake = FakeClaude(["ok"])
     run(JOB, "daily", [task([s0, s1], fake)], only=KEY, force=True, clock=lambda: datetime(2048, 9, 20, 18, tzinfo=UTC))
-    assert len(fake.batches) == 1 and outputs(new) == []                    # submitted, still processing
+    r = last_run()                                                           # 14:00 in New York: the window is open
+    assert [len(b["requests"]) for b in fake.batches.values()] == [1] and outputs(new) == []
+    assert f'"held_for_watch": [{new}]' in r["checks"]["batches"]["detail"]
+    assert [(g[0], g[1]) for g in outputs(old)] == [("doc_summary", "published")]
     rt = FakeClaude(["ok"])
     _, code = watch_once(task([s0, s1], rt), decision_day(date(2048, 9, 20), 10))
-    assert code == 0 and last_run()["status"] == "success" and rt.n == 0    # the step ran; nothing sent twice
-    fake.ends_after = 1
-    run(JOB, "daily", [task([s0, s1], fake)], only=KEY, force=True, clock=lambda: datetime(2048, 9, 21, 18, tzinfo=UTC))
+    assert code == 0 and last_run()["status"] == "success" and rt.n == 2
     assert sorted((g[0], g[1]) for g in outputs(new)) == [("doc_summary", "published"),
                                                           ("statement_diff_summary", "published")]
 
@@ -599,10 +602,18 @@ def test_a_result_whose_input_changed_is_stored_stale_with_its_cost(monkeypatch)
     assert '"stale": 1' in r["checks"]["batches"]["detail"] and r["checks"]["batches"]["passed"]
     assert q("select count(*) from ops.alert where dedupe_key = %s and resolved_at is null",
              f"ai_rejected:doc_summary:{doc}") == [(0,)]                    # stale isn't a citation rejection
+    # The v1 prompt again: the stale request's input is a target's again, so it's sent again (its reply was never
+    # checked), and its output supersedes v2's.
+    monkeypatch.undo()
+    assert daily(task([s], fake), datetime(2050, 3, 19, 12, tzinfo=UTC)) == 0
+    assert fake.create_calls == 3 and [(g[1], g[5]) for g in outputs(doc)] == [
+        ("rejected", "v1"), ("superseded", "v2"), ("published", "v1")]
 
 
 @pytest.mark.db
-def test_a_batch_the_api_no_longer_knows_is_marked_failed_and_its_requests_sent_again():
+def test_a_batch_the_api_doesnt_know_isnt_given_up_until_its_results_would_have_expired():
+    """A 404 within 29 days might be passing (or the key's workspace changed): the batch's replies may have been
+    billed, so its requests aren't sent again; the check fails. After 29 days the results are gone anyway."""
     s, doc = one_statement(date(2050, 4, 27))
     fake = FakeClaude(["ok"], ends_after=None)
     daily(task([s], fake), datetime(2050, 4, 28, 12, tzinfo=UTC))
@@ -610,22 +621,157 @@ def test_a_batch_the_api_no_longer_knows_is_marked_failed_and_its_requests_sent_
     del fake.batches[lost]
     fake.ends_after = 1
     assert daily(task([s], fake), datetime(2050, 4, 29, 12, tzinfo=UTC)) == 0
-    r = last_run()
+    b = last_run()["checks"]["batches"]
+    assert not b["passed"] and b["detail"].count("NotFoundError (404)") == 1     # once, however often it was read
+    assert q("select status from ops.ai_batch where provider_batch_id = %s", lost) == [("submitted",)]
+    assert fake.create_calls == 1 and batch_requests([doc]) == [("doc_summary", "pending", "", True)]
+    x("update ops.ai_batch set submitted_at = submitted_at - interval '30 days' where provider_batch_id = %s", lost)
+    assert daily(task([s], fake), datetime(2050, 4, 30, 12, tzinfo=UTC)) == 0
     assert q("select status from ops.ai_batch where provider_batch_id = %s", lost) == [("failed",)]
     assert fake.create_calls == 2 and [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
-    assert not r["checks"]["batches"]["passed"] and "NotFoundError (404)" in r["checks"]["batches"]["detail"]
 
 
 @pytest.mark.db
-def test_a_results_read_that_breaks_off_is_finished_by_the_next_read_each_result_stored_once():
-    (s0, s1), old, new = two_statements(date(2050, 6, 15), date(2050, 7, 27))
-    fake, tick = FakeClaude(["ok"], truncate=1), Ticker()
-    assert daily(task([s0, s1], fake, tick=tick), datetime(2050, 7, 28, 12, tzinfo=UTC)) == 0
+def test_an_archived_batch_is_given_up_and_its_requests_sent_again():
+    s, doc = one_statement(date(2051, 4, 26))
+    fake = FakeClaude(["ok"], ends_after=None)
+    daily(task([s], fake), datetime(2051, 4, 27, 12, tzinfo=UTC))
+    archived = next(iter(fake.batches))
+    fake.archive(archived)
+    fake.ends_after = 1
+    assert daily(task([s], fake), datetime(2051, 4, 28, 12, tzinfo=UTC)) == 0
+    assert q("select status from ops.ai_batch where provider_batch_id = %s", archived) == [("failed",)]
+    assert fake.create_calls == 2 and [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("cut", ["mid", "clean"])
+def test_a_results_read_that_breaks_off_or_ends_short_is_finished_by_the_next_read(cut):
+    d0, d1 = (date(2050, 6, 15), date(2050, 7, 27)) if cut == "mid" else (date(2050, 6, 16), date(2050, 7, 28))
+    (s0, s1), old, new = two_statements(d0, d1)
+    fake, tick = FakeClaude(["ok"], truncate=1, cut=cut), Ticker()
+    assert daily(task([s0, s1], fake, tick=tick), datetime(2050, 7, 29, 12, tzinfo=UTC)) == 0
     r = last_run()
     assert fake.create_calls == 1 and tick.sleeps == [30.0, 60.0]
     assert q("select count(*) from core.ai_output where document_id = any(%s)", [old, new]) == [(3,)]   # one each
     assert [x[1] for x in batch_requests([old, new])] == ["succeeded"] * 3
     assert r["checks"]["batches"]["passed"]                                # the broken read was finished
+
+
+@pytest.mark.db
+def test_a_request_that_errored_in_a_half_read_batch_waits_for_the_rest_of_the_read():
+    """An errored result read before the read breaks off isn't sent again until its batch has been read to the end
+    (so the rest of the read still maps every result), and not twice in one run."""
+    (s0, s1), _, new = two_statements(date(2051, 1, 25), date(2051, 3, 15))
+    fake = FakeClaude(["ok", "ok", "400"], truncate=1, cut="clean")   # the diff errors; its result is read first
+    assert daily(task([s0, s1], fake), datetime(2051, 3, 16, 12, tzinfo=UTC)) == 0
+    detail = last_run()["checks"]["batches"]["detail"]
+    assert fake.create_calls == 1 and '"unknown"' not in detail and '"left_for_next_run": 1' in detail
+    assert sorted(batch_requests([new])) == [("doc_summary", "succeeded", "", True),
+                                             ("statement_diff_summary", "errored", "batch invalid_request_error", True)]
+    assert daily(task([s0, s1], fake), datetime(2051, 3, 17, 12, tzinfo=UTC)) == 0
+    assert fake.create_calls == 2 and sorted((g[0], g[1]) for g in outputs(new)) == [
+        ("doc_summary", "published"), ("statement_diff_summary", "published")]
+
+
+@pytest.mark.db
+def test_the_worst_case_of_what_waits_in_open_batches_counts_against_the_budget():
+    days = [date(2050, 9, 1) + timedelta(days=7 * i) for i in range(5)]
+    slugs, docs = [], []
+    for i, d in enumerate(days):
+        s, e = meeting(d)
+        slugs.append(s)
+        docs.append(statement(d, e, FOMC_A, publish=i < 4))
+    fake = FakeClaude(["ok"], ends_after=None)
+    daily(task(slugs, fake), datetime(2050, 10, 2, 12, tzinfo=UTC))
+    assert [len(b["requests"]) for b in fake.batches.values()] == [4]      # still processing
+    x("update core.document set is_published = true where id = %s", docs[4])
+    month = q("select coalesce(sum(ai_cost_usd), 0) from ops.task_run where started_at >= date_trunc('month', now())")
+    # Room for the new request on its own (its worst case is about $0.0023), not with the four in the open batch.
+    x("update ops.setting set value = %s where key = 'ai_monthly_budget_usd'", str(month[0][0] + Decimal("0.004")))
+    try:
+        daily(task(slugs, fake), datetime(2050, 10, 3, 12, tzinfo=UTC))
+    finally:
+        x("update ops.setting set value = '15' where key = 'ai_monthly_budget_usd'")
+    spend = json.loads(last_run()["checks"]["ai_spend"]["detail"])
+    assert fake.create_calls == 1 and spend["stopped"] == "budget"
+    assert Decimal(spend["in_batches_worst_usd"]) >= Decimal("0.008")
+    x("update ops.alert set resolved_at = now() where dedupe_key = %s and resolved_at is null",
+      f"ai_budget:{datetime.now(UTC):%Y-%m}")
+    fake.ends_after = 1
+    assert daily(task(slugs, fake), datetime(2050, 10, 4, 12, tzinfo=UTC)) == 0
+    assert fake.create_calls == 2 and [g[1] for d in docs for g in outputs(d)] == ["published"] * 5
+
+
+@pytest.mark.db
+def test_a_batch_whose_create_timed_out_is_found_and_adopted_not_sent_twice():
+    s, doc = one_statement(date(2050, 10, 26))
+    fake = FakeClaude(["ok"], creates=["lost", "ok"])
+    assert daily(task([s], fake), datetime(2050, 10, 27, 12, tzinfo=UTC)) == 0
+    b = last_run()["checks"]["batches"]
+    assert fake.create_calls == 1 and [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+    assert b["passed"] and '"adopted": ["msgbatch_' in b["detail"]
+    assert batch_requests([doc]) == [("doc_summary", "succeeded", "", True)]
+
+
+@pytest.mark.db
+def test_a_create_that_timed_out_before_making_a_batch_is_sent_again_by_the_next_run():
+    s, doc = one_statement(date(2050, 11, 30))
+    fake = FakeClaude(["ok"], creates=["lost_before", "ok"])
+    assert daily(task([s], fake), datetime(2050, 12, 1, 12, tzinfo=UTC)) == 0
+    b = last_run()["checks"]["batches"]
+    assert not b["passed"] and "create: APITimeoutError" in b["detail"] and fake.batches == {}
+    assert batch_requests([doc]) == [("doc_summary", "errored", "batch APITimeoutError", False)]
+    assert daily(task([s], fake), datetime(2050, 12, 2, 12, tzinfo=UTC)) == 0
+    assert fake.create_calls == 2 and [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+
+
+@pytest.mark.db
+def test_another_tasks_batches_are_left_to_it():
+    s, doc = one_statement(date(2051, 6, 14))
+    jr = q("insert into ops.job_run (workflow, trigger, runner) values ('daily', 'cli', 'local') returning id")[0][0]
+    tr = q("insert into ops.task_run (job_run_id, task_key) values (%s, %s) returning id", jr, FED_KEY)[0][0]
+    other = q("""insert into ops.ai_batch (provider_batch_id, task_run_id, request_count)
+                 values ('msgbatch_another_task_' || md5(random()::text), %s, 1) returning id""", tr)[0][0]
+    x("""insert into ops.ai_request (custom_id, ai_batch_id, ai_task, document_id, input_sha256, model, prompt_version)
+         values (%s, %s, 'doc_summary', %s, sha256('another task'::bytea), 'claude-haiku-5-5', 'v1')""",
+      f"doc_summary:doc-{doc}:feedfacefeedface", other, doc)
+    fake = FakeClaude(["ok"])
+    assert daily(task([s], fake), datetime(2051, 6, 15, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert r["checks"]["batches"]["passed"] and q("select status from ops.ai_batch where id = %s", other) == [
+        ("submitted",)]                                                    # never read (the fake would answer 404)
+    assert json.loads(r["checks"]["ai_spend"]["detail"])["in_batches_worst_usd"] == "0.0000"
+    assert [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+
+
+@pytest.mark.db
+def test_a_reply_the_database_refuses_is_stored_bare_with_its_cost_and_retried():
+    s, doc = one_statement(date(2051, 7, 26))
+    fake = FakeClaude(["nul", "ok"])
+    assert daily(task([s], fake), datetime(2051, 7, 27, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    got = outputs(doc)
+    assert [(g[0], g[1]) for g in got] == [("doc_summary", "rejected"), ("doc_summary", "published")]
+    assert got[0][2].startswith("retried: the reply couldn't be stored") and got[0][4] > 0
+    assert fake.create_calls == 2 and r["cost"] == (got[0][4] + got[1][4]).quantize(Decimal("0.0001"))
+    assert '"unstorable": 1' in r["checks"]["batches"]["detail"] and not r["checks"]["batches"]["passed"]
+
+
+@pytest.mark.db
+def test_a_result_another_run_stored_meanwhile_isnt_stored_again(monkeypatch):
+    s, doc = one_statement(date(2051, 9, 20))
+    fake = FakeClaude(["ok"])
+    real = AiBatch._entry
+
+    def entry(self, db, cid, doc_id, prompts, index):
+        got = real(self, db, cid, doc_id, prompts, index)
+        x("update ops.ai_request set status = 'succeeded' where custom_id = %s", cid)   # as another run would
+        return got
+    monkeypatch.setattr(AiBatch, "_entry", entry)
+    assert daily(task([s], fake), datetime(2051, 9, 21, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert fake.create_calls == 1 and outputs(doc) == [] and not r["cost"]
 
 
 def test_batches_are_split_under_the_request_and_size_limits():
