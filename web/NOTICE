@@ -1,0 +1,22 @@
+Finance Terminal, web/: third-party notices
+
+The site's front end (web/) includes the following third-party software. Each package's full licence text ships
+in its npm package (node_modules/<package>/LICENSE); only the notices a licence requires us to reproduce are here.
+
+--------------------------------------------------------------------------------------------------------------------
+TradingView Lightweight Charts (npm: lightweight-charts 5.2.1)
+https://github.com/tradingview/lightweight-charts
+
+Licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). The licence requires
+the attribution notice from its NOTICE file and a link to https://www.tradingview.com/ on the site. The notice, as
+published in the project's NOTICE file at tag v5.2.1:
+
+    TradingView Lightweight Charts™
+    Copyright (с) 2025 TradingView, Inc. https://www.tradingview.com/
+
+The link: every page's footer carries "Charts: TradingView Lightweight Charts", linking to https://www.tradingview.com/,
+and the charts' attributionLogo option is off (Design 01 §1.5, §4.1). The footer comes with the site shell, before
+any chart is drawn.
+
+Lightweight Charts incorporates parts of tslib (https://github.com/Microsoft/tslib, (c) Microsoft Corporation),
+covered by the BSD Zero Clause License, which requires no notice.
