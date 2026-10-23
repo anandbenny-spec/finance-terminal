@@ -11,6 +11,8 @@ node_modules/
 .vercel/
 .DS_Store
 data/
+# …except the front end's data components (Design 01 §7), which the rule above would silently drop (A0, 23 Oct 2026)
+!web/components/data/
 raw/
 
 # Supabase CLI local state (written by `supabase link`)
