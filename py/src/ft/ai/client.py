@@ -469,8 +469,8 @@ class Client:
         import anthropic
         import httpx2
         on = info.created_at.astimezone(UTC).date()
-        stream = self._call(lambda: self._api.messages.batches.results(info.id))
         try:
+            stream = self._call(lambda: self._api.messages.batches.results(info.id))
             for line in stream:
                 r = line.result
                 if r.type == "succeeded":
@@ -485,7 +485,9 @@ class Client:
                     yield BatchResult(line.custom_id, "errored", error=str(getattr(err, "type", None) or "error"))
                 else:                                   # canceled, expired: not billed
                     yield BatchResult(line.custom_id, str(r.type))
-        except (anthropic.APIError, httpx2.HTTPError, ValueError) as e:
+        except (anthropic.AnthropicError, httpx2.HTTPError, ValueError) as e:
+            # (A CallError from _call, a 404 say, passes through as it is.) The SDK raises its base AnthropicError
+            # when the batch has no results_url.
             raise CallError("ResultsStream", None, f"{type(e).__name__}: {e}") from None
 
 
