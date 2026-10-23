@@ -1,5 +1,6 @@
 # Rosters (Spec 01 D12): who sits on each committee, in what role, and when they vote. Read by ft/policy/members.py
-# and loaded into policy.member and policy.member_term on every policy.fed_documents run. Anand spot-checks.
+# and loaded into policy.member and policy.member_term on every policy.fed_documents and policy.rbi_documents run.
+# Anand spot-checks.
 #
 # Per person: name (as the statements write it), aliases (other spellings in the documents) and dated terms, each with
 # role, affiliation, voter (FOMC voting member), from, to (the last day, inclusive; absent = open) and a source note.
@@ -10,11 +11,15 @@
 # day: "Annual Organizational Matters" in that meeting's minutes), so each voting year is its own term. An alternate who
 # votes in a member's place keeps voter: false (the statement says "X voted as an alternate member").
 #
-# Coverage (B5 part 1, 23 Oct 2026): everyone who voted at an FOMC meeting from the 2025 organizational meeting
-# (28 Jan 2025) on, with terms from that date. The 2019-2024 voters and their earlier terms come with B5 part 2.
+# Coverage (B5 part 2, 24 Oct 2026): everyone who voted at an FOMC meeting from the Dec 2018 baseline (18-19 Dec 2018)
+# on, with every term from that meeting (or from taking office, if later) to the latest saved minutes (15-16 Sep 2026).
+# A president who has left ends on the last day of the last meeting the minutes list them at, not on the departure
+# date (as for the MPC below); the voting years come from each January's Annual Organizational Matters; a president who
+# didn't vote at the baseline starts at the 2019 term (29 Jan 2019).
 # Checked against: the Board's membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read
-# 23 Oct 2026); the minutes of 28-29 Jan 2025 and 27-28 Jan 2026 (Annual Organizational Matters; saved in
-# app/data/fixtures/fed/); and each Reserve Bank's announcement, cited per person.
+# 23 and 24 Oct 2026); the 62 minutes Jan 2019-Sep 2026 (Annual Organizational Matters each January; the attendance
+# lists; saved in app/data/fixtures/fed/); the Dec 2018 statement's voting line; and each Reserve Bank's announcement
+# where a president took office in the period, cited per person.
 
 fed:
   # ------------------------------------------------------------------ Board of Governors
@@ -25,14 +30,14 @@ fed:
       - role: fed_chair
         affiliation: Board of Governors
         voter: true
-        from: 2025-01-28
+        from: 2018-12-18
         to: 2026-05-21
-        source: "Board membership list (federalreserve.gov, read 23 Oct 2026): Board member since May 25, 2012; Chairman Feb. 5, 2018 - May 22, 2026, when Kevin Warsh took office as Chairman"
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): Board member since May 25, 2012; Chairman Feb. 5, 2018 - May 22, 2026, when Kevin Warsh took office as Chairman; the roster starts at the Dec 2018 baseline meeting (18-19 Dec 2018), not at the start of the term"
       - role: fed_governor
         affiliation: Board of Governors
         voter: true
         from: 2026-05-22
-        source: "Board membership list (federalreserve.gov, read 23 Oct 2026): still a Board member after his term as Chairman ended on May 22, 2026; votes as a member in the Jun-Sep 2026 minutes"
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): still a Board member after his term as Chairman ended on May 22, 2026; votes as a member in the Jun-Sep 2026 minutes"
   kevin-warsh:
     name: Kevin Warsh
     aliases: [Kevin M. Warsh]
@@ -41,7 +46,37 @@ fed:
         affiliation: Board of Governors
         voter: true
         from: 2026-05-22
-        source: "Board membership list (federalreserve.gov, read 23 Oct 2026): oath of office May 22, 2026; Chairman from May 22, 2026"
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): oath of office May 22, 2026; Chairman from May 22, 2026"
+  richard-h-clarida:
+    name: Richard H. Clarida
+    aliases: [Richard Clarida]
+    terms:
+      - role: fed_governor
+        affiliation: Board of Governors
+        voter: true
+        from: 2018-12-18
+        to: 2022-01-14
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): oath of office Sept. 17, 2018; the Board's Vice Chairman Sept. 17, 2018 - Jan. 14, 2022; resigned Jan. 14, 2022; the roster starts at the Dec 2018 baseline meeting (18-19 Dec 2018), not at the start of the term"
+  randal-k-quarles:
+    name: Randal K. Quarles
+    aliases: [Randal Quarles]
+    terms:
+      - role: fed_governor
+        affiliation: Board of Governors
+        voter: true
+        from: 2018-12-18
+        to: 2021-12-25
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): oath of office Oct. 13, 2017; Vice Chairman for Supervision Oct. 13, 2017 - Oct. 13, 2021; resigned Dec. 25, 2021; the roster starts at the Dec 2018 baseline meeting (18-19 Dec 2018), not at the start of the term"
+  lael-brainard:
+    name: Lael Brainard
+    aliases: []
+    terms:
+      - role: fed_governor
+        affiliation: Board of Governors
+        voter: true
+        from: 2018-12-18
+        to: 2023-02-18
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): oath of office June 16, 2014; the Board's Vice Chair May 23, 2022 - Feb. 18, 2023; resigned Feb. 18, 2023; the roster starts at the Dec 2018 baseline meeting (18-19 Dec 2018), not at the start of the term"
   philip-n-jefferson:
     name: Philip N. Jefferson
     aliases: [Philip Jefferson]
@@ -49,8 +84,8 @@ fed:
       - role: fed_governor
         affiliation: Board of Governors
         voter: true
-        from: 2025-01-28
-        source: "Board membership list (federalreserve.gov, read 23 Oct 2026): Board member since May 23, 2022; the Board's Vice Chair since Sept. 13, 2023"
+        from: 2022-05-23
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): Board member since May 23, 2022; the Board's Vice Chair since Sept. 13, 2023"
   michael-s-barr:
     name: Michael S. Barr
     aliases: [Michael Barr]
@@ -58,8 +93,8 @@ fed:
       - role: fed_governor
         affiliation: Board of Governors
         voter: true
-        from: 2025-01-28
-        source: "Board membership list (federalreserve.gov, read 23 Oct 2026): Board member since July 19, 2022; Vice Chair for Supervision July 19, 2022 - Feb. 28, 2025"
+        from: 2022-07-19
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): Board member since July 19, 2022; Vice Chair for Supervision July 19, 2022 - Feb. 28, 2025"
   michelle-w-bowman:
     name: Michelle W. Bowman
     aliases: [Michelle Bowman]
@@ -67,8 +102,8 @@ fed:
       - role: fed_governor
         affiliation: Board of Governors
         voter: true
-        from: 2025-01-28
-        source: "Board membership list (federalreserve.gov, read 23 Oct 2026): Board member since Nov. 26, 2018, reappointed Jan. 30, 2020; Vice Chair for Supervision since June 9, 2025"
+        from: 2018-12-18
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): Board member since Nov. 26, 2018, reappointed Jan. 30, 2020; Vice Chair for Supervision since June 9, 2025; the roster starts at the Dec 2018 baseline meeting (18-19 Dec 2018), not at the start of the term"
   lisa-d-cook:
     name: Lisa D. Cook
     aliases: [Lisa Cook]
@@ -76,8 +111,8 @@ fed:
       - role: fed_governor
         affiliation: Board of Governors
         voter: true
-        from: 2025-01-28
-        source: "Board membership list (federalreserve.gov, read 23 Oct 2026): Board member since May 23, 2022, reappointed Sept. 13, 2023"
+        from: 2022-05-23
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): Board member since May 23, 2022, reappointed Sept. 13, 2023"
   christopher-j-waller:
     name: Christopher J. Waller
     aliases: [Christopher Waller]
@@ -85,8 +120,8 @@ fed:
       - role: fed_governor
         affiliation: Board of Governors
         voter: true
-        from: 2025-01-28
-        source: "Board membership list (federalreserve.gov, read 23 Oct 2026): Board member since Dec. 18, 2020"
+        from: 2020-12-18
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): Board member since Dec. 18, 2020"
   adriana-d-kugler:
     name: Adriana D. Kugler
     aliases: [Adriana Kugler]
@@ -94,9 +129,9 @@ fed:
       - role: fed_governor
         affiliation: Board of Governors
         voter: true
-        from: 2025-01-28
+        from: 2023-09-13
         to: 2025-08-08
-        source: "Board membership list (federalreserve.gov, read 23 Oct 2026): Board member since Sept. 13, 2023; resigned Aug. 8, 2025 (the 30 Jul 2025 statement: 'Absent and not voting was Adriana D. Kugler')"
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): Board member since Sept. 13, 2023; resigned Aug. 8, 2025 (the 30 Jul 2025 statement: 'Absent and not voting was Adriana D. Kugler')"
   stephen-i-miran:
     name: Stephen I. Miran
     aliases: [Stephen Miran]
@@ -106,7 +141,7 @@ fed:
         voter: true
         from: 2025-09-16
         to: 2026-05-21
-        source: "Board membership list (federalreserve.gov, read 23 Oct 2026): oath of office Sept. 16, 2025; resigned May 21, 2026"
+        source: "Board membership list (federalreserve.gov/aboutthefed/bios/board/boardmembership.htm, read 24 Oct 2026): oath of office Sept. 16, 2025; resigned May 21, 2026"
 
   # ------------------------------------------------------------------ Reserve Bank presidents
   john-c-williams:
@@ -116,68 +151,322 @@ fed:
       - role: fed_vice_chair
         affiliation: FRB New York
         voter: true
-        from: 2025-01-28
-        source: "New York Fed, 18 Jun 2018: president since June 18, 2018 (newyorkfed.org/newsevents/statements/2018/0618-2018); the Committee's Vice Chair in the 2025 and 2026 statements and minutes; a voting member every year (the New York Fed's permanent seat)"
-  susan-m-collins:
-    name: Susan M. Collins
-    aliases: [Susan Collins]
+        from: 2018-12-18
+        source: "New York Fed, 18 Jun 2018: president since June 18, 2018 (newyorkfed.org/newsevents/statements/2018/0618-2018); the Committee's Vice Chair in every statement and minutes from Dec 2018 on; elected a member every year (the New York Fed's permanent seat: Annual Organizational Matters, Jan 2019-Jan 2026); the roster starts at the Dec 2018 baseline meeting (18-19 Dec 2018), not at the start of the term"
+  thomas-i-barkin:
+    name: Thomas I. Barkin
+    aliases: [Thomas Barkin]
     terms:
       - role: fed_bank_president
-        affiliation: FRB Boston
+        affiliation: FRB Richmond
         voter: true
-        from: 2025-01-28
-        to: 2026-01-26
-        source: "Boston Fed, 1 Jul 2022: president since July 1, 2022 (bostonfed.org); FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: elected a member for the term beginning January 28, 2025"
+        from: 2018-12-18
+        to: 2019-01-28
+        source: "FOMC statement, 19 Dec 2018: 'Voting for the FOMC monetary policy action were …' names him as a member (the 2018 voting year); the roster starts at the Dec 2018 baseline meeting (18-19 Dec 2018), not at the start of the term"
       - role: fed_bank_president
-        affiliation: FRB Boston
+        affiliation: FRB Richmond
         voter: false
-        from: 2026-01-27
-        source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: not among the members elected for the term beginning January 27, 2026 (attends as a Reserve Bank president)"
-  austan-d-goolsbee:
-    name: Austan D. Goolsbee
-    aliases: [Austan Goolsbee]
+        from: 2019-01-29
+        to: 2021-01-25
+        source: "FOMC minutes, 29-30 Jan 2019, Annual Organizational Matters: not elected (a non-voting president: the minutes' attendance) for the term beginning January 29, 2019; FOMC minutes, 28-29 Jan 2020, Annual Organizational Matters: alternate (for Patrick Harker) for the term beginning January 28, 2020"
+      - role: fed_bank_president
+        affiliation: FRB Richmond
+        voter: true
+        from: 2021-01-26
+        to: 2022-01-24
+        source: "FOMC minutes, 26-27 Jan 2021, Annual Organizational Matters: elected a member for the term beginning January 26, 2021"
+      - role: fed_bank_president
+        affiliation: FRB Richmond
+        voter: false
+        from: 2022-01-25
+        to: 2024-01-29
+        source: "FOMC minutes, 25-26 Jan 2022, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 25, 2022; FOMC minutes, 31 Jan-1 Feb 2023, Annual Organizational Matters: alternate (for Patrick Harker) for the term beginning January 31, 2023"
+      - role: fed_bank_president
+        affiliation: FRB Richmond
+        voter: true
+        from: 2024-01-30
+        to: 2025-01-27
+        source: "FOMC minutes, 30-31 Jan 2024, Annual Organizational Matters: elected a member for the term beginning January 30, 2024"
+      - role: fed_bank_president
+        affiliation: FRB Richmond
+        voter: false
+        from: 2025-01-28
+        source: "FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 28, 2025; FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: alternate (for Anna Paulson) for the term beginning January 27, 2026; still attending at the latest saved minutes (15-16 Sep 2026)"
+  raphael-w-bostic:
+    name: Raphael W. Bostic
+    aliases: [Raphael Bostic]
+    terms:
+      - role: fed_bank_president
+        affiliation: FRB Atlanta
+        voter: true
+        from: 2018-12-18
+        to: 2019-01-28
+        source: "FOMC statement, 19 Dec 2018: 'Voting for the FOMC monetary policy action were …' names him as a member (the 2018 voting year); the roster starts at the Dec 2018 baseline meeting (18-19 Dec 2018), not at the start of the term"
+      - role: fed_bank_president
+        affiliation: FRB Atlanta
+        voter: false
+        from: 2019-01-29
+        to: 2021-01-25
+        source: "FOMC minutes, 29-30 Jan 2019, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 29, 2019; FOMC minutes, 28-29 Jan 2020, Annual Organizational Matters: alternate (for Robert S. Kaplan) for the term beginning January 28, 2020"
+      - role: fed_bank_president
+        affiliation: FRB Atlanta
+        voter: true
+        from: 2021-01-26
+        to: 2022-01-24
+        source: "FOMC minutes, 26-27 Jan 2021, Annual Organizational Matters: elected a member for the term beginning January 26, 2021"
+      - role: fed_bank_president
+        affiliation: FRB Atlanta
+        voter: false
+        from: 2022-01-25
+        to: 2024-01-29
+        source: "FOMC minutes, 25-26 Jan 2022, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 25, 2022; FOMC minutes, 31 Jan-1 Feb 2023, Annual Organizational Matters: alternate (for Lorie K. Logan) for the term beginning January 31, 2023"
+      - role: fed_bank_president
+        affiliation: FRB Atlanta
+        voter: true
+        from: 2024-01-30
+        to: 2025-01-27
+        source: "FOMC minutes, 30-31 Jan 2024, Annual Organizational Matters: elected a member for the term beginning January 30, 2024"
+      - role: fed_bank_president
+        affiliation: FRB Atlanta
+        voter: false
+        from: 2025-01-28
+        to: 2026-01-28
+        source: "FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 28, 2025; FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: alternate (for Lorie K. Logan) for the term beginning January 27, 2026; last attended 27-28 Jan 2026 (from Mar 2026 the minutes list Cheryl L. Venable for Atlanta): the roster's last day is his last meeting, not the departure date"
+  mary-c-daly:
+    name: Mary C. Daly
+    aliases: [Mary Daly]
+    terms:
+      - role: fed_bank_president
+        affiliation: FRB San Francisco
+        voter: true
+        from: 2018-12-18
+        to: 2019-01-28
+        source: "FOMC statement, 19 Dec 2018: 'Voting for the FOMC monetary policy action were …' names her as a member (the 2018 voting year); the roster starts at the Dec 2018 baseline meeting (18-19 Dec 2018), not at the start of the term"
+      - role: fed_bank_president
+        affiliation: FRB San Francisco
+        voter: false
+        from: 2019-01-29
+        to: 2021-01-25
+        source: "FOMC minutes, 29-30 Jan 2019, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 29, 2019; FOMC minutes, 28-29 Jan 2020, Annual Organizational Matters: alternate (for Neel Kashkari) for the term beginning January 28, 2020; voted as an alternate on 5 Nov 2020"
+      - role: fed_bank_president
+        affiliation: FRB San Francisco
+        voter: true
+        from: 2021-01-26
+        to: 2022-01-24
+        source: "FOMC minutes, 26-27 Jan 2021, Annual Organizational Matters: elected a member for the term beginning January 26, 2021"
+      - role: fed_bank_president
+        affiliation: FRB San Francisco
+        voter: false
+        from: 2022-01-25
+        to: 2024-01-29
+        source: "FOMC minutes, 25-26 Jan 2022, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 25, 2022; FOMC minutes, 31 Jan-1 Feb 2023, Annual Organizational Matters: alternate (for Neel Kashkari) for the term beginning January 31, 2023"
+      - role: fed_bank_president
+        affiliation: FRB San Francisco
+        voter: true
+        from: 2024-01-30
+        to: 2025-01-27
+        source: "FOMC minutes, 30-31 Jan 2024, Annual Organizational Matters: elected a member for the term beginning January 30, 2024"
+      - role: fed_bank_president
+        affiliation: FRB San Francisco
+        voter: false
+        from: 2025-01-28
+        source: "FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 28, 2025; FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: alternate (for Neel Kashkari) for the term beginning January 27, 2026; still attending at the latest saved minutes (15-16 Sep 2026)"
+  loretta-j-mester:
+    name: Loretta J. Mester
+    aliases: [Loretta Mester]
+    terms:
+      - role: fed_bank_president
+        affiliation: FRB Cleveland
+        voter: true
+        from: 2018-12-18
+        to: 2019-01-28
+        source: "FOMC statement, 19 Dec 2018: 'Voting for the FOMC monetary policy action were …' names her as a member (the 2018 voting year); the roster starts at the Dec 2018 baseline meeting (18-19 Dec 2018), not at the start of the term"
+      - role: fed_bank_president
+        affiliation: FRB Cleveland
+        voter: false
+        from: 2019-01-29
+        to: 2020-01-27
+        source: "FOMC minutes, 29-30 Jan 2019, Annual Organizational Matters: alternate (for Charles L. Evans) for the term beginning January 29, 2019"
+      - role: fed_bank_president
+        affiliation: FRB Cleveland
+        voter: true
+        from: 2020-01-28
+        to: 2021-01-25
+        source: "FOMC minutes, 28-29 Jan 2020, Annual Organizational Matters: elected a member for the term beginning January 28, 2020"
+      - role: fed_bank_president
+        affiliation: FRB Cleveland
+        voter: false
+        from: 2021-01-26
+        to: 2022-01-24
+        source: "FOMC minutes, 26-27 Jan 2021, Annual Organizational Matters: alternate (for Charles L. Evans) for the term beginning January 26, 2021"
+      - role: fed_bank_president
+        affiliation: FRB Cleveland
+        voter: true
+        from: 2022-01-25
+        to: 2023-01-30
+        source: "FOMC minutes, 25-26 Jan 2022, Annual Organizational Matters: elected a member for the term beginning January 25, 2022"
+      - role: fed_bank_president
+        affiliation: FRB Cleveland
+        voter: false
+        from: 2023-01-31
+        to: 2024-01-29
+        source: "FOMC minutes, 31 Jan-1 Feb 2023, Annual Organizational Matters: alternate (for Austan D. Goolsbee) for the term beginning January 31, 2023"
+      - role: fed_bank_president
+        affiliation: FRB Cleveland
+        voter: true
+        from: 2024-01-30
+        to: 2024-06-12
+        source: "FOMC minutes, 30-31 Jan 2024, Annual Organizational Matters: elected a member for the term beginning January 30, 2024; last attended 11-12 Jun 2024 (Cleveland's seat was vacant on 30-31 Jul 2024): the roster's last day is her last meeting, not the departure date"
+  charles-l-evans:
+    name: Charles L. Evans
+    aliases: [Charles Evans]
     terms:
       - role: fed_bank_president
         affiliation: FRB Chicago
         voter: true
-        from: 2025-01-28
-        to: 2026-01-26
-        source: "Chicago Fed (chicagofed.org/tenthpresident) and the Board's Chicago page: president effective January 9, 2023; FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: elected a member for the term beginning January 28, 2025"
+        from: 2019-01-29
+        to: 2020-01-27
+        source: "FOMC minutes, 29-30 Jan 2019, Annual Organizational Matters: elected a member for the term beginning January 29, 2019"
       - role: fed_bank_president
         affiliation: FRB Chicago
         voter: false
-        from: 2026-01-27
-        source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: alternate (for Beth M. Hammack) for the term beginning January 27, 2026"
-  alberto-g-musalem:
-    name: Alberto G. Musalem
-    aliases: [Alberto Musalem]
+        from: 2020-01-28
+        to: 2021-01-25
+        source: "FOMC minutes, 28-29 Jan 2020, Annual Organizational Matters: alternate (for Loretta J. Mester) for the term beginning January 28, 2020"
+      - role: fed_bank_president
+        affiliation: FRB Chicago
+        voter: true
+        from: 2021-01-26
+        to: 2022-01-24
+        source: "FOMC minutes, 26-27 Jan 2021, Annual Organizational Matters: elected a member for the term beginning January 26, 2021"
+      - role: fed_bank_president
+        affiliation: FRB Chicago
+        voter: false
+        from: 2022-01-25
+        to: 2022-12-14
+        source: "FOMC minutes, 25-26 Jan 2022, Annual Organizational Matters: alternate (for Loretta J. Mester) for the term beginning January 25, 2022; last attended 13-14 Dec 2022: the roster's last day is his last meeting, not the departure date"
+  eric-s-rosengren:
+    name: Eric S. Rosengren
+    aliases: [Eric Rosengren]
+    terms:
+      - role: fed_bank_president
+        affiliation: FRB Boston
+        voter: true
+        from: 2019-01-29
+        to: 2020-01-27
+        source: "FOMC minutes, 29-30 Jan 2019, Annual Organizational Matters: elected a member for the term beginning January 29, 2019 (the minutes write 'Eric Rosengren', the statements 'Eric S. Rosengren')"
+      - role: fed_bank_president
+        affiliation: FRB Boston
+        voter: false
+        from: 2020-01-28
+        to: 2021-09-22
+        source: "FOMC minutes, 28-29 Jan 2020, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 28, 2020; FOMC minutes, 26-27 Jan 2021, Annual Organizational Matters: alternate (for Thomas I. Barkin) for the term beginning January 26, 2021; last attended 21-22 Sep 2021: the roster's last day is his last meeting, not the departure date"
+  james-bullard:
+    name: James Bullard
+    aliases: []
     terms:
       - role: fed_bank_president
         affiliation: FRB St. Louis
         voter: true
-        from: 2025-01-28
-        to: 2026-01-26
-        source: "St. Louis Fed, 2 Apr 2024: president since April 2, 2024 (stlouisfed.org news release); FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: elected a member for the term beginning January 28, 2025"
+        from: 2019-01-29
+        to: 2020-01-27
+        source: "FOMC minutes, 29-30 Jan 2019, Annual Organizational Matters: elected a member for the term beginning January 29, 2019"
       - role: fed_bank_president
         affiliation: FRB St. Louis
         voter: false
-        from: 2026-01-27
-        source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: not among the members elected for the term beginning January 27, 2026"
-  jeffrey-r-schmid:
-    name: Jeffrey R. Schmid
-    aliases: [Jeffrey Schmid]
+        from: 2020-01-28
+        to: 2022-01-24
+        source: "FOMC minutes, 28-29 Jan 2020, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 28, 2020; FOMC minutes, 26-27 Jan 2021, Annual Organizational Matters: alternate (for Raphael W. Bostic) for the term beginning January 26, 2021"
+      - role: fed_bank_president
+        affiliation: FRB St. Louis
+        voter: true
+        from: 2022-01-25
+        to: 2023-01-30
+        source: "FOMC minutes, 25-26 Jan 2022, Annual Organizational Matters: elected a member for the term beginning January 25, 2022"
+      - role: fed_bank_president
+        affiliation: FRB St. Louis
+        voter: false
+        from: 2023-01-31
+        to: 2023-06-14
+        source: "FOMC minutes, 31 Jan-1 Feb 2023, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 31, 2023; last attended 13-14 Jun 2023: the roster's last day is his last meeting, not the departure date"
+  esther-l-george:
+    name: Esther L. George
+    aliases: [Esther George]
     terms:
       - role: fed_bank_president
         affiliation: FRB Kansas City
         voter: true
-        from: 2025-01-28
-        to: 2026-01-26
-        source: "Kansas City Fed, 2 Aug 2023 and Federal Reserve History: president since August 21, 2023; FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: elected a member for the term beginning January 28, 2025"
+        from: 2019-01-29
+        to: 2020-01-27
+        source: "FOMC minutes, 29-30 Jan 2019, Annual Organizational Matters: elected a member for the term beginning January 29, 2019"
       - role: fed_bank_president
         affiliation: FRB Kansas City
         voter: false
-        from: 2026-01-27
-        source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: not among the members elected for the term beginning January 27, 2026"
+        from: 2020-01-28
+        to: 2022-01-24
+        source: "FOMC minutes, 28-29 Jan 2020, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 28, 2020; FOMC minutes, 26-27 Jan 2021, Annual Organizational Matters: alternate (for Mary C. Daly) for the term beginning January 26, 2021"
+      - role: fed_bank_president
+        affiliation: FRB Kansas City
+        voter: true
+        from: 2022-01-25
+        to: 2022-12-14
+        source: "FOMC minutes, 25-26 Jan 2022, Annual Organizational Matters: elected a member for the term beginning January 25, 2022; last attended 13-14 Dec 2022 (Kelly J. Dubbert attends for Kansas City from Jan 2023): the roster's last day is her last meeting, not the departure date"
+  patrick-harker:
+    name: Patrick Harker
+    aliases: []
+    terms:
+      - role: fed_bank_president
+        affiliation: FRB Philadelphia
+        voter: false
+        from: 2019-01-29
+        to: 2020-01-27
+        source: "FOMC minutes, 29-30 Jan 2019, Annual Organizational Matters: alternate (for Eric Rosengren) for the term beginning January 29, 2019"
+      - role: fed_bank_president
+        affiliation: FRB Philadelphia
+        voter: true
+        from: 2020-01-28
+        to: 2021-01-25
+        source: "FOMC minutes, 28-29 Jan 2020, Annual Organizational Matters: elected a member for the term beginning January 28, 2020"
+      - role: fed_bank_president
+        affiliation: FRB Philadelphia
+        voter: false
+        from: 2021-01-26
+        to: 2023-01-30
+        source: "FOMC minutes, 26-27 Jan 2021, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 26, 2021; FOMC minutes, 25-26 Jan 2022, Annual Organizational Matters: alternate for the Boston seat, vacant until Jul 2022 for the term beginning January 25, 2022; voted as an alternate in Jan, Mar, May and Jun 2022"
+      - role: fed_bank_president
+        affiliation: FRB Philadelphia
+        voter: true
+        from: 2023-01-31
+        to: 2024-01-29
+        source: "FOMC minutes, 31 Jan-1 Feb 2023, Annual Organizational Matters: elected a member for the term beginning January 31, 2023"
+      - role: fed_bank_president
+        affiliation: FRB Philadelphia
+        voter: false
+        from: 2024-01-30
+        to: 2025-06-18
+        source: "FOMC minutes, 30-31 Jan 2024, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 30, 2024; FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: alternate (for Susan M. Collins) for the term beginning January 28, 2025; last attended 17-18 Jun 2025 (Anna Paulson from Jul 2025): the roster's last day is his last meeting, not the departure date"
+  robert-s-kaplan:
+    name: Robert S. Kaplan
+    aliases: [Robert Kaplan]
+    terms:
+      - role: fed_bank_president
+        affiliation: FRB Dallas
+        voter: false
+        from: 2019-01-29
+        to: 2020-01-27
+        source: "FOMC minutes, 29-30 Jan 2019, Annual Organizational Matters: alternate (for James Bullard) for the term beginning January 29, 2019"
+      - role: fed_bank_president
+        affiliation: FRB Dallas
+        voter: true
+        from: 2020-01-28
+        to: 2021-01-25
+        source: "FOMC minutes, 28-29 Jan 2020, Annual Organizational Matters: elected a member for the term beginning January 28, 2020"
+      - role: fed_bank_president
+        affiliation: FRB Dallas
+        voter: false
+        from: 2021-01-26
+        to: 2021-09-22
+        source: "FOMC minutes, 26-27 Jan 2021, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 26, 2021; last attended 21-22 Sep 2021 (Meredith Black, interim, from Nov 2021): the roster's last day is his last meeting, not the departure date"
   neel-kashkari:
     name: Neel Kashkari
     aliases: []
@@ -185,29 +474,65 @@ fed:
       - role: fed_bank_president
         affiliation: FRB Minneapolis
         voter: false
-        from: 2025-01-28
+        from: 2019-01-29
+        to: 2020-01-27
+        source: "FOMC minutes, 29-30 Jan 2019, Annual Organizational Matters: alternate (for Esther L. George) for the term beginning January 29, 2019"
+      - role: fed_bank_president
+        affiliation: FRB Minneapolis
+        voter: true
+        from: 2020-01-28
+        to: 2021-01-25
+        source: "FOMC minutes, 28-29 Jan 2020, Annual Organizational Matters: elected a member for the term beginning January 28, 2020 (absent on 4-5 Nov 2020, Mary C. Daly voting as the alternate)"
+      - role: fed_bank_president
+        affiliation: FRB Minneapolis
+        voter: false
+        from: 2021-01-26
+        to: 2023-01-30
+        source: "FOMC minutes, 26-27 Jan 2021, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 26, 2021; FOMC minutes, 25-26 Jan 2022, Annual Organizational Matters: alternate (for Esther L. George) for the term beginning January 25, 2022"
+      - role: fed_bank_president
+        affiliation: FRB Minneapolis
+        voter: true
+        from: 2023-01-31
+        to: 2024-01-29
+        source: "FOMC minutes, 31 Jan-1 Feb 2023, Annual Organizational Matters: elected a member for the term beginning January 31, 2023"
+      - role: fed_bank_president
+        affiliation: FRB Minneapolis
+        voter: false
+        from: 2024-01-30
         to: 2026-01-26
-        source: "Minneapolis Fed, 10 Nov 2015 and Federal Reserve History: president since January 1, 2016; FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: alternate (for Jeffrey R. Schmid) for the term beginning January 28, 2025; voted as an alternate on 7 May 2025"
+        source: "FOMC minutes, 30-31 Jan 2024, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 30, 2024; FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: alternate (for Jeffrey R. Schmid) for the term beginning January 28, 2025; voted as an alternate on 7 May 2025"
       - role: fed_bank_president
         affiliation: FRB Minneapolis
         voter: true
         from: 2026-01-27
         source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: elected a member for the term beginning January 27, 2026"
-  beth-m-hammack:
-    name: Beth M. Hammack
-    aliases: [Beth Hammack]
+  susan-m-collins:
+    name: Susan M. Collins
+    aliases: [Susan Collins]
     terms:
       - role: fed_bank_president
-        affiliation: FRB Cleveland
+        affiliation: FRB Boston
+        voter: true
+        from: 2022-07-01
+        to: 2023-01-30
+        source: "Boston Fed, 1 Jul 2022: president since July 1, 2022 (bostonfed.org); votes as a member from 26-27 Jul 2022 (Boston's seat for 2022, vacant since the term began)"
+      - role: fed_bank_president
+        affiliation: FRB Boston
         voter: false
+        from: 2023-01-31
+        to: 2025-01-27
+        source: "FOMC minutes, 31 Jan-1 Feb 2023, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 31, 2023; FOMC minutes, 30-31 Jan 2024, Annual Organizational Matters: alternate (for Thomas I. Barkin) for the term beginning January 30, 2024"
+      - role: fed_bank_president
+        affiliation: FRB Boston
+        voter: true
         from: 2025-01-28
         to: 2026-01-26
-        source: "Cleveland Fed (clevelandfed.org profile; 29 May 2024 announcement): president since August 21, 2024; FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: alternate (for Austan D. Goolsbee) for the term beginning January 28, 2025"
+        source: "FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: elected a member for the term beginning January 28, 2025"
       - role: fed_bank_president
-        affiliation: FRB Cleveland
-        voter: true
+        affiliation: FRB Boston
+        voter: false
         from: 2026-01-27
-        source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: elected a member for the term beginning January 27, 2026"
+        source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: not elected (attends as a Reserve Bank president) for the term beginning January 27, 2026"
   lorie-k-logan:
     name: Lorie K. Logan
     aliases: [Lorie Logan]
@@ -215,11 +540,119 @@ fed:
       - role: fed_bank_president
         affiliation: FRB Dallas
         voter: false
-        from: 2025-01-28
-        to: 2026-01-26
-        source: "Dallas Fed (dallasfed.org/fed/leadership/logan): president since Aug. 22, 2022; FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: alternate (for Alberto G. Musalem) for the term beginning January 28, 2025"
+        from: 2022-08-22
+        to: 2023-01-30
+        source: "Dallas Fed (dallasfed.org/fed/leadership/logan): president since Aug. 22, 2022; an alternate in the Sep-Dec 2022 minutes' attendance"
       - role: fed_bank_president
         affiliation: FRB Dallas
+        voter: true
+        from: 2023-01-31
+        to: 2024-01-29
+        source: "FOMC minutes, 31 Jan-1 Feb 2023, Annual Organizational Matters: elected a member for the term beginning January 31, 2023"
+      - role: fed_bank_president
+        affiliation: FRB Dallas
+        voter: false
+        from: 2024-01-30
+        to: 2026-01-26
+        source: "FOMC minutes, 30-31 Jan 2024, Annual Organizational Matters: not elected (a non-voting president) for the term beginning January 30, 2024; FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: alternate (for Alberto G. Musalem) for the term beginning January 28, 2025"
+      - role: fed_bank_president
+        affiliation: FRB Dallas
+        voter: true
+        from: 2026-01-27
+        source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: elected a member for the term beginning January 27, 2026"
+  austan-d-goolsbee:
+    name: Austan D. Goolsbee
+    aliases: [Austan Goolsbee]
+    terms:
+      - role: fed_bank_president
+        affiliation: FRB Chicago
+        voter: false
+        from: 2023-01-09
+        to: 2023-01-30
+        source: "Chicago Fed (chicagofed.org/tenthpresident) and the Board's Chicago page: president effective January 9, 2023, three weeks before the 2023 term began"
+      - role: fed_bank_president
+        affiliation: FRB Chicago
+        voter: true
+        from: 2023-01-31
+        to: 2024-01-29
+        source: "FOMC minutes, 31 Jan-1 Feb 2023, Annual Organizational Matters: elected a member for the term beginning January 31, 2023"
+      - role: fed_bank_president
+        affiliation: FRB Chicago
+        voter: false
+        from: 2024-01-30
+        to: 2025-01-27
+        source: "FOMC minutes, 30-31 Jan 2024, Annual Organizational Matters: alternate (for Loretta J. Mester) for the term beginning January 30, 2024; voted as an alternate on 31 Jul 2024 (Cleveland's seat vacant)"
+      - role: fed_bank_president
+        affiliation: FRB Chicago
+        voter: true
+        from: 2025-01-28
+        to: 2026-01-26
+        source: "FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: elected a member for the term beginning January 28, 2025"
+      - role: fed_bank_president
+        affiliation: FRB Chicago
+        voter: false
+        from: 2026-01-27
+        source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: alternate (for Beth M. Hammack) for the term beginning January 27, 2026"
+  jeffrey-r-schmid:
+    name: Jeffrey R. Schmid
+    aliases: [Jeffrey Schmid]
+    terms:
+      - role: fed_bank_president
+        affiliation: FRB Kansas City
+        voter: false
+        from: 2023-08-21
+        to: 2025-01-27
+        source: "Kansas City Fed, 2 Aug 2023 and Federal Reserve History: president since August 21, 2023; FOMC minutes, 30-31 Jan 2024, Annual Organizational Matters: alternate (for Mary C. Daly) for the term beginning January 30, 2024"
+      - role: fed_bank_president
+        affiliation: FRB Kansas City
+        voter: true
+        from: 2025-01-28
+        to: 2026-01-26
+        source: "FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: elected a member for the term beginning January 28, 2025"
+      - role: fed_bank_president
+        affiliation: FRB Kansas City
+        voter: false
+        from: 2026-01-27
+        source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: not elected (attends as a Reserve Bank president) for the term beginning January 27, 2026"
+  alberto-g-musalem:
+    name: Alberto G. Musalem
+    aliases: [Alberto Musalem]
+    terms:
+      - role: fed_bank_president
+        affiliation: FRB St. Louis
+        voter: false
+        from: 2024-04-02
+        to: 2025-01-27
+        source: "St. Louis Fed, 2 Apr 2024: president since April 2, 2024 (stlouisfed.org news release); an alternate (for Raphael W. Bostic) in the Apr-Dec 2024 minutes' attendance"
+      - role: fed_bank_president
+        affiliation: FRB St. Louis
+        voter: true
+        from: 2025-01-28
+        to: 2026-01-26
+        source: "FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: elected a member for the term beginning January 28, 2025"
+      - role: fed_bank_president
+        affiliation: FRB St. Louis
+        voter: false
+        from: 2026-01-27
+        source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: not elected (attends as a Reserve Bank president) for the term beginning January 27, 2026"
+  beth-m-hammack:
+    name: Beth M. Hammack
+    aliases: [Beth Hammack]
+    terms:
+      - role: fed_bank_president
+        affiliation: FRB Cleveland
+        voter: true
+        from: 2024-08-21
+        to: 2025-01-27
+        source: "Cleveland Fed (clevelandfed.org profile; 29 May 2024 announcement): president since August 21, 2024; votes as a member from 17-18 Sep 2024 (Cleveland's seat for 2024)"
+      - role: fed_bank_president
+        affiliation: FRB Cleveland
+        voter: false
+        from: 2025-01-28
+        to: 2026-01-26
+        source: "FOMC minutes, 28-29 Jan 2025, Annual Organizational Matters: alternate (for Austan D. Goolsbee) for the term beginning January 28, 2025"
+      - role: fed_bank_president
+        affiliation: FRB Cleveland
         voter: true
         from: 2026-01-27
         source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: elected a member for the term beginning January 27, 2026"
@@ -232,7 +665,7 @@ fed:
         voter: false
         from: 2025-07-01
         to: 2026-01-26
-        source: "Philadelphia Fed (philadelphiafed.org/our-people/anna-paulson): president since July 1, 2025; an alternate in the Jul-Dec 2025 minutes' attendance"
+        source: "Philadelphia Fed (philadelphiafed.org/our-people/anna-paulson): president since July 1, 2025; an alternate (for Susan M. Collins) in the Jul-Dec 2025 minutes' attendance"
       - role: fed_bank_president
         affiliation: FRB Philadelphia
         voter: true
