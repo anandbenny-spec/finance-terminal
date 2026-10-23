@@ -21,7 +21,9 @@ the RSS item's link is used, and a later run's `annual_policy_link` check (W) co
 **What a resolution stores:** the raw file (through the fetcher), the document (its canonical text), its chunks, the
 diff against the previous meeting's resolution, a rate row per instrument it states (repo; reverse repo before 8 Apr
 2022, SDF from then; MSF; Bank Rate; never CRR: D5), each with its change against the previous meeting and the
-sentence's span, the votes, the CPI and GDP projections (core.forecast, vintage = the decision date), and the meeting
+sentence's span, the votes, the CPI and GDP projections (core.forecast, vintage = the decision date; a target the
+regex reads replaces an AI-extracted row for it, since policy.ai_batch's projection_extraction is only the fallback
+where the regex failed), and the meeting
 marked `held` and published with its document. If the previous meeting's resolution isn't stored, it's stored too,
 unpublished, as the diff's base and for the change. The baseline's changes come from its own decision sentences.
 The first SDF row's change is measured against the reverse repo it replaced as the corridor floor (+40 bps on 8 Apr
@@ -564,14 +566,16 @@ class RbiDocuments(Task):
                    on conflict (series_id, vintage_date, target_start, target_end) do update set
                      target_label = excluded.target_label, value = excluded.value, value_low = excluded.value_low,
                      value_high = excluded.value_high, method = excluded.method, document_id = excluded.document_id,
-                     char_start = excluded.char_start, char_end = excluded.char_end, task_run_id = excluded.task_run_id
-                   where core.forecast.method = 'parsed'
-                     and (core.forecast.target_label, core.forecast.value, core.forecast.value_low,
-                          core.forecast.value_high, core.forecast.document_id, core.forecast.char_start,
-                          core.forecast.char_end)
-                         is distinct from (excluded.target_label, excluded.value, excluded.value_low,
-                                           excluded.value_high, excluded.document_id, excluded.char_start,
-                                           excluded.char_end)""",
+                     char_start = excluded.char_start, char_end = excluded.char_end, task_run_id = excluded.task_run_id,
+                     ai_output_id = null
+                   where core.forecast.method = 'ai_extracted'      -- the regex first: a target it now reads replaces
+                      or (core.forecast.method = 'parsed'           -- the AI's row (B7 part 2's fallback)
+                          and (core.forecast.target_label, core.forecast.value, core.forecast.value_low,
+                               core.forecast.value_high, core.forecast.document_id, core.forecast.char_start,
+                               core.forecast.char_end)
+                              is distinct from (excluded.target_label, excluded.value, excluded.value_low,
+                                                excluded.value_high, excluded.document_id, excluded.char_start,
+                                                excluded.char_end))""",
                 (sid, m.decision_date, p.target_start, p.target_end, p.target_label, p.value, p.low, p.high, doc_id,
                  s, e, tr)).rowcount
         for sid, start, end in tx.execute(
