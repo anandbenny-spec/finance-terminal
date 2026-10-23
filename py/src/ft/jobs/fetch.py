@@ -150,15 +150,19 @@ class HttpClient:
     def _backoff(self, attempt: int) -> float:
         return BACKOFF * 2 ** attempt + BACKOFF * self._rand()
 
-    def _once(self, url: str, record: str, params, headers) -> tuple[int, httpx.Headers, bytes]:
-        """One attempt. Redirects are followed here, each hop checked first, so an unlisted host is never contacted."""
+    def _once(self, url: str, record: str, params, headers, data=None) -> tuple[int, httpx.Headers, bytes]:
+        """One attempt. Redirects are followed here, each hop checked first, so an unlisted host is never contacted.
+        A form post (`data`) that redirects continues as a GET, as browsers do."""
+        method = "POST" if data is not None else "GET"
         for _ in range(MAX_REDIRECTS + 1):
-            with self._http.stream("GET", url, params=params, headers=headers) as r:
+            with self._http.stream(method, url, params=params, headers=headers, data=data) as r:
                 if r.status_code in REDIRECT_STATUS and (location := r.headers.get("location")):
                     nxt = r.url.join(location)
                     if nxt.scheme not in ("http", "https") or not any(s.matches(nxt.host) for s in self.sites):
                         raise FetchError(record, f"redirected to {nxt.host or nxt.scheme}, which isn't a listed source")
                     url, params = str(nxt), None
+                    if r.status_code in (301, 302, 303):
+                        method, data = "GET", None
                     continue
                 parts, n = [], 0
                 for b in r.iter_bytes():
@@ -170,17 +174,18 @@ class HttpClient:
         raise FetchError(record, f"more than {MAX_REDIRECTS} redirects")
 
     def get(self, url: str, *, record_url: str | None = None, params: Mapping[str, str] | None = None,
-            headers: Mapping[str, str] | None = None, stats: Counter | None = None) -> Response:
-        """GET with pacing and retries. Returns the last response whatever its status (the caller decides what a
-        404 means); raises FetchError for an unlisted host, an oversized body, a Retry-After beyond MAX_WAIT or a
-        network error that outlasts the retries."""
+            headers: Mapping[str, str] | None = None, stats: Counter | None = None,
+            data: Mapping[str, str] | None = None) -> Response:
+        """GET, or a form post with `data`, with pacing and retries. Returns the last response whatever its status
+        (the caller decides what a 404 means); raises FetchError for an unlisted host, an oversized body, a
+        Retry-After beyond MAX_WAIT or a network error that outlasts the retries."""
         record = record_url or url
         site = site_for(url, self.sites)
         stats = Counter() if stats is None else stats
         for attempt in range(RETRIES + 1):
             self._pace(site)
             try:
-                status, hdrs, body = self._once(url, record, params, headers)
+                status, hdrs, body = self._once(url, record, params, headers, data)
             except httpx.TransportError as e:        # DNS, TLS, timeouts, resets: never str(e), which may hold the URL
                 self._last[site.key] = self._mono()
                 stats["errors"] += 1
@@ -320,6 +325,31 @@ class Fetcher:
         if r.status in set(allow):
             return Fetched(record, r.status, False, None, None, None, None, r.fetched_at)
         raise FetchError(record, f"HTTP {r.status}", r.status)
+
+    def post(self, url: str, data: Mapping[str, str], *, source: str, record_url: str,
+             media_type: str | None = None, ext: str | None = None, content_date: date | None = None) -> Fetched:
+        """A form post (the RBI's Annual Policy page for an earlier fiscal year). `record_url` names what was asked
+        for (e.g. the page's URL with `#hdnYear=2020`): it is what ops.http_cache and core.raw_file record, since the
+        form's fields (ASP.NET view state) are neither stable nor worth keeping. No validators: a post isn't
+        conditional, but a body identical to the last one is still no new raw file."""
+        if record_url == url:
+            raise ValueError("a form post needs its own record_url (the URL alone doesn't say what was asked for)")
+        source_id = self._source_id(source)
+        cached = self._cached(record_url, source_id)
+        r = self.http.get(url, record_url=record_url, data=dict(data), stats=self.counts)
+        if r.status == 200:
+            return self._store(r, url, source, source_id, cached, media_type, ext, content_date)
+        raise FetchError(record_url, f"HTTP {r.status}", r.status)
+
+    def stored(self, record_url: str, *, source: str) -> Fetched | None:
+        """The copy last stored for `record_url`, without contacting the site (a closed fiscal year's page that a
+        re-run needn't fetch again), or None if there's none. Its bytes come from read(raw_file_id)."""
+        source_id = self._source_id(source)
+        cached = self._cached(record_url, source_id)
+        if cached is None or cached.raw_file_id is None:
+            return None
+        at = self.db.execute("select fetched_at from ops.http_cache where url = %s", (record_url,)).fetchone()[0]
+        return Fetched(record_url, 304, False, cached.raw_file_id, cached.sha256, cached.media_type, None, at)
 
     def _store(self, r: Response, url: str, source: str, source_id: int, cached: _Cached | None,
                media_type: str | None, ext: str | None, content_date: date | None) -> Fetched:
