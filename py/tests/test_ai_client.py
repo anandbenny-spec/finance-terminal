@@ -180,17 +180,42 @@ def test_a_batch_create_is_retried_only_where_the_api_refused_it():
         assert e.value.status == int(mode) and fake.create_calls == 1 and fake.batches == {}
 
 
-def test_batch_results_come_priced_at_the_batch_rate_with_each_kind():
-    fake = FakeClaude(["ok", "max_tokens", "400", "expired"], ends_after=2)
+def test_a_create_that_might_have_happened_is_told_apart_from_a_refusal():
+    def err(kind, status=None):
+        return CallError(kind, status, "x")
+    for maybe in (err("APITimeoutError"), err("APIConnectionError"), err("InternalServerError", 500),
+                  err("APIStatusError", 502), err("APIStatusError", 504), err("APIStatusError", 408),
+                  err("ConflictError", 409)):
+        assert ai.maybe_created(maybe), maybe
+    for refused in (err("BadRequestError", 400), err("AuthenticationError", 401), err("RequestTooLarge", 413),
+                    err("RateLimitError", 429), err("APIStatusError", 503), err("OverloadedError", 529),
+                    err("RetryAfterTooLong"), err("NoKey")):
+        assert not ai.maybe_created(refused), refused
+
+
+def test_a_lost_create_raises_and_the_batch_it_made_is_in_the_list():
+    fake = FakeClaude(creates=["lost"])
     c = claude(fake)
-    info = c.create_batch([(f"r{i}", req(TEXT + " " * i)) for i in range(4)])
+    with pytest.raises(CallError) as e:
+        c.create_batch([("a", req()), ("b", req(TEXT + " More."))])
+    assert ai.maybe_created(e.value) and fake.create_calls == 1               # a lost connection isn't retried
+    (made,) = c.recent_batches()
+    assert made.id in fake.batches and sum(made.counts.values()) == 2 and made.archived_at is None
+    fake.archive(made.id)
+    assert c.batch(made.id).archived_at is not None
+
+
+def test_batch_results_come_priced_at_the_batch_rate_with_each_kind():
+    fake = FakeClaude(["ok", "max_tokens", "400", "expired", "canceled"], ends_after=2)
+    c = claude(fake)
+    info = c.create_batch([(f"r{i}", req(TEXT + " " * i)) for i in range(5)])
     assert not c.batch(info.id).ended                                     # the first read: still processing
     info = c.batch(info.id)
-    assert info.ended and info.counts == {"processing": 0, "succeeded": 2, "errored": 1, "canceled": 0, "expired": 1}
+    assert info.ended and info.counts == {"processing": 0, "succeeded": 2, "errored": 1, "canceled": 1, "expired": 1}
     got = {r.custom_id: r for r in c.batch_results(info, model_of=lambda cid: "claude-haiku-5-5")}
     assert {k: (r.kind, r.error) for k, r in got.items()} == {
         "r0": ("succeeded", None), "r1": ("succeeded", None), "r2": ("errored", "invalid_request_error"),
-        "r3": ("expired", None)}
+        "r3": ("expired", None), "r4": ("canceled", None)}
     ok, cut = got["r0"].reply, got["r1"].reply
     assert ok.stop_reason == "end_turn" and cut.stop_reason == "max_tokens" and cut.cost_usd > 0   # billed anyway
     assert ok.cost_usd == cost_usd("claude-haiku-5-5", ok.usage, batch=True)
