@@ -1,29 +1,18 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { plexMono, plexSans } from "./fonts";
 import "./globals.css";
-
-// A0 baseline: the template's fonts stay until C1 replaces them with IBM Plex (Design 01 §2.7, web/app/fonts.ts).
-const geistSans = Geist({
-  variable: "--font-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "Finance Terminal",
   description: "An AI research terminal for Indian and US markets. Informational only, not investment advice.",
 };
 
+// Fonts: Design 01 §2.7 (fonts.ts). `dark`: the site is dark only, and globals.css keeps shadcn's class-based
+// `dark:` variant so its primitives look the same whatever the viewer's OS setting (see globals.css, part 1).
+// The shell (C2) replaces the body's placeholder layout.
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
+    <html lang="en" className={`${plexSans.variable} ${plexMono.variable} dark h-full`}>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
