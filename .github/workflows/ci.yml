@@ -112,6 +112,7 @@ jobs:
         run: |
           npm test 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
+          sed -i 's/\x1b\[[0-9;]*m//g' test.log   # Vitest colours its output on GitHub's runners
           grep -E '^ +(FAIL|×) ' test.log | head -10 | sed 's/^ */::error title=vitest::/'
           echo "::notice title=vitest::$(grep -E '^ +Tests +' test.log | tr -s ' ' | sed 's/^ //')"
           exit "$status"
