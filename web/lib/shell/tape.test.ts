@@ -28,7 +28,7 @@ const SERIES: SeriesRow[] = [
   { key: "yf.^NDX", name: "Nasdaq-100", market: "US", attribution: "Source: Nasdaq, Inc., via Yahoo Finance · © Nasdaq, Inc." },
   { key: "yf.^DJI", name: "Dow Jones Industrial Average", market: "US", attribution: "Source: S&P Dow Jones Indices LLC, via Yahoo Finance · © S&P Dow Jones Indices LLC" },
   { key: "yf.INR=X", name: "USD/INR (Yahoo Finance)", market: "GLOBAL", attribution: "Source: Yahoo Finance" },
-  { key: "fred.DGS10", name: "US 10-year Treasury yield", market: "US", attribution: "Source: Federal Reserve Board (H.15), via FRED" },
+  { key: "fred.DGS10", name: "US 10-year Treasury yield", market: "US", attribution: "Source: U.S. Treasury, via Federal Reserve Board (H.15) and FRED" },
   { key: "fred.INDIRLTLT01STM", name: "India 10-year government bond yield (monthly)", market: "IN", attribution: "Source: OECD, via FRED" },
   { key: "fred.DEXINUS", name: "USD/INR", market: "GLOBAL", attribution: "Source: Federal Reserve Board (H.10), via FRED" },
 ];
