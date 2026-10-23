@@ -64,9 +64,11 @@ finance-terminal/            on the Mac: ~/Projects/finance-terminal/app
 │   ├── src/ft/ai/           sqlguard, citations; the model wrapper (client.py) comes in the slice
 │   ├── src/ft/jobs/         run.py (CLI), config, due rules, runner, watch loop, fetch.py; tasks/
 │   ├── src/ft/engines/      document/ (canonical text, chunker, differ, store); time series, events (to come)
-│   ├── src/ft/policy/       module 1's source parsers and rules: dates, fed_calendar, rbi_calendar, meetings
+│   ├── src/ft/policy/       module 1's source parsers and rules: dates, fed_calendar, rbi_calendar, meetings,
+│   │                        fed_statement, members (the rosters)
 │   ├── src/ft/api/app.py    FastAPI service on Vercel at /api/* (entrypoint py/main.py, main:app)
-│   ├── config/              tasks.yaml · prompts/<task>/vN.md + schema · eval/sets/ · curated YAML (meeting_times)
+│   ├── config/              tasks.yaml · prompts/<task>/vN.md + schema · eval/sets/ · curated YAML (meeting_times,
+│   │                        members)
 │   └── tests/               pytest
 ├── web/                     Next.js, created in the slice (layout: Design 01 §7)
 ├── .github/workflows/       daily · watch · weekly · refresh · backfill · ci

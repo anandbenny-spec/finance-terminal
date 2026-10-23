@@ -147,3 +147,76 @@ def transcript_pages() -> list[str]:
         k += size
         pages.append("\n".join(lines))
     return pages
+
+
+def fed_page(paragraphs: list[str], *, day: str = "September 16, 2026", title: str = "Federal Reserve issues FOMC statement",
+             release: str = "For release at 2:00 p.m. EDT", note_date: str | None = None, panel: bool = False) -> str:
+    """The Fed's press-release template around a statement (newsevents/pressreleases/monetaryYYYYMMDDa.htm, checked on
+    the pages saved 23 Oct 2026): a heading column (date, title, release time, share menu) and a body column ending
+    with the media contact (a Cloudflare-obfuscated address) and the implementation-note link. Some pages (15 Mar
+    2020) add a related-links panel. Synthetic: written for the tests, not copied from the source."""
+    body = "\n".join(f"<p>{p}</p>" for p in paragraphs)
+    extra = ('<div class="panel panel-attachments col-xs-12 col-sm-8 col-md-8"><div><ul><li><a href="/x.htm">'
+             "Implementation Note issued " + (note_date or day) + "</a></li><li><a href='/y.htm'>Related actions</a>"
+             "</li></ul></div></div>") if panel else ""
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Federal Reserve Board - {title}</title>
+<script>window.dataLayer = [];</script></head><body><div id="content" class="container">
+<div class="row"><div id="article">
+<div class="heading col-xs-12 col-sm-8 col-md-8"><p class="article__time">{day}</p><h3 class="title">{title}</h3>
+<p class="releaseTime">{release}
+<ul class="list-unstyled"><li class="share btn-group"><a href="#">Share</a><ul role="menu"><li><a href="https://twitter.com/share">x</a></li></ul></li></ul>
+</div><div class="col-xs-12 col-sm-4 col-md-4 hidden-sm"></div>
+<div class="col-xs-12 col-sm-8 col-md-8">
+{body}
+<p>For media inquiries, please email <a href="/cdn-cgi/l/email-protection#6f"><span class="__cf_email__">[email&#160;protected]</span></a> or call 202-452-2955.</p>
+<p><a href="/newsevents/pressreleases/monetary20260916a1.htm">Implementation Note issued {note_date or day}</a></p>
+</div>{extra}<div class="col-xs-12 col-sm-4 col-md-4"></div></div></div>
+<div class="row"><div id="lastUpdate" class="lastUpdate">Last Update: {day}</div></div></div>
+<footer class="container footer"><h6>Board of Governors of the Federal Reserve System</h6></footer></body></html>"""
+
+
+FED_ECONOMY = (
+    ("Recent indicators suggest that economic activity has been expanding at a solid pace. Job gains have remained "
+    "low, and the unemployment rate has been little changed in recent months. Inflation remains somewhat elevated."),
+    ("The Committee seeks to achieve maximum employment and inflation at the rate of 2 percent over the longer run. "
+    "Uncertainty about the economic outlook remains elevated. The Committee is attentive to the risks to both sides "
+    "of its dual mandate."),
+)
+FED_GUIDANCE = (" In considering the extent and timing of additional adjustments to the target range for the federal "
+                "funds rate, the Committee will carefully assess incoming data, the evolving outlook, and the balance "
+                "of risks. The Committee is strongly committed to supporting maximum employment and returning "
+                "inflation to its 2 percent objective.")
+FED_MONITOR = (
+    "In assessing the appropriate stance of monetary policy, the Committee will continue to monitor the implications "
+    "of incoming information for the economic outlook. The Committee would be prepared to adjust the stance of "
+    "monetary policy as appropriate if risks emerge that could impede the attainment of the Committee's goals.")
+
+
+def fed_named(decision: str, voting: str) -> list[str]:
+    """A statement in the format used to Apr 2026: economy, goals, decision and guidance, monitoring, voting line."""
+    return [*FED_ECONOMY, f"In support of its goals, the Committee {decision}.{FED_GUIDANCE}", FED_MONITOR, voting]
+
+
+def fed_tally(tally: str, decision: str, against: str | None = None) -> list[str]:
+    """A statement in the format used from Jun 2026: the approval line, the decision, two short paragraphs, the
+    dissenters (if any)."""
+    return [f"The Federal Open Market Committee approved the following statement for release by a {tally} vote:",
+            (f"The Committee {decision}, in support of the Federal Reserve's dual mandate. The Committee is continuing "
+            "its policy of maintaining ample reserves in the banking system."),
+            ("Economic activity is expanding at a solid pace despite elevated uncertainty. Productivity growth and "
+            "capital investment are strong. Job gains have kept pace with the workforce, and the unemployment rate has "
+            "changed little."),
+            ("Inflation remains elevated relative to the Committee's 2 percent goal, in part reflecting supply shocks "
+            "that have driven price increases in certain sectors, including energy. The Committee will deliver price "
+            "stability."),
+            *([against] if against else [])]
+
+
+def fed_rss(*items: tuple[str, str, str]) -> str:
+    """The monetary-policy feed (feeds/press_monetary.xml): (title, link, pubDate) per item, newest first."""
+    body = "".join(f"<item><title>{t}</title><link><![CDATA[{u}]]></link><guid><![CDATA[{u}]]></guid>"
+                   f"<description><![CDATA[{t}]]></description><category>Monetary Policy</category>"
+                   f"<pubDate><![CDATA[{d}]]></pubDate></item>" for t, u, d in items)
+    return ('\ufeff<?xml version="1.0" encoding="utf-8" ?><rss version="2.0"><channel>'
+            "<title>FRB: Press Release - Monetary Policy</title><link><![CDATA[https://www.federalreserve.gov/feeds/"
+            "feeds.htm]]></link><language>en</language>" + body + "</channel></rss>")
