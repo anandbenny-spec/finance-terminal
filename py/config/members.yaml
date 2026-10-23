@@ -238,3 +238,205 @@ fed:
         voter: true
         from: 2026-01-27
         source: "FOMC minutes, 27-28 Jan 2026, Annual Organizational Matters: elected a member for the term beginning January 27, 2026"
+
+# ------------------------------------------------------------------------------------------------------------------
+# The RBI's Monetary Policy Committee (B6 part 1, 23 Oct 2026): every member of every meeting from the Dec 2018
+# baseline (no. 14) to Oct 2026 (no. 63), drafted from the attendance paragraph (para 2) of the 49 minutes saved in
+# app/data/fixtures/rbi/ (no. 39, the special meeting of 3 Nov 2022, has no minutes). Each minutes names the six
+# members with their roles: the Governor (the chair), the Deputy Governor in charge of monetary policy, the Executive
+# Director nominated by the Central Board (RBI Act s.45ZB(2)(c)) and three external members. All six vote.
+# A term here spans the meetings a member attended in that role, from the first meeting's first day to the last
+# meeting's last day (open while they sat at the latest meeting), so it isn't the appointment's dates: those come
+# from the appointment notices if a check ever needs them. Names are written without their title (Dr., Prof., Shri,
+# Smt.), which ft/policy/members.py strips from the documents' names before matching.
+rbi:
+  chetan-ghate:
+    name: Chetan Ghate
+    terms:
+      - role: mpc_external_member
+        affiliation: Professor, Indian Statistical Institute
+        voter: true
+        from: 2018-12-03
+        to: 2020-08-06
+        source: "MPC minutes, para 2 (attendance): external member, meetings nos. 14-24 (3 Dec 2018 to 6 Aug 2020, 11 meetings); the roster starts at the Dec 2018 baseline, not at the start of the term"
+  michael-debabrata-patra:
+    name: Michael Debabrata Patra
+    terms:
+      - role: rbi_executive_director
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2018-12-03
+        to: 2019-12-05
+        source: "MPC minutes, para 2 (attendance): Executive Director, the officer nominated by the Central Board (RBI Act s.45ZB(2)(c)), meetings nos. 14-20 (3 Dec 2018 to 5 Dec 2019, 7 meetings); the roster starts at the Dec 2018 baseline, not at the start of the term"
+      - role: rbi_deputy_governor
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2020-02-04
+        to: 2024-12-06
+        source: "MPC minutes, para 2 (attendance): Deputy Governor in charge of monetary policy, meetings nos. 21-52 (4 Feb 2020 to 6 Dec 2024, 31 meetings)"
+  pami-dua:
+    name: Pami Dua
+    terms:
+      - role: mpc_external_member
+        affiliation: Director, Delhi School of Economics
+        voter: true
+        from: 2018-12-03
+        to: 2020-08-06
+        source: "MPC minutes, para 2 (attendance): external member, meetings nos. 14-24 (3 Dec 2018 to 6 Aug 2020, 11 meetings); the roster starts at the Dec 2018 baseline, not at the start of the term"
+  ravindra-h-dholakia:
+    name: Ravindra H. Dholakia
+    terms:
+      - role: mpc_external_member
+        affiliation: former Professor, Indian Institute of Management, Ahmedabad
+        voter: true
+        from: 2018-12-03
+        to: 2020-08-06
+        source: "MPC minutes, para 2 (attendance): external member, meetings nos. 14-24 (3 Dec 2018 to 6 Aug 2020, 11 meetings); the roster starts at the Dec 2018 baseline, not at the start of the term"
+  urjit-r-patel:
+    name: Urjit R. Patel
+    terms:
+      - role: rbi_governor
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2018-12-03
+        to: 2018-12-05
+        source: "MPC minutes, para 2 (attendance): Governor, chair, meeting no. 14 (3 Dec 2018-5 Dec 2018); the roster starts at the Dec 2018 baseline, not at the start of the term"
+  viral-v-acharya:
+    name: Viral V. Acharya
+    terms:
+      - role: rbi_deputy_governor
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2018-12-03
+        to: 2019-06-06
+        source: "MPC minutes, para 2 (attendance): Deputy Governor in charge of monetary policy, meetings nos. 14-17 (3 Dec 2018 to 6 Jun 2019, 4 meetings); the roster starts at the Dec 2018 baseline, not at the start of the term"
+  shaktikanta-das:
+    name: Shaktikanta Das
+    terms:
+      - role: rbi_governor
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2019-02-05
+        to: 2024-12-06
+        source: "MPC minutes, para 2 (attendance): Governor, chair, meetings nos. 15-52 (5 Feb 2019 to 6 Dec 2024, 37 meetings)"
+  bibhu-prasad-kanungo:
+    name: Bibhu Prasad Kanungo
+    terms:
+      - role: rbi_deputy_governor
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2019-08-05
+        to: 2019-12-05
+        source: "MPC minutes, para 2 (attendance): Deputy Governor in charge of monetary policy, meetings nos. 18-20 (5 Aug 2019 to 5 Dec 2019, 3 meetings)"
+  janak-raj:
+    name: Janak Raj
+    terms:
+      - role: rbi_executive_director
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2020-02-04
+        to: 2020-05-22
+        source: "MPC minutes, para 2 (attendance): Executive Director, the officer nominated by the Central Board (RBI Act s.45ZB(2)(c)), meetings nos. 21-23 (4 Feb 2020 to 22 May 2020, 3 meetings)"
+  mridul-k-saggar:
+    name: Mridul K. Saggar
+    terms:
+      - role: rbi_executive_director
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2020-08-04
+        to: 2022-04-08
+        source: "MPC minutes, para 2 (attendance): Executive Director, the officer nominated by the Central Board (RBI Act s.45ZB(2)(c)), meetings nos. 24-34 (4 Aug 2020 to 8 Apr 2022, 11 meetings)"
+  ashima-goyal:
+    name: Ashima Goyal
+    terms:
+      - role: mpc_external_member
+        affiliation: Professor, Indira Gandhi Institute of Development Research, Mumbai
+        voter: true
+        from: 2020-10-07
+        to: 2024-08-08
+        source: "MPC minutes, para 2 (attendance): external member, meetings nos. 25-50 (7 Oct 2020 to 8 Aug 2024, 25 meetings)"
+  jayanth-r-varma:
+    name: Jayanth R. Varma
+    terms:
+      - role: mpc_external_member
+        affiliation: Professor, Indian Institute of Management, Ahmedabad
+        voter: true
+        from: 2020-10-07
+        to: 2024-08-08
+        source: "MPC minutes, para 2 (attendance): external member, meetings nos. 25-50 (7 Oct 2020 to 8 Aug 2024, 25 meetings)"
+  shashanka-bhide:
+    name: Shashanka Bhide
+    terms:
+      - role: mpc_external_member
+        affiliation: Senior Advisor, National Council of Applied Economic Research, Delhi
+        voter: true
+        from: 2020-10-07
+        to: 2024-08-08
+        source: "MPC minutes, para 2 (attendance): external member, meetings nos. 25-50 (7 Oct 2020 to 8 Aug 2024, 25 meetings)"
+  rajiv-ranjan:
+    name: Rajiv Ranjan
+    terms:
+      - role: rbi_executive_director
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2022-05-02
+        to: 2025-08-06
+        source: "MPC minutes, para 2 (attendance): Executive Director, the officer nominated by the Central Board (RBI Act s.45ZB(2)(c)), meetings nos. 35-56 (2 May 2022 to 6 Aug 2025, 21 meetings)"
+  nagesh-kumar:
+    name: Nagesh Kumar
+    terms:
+      - role: mpc_external_member
+        affiliation: Director and Chief Executive, Institute for Studies in Industrial Development, New Delhi
+        voter: true
+        from: 2024-10-07
+        source: "MPC minutes, para 2 (attendance): external member, meetings nos. 51-63 (7 Oct 2024 to 7 Oct 2026, 13 meetings); still a member at the latest meeting"
+  ram-singh:
+    name: Ram Singh
+    terms:
+      - role: mpc_external_member
+        affiliation: Director, Delhi School of Economics, Delhi
+        voter: true
+        from: 2024-10-07
+        source: "MPC minutes, para 2 (attendance): external member, meetings nos. 51-63 (7 Oct 2024 to 7 Oct 2026, 13 meetings); still a member at the latest meeting"
+  saugata-bhattacharya:
+    name: Saugata Bhattacharya
+    terms:
+      - role: mpc_external_member
+        affiliation: Economist, Mumbai
+        voter: true
+        from: 2024-10-07
+        source: "MPC minutes, para 2 (attendance): external member, meetings nos. 51-63 (7 Oct 2024 to 7 Oct 2026, 13 meetings); still a member at the latest meeting"
+  m-rajeshwar-rao:
+    name: M. Rajeshwar Rao
+    aliases: [M Rajeshwar Rao]
+    terms:
+      - role: rbi_deputy_governor
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2025-02-05
+        to: 2025-04-09
+        source: "MPC minutes, para 2 (attendance): Deputy Governor in charge of monetary policy, meetings nos. 53-54 (5 Feb 2025 to 9 Apr 2025, 2 meetings)"
+  sanjay-malhotra:
+    name: Sanjay Malhotra
+    terms:
+      - role: rbi_governor
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2025-02-05
+        source: "MPC minutes, para 2 (attendance): Governor, chair, meetings nos. 53-63 (5 Feb 2025 to 7 Oct 2026, 11 meetings); still a member at the latest meeting"
+  poonam-gupta:
+    name: Poonam Gupta
+    terms:
+      - role: rbi_deputy_governor
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2025-06-04
+        source: "MPC minutes, para 2 (attendance): Deputy Governor in charge of monetary policy, meetings nos. 55-63 (4 Jun 2025 to 7 Oct 2026, 9 meetings); still a member at the latest meeting"
+  indranil-bhattacharyya:
+    name: Indranil Bhattacharyya
+    terms:
+      - role: rbi_executive_director
+        affiliation: Reserve Bank of India
+        voter: true
+        from: 2025-09-29
+        source: "MPC minutes, para 2 (attendance): Executive Director, the officer nominated by the Central Board (RBI Act s.45ZB(2)(c)), meetings nos. 57-63 (29 Sep 2025 to 7 Oct 2026, 7 meetings); still a member at the latest meeting"
