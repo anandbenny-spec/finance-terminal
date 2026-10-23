@@ -200,9 +200,15 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   every other session. After writing a file to the Mac, read it back there.
 - **Branches and pull requests (Anand, 23 Oct 2026; replaces "Anand commits and pushes").** Claude commits in
   its own cloud clone, pushes only to `claude/<job>` branches it created, and opens a pull request; CI runs on
-  it. Anand reviews and merges into `main`. Claude never pushes to `main`, merges, force-pushes or rewrites
-  `main`'s history. On the Mac (Anand's clone) Claude still runs no git command that writes, `git status`
-  included; read-only `git log`, `git show` and `git --no-optional-locks diff` are fine.
+  it. **Claude merges its own pull requests (Anand, 23 Oct 2026, 22:16 IST, so the build never waits on him):**
+  once every check on the pull request's latest commit has passed (`test`, `web`, `secrets`) and the handoff
+  comment is written, Claude merges it into `main` with a merge commit through GitHub's merge API. A pull request
+  holding anything §7 or the sub-prompt's stop conditions name waits for Anand, and so does one he's asked to see
+  first. A merged migration still needs his `supabase db push` (say so). Anand reviews merged work when he
+  chooses and reverts what he doesn't want. Claude never pushes to `main` directly, merges a pull request that
+  isn't its own or whose checks failed or are still running, force-pushes or rewrites `main`'s history. On the
+  Mac (Anand's clone) Claude still runs no git command that writes, `git status` included; read-only `git log`,
+  `git show` and `git --no-optional-locks diff` are fine.
 - **Flag a conflict with a decided rule instead of changing it.** Decisions are dated in the docs, and Anand
   reverses them. Build progress lives in git and GitHub issues, never in this file or the planning docs.
 - **Where things run (checked 22 Oct 2026):** Claude's shells (the session's cloud workspace and the Mac's Linux
@@ -217,7 +223,8 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 - **Campus Wi-Fi (Sophos, from 26 Oct):** `UV_SYSTEM_CERTS=true` for uv, `NODE_EXTRA_CA_CERTS` for npm and the
   Vercel CLI, `http.sslCAInfo` for git. Production (GitHub, Vercel) is unaffected.
 - **End each piece of work with:** the files changed, the tests run and where (the CI run on the pull request),
-  the pull request's link, and anything Anand must do (a merge, a secret, a dashboard setting, a run to start).
+  the pull request's link (and its merge), and anything Anand must do (a secret, a dashboard setting, a
+  `supabase db push`, a run to start).
 
 ## 7. Stop and ask Anand before you
 
