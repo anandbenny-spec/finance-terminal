@@ -2,7 +2,7 @@
 
 The Next.js front end (a Vercel service at `/`). It reads published data with the browser key from the `api`
 schema only, and calls the Python `api` service under `/api/*` for the command bar and admin actions
-(`CLAUDE.md` §2). Layout: Design 01 §7. Created in A0 (Prompt 01, 23 Oct 2026); the design base comes in C1.
+(`CLAUDE.md` §2). Layout: Design 01 §7. Created in A0 (Prompt 01, 23 Oct 2026); the design base came in C1.
 
 ## Commands
 
@@ -29,6 +29,33 @@ CI runs all five on Node 24 (`.github/workflows/ci.yml`, job `web`).
   dependency: only the CSS build reads it (`@import "shadcn/tailwind.css"`).
 - `next.config.ts` keeps create-next-app 16.4's defaults `cacheComponents` and `partialPrefetching`; how pages cache
   Supabase reads is decided when the first page reads data (C3).
+
+## Design base (C1, 23 Oct 2026)
+
+- `app/globals.css` is Design 01 §2.6 byte for byte (checked against the 21 Oct review pack's copy), plus the two
+  `@import` lines `shadcn init` added (`tw-animate-css`, `shadcn/tailwind.css`: variants, keyframes and masks; no
+  colours). shadcn's oklch palette, `.dark` block, sidebar roles and radius scale are gone.
+- **Two additions after §2.6**, in a marked block at the end; neither changes a colour or a §2.6 value:
+  1. `@custom-variant dark (&:is(.dark *))`, as `shadcn init` wrote it, with `dark` on `<html>` (`app/layout.tsx`).
+     Without it Tailwind's `dark:` follows the viewer's OS setting, so Nova's primitives would differ between a Mac in
+     light mode and one in dark mode. With it, their dark styling always applies (controls take `--input`, which is
+     `--line-input`, as their border).
+  2. `--radius-lg` … `--radius-4xl` held at 4 px. Nova's primitives use `rounded-lg` and up, which Tailwind's
+     defaults make 8–32 px; Design 01 §2.5 allows 2 px and 4 px only.
+- `app/fonts.ts` is §2.7 exactly (Plex Sans and Mono, `latin` + `latin-ext`, the subset ₹ lives in).
+- `lib/tokens.ts` reads the chart colours from the CSS variables once at mount (Lightweight Charts takes colours in
+  JavaScript); `lib/format.ts` formats every number, date and time (Design 01 §3), with every §3 example a test.
+- `design/specimen.html` is the visual reference (Prompt 01 §1.1 item 9); its numbers are samples. A test keeps its
+  token values equal to `globals.css`'s.
+- `NOTICE` carries Lightweight Charts' attribution notice (Apache 2.0); a test ties it to the installed version.
+- **Tests that guard the token file** (`tests/globals-css.test.ts`) compile `globals.css` with the installed Tailwind:
+  every token at its Design 01 value, every role utility resolving, every radius step 2 or 4 px, and every class in
+  `components/ui/` that sets a colour coming from a token (Design 01 §10.3: a colour with no token, Tailwind's own
+  palette or a literal colour fails it). Add a primitive with `shadcn add` and the test checks it too.
+- Noticed while checking §10.3, left for the components that use them: Nova's button sizes its text with `text-sm`,
+  `text-xs` and `text-[0.8rem]` (14, 12 and 12.8 px: nothing below 12 px, but not the role names of §2.4), and shows
+  focus as a 3 px `ring-ring/50` instead of the base 2 px amber outline. Both are amber/size choices inside the
+  primitive, not colour edits; C2 decides when it first uses a button.
 
 ## Install scripts
 
