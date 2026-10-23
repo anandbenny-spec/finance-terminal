@@ -46,6 +46,8 @@ def map_api_citation(doc_text: str, seg_start: int, start_idx: int, end_idx: int
     Trust the indices only if the text there is exactly the cited text; otherwise fall back to searching
     for the cited text. Either way the stored span is checked against our own copy of the document."""
     s, e = seg_start + start_idx, seg_start + end_idx
+    if e <= s or not cited_text.strip():
+        return Span(0, 0, False, "failed")               # an empty range or quote is no evidence (B7 review)
     if doc_text[s:e] == cited_text:
         return Span(s, e, True, "offsets")
     return locate_quote(doc_text, cited_text)
@@ -72,12 +74,6 @@ def _numbers(s: str) -> list[Decimal]:
         except InvalidOperation:
             pass
     return out
-
-
-def numbers_in(s: str) -> list[Decimal]:
-    """Every number written in `s` (signs kept), parsed as numbers_grounded parses them (B7's summaries check that
-    a bullet's numbers are in its cited passages)."""
-    return _numbers(s)
 
 
 def numbers_grounded(summary: str, rows: list[dict], sql: str = "") -> tuple[bool, list[str]]:
