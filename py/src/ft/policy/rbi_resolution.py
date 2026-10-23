@@ -33,7 +33,8 @@ range of 26.2 to 8.3 per cent"), signs ("(-)7.5 per cent"), "Q3 and Q4 at 6.5 pe
 Q2 … at 3.9 per cent and 4.0 per cent, respectively". Only this resolution's projections ("is projected", "is
 revised", "is retained", "is placed"), never the earlier vintages it restates ("In the October policy, … was
 projected …", "from 7.0 per cent in the June policy"). A projection sentence the regex can't fully read is listed
-for `projection_extraction` (AI, B7 part 2).
+for `projection_extraction` (AI, B7 part 2), which re-reads the stored text (`read_projections`) and checks the
+model's periods and figures with the same grammar (`target_dates`, `quoted_pairs`).
 """
 from __future__ import annotations
 
@@ -46,7 +47,7 @@ from urllib.parse import parse_qs, urlsplit
 from lxml import etree
 from lxml import html as lxml_html
 
-from ft.engines.document.text import Extracted, extract_html, normalize_inline, sentence_spans
+from ft.engines.document.text import Block, Extracted, extract_html, normalize_inline, sentence_spans
 from ft.policy.members import strip_title
 
 BASE = "https://www.rbi.org.in/Scripts/"
@@ -630,6 +631,107 @@ def _projections(ex: Extracted, problems: list[str]) -> tuple[tuple[Projection, 
                             f"{p.value or (p.low, p.high)}")
             out[p.key] = None
     return tuple(p for p in out.values() if p is not None), tuple(unparsed)
+
+
+def reread(text: str, version: str = "stored") -> Extracted:
+    """A stored canonical text with its blocks rebuilt from the blank lines between them (text.py's shape: blocks
+    joined by "\\n\\n", and no block holds one), each block a paragraph. The projection reader looks only at block
+    boundaries, so it reads a stored text exactly as it read the page; the decision part needs the headings, so the
+    stance is read from the raw file instead (`parse`)."""
+    blocks, pos = [], 0
+    for part in text.split("\n\n"):
+        blocks.append(Block(pos, pos + len(part), "para"))
+        pos += len(part) + 2
+    return Extracted(text, tuple(blocks), version)
+
+
+def read_projections(text: str) -> tuple[tuple[Projection, ...], tuple[tuple[int, int], ...]]:
+    """(the projections, the projection sentences the regex couldn't fully read) of a stored resolution's text: what
+    `parse` gave at load time (policy.ai_batch's `projection_extraction` runs where this lists sentences)."""
+    return _projections(reread(text), [])
+
+
+_LABEL = re.compile(r"^(?:(?P<q>Q[1-4]|H[12])|FY) (?P<a>20\d\d)-(?P<b>\d\d)$")
+
+
+def target_dates(label: str) -> tuple[date, date] | None:
+    """The first and last day of a target period written as this module writes it ('Q2 2026-27', 'H1 2019-20',
+    'FY 2026-27'); None for anything else."""
+    m = _LABEL.match(label)
+    if m is None or int(m["b"]) != (int(m["a"]) + 1) % 100:
+        return None
+    _, start, end = _target(m["q"], f"{m['a']}-{m['b']}")
+    return start, end
+
+
+def quoted_pairs(quote: str) -> list[tuple[str, str | None, Decimal | tuple[Decimal, Decimal]]] | None:
+    """The (period, fiscal year, figure) triples a projection quote states, its periods and its figures paired in
+    order ("Q1 at 3.9 per cent and Q2 at 4.0 per cent", "Q1:2026-27 and Q2 … at 3.9 per cent and 4.0 per cent,
+    respectively", "26.2 per cent in Q1"); None unless it states exactly one figure for each period it names. A period
+    is 'Q1'…'Q4', 'H1', 'H2' or 'FY'; its fiscal year '2026-27', or None for a bare quarter; a figure a value, or
+    (low, high) for a range. Read with the regex's own grammar ("(-)7.5 per cent", "3.2-3.4 per cent", "5.2 per cent to
+    5.0 per cent"), with earlier vintages and target levels set aside first, as the regex does."""
+    work = _EARLIER.sub(lambda m: " " * len(m.group(0)), quote)
+    work = re.sub(r"\b(?:level|target|band)\s+of\s+[\d.]+\s*per\s*cent", lambda m: " " * len(m.group(0)), work)
+    periods = []
+    for m in _PERIOD.finditer(work):
+        fy = m["fy1"] or m["fy2"] or m["fy"]
+        periods.append((m["q"].upper() if m["q"] else "FY", _norm_fy(fy) if fy else None))
+    figures, used = [], []
+    for m in _RANGE.finditer(work):
+        a, b = _num(m, 1), _num(m, 2)
+        figures.append((m.start(), (min(a, b), max(a, b))))
+        used.append((m.start(), m.end()))
+    figures += [(m.start(), _num(m, 1)) for m in _ONE.finditer(work) if not any(a <= m.start() < b for a, b in used)]
+    figures.sort(key=lambda f: f[0])
+    if not periods or len(periods) != len(figures):
+        return None
+    return [(p, fy, f) for (p, fy), (_, f) in zip(periods, figures, strict=True)]
+
+
+def _set_aside(s: str) -> str:
+    return _EARLIER.sub(lambda m: " " * len(m.group(0)), s)
+
+
+def period_years(text: str, sentence: tuple[int, int]) -> list[tuple[int, int, str, str | None]]:
+    """The periods a projection sentence names, as (start, end, 'Q2' | 'H1' | 'FY', fiscal year), each bare quarter
+    given the fiscal year the regex gives it: the last one named before it in the sentence, else the last one named
+    earlier in its paragraph, else the next one named after it in the sentence (None if there's none). Earlier
+    vintages are set aside first, as the regex does."""
+    s, e = sentence
+    found = []
+    for m in _PERIOD.finditer(_set_aside(text[s:e])):
+        fy = m["fy1"] or m["fy2"] or m["fy"]
+        found.append([s + m.start(), s + m.end(), m["q"].upper() if m["q"] else "FY", _norm_fy(fy) if fy else None])
+    block = text.rfind("\n\n", 0, s)
+    last = None
+    for m in _PERIOD.finditer(_set_aside(text[(block + 2 if block >= 0 else 0):s])):
+        if fy := m["fy1"] or m["fy2"] or m["fy"]:
+            last = _norm_fy(fy)
+    ctx = []
+    for p in found:
+        if p[3]:
+            last = p[3]
+        ctx.append(last)
+    for i, p in enumerate(found):
+        if p[3] is None:
+            p[3] = ctx[i] or next((x[3] for x in found[i + 1:] if x[3]), None)
+    return [tuple(p) for p in found]
+
+
+def subject_at(text: str, sentence: tuple[int, int], pos: int) -> str | None:
+    """What a projection at `pos` is about, by the regex's subjects: the last CPI-inflation or GDP-growth mention in
+    its sentence before `pos` ('cpi' | 'gdp'); None if there's none, or it's core, food or fuel inflation, GVA or
+    inflation 'excluding' something."""
+    s, e = sentence
+    last = None
+    for m in _SUBJECT.finditer(text, s, e):
+        if m.start() >= pos:
+            break
+        last = m
+    if last is None or _SKIP_SUBJECT.search(text[max(s, last.start() - 12):min(e, last.end() + 12)]):
+        return None
+    return "gdp" if last.lastgroup == "gdp" else "cpi"
 
 
 # ---------------------------------------------------------------------------------------------- parse

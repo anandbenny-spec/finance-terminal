@@ -44,6 +44,10 @@ class Doc:
     bank: str                         # core.entity.short_name: 'Fed', 'RBI'
     day: date | None                  # the release date in the bank's time zone
     text: str                         # the canonical text (the chunks, concatenated)
+    event_id: int | None = None       # its meeting (the stance is the meeting's: core.ai_output.event_id)
+    event_day: date | None = None     # the meeting's decision date (a projection's vintage)
+    raw_file_id: int | None = None    # the page it was read from (the stance cross-check re-parses it)
+    source_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,10 @@ class Checked:
 
     def reasons(self) -> list[str]:
         return self.problems + [f"bullet {i + 1}: {b.problem}" for i, b in enumerate(self.bullets) if b.problem]
+
+    def note(self) -> str:
+        """The retry's note about this reply (`retry_note`)."""
+        return retry_note(self)
 
 
 def _when(d: date | None) -> str:
