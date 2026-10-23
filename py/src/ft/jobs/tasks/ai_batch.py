@@ -9,8 +9,11 @@ is the meeting's output (core.ai_output.event_id, which the views read), cited t
 if it agrees with the stance B6's parser reads in the same resolution (its raw file parsed again; Anand, 24 Oct 2026,
 issue #16). A projection output's targets become core.forecast rows (method 'ai_extracted', the quote as the span); a
 target the regex stored must agree. `other` and any disagreement are held: the output stays a draft, the request
-counts as answered (never resent for the same input), `ai_held:<task>:<document>` is raised, and each run checks the
-held answer again, so a fixed parser or a corrected figure publishes it without a new request.
+counts as answered (never resent for the same input) and `ai_held:<task>:<document>` is raised. Each run checks a held
+answer again without a new request: a stance whose parse disagreed or couldn't be read is published once B6's parse
+agrees (a fixed parser, storage back), a projection conflict once the stored figure is corrected. A projection
+target's input holds its unread sentences, so a regex change that alters them makes a new request; one the regex now
+reads in full has no target, and its published AI output and rows are retired (`_retire_projections`).
 
 **When it sends what:**
 - watch, on a decision day (`after_decision_document`), with `ai_realtime_on_decision_days` on: the meeting's newly
@@ -299,6 +302,7 @@ class Fetched:
     stopped: str | None = None        # 'budget' | 'run_estimate'
     run_estimate: Decimal = Decimal(0)
     rechecked: list = field(default_factory=list)   # held drafts published on a re-check: (work, output id, checked)
+    retired: list[int] = field(default_factory=list)   # resolutions whose projection target is gone (`_retire_…`)
     embeds: list[tuple[int, int, str, list[float]]] = field(default_factory=list)   # doc, chunk_no, body md5, vector
     embed_pending: int = 0            # chunks still without an embedding after this run's attempt
     embed_tokens: int = 0
@@ -394,14 +398,21 @@ class AiBatch(Task):
                                  parse=lambda d=d: self._stored_projections(db, d)))
         return work
 
-    def _parsed_stance(self, d: Doc) -> extraction.Parsed:
+    def _parsed_stance(self, d: Doc, *, strict: bool = False) -> extraction.Parsed:
         """The stance B6's parser reads in this resolution (its raw file, parsed again: the decision part needs the
-        page's headings): what the AI's label must equal (Anand, 24 Oct 2026). A storage error propagates (the reply
-        stays pending: a real-time target fails its poll, a batch is read again by the next run)."""
+        page's headings): what the AI's label must equal (Anand, 24 Oct 2026). If the raw file can't be read (storage
+        down, a hash mismatch), `strict` raises (real time reads it before sending, so the poll fails and the next one
+        retries); otherwise the reply is held 'unchecked' and each run re-checks it, so one collection's storage error
+        never fails the run or leaves a billed result unstored. Read once per run."""
         if d.raw_file_id is None or self._fetcher is None:
             return extraction.Parsed(error="the resolution has no stored raw file")
         if d.document_id not in self._parsed_stances:
-            data = self._fetcher.read(d.raw_file_id)
+            try:
+                data = self._fetcher.read(d.raw_file_id)
+            except Exception as e:  # storage: held 'unchecked' now, read again by the next run
+                if strict:
+                    raise
+                return extraction.Parsed(error=f"its raw file couldn't be read ({type(e).__name__}: {e})")
             try:
                 res = rbi_resolution.parse(data, d.source_url or "")
             except (rbi_resolution.ResolutionError, ExtractError, ValueError) as e:
@@ -570,6 +581,7 @@ class AiBatch(Task):
                 f.batch.held_for_watch = sorted(held & {d.document_id for d in docs})
                 docs = [d for d in docs if d.document_id not in held]
         f.targets = self._work(db, docs)
+        self._retire_projections(db, f, docs)
         if mode == "batch":
             self._batch_path(ctx, f, prompts, poll=0 if ctx.workflow == "watch" else BATCH_POLL_SECONDS)
         else:
@@ -590,6 +602,28 @@ class AiBatch(Task):
                 raise CallError("Unfinished", None, "; ".join(f"{o.work.target}: {o.reason}" for o in unfinished))
         self._embed(db, f, docs if meeting is not None else None)
         return f
+
+    @staticmethod
+    def _retire_projections(db, f: Fetched, docs: list[Doc]) -> None:
+        """A resolution whose every projection sentence the regex now reads (it was improved) has no
+        projection_extraction target any more: its published AI output is superseded and its AI-extracted rows go
+        (policy.rbi_documents writes the parsed rows over them: the regex first). Its alerts are resolved."""
+        targeted = {w.doc.document_id for w in f.targets if w.task == "projection_extraction"}
+        ids = [d.document_id for d in docs if d.doc_type == EXTRACTION_DOC_TYPE and d.document_id not in targeted]
+        if not ids:
+            return
+        f.retired = [r[0] for r in db.execute("""select distinct document_id from ops.ai_request
+                                                  where ai_task = 'projection_extraction' and document_id = any(%s)""",
+                                              (ids,)).fetchall()]
+        for out_id, doc_id in db.execute("""select id, document_id from core.ai_output where task = 'projection_extraction'
+                                             and status = 'published' and document_id = any(%s)""",
+                                         (f.retired,)).fetchall():
+            with db.transaction():
+                db.execute("delete from core.forecast where ai_output_id = %s and method = 'ai_extracted'", (out_id,))
+                db.execute("""update core.ai_output set status = 'superseded', status_reason = %s
+                               where id = %s and status = 'published'""",
+                           ("superseded by the regex: it reads every projection sentence of this resolution now",
+                            out_id))
 
     @staticmethod
     def _watch_documents(db, now: datetime) -> set[int]:
@@ -658,8 +692,10 @@ class AiBatch(Task):
             o = f.outcome(w, "rejected")
             attempt, note = step.attempt, step.note
             if w.task in EXTRACTION_TASKS:
-                try:
-                    w.parsed()          # B6's reading, before anything is billed: a reply must be storable at once
+                try:                    # B6's reading, before anything is billed: a reply must be storable at once
+                    if w.task == "stance_extraction":
+                        self._parsed_stance(w.doc, strict=True)
+                    w.parsed()
                 except Exception as e:  # noqa: BLE001 - storage: this poll fails for the target and the next one retries
                     o.status, o.reason = "errored", f"the resolution couldn't be read back: {type(e).__name__}: {e}"
                     continue
@@ -1378,12 +1414,9 @@ class AiBatch(Task):
                       and r.status = 'rejected' and r.reject_reason like 'rejected:%%'
                     group by r.ai_task, r.document_id""", (ids, list(AI_TASKS))).fetchall()
             bad = {(t, d): reason for t, d, reason in rows}
-            held = {(t, d): reason for t, d, reason in db.execute(
-                """select r.ai_task, r.document_id, max(o.status_reason)
-                     from ops.ai_request r join core.ai_output o on o.id = r.ai_output_id
-                    where r.document_id = any(%s) and r.ai_task = any(%s) and r.status = 'succeeded'
-                      and o.status = 'draft' and o.status_reason like 'held:%%'
-                    group by r.ai_task, r.document_id""", (ids, list(EXTRACTION_TASKS))).fetchall()}
+            # Held: what this run found (every target is planned each run), so a hold whose input has since changed
+            # doesn't stay open.
+            held = {(o.work.task, o.work.doc.document_id): o.reason for o in f.outcomes if o.status == "held"}
             for w in f.targets:
                 cond, args = self._on_target(w)
                 published = db.execute(f"select 1 from core.ai_output where {cond} and status = 'published'",
@@ -1397,6 +1430,10 @@ class AiBatch(Task):
                     elif (w.task, w.doc.document_id) in reasons:
                         out.append(Alert(key, True, "warn", f"{w.target} ({w.doc.title}): "
                                          f"{reasons[(w.task, w.doc.document_id)]}"))
+                    elif kind == "ai_held":
+                        out.append(Alert(key, False))
+        for doc_id in f.retired:                           # no projection target any more: nothing to alert about
+            out += [Alert(f"{k}:projection_extraction:{doc_id}", False) for k in ("ai_rejected", "ai_held")]
         month = datetime.now(UTC).strftime("%Y-%m")
         if f.stopped == "budget":
             out.append(Alert(f"ai_budget:{month}", True, "error",

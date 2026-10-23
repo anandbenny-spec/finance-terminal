@@ -175,11 +175,36 @@ def test_projections_in_the_unread_sentences_are_stored_as_the_resolution_writes
     ({"low": 4.5, "high": 4.7}, "one value, or a range"),
     ({"quote": "Q2 4.7 per cent"}, "isn't in the resolution exactly once"),
     ({"quote": "per cent"}, "isn't in the resolution exactly once"),
+    # A bare quarter's year is the one the resolution gives it in context, never another (review of #45).
+    ({"target_label": "Q2 2019-20", "target_start": "2019-07-01", "target_end": "2019-09-30"},
+     "its Q2 is in 2040-41 where the resolution states it, not 2019-20"),
+    # A CPI sentence's figure can't become GDP growth (review of #45).
+    ({"variable": "gdp"}, "its sentence states CPI inflation there, not Real GDP growth"),
 ])
 def test_a_projection_whose_quote_period_or_figure_doesnt_check_is_retried(change, problem):
     c = proj({"projections": [GOOD[0], {**GOOD[1], **change}]})
     assert not c.ok and c.hold is None and len(c.problems) == 1 and problem in c.problems[0], c.problems
-    assert c.problems[0].startswith("projection 2 (cpi ")
+    assert c.problems[0].startswith("projection 2 (")
+
+
+def test_the_fiscal_year_and_the_variable_are_read_in_context_as_the_regex_reads_them():
+    text = ("Real GDP growth for 2040-41 is projected at 7.0 per cent. Core inflation is projected at 4.2 per cent for "
+            "2040-41.\n\nCPI inflation is projected at 4.5 per cent, with Q1 at 4.9 per cent and 2041-42 at 4.1 per "
+            "cent.")
+    a, b = text.index("Core"), text.index("CPI")
+    first, core, third = (0, a - 1), (a, text.index("\n\n")), (b, len(text))
+    assert text[first[0]:first[1]].endswith("per cent.") and text[core[0]:core[1]].endswith("2040-41.")
+    # A bare quarter takes the year named before it in its paragraph, else the next one in its sentence.
+    assert [(k, y) for _, _, k, y in rr.period_years(text, first)] == [("FY", "2040-41")]
+    assert [(k, y) for _, _, k, y in rr.period_years(text, third)] == [("Q1", "2041-42"), ("FY", "2041-42")]
+    para = "Real GDP growth for 2040-41 is projected at 7.0 per cent. It is placed at 6.8 per cent in Q2."
+    assert [(k, y) for _, _, k, y in rr.period_years(para, (58, len(para)))] == [("Q2", "2040-41")]
+    assert rr.subject_at(text, first, 55) == "gdp" and rr.subject_at(text, third, len(text)) == "cpi"
+    assert rr.subject_at(text, core, core[1]) is None                        # core inflation isn't headline CPI
+    c = extraction.check_projections({"projections": [item("cpi", "FY 2040-41", "2040-04-01", "2041-03-31",
+                                                           "4.2 per cent for 2040-41", value=4.2)]},
+                                     text, 1, (core,), Parsed())
+    assert "neither CPI inflation nor real GDP growth" in c.problems[0]
 
 
 def test_a_quote_outside_the_unread_sentences_an_empty_list_or_a_repeated_target_is_retried():
@@ -228,11 +253,13 @@ class StubDB:
 
 
 class RawFiles:
-    def __init__(self, data: bytes):
+    def __init__(self, data: bytes | Exception):
         self.data, self.reads = data, 0
 
     def read(self, raw_file_id: int) -> bytes:
         self.reads += 1
+        if isinstance(self.data, Exception):
+            raise self.data
         return self.data
 
 
@@ -269,6 +296,15 @@ def test_the_cross_check_reads_the_stance_from_the_raw_file_once_and_holds_what_
     t._parsed_stances = {}
     assert "ResolutionError" in t._parsed_stance(doc).error
     assert AiBatch()._parsed_stance(doc).error == "the resolution has no stored raw file"   # no fetcher outside a run
+    # Storage down while a batch is collected: held 'unchecked' and read again later, never a failed run (review of
+    # #45); real time reads it before sending, strictly, so its poll fails and retries instead.
+    t._fetcher, t._parsed_stances = RawFiles(OSError("storage unreachable")), {}
+    assert t._parsed_stance(doc).error == "its raw file couldn't be read (OSError: storage unreachable)"
+    assert t._parsed_stances == {}                                            # not kept: the next look reads again
+    with pytest.raises(OSError):
+        t._parsed_stance(doc, strict=True)
+    held = extraction.check_stance({"stance": "neutral", "quote": STANCE}, parsed.text.text, 43, t._parsed_stance(doc))
+    assert held.hold.startswith("unchecked: the resolution's parsed stance couldn't be read")
 
 
 def test_content_keeps_the_answer_and_why_it_wasnt_published():

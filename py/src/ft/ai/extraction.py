@@ -20,16 +20,20 @@ quote}]}`), on the sentences the regex couldn't fully read (`rbi_resolution.read
   period's;
 - its figure is one value, or a range with low below high;
 - the quote states that period at exactly that figure "per cent", sign included: its periods and figures, read with
-  the regex's own grammar, pair up one to one in order, and one pair is this projection's (a bare quarter's fiscal
-  year may be named elsewhere in the paragraph; `rbi_resolution.quoted_pairs`). So "its numbers equal the values"
-  (Architecture 03 §1.2), and a "respectively" sentence can't swap two quarters' figures;
+  the regex's own grammar, pair up one to one in order, and one pair is this projection's
+  (`rbi_resolution.quoted_pairs`). So "its numbers equal the values" (Architecture 03 §1.2), and a "respectively"
+  sentence can't swap two quarters' figures;
+- the period's fiscal year is the one the regex gives it where the resolution states it (a bare "Q2" takes the year
+  named before it in its sentence or paragraph: `rbi_resolution.period_years`), and the sentence is about the
+  projection's variable there (the last CPI-inflation or GDP-growth mention before the quote, never core inflation or
+  GVA: `rbi_resolution.subject_at`), so a quarter can't move to another year nor a CPI figure become GDP growth;
 - no target twice, and at least one projection;
 - **the same cross-check:** a target the regex also stored must have the same figure; otherwise the output is held.
 
 A reply that isn't the schema's JSON or fails a check above (except a hold) is retried once with a note naming the
 problems, then rejected with an alert (`policy.ai_batch`); a held reply is never retried. The checks take the
 answer itself, so a held output can be checked again later without a new request (`policy.ai_batch` re-checks held
-drafts each run: a fixed parser or a corrected stored figure publishes them).
+drafts each run: a stance once B6's parse agrees, a projection conflict once the stored figure is corrected).
 """
 from __future__ import annotations
 
@@ -209,9 +213,11 @@ def check_projections(answer, text: str, document_id: int, sentences: tuple[tupl
         if not (single or ranged):
             bad.append("it needs one value, or a range with low below high")
         span = _locate(text, quote, c.mapping) if quote.strip() else None
+        sentence = next(((s, e) for s, e in sentences if span is not None and span.verified and s <= span.start
+                         and span.end <= e), None)
         if span is None or not span.verified:
             bad.append(f"its quote \"{_short(quote)}\" isn't in the resolution exactly once")
-        elif not any(s <= span.start and span.end <= e for s, e in sentences):
+        elif sentence is None:
             c.mapping["outside"] += 1
             bad.append(f"its quote \"{_short(quote)}\" isn't inside one of the sentences given")
         elif dates is not None and (single or ranged):
@@ -220,10 +226,21 @@ def check_projections(answer, text: str, document_id: int, sentences: tuple[tupl
             kind, fy = label.split(" ")
             want = value if single else (low, high)
             match = [g for k, f, g in pairs or [] if k == kind and f in (None, fy) and g == want]
+            # The period's fiscal year as the regex reads it in context (a bare "Q2" takes the year named before it
+            # in the sentence or paragraph), and what the sentence is about at the quote: CPI or GDP.
+            years = {y for a, b, k, y in rbi_resolution.period_years(text, sentence)
+                     if k == kind and span.start <= a and b <= span.end}
+            about = rbi_resolution.subject_at(text, sentence, span.end)
             if pairs is None:
                 bad.append("its quote doesn't state exactly one figure for each period it names")
             elif not match:
                 bad.append(f"its quote doesn't state {label} at {_figure(value, low, high)} per cent")
+            elif fy not in years:
+                named = ", ".join(sorted(y for y in years if y)) or "no fiscal year named before it"
+                bad.append(f"its {kind} is in {named} where the resolution states it, not {fy}")
+            elif about != variable:
+                bad.append(f"its sentence states {VARIABLES[about] if about else 'neither CPI inflation nor real GDP '
+                           'growth'} there, not {VARIABLES[variable]}")
             elif single:     # the figure as the resolution writes it ("7.0", not 7)
                 value = match[0]
             else:
