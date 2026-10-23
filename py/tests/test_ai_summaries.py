@@ -33,9 +33,10 @@ def summary_request(doc=NEW):
 def test_bullets_come_from_list_lines_with_their_blocks_citations():
     r = reply(bullets([("First point", [cite(FOMC_B, 0, 10, 0)]), ("Second point", [])],
                       preamble="Here is the summary:\n\n") + [{"type": "text", "text": "\n  continued here"}])
-    got = split_bullets(r.parts())
-    assert [b for b, _ in got] == ["First point", "Second point continued here"]   # the preamble isn't a bullet
-    assert [len(c) for _, c in got] == [1, 0]
+    found, stray = split_bullets(r.parts())
+    assert [b for b, _ in found] == ["First point", "Second point"]   # the preamble isn't a bullet
+    assert [len(c) for _, c in found] == [1, 0]
+    assert stray == ["continued here"]                                 # one line per bullet: the rest is stray
 
 
 def test_a_good_summary_passes_with_every_citation_on_its_offsets():
@@ -118,5 +119,59 @@ def test_the_retry_is_a_new_input():
     p = load_prompt("doc_summary")
     first = summaries.doc_summary_request(NEW, p)
     retry = summaries.doc_summary_request(NEW, p, note="bullet 1 had no verified citation.")
-    assert first.input_sha256 != retry.input_sha256 and "couldn't be published" in retry.instruction
+    assert first.input_sha256 != retry.input_sha256 and "couldn't be published" in retry.note
     assert first.sources[0].context == "Fed · FOMC statement · released 28 Oct 2026"
+
+
+# ---------------------------------------------------------------------------------------------- B7 review regressions
+def test_figures_are_compared_whole_as_written():
+    """'3/4' isn't '3-3/4', 'Q2' isn't 'Q3', '-4' isn't '4' (review of B7, 23 Oct)."""
+    from ft.ai.summaries import figures, unsupported_figures
+    fed = "lower the target range by 1/4 percentage point to 3-3/4 to 4 percent"
+    assert unsupported_figures("cut by 3/4 percentage point", [fed]) == ["3/4"]
+    assert unsupported_figures("cut by 1/4 percentage point to 3-3/4 to 4 percent", [fed]) == []
+    rbi = "Real GDP growth is projected at 6.7 per cent in Q2 and 7.0 per cent for FY2026-27"
+    assert unsupported_figures("6.7 per cent in Q3", [rbi]) == ["q3"]
+    assert unsupported_figures("Q2 at 6.7 per cent; 7 per cent for FY2026–27", [rbi]) == []
+    assert unsupported_figures("a change of -4 percent", ["inflation at 4 percent"]) == ["-4"]
+    assert unsupported_figures("inflation at 4 percent", ["a change of −4 percent"]) == []   # unsigned: either
+    assert figures("₹1,23,456 and 5.50 and 0.250") == [("", "123456"), ("", "5.5"), ("", "0.25")]
+    assert figures("the COVID-19 period and the 10-year yield") == [("", "19"), ("", "10-year")]
+
+
+def test_a_closing_remark_after_the_bullets_fails_the_reply():
+    blocks = good_summary([(NEW.title, FOMC_B)]) + [
+        {"type": "text", "text": "\nThe Committee is clearly turning dovish and will cut again in December."}]
+    c = check("doc_summary", reply(blocks), summary_request().sources)
+    assert not c.ok and c.problems[0].startswith("text outside the bullets")
+    assert all(b.problem is None for b in c.bullets) and "dovish" not in c.bullets[-1].text
+    pre = check("doc_summary", reply([{"type": "text", "text": "Here are the points:\n\n"}]
+                                     + good_summary([(NEW.title, FOMC_B)])), summary_request().sources)
+    assert pre.ok                                                     # a preamble is ignored, never stored
+
+
+def test_a_blocks_citation_counts_only_for_the_bullet_it_starts_in():
+    s, e = sent(FOMC_B, 0)
+    blocks = [{"type": "text", "text": "- "},
+              {"type": "text", "text": "First point.\n- Second point", "citations": [cite(FOMC_B, s, e, 0)]},
+              {"type": "text", "text": "\n- Third point"}]
+    found, stray = split_bullets(reply(blocks).parts())
+    assert [len(c) for _, c in found] == [1, 0, 0] and stray == []
+
+
+def test_an_empty_citation_is_no_evidence():
+    empty = {"type": "char_location", "cited_text": "", "document_index": 0, "start_char_index": 5,
+             "end_char_index": 5}
+    items = [(f"Point {x}", [empty]) for x in "ABC"]
+    c = check("doc_summary", reply(bullets(items)), summary_request().sources)
+    assert [b.problem for b in c.bullets] == ["no verified citation"] * 3 and c.mapping["empty"] == 3
+    from ft.ai.citations import map_api_citation
+    assert not map_api_citation(FOMC_B, 0, 5, 5, "").verified
+
+
+def test_the_retry_note_is_its_own_last_block_so_the_prefix_stays_the_same():
+    p = load_prompt("doc_summary")
+    first = summaries.doc_summary_request(NEW, p).params()["messages"][0]["content"]
+    retry = summaries.doc_summary_request(NEW, p, note="bullet 1 had no verified citation.").params()
+    blocks = retry["messages"][0]["content"]
+    assert blocks[:-1] == first and blocks[-1]["text"].startswith("Your previous answer")

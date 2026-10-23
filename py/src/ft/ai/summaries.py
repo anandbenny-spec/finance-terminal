@@ -8,8 +8,11 @@ passages they cite.
   ignored and never stored. A bullet's citations are those of the reply's text blocks that overlap it.
 - Each citation is mapped into our copy of the document (`citations.map_api_citation`): the API's offsets if our text
   there equals the cited text, else the cited text found exactly once; otherwise it isn't evidence.
-- A bullet is kept only with at least one verified citation, and only if every number it writes is a number in its
-  cited passages ("no number that isn't in a cited passage", Spec 01 §3.3). For `statement_diff_summary` a citation
+- A bullet is kept only with at least one verified citation, and only if every figure it writes is a figure in its
+  cited passages ("no number that isn't in a cited passage", Spec 01 §3.3). Figures are compared whole, as written:
+  "3/4" doesn't match "3-3/4", "Q2" doesn't match "Q3", and a signed figure needs the same sign (`figures`).
+- Text after the first bullet that isn't a bullet (a closing remark) fails the reply: it would sit under the last
+  bullet's citation. A preamble before the first bullet is ignored and never stored. For `statement_diff_summary` a citation
   counts only if it falls on a sentence the redline marks changed, added or removed: so additions cite the new text
   and removals the old, as only the new text holds an addition and only the old a removal.
 - The bullet count must be in range (3-6, 2-5).
@@ -24,7 +27,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
 
-from ft.ai.citations import map_api_citation, numbers_in
+from ft.ai.citations import map_api_citation
 from ft.ai.client import Prompt, Reply, Request, Source, TextPart
 
 BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
@@ -86,10 +89,12 @@ def _when(d: date | None) -> str:
 
 
 # ---------------------------------------------------------------------------------------------- requests
-def _note(note: str | None) -> str:
+def _note(note: str | None) -> str | None:
+    """The retry's note: sent as its own last block, after the unchanged instruction, so the retry can read the first
+    attempt's cached prefix."""
     if not note:
-        return ""
-    return ("\n\nYour previous answer to this request couldn't be published: " + note
+        return None
+    return ("Your previous answer to this request couldn't be published: " + note
             + "\nAnswer again, following every rule. Cite the passage that states each point, and write numbers "
               "only as the cited passage writes them.")
 
@@ -97,9 +102,8 @@ def _note(note: str | None) -> str:
 def doc_summary_request(doc: Doc, prompt: Prompt, *, note: str | None = None) -> Request:
     lo, hi = BULLETS["doc_summary"]
     src = Source(doc.document_id, doc.text, doc.title, context=f"{doc.bank} · {doc.label} · released {_when(doc.day)}")
-    instruction = (f"Summarise the {doc.label} above ({doc.title}) in {lo} to {hi} bullets, following the rules."
-                   + _note(note))
-    return Request("doc_summary", prompt, (src,), instruction)
+    instruction = f"Summarise the {doc.label} above ({doc.title}) in {lo} to {hi} bullets, following the rules."
+    return Request("doc_summary", prompt, (src,), instruction, note=_note(note))
 
 
 def changed_spans(segments: dict) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
@@ -137,38 +141,73 @@ def diff_summary_request(new: Doc, old: Doc, segments: dict, prompt: Prompt, *, 
     instruction = (f"Document 1 is the previous {old.label} ({_when(old.day)}); document 2 is the new one "
                    f"({_when(new.day)}). These sentences changed between them:\n\n"
                    f"{redline_text(segments, old.text, new.text)}\n\n"
-                   f"In {lo} to {hi} bullets, explain what changed, following the rules." + _note(note))
-    return Request("statement_diff_summary", prompt, sources, instruction)
+                   f"In {lo} to {hi} bullets, explain what changed, following the rules.")
+    return Request("statement_diff_summary", prompt, sources, instruction, note=_note(note))
 
 
 # ---------------------------------------------------------------------------------------------- checking a reply
-def split_bullets(parts: list[TextPart]) -> list[tuple[str, list]]:
-    """(bullet text, the API citations of the text blocks overlapping it), in order."""
+_LEAD = re.compile(r"^\s*(?:(?:[-*\u2022\u2013\u2014]|\d{1,2}[.)])[ \t]+)?")
+
+
+def split_bullets(parts: list[TextPart]) -> tuple[list[tuple[str, list]], list[str]]:
+    """(the bullets as (text, the API citations credited to it), the non-bullet lines after the first bullet).
+    A text block's citations go to the bullet its text starts in (after any whitespace and list marker), so one
+    block's citation never verifies two bullets."""
     text, spans = "", []
     for p in parts:
-        spans.append((len(text), len(text) + len(p.text), p.citations))
+        lead = _LEAD.match(p.text)
+        spans.append((len(text) + (lead.end() if lead else 0), p.citations))
         text += p.text
-    ranges: list[list[int]] = []
-    current: list[int] | None = None
+    bullets: list[list[int]] = []                 # [region start, text start, text end]
+    stray: list[str] = []
     pos = 0
     for line in text.split("\n"):
         start, end = pos, pos + len(line)
         pos = end + 1
         m = _MARK.match(line)
         if m:
-            current = [start + m.end(), end]
-            ranges.append(current)
-        elif not line.strip():
-            current = None
-        elif current is not None:
-            current[1] = end                                 # a bullet wrapped onto another line
+            bullets.append([start, start + m.end(), end])
+        elif line.strip() and bullets:
+            stray.append(line.strip())
     out = []
-    for s, e in ranges:
+    for i, (region, s, e) in enumerate(bullets):
+        nxt = bullets[i + 1][0] if i + 1 < len(bullets) else len(text) + 1
+        cites = [c for at, cs in spans if region <= at < nxt for c in cs]
         body = " ".join(text[s:e].split())
-        cites = [c for bs, be, cs in spans if bs < e and be > s for c in cs]
         if body:
             out.append((body, cites))
+    return out, stray
+
+
+# A figure as written: digits with whatever they're joined to by . , / - (and letters: "Q2", "FY27", "10-year"), with
+# a sign only when it stands alone ("-0.25", not the hyphen of "COVID-19"). Dashes and the minus sign read as "-".
+_FIGURE = re.compile(r"(?<![\w.])([-+]?)([A-Za-z]*\d\w*(?:[.,/-]\w+)*)")
+_PLAIN = re.compile(r"^\d{1,3}(?:,\d{2,3})+(?:\.\d+)?$|^\d+(?:\.\d+)?$")
+_DASHES = str.maketrans({"\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-", "\u2212": "-"})
+
+
+def figures(text: str) -> list[tuple[str, str]]:
+    """Every figure in `text` as (sign, canonical form): plain numbers by value ("5.50" and "5.5" agree; Indian and
+    Western grouping read whole), everything else as written, lower-cased ("4-1/4", "q2", "fy2026-27")."""
+    out = []
+    for sign, tok in _FIGURE.findall(text.translate(_DASHES)):
+        if _PLAIN.match(tok):
+            whole, _, frac = tok.replace(",", "").partition(".")
+            tok = (whole.lstrip("0") or "0") + ("." + frac.rstrip("0") if frac.rstrip("0") else "")
+        out.append((sign, tok.lower()))
     return out
+
+
+def unsupported_figures(bullet: str, passages: list[str]) -> list[str]:
+    """The bullet's figures that aren't in its cited passages. An unsigned figure may match either sign; a signed one
+    needs the same sign (Review 01, F4's rule for numbers)."""
+    have = {f for p in passages for f in figures(p)}
+    unsigned = {t for _, t in have}
+    bad = []
+    for sign, tok in figures(bullet):
+        if (sign and (sign, tok) not in have) or (not sign and tok not in unsigned):
+            bad.append(sign + tok)
+    return list(dict.fromkeys(bad))
 
 
 def _overlaps(s: int, e: int, spans: list[tuple[int, int]]) -> bool:
@@ -182,7 +221,8 @@ def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
     lo, hi = BULLETS[task]
     mapping: Counter = Counter()
     bullets = []
-    for body, cites in split_bullets(reply.parts()):
+    found, stray = split_bullets(reply.parts())
+    for body, cites in found:
         b = Bullet(body)
         seen = set()
         passages = []
@@ -190,9 +230,12 @@ def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
             if c.kind != "char_location" or c.document_index is None or not 0 <= c.document_index < len(sources):
                 mapping["not_a_passage"] += 1
                 continue
+            if c.start is None or c.end is None or c.end <= c.start or not c.cited_text.strip():
+                mapping["empty"] += 1                        # an empty range quotes nothing
+                continue
             src = sources[c.document_index]
             doc_text = (full_text or {}).get(src.document_id, src.text if src.seg_start == 0 else None)
-            if doc_text is None or c.start is None or c.end is None:
+            if doc_text is None:
                 mapping["failed"] += 1
                 continue
             span = map_api_citation(doc_text, src.seg_start, c.start, c.end, c.cited_text)
@@ -211,13 +254,12 @@ def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
         if not b.citations:
             b.problem = ("no verified citation on a changed sentence" if changed is not None and cites
                          else "no verified citation")
-        else:
-            have = {abs(n) for p in passages for n in numbers_in(p)}
-            extra = [str(n) for n in numbers_in(body) if abs(n) not in have]
-            if extra:
-                b.problem = "numbers not in its cited passages: " + ", ".join(dict.fromkeys(extra))
+        elif extra := unsupported_figures(body, passages):
+            b.problem = "numbers not in its cited passages: " + ", ".join(extra)
         bullets.append(b)
     problems = []
+    if stray:
+        problems.append("text outside the bullets: " + " / ".join(f'"{x[:120]}"' for x in stray))
     if not bullets:
         problems.append("no bullets (each bullet is a line starting with '- ')")
     elif not lo <= len(bullets) <= hi:

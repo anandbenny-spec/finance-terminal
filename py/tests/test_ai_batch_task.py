@@ -266,12 +266,58 @@ def test_an_api_error_fails_the_poll_and_the_next_poll_sends_again():
     with JobRun(JOB, "watch", clock=Clock(decision_day(date(2046, 12, 12)))) as job:
         job.run_pass([t])
         first = last_run()
-        assert first["status"] == "failed" and "NoReply" in first["error"] and outputs(new) == []
+        assert first["status"] == "failed" and "Unfinished" in first["error"] and outputs(new) == []
         assert requests(new) == [("doc_summary", "errored", "BadRequestError 400", False)]
         job.run_pass([t], record_skips=False)                              # the next poll
         assert last_run()["status"] == "success"
         assert job.finish() == 0                                            # the last outcome counts
     assert [(g[0], g[1]) for g in outputs(new)] == [("doc_summary", "published"), ("statement_diff_summary", "published")]
+
+
+@pytest.mark.db
+def test_a_retry_that_errors_is_sent_again_from_its_stored_note_and_the_first_reply_isnt():
+    """Review of B7, 23 Oct: the first reply is stored ("retried: …", with the retry's note); the retry fails with a
+    400; the poll fails; the next poll sends only the retry, from the stored note."""
+    (s0, s1), _, new = two_statements(date(2048, 1, 26), date(2048, 3, 15))
+    fake = FakeClaude(["uncited", "400", "ok"])
+    t = task([s0, s1], fake)
+    with JobRun(JOB, "watch", clock=Clock(decision_day(date(2048, 3, 15)))) as job:
+        job.run_pass([t])
+        assert last_run()["status"] == "failed" and fake.n == 2
+        assert [x[:2] for x in requests(new)] == [("doc_summary", "rejected"), ("doc_summary", "errored")]
+        job.run_pass([t], record_skips=False)
+        assert last_run()["status"] == "success" and job.finish() == 0
+    retries = [b["messages"][0]["content"][-1]["text"] for b in fake.requests[1:3]]
+    assert retries[0] == retries[1] and retries[0].startswith("Your previous answer")   # the same retry, twice
+    assert fake.n == 4                                                   # a1, a2 (400), a2, the diff summary
+    assert [(g[0], g[1]) for g in outputs(new)] == [("doc_summary", "rejected"), ("doc_summary", "published"),
+                                                    ("statement_diff_summary", "published")]
+
+
+@pytest.mark.db
+def test_a_target_left_unfinished_fails_the_poll_and_the_finished_one_isnt_sent_again():
+    (s0, s1), _, new = two_statements(date(2048, 4, 26), date(2048, 6, 14))
+    fake = FakeClaude(["ok", "400", "ok"])
+    t = task([s0, s1], fake)
+    with JobRun(JOB, "watch", clock=Clock(decision_day(date(2048, 6, 14)))) as job:
+        job.run_pass([t])
+        assert last_run()["status"] == "failed"
+        assert [(g[0], g[1]) for g in outputs(new)] == [("doc_summary", "published")]    # stored as it came
+        job.run_pass([t], record_skips=False)
+        assert last_run()["status"] == "success"
+    assert fake.n == 3 and [(g[0], g[1]) for g in outputs(new)] == [("doc_summary", "published"),
+                                                                    ("statement_diff_summary", "published")]
+
+
+@pytest.mark.db
+def test_a_daily_run_after_the_statement_doesnt_stand_in_for_the_decision_day_step():
+    """after_decision_document counts only watch runs (a daily run sends nothing in real time)."""
+    (s0, s1), _, new = two_statements(date(2048, 7, 26), date(2048, 9, 20))
+    fake = FakeClaude(["ok"])
+    run(JOB, "daily", [task([s0, s1], fake)], only=KEY, force=True, clock=lambda: datetime(2048, 9, 20, 18, tzinfo=UTC))
+    assert fake.requests == []
+    _, code = watch_once(task([s0, s1], fake), decision_day(date(2048, 9, 20), 10))
+    assert code == 0 and fake.n == 2 and [g[1] for g in outputs(new)] == ["published", "published"]
 
 
 @pytest.mark.db

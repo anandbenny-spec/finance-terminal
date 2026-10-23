@@ -15,6 +15,7 @@ Messages API call and returns the reply with its usage and cost.
   (up to `max_wait`), else backing off with jitter. Anything else raises `CallError` at once.
 - Prompt caching: one top-level `cache_control` (5 minutes in real time, 1 hour in a batch, which can outlast five
   minutes); the API caches the prefix once it passes the model's minimum (512 tokens on Haiku 5.5 and Sonnet 5.5).
+  A retry's note goes in its own last block, so the retry reads the first attempt's cached prefix.
 - Every request stays under 100,000 input tokens (Haiku costs five times as much above that): an estimate over the
   limit is refused before sending (`TooLong`).
 - Cost comes from the dated price table (config/ai_prices.yaml); a model without a price is refused before sending.
@@ -206,6 +207,7 @@ class Request:
     instruction: str                  # the user turn's text, after the documents
     model: str | None = None          # default: the task's (Haiku 5.5)
     schema: dict | None = None        # the json route's JSON schema
+    note: str | None = None           # a retry's note: its own last block, so the prefix before it stays cached
 
     def __post_init__(self):
         if self.task not in TASKS:
@@ -226,7 +228,8 @@ class Request:
     def _canonical(self) -> dict:
         return {"model": self.model_id, "task": self.task, "prompt_version": self.prompt.version,
                 "prompt_sha256": self.prompt.sha256, "route": self.spec.route, "effort": self.spec.effort,
-                "max_tokens": self.spec.max_tokens, "instruction": self.instruction, "schema": self.schema,
+                "max_tokens": self.spec.max_tokens, "instruction": self.instruction, "note": self.note,
+                "schema": self.schema,
                 "sources": [{"document_id": s.document_id, "seg_start": s.seg_start, "title": s.title,
                              "context": s.context, "text_sha256": s.text_sha256} for s in self.sources]}
 
@@ -236,7 +239,7 @@ class Request:
         return hashlib.sha256(json.dumps(self._canonical(), sort_keys=True, ensure_ascii=False).encode()).digest()
 
     def estimated_tokens(self) -> int:
-        chars = len(self.prompt.text) + len(self.instruction) + sum(
+        chars = len(self.prompt.text) + len(self.instruction) + len(self.note or "") + sum(
             len(s.text) + len(s.title) + len(s.context or "") for s in self.sources)
         if self.schema is not None:
             chars += len(json.dumps(self.schema))
@@ -255,6 +258,8 @@ class Request:
                 block["citations"] = {"enabled": True}
             content.append(block)
         content.append({"type": "text", "text": self.instruction})
+        if self.note:
+            content.append({"type": "text", "text": self.note})
         output_config: dict = {"effort": self.spec.effort}
         if not cite:
             output_config["format"] = {"type": "json_schema", "schema": self.schema}
