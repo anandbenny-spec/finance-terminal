@@ -1,4 +1,7 @@
-# Source of truth for what runs when (Architecture 02 §1.3). Each run upserts this into ops.task.
+# Source of truth for what runs when (Architecture 02 §1.3). Each run upserts this into ops.task (ft/jobs/config.py).
+# Per task: description, workflows (workflow: due rule), run_after, overdue_after, and optionally uses_nse,
+# visitor_refreshable and enabled (default true). Due rules: `every <n> minutes|hours|days`, fomc_decision_day,
+# mpc_decision_day, after_decision_document (ft/jobs/due.py). Each task needs at least one `every` rule.
 policy.calendar:
   description: FOMC and MPC meeting calendars
   workflows: {weekly: every 25 days}
@@ -22,6 +25,7 @@ policy.reactions:
   workflows: {daily: every 20 hours}
   run_after: [policy.market_series, policy.fed_documents, policy.rbi_documents]
   overdue_after: 4 days
+  enabled: false        # until Pass 1b builds it (Prompt 01 A2, §5 item 4), so the health page doesn't flag it
 policy.ai_batch:
   description: Summaries, diffs, stance, scores and projections for new documents
   workflows: {daily: every 20 hours, watch: after_decision_document}
