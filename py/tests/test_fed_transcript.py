@@ -66,7 +66,8 @@ FED = FIXTURES / "fed"
                     reason="the saved pages are only on the Mac (app/data/fixtures, git-ignored)")
 def test_every_saved_transcript_the_pages_link_passes():
     """The press-conference pages saved 23 Oct 2026 (Jan 2019 to Sep 2026): 62 link a transcript, Sep 2026's doesn't
-    (its link is commented out); every linked PDF that was saved passes (Jul 2024's lower-case one wasn't saved)."""
+    (its link is commented out); every linked PDF that was saved passes. Jul 2024's link is lower-case, which the
+    fixtures script saves only since 24 Oct 2026, so it's counted when it's there."""
     pages = sorted(FED.glob("fomcpres*conf*.htm"), key=lambda p: re.search(r"(\d{8})", p.name)[1])
     assert len(pages) == 63
     linked, passed = {}, []
@@ -82,7 +83,9 @@ def test_every_saved_transcript_the_pages_link_passes():
         assert not bad, (d8, bad)
         passed.append(d8)
     assert [d for d, link in linked.items() if link is None] == ["20260916"]
-    assert len(passed) == 61 and "20240731" not in passed and linked["20240731"].endswith("fomcpresconf20240731.pdf")
+    jul24 = (FED / "fomcpresconf20240731.pdf").exists()
+    assert linked["20240731"].endswith("/mediacenter/files/fomcpresconf20240731.pdf")
+    assert len(passed) == 61 + jul24 and ("20240731" in passed) == jul24
     warsh = ft.parse((FED / "FOMCpresconf20260617.pdf").read_bytes(), "x.pdf")
     assert warsh.chair == "CHAIRMAN WARSH" and warsh.text.text.startswith(
         "Transcript of Chairman Warsh's Press Conference June 17, 2026 CHAI\n\nRMAN WARSH. Good day.")   # as the PDF has it

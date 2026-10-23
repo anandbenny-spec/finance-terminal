@@ -11,6 +11,13 @@ Checked on the 61 transcripts saved 23 Oct 2026 (Jan 2019 to Sep 2026; Jul 2024'
 characters, its first line naming the press conference and its day ("Transcript of Chair Powell's Press Conference
 January 30, 2019"; "… Press Conference Call March 15, 2020"), the Chair speaking. Jun 2026's text layer splits the
 Chair's first label across two lines ("CHAI" / "RMAN WARSH."): the text keeps it as the PDF has it.
+
+**Only the page's link counts** (decided by Claude, Anand delegating, 24 Oct 2026; GitHub issue #14). The 16 Sep 2026
+page names its PDF only inside an HTML comment (still so on 23 Oct, the PDF marked FINAL and dated 24 Sep), so that
+transcript counts as not posted: no URL is guessed. Spec 01 §1.1 routes the transcript through the page's link, the
+docs' fallback for a missing one is to skip the meeting (Data Audit 01 #2; Arch 02 §2), and a document its owner hasn't
+linked may be withdrawn or under correction, which the accuracy rule holds back. The 30-day alert flags it; once the
+page links it, a backfill run takes it.
 """
 from __future__ import annotations
 
