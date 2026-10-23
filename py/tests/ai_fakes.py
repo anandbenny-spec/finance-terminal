@@ -260,12 +260,12 @@ class _Result:
 
 
 class FakeVoyage:
-    """voyageai.Client.embed: deterministic unit vectors from each text's hash; records every call. `fail` raises
-    the given exceptions first, one per call."""
+    """VoyageHTTP.embed: deterministic unit vectors from each text's hash; records every call. `fail` raises the given
+    exceptions first, one per call."""
 
     def __init__(self, *, fail=(), dimension: int = 512):
         self.calls, self.fail, self.dimension = [], list(fail), dimension
-        self._params = {"base_url": "https://ai.mongodb.com/v1"}
+        self.base_url = "https://ai.mongodb.com/v1"
 
     def embed(self, texts, model=None, input_type=None, truncation=True, output_dtype=None, output_dimension=None):
         self.calls.append({"texts": list(texts), "model": model, "input_type": input_type, "truncation": truncation,

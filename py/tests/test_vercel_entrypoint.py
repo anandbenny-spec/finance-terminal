@@ -3,7 +3,9 @@
 Checked on the first deploys (24 Oct 2026): `/api/health` answered from the api service with Vercel passing the full
 `/api/...` path, so `app.py` keeps its `/api` prefix. These tests keep that shape from drifting: the entrypoint
 `main:app` in both files, `/api/*` routed to the api service ahead of the web catch-all, the app answering on the full
-path, the cold-start line in the runtime logs, and the api service's base dependencies holding no `jobs` package."""
+path, the cold-start line in the runtime logs, and the api service's base dependencies holding no `jobs` package
+and none of the heavy packages the voyageai SDK brought (24 Oct 2026, issue #9: Vercel installed them at every cold
+start)."""
 import importlib.util
 import json
 import re
@@ -100,3 +102,32 @@ def test_the_api_service_installs_no_jobs_or_eval_package():
     extras = PYPROJECT["project"]["optional-dependencies"]
     for extra in ("jobs", "eval"):
         assert not base & {_name(r) for r in extras[extra]}, extra
+
+
+# What the voyageai SDK pulled into the api service (36 packages, about 152 MB; issue #9), and the jobs' heavy ones.
+HEAVY = {"voyageai", "langchain-core", "langsmith", "huggingface-hub", "tokenizers", "hf-xet", "numpy", "pillow",
+         "aiohttp", "pandas", "lxml", "yfinance", "curl-cffi"}
+
+
+def _base_closure() -> set[str]:
+    """Every package Vercel installs for the api service: the base dependencies' closure in uv.lock."""
+    lock = {p["name"]: p for p in tomllib.loads((PY / "uv.lock").read_text())["package"]}
+    seen, todo = set(), [(d["name"], tuple(d.get("extra", ()))) for d in lock["finance-terminal"]["dependencies"]]
+    while todo:
+        name, extras = todo.pop()
+        key = (name, extras)
+        if key in seen:
+            continue
+        seen.add(key)
+        pkg = lock[name]
+        deps = list(pkg.get("dependencies", []))
+        for extra in extras:
+            deps += pkg.get("optional-dependencies", {}).get(extra, [])
+        todo += [(d["name"], tuple(d.get("extra", ()))) for d in deps]
+    return {name for name, _ in seen}
+
+
+def test_the_api_service_bundle_holds_none_of_the_heavy_packages():
+    closure = _base_closure()
+    assert {"anthropic", "fastapi", "httpx", "psycopg-binary", "pglast", "boto3"} <= closure
+    assert not closure & HEAVY, sorted(closure & HEAVY)
