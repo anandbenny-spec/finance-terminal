@@ -15,6 +15,11 @@ on:
         description: Last date (blank = today)
         required: false
         type: string
+      target:
+        description: Project to run against
+        type: choice
+        options: [dev, production]
+        default: dev
 concurrency:
   group: jobs-backfill
   cancel-in-progress: false
@@ -27,6 +32,11 @@ jobs:
   run:
     runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026; the audit's G1/S1 ran on 24.04
     timeout-minutes: 240
+    env:
+      # GitHub issue #2, item 1: a scheduled run always targets production; a manual run targets dev unless
+      # production is chosen. Production's credentials enter the environment only on a production run, and a
+      # missing DEV_ secret leaves its variable empty (the run then stops), never falling back to production's.
+      FT_TARGET: ${{ (github.event_name == 'schedule' || inputs.target == 'production') && 'production' || 'dev' }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0, pinned by SHA (setup-uv publishes no v8+ major tags)
@@ -35,18 +45,19 @@ jobs:
           cache-dependency-glob: py/uv.lock
       - run: uv sync --locked --extra jobs
       - name: Run
-        run: uv run --locked python -m ft.jobs.run --workflow backfill --task "$INPUT_TASK" --since "$INPUT_SINCE" --until "$INPUT_UNTIL" --runner github --github-run-id ${{ github.run_id }} --git-sha ${{ github.sha }}
+        run: uv run --locked python -m ft.jobs.run --workflow backfill --target "$FT_TARGET" --task "$INPUT_TASK" --since "$INPUT_SINCE" --until "$INPUT_UNTIL" --runner github --github-run-id ${{ github.run_id }} --git-sha ${{ github.sha }}
         env:
           # inputs go through the environment, never pasted into the script (injection)
           INPUT_TASK: ${{ inputs.task }}
           INPUT_SINCE: ${{ inputs.since }}
           INPUT_UNTIL: ${{ inputs.until }}
-          JOB_DATABASE_URL: ${{ secrets.JOB_DATABASE_URL }}
-          STORAGE_ENDPOINT: ${{ secrets.STORAGE_ENDPOINT }}
+          JOB_DATABASE_URL: ${{ env.FT_TARGET == 'production' && secrets.JOB_DATABASE_URL || env.FT_TARGET == 'dev' && secrets.DEV_JOB_DATABASE_URL || '' }}
+          STORAGE_ENDPOINT: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_ENDPOINT || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_ENDPOINT || '' }}
+          STORAGE_ACCESS_KEY_ID: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_ACCESS_KEY_ID || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_ACCESS_KEY_ID || '' }}
+          STORAGE_SECRET_ACCESS_KEY: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_SECRET_ACCESS_KEY || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_SECRET_ACCESS_KEY || '' }}
           STORAGE_BUCKET: ${{ secrets.STORAGE_BUCKET }}
-          STORAGE_ACCESS_KEY_ID: ${{ secrets.STORAGE_ACCESS_KEY_ID }}
-          STORAGE_SECRET_ACCESS_KEY: ${{ secrets.STORAGE_SECRET_ACCESS_KEY }}
           STORAGE_REGION: ${{ secrets.STORAGE_REGION }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
