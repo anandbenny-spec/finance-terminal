@@ -728,10 +728,10 @@ def saved_site() -> dict[str, bytes]:
         n = p.name
         if n.startswith("monetary"):
             pages[f"{SITE}/newsevents/pressreleases/{n}"] = p.read_bytes()
+        elif n.endswith(".pdf"):                              # FOMCpresconf…, or fomcpresconf20240731.pdf
+            pages[f"{SITE}/mediacenter/files/{n}"] = p.read_bytes()
         elif n.startswith(("fomcminutes", "fomcpres", "fomccalendars", "fomchistorical")):
             pages[f"{SITE}/monetarypolicy/{n}"] = p.read_bytes()
-        elif n.startswith("FOMCpres"):
-            pages[f"{SITE}/mediacenter/files/{n}"] = p.read_bytes()
     return pages
 
 
@@ -749,7 +749,7 @@ def test_a_backfill_over_the_saved_pages_loads_every_statement_minutes_and_trans
     """B5's done-when over the pages saved 23 Oct 2026 and the real roster (config/members.yaml): every statement from
     the Dec 2018 baseline to Jul 2026 passes its blocking checks, 2019-20 and the unscheduled 3 and 15 Mar 2020 included;
     every voter is stored, the dissents match the statements (Sep 2020's two without bps), the tally statements' votes
-    come from the minutes; the roster matches every minutes' vote; 61 minutes and 61 transcripts load. The meetings come
+    come from the minutes; the roster matches every minutes' vote; 61 minutes and every saved transcript load. The meetings come
     from the saved calendar pages through the calendar's own rules."""
     from ft.policy import meetings
 
@@ -790,13 +790,16 @@ def test_a_backfill_over_the_saved_pages_loads_every_statement_minutes_and_trans
     for name in ("meetings_failed", "minutes_failed", "transcripts_failed", "voter_terms", "minutes_votes",
                  "minutes_roster", "votes_wait", "baseline_change"):
         assert r["checks"][name]["passed"], (name, r["checks"][name]["detail"])
+    # Jul 2024's transcript link is lower-case (fomcpresconf20240731.pdf): the fixtures script saves it only since
+    # 24 Oct 2026, so it's expected when the file is there and reported missing when it isn't.
+    jul24 = (FIXTURES / "fomcpresconf20240731.pdf").exists()
     counts = json.loads(r["checks"]["statements_stored"]["detail"])
     assert counts == {"targets": 63, "loaded": 63, "waiting": 0, "failed": 0, "named_votes": 673, "dissents": 31,
                       "tally_statements": 2, "rates_pending": 0, "from_rss": 0, "roster": 52, "minutes": 61,
-                      "minutes_votes": 24, "transcripts": 61, "transcripts_waiting": 0, "documents_failed": 0}, counts
-    # Jul 2024's transcript isn't among the saved files (its link is lower-case: fomcpresconf20240731.pdf).
-    assert r["checks"]["documents_missing"]["detail"] == (
-        "fomc-2024-07-31: transcript https://www.federalreserve.gov/mediacenter/files/fomcpresconf20240731.pdf")
+                      "minutes_votes": 24, "transcripts": 61 + jul24, "transcripts_waiting": 0,
+                      "documents_failed": 0}, counts
+    assert r["checks"]["documents_missing"]["detail"] == ("" if jul24 else (
+        "fomc-2024-07-31: transcript https://www.federalreserve.gov/mediacenter/files/fomcpresconf20240731.pdf"))
 
     # Every voter of every meeting is stored, each with a document and a span.
     n = q("""select count(*), count(distinct e.slug) from policy.vote v join core.event e on e.id = v.meeting_event_id
@@ -817,13 +820,13 @@ def test_a_backfill_over_the_saved_pages_loads_every_statement_minutes_and_trans
 
     docs = dict(q("""select d.doc_type, count(*) from core.document d join core.event e on e.id = d.event_id
                       where e.slug = any(%s) and d.is_published group by 1""", slugs))
-    assert docs == {"fomc_statement": 63, "fomc_minutes": 61, "fomc_presconf_transcript": 61}
+    assert docs == {"fomc_statement": 63, "fomc_minutes": 61, "fomc_presconf_transcript": 61 + jul24}
     speakers = q("""select count(distinct c.speaker) from core.chunk c join core.document d on d.id = c.document_id
                      join core.event e on e.id = d.event_id
                     where e.slug = 'fomc-2026-07-29' and d.doc_type = 'fomc_presconf_transcript'""")[0][0]
     assert speakers >= 5
     alerts = {k for (k,) in q("select dedupe_key from ops.alert where resolved_at is null and dedupe_key like 'fed_%%'")}
-    assert "fed_transcript_missing:fomc-2024-07-31" in alerts
+    assert ("fed_transcript_missing:fomc-2024-07-31" in alerts) != jul24
     assert not {a for a in alerts if a.startswith(("fed_statement_failed:", "fed_minutes_failed:",
                                                    "fed_transcript_failed:")) and a.split(":", 1)[1] in slugs}
 
