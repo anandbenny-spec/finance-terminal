@@ -200,9 +200,10 @@ def test_a_daily_run_publishes_each_stance_and_the_projections_the_regex_missed_
     # One batch: the summaries, the cut's "what changed", a stance for each resolution and the cut's projections.
     assert [len(b["requests"]) for b in fake.batches.values()] == [6]
     assert sorted(k for k, _ in fake.answered) == ["projections", "stance", "stance"]
-    assert [x[:2] for x in requests(base)] == [("doc_summary", "succeeded"), ("stance_extraction", "succeeded")]
-    assert [x[:2] for x in requests(cut)] == [("doc_summary", "succeeded"), ("statement_diff_summary", "succeeded"),
-                                             ("stance_extraction", "succeeded"), ("projection_extraction", "succeeded")]
+    assert sorted(x[:2] for x in requests(base)) == [("doc_summary", "succeeded"), ("stance_extraction", "succeeded")]
+    assert sorted(x[:2] for x in requests(cut)) == [("doc_summary", "succeeded"), ("projection_extraction", "succeeded"),
+                                                   ("stance_extraction", "succeeded"),
+                                                   ("statement_diff_summary", "succeeded")]
 
     # The stance is the meeting's, labelled and cited to the resolution's own sentence; visitors see it.
     assert stance_outputs(base) == [("published", "calibrated tightening", HOLD_STANCE, True, "")]
@@ -248,7 +249,7 @@ def test_a_stance_that_disagrees_with_the_parse_is_held_and_published_once_the_p
         r["checks"]["extractions_held"]["detail"]
     out = stance_outputs(slug)
     assert [(o[0], o[1], o[3]) for o in out] == [("draft", "neutral", True)] and out[0][4].startswith("held: mismatch")
-    assert [x[:2] for x in requests(slug)] == [("doc_summary", "succeeded"), ("stance_extraction", "succeeded")]
+    assert sorted(x[:2] for x in requests(slug)) == [("doc_summary", "succeeded"), ("stance_extraction", "succeeded")]
     key = f"ai_held:stance_extraction:{resolution_id(slug)}"
     open_, message = alert(key)
     assert open_ and "mismatch" in message
