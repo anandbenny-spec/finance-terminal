@@ -62,7 +62,7 @@ finance-terminal/            on the Mac: ~/Projects/finance-terminal/app
 ├── py/                      one uv project, Python 3.13 (>=3.13,<3.14); uv.lock covers the Mac and Linux
 │   ├── src/ft/storage.py    the one storage function
 │   ├── src/ft/ai/           sqlguard, citations; the model wrapper (client.py) comes in the slice
-│   ├── src/ft/jobs/         runner; the run CLI and the tasks come in the slice
+│   ├── src/ft/jobs/         run.py (CLI), config, due rules, runner, watch loop; tasks/ (added in the slice)
 │   ├── src/ft/engines/      document, time series, events (to come)
 │   ├── src/ft/api/app.py    FastAPI service on Vercel at /api/* (entrypoint py/main.py, main:app)
 │   ├── config/              tasks.yaml · prompts/<task>/vN.md + JSON schema · eval/sets/ · curated YAML
@@ -83,7 +83,7 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 
 - **Tests pass before anything is called done:** ruff; `run_all.sh` with every script at "failed 0"; pytest
   with `TEST_PG_CONNINFO` set (database tests skip without it, and a skip isn't a pass); the `web/` checks.
-  Counts only grow (23 Oct: 84 SQL, 77 pytest). Say where they ran: CI on the pushed commit counts (§6).
+  Counts only grow (23 Oct: 84 SQL, 186 pytest). Say where they ran: CI on the pushed commit counts (§6).
 - New behaviour gets a test; a fixed bug gets a regression test.
 - Deleting, skipping or weakening a test, or loosening a data check, is Anand's call (§7).
 - A new dependency or `uv lock --upgrade` is a named, deliberate change. The API service's base dependencies
