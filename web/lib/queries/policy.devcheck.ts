@@ -5,7 +5,7 @@
 // A missing setting or an unloaded series fails the check; it never skips.
 import { createClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
-import type { PolicyApiDatabase } from "@/lib/queries/api-policy";
+import type { ApiDatabase } from "@/lib/queries/api";
 import {
   FED_TARGET_SERIES,
   POLICY_START,
@@ -22,7 +22,7 @@ function client(): PolicyDb {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) throw new Error("set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to the dev project's");
-  return createClient<PolicyApiDatabase, "api">(url, key, {
+  return createClient<ApiDatabase, "api">(url, key, {
     db: { schema: "api" },
     auth: { persistSession: false, autoRefreshToken: false },
   });

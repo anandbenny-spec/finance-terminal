@@ -4,7 +4,7 @@
 // Content-Range only when the request asks for it (`Prefer: count=exact`). It understands the parts of the query
 // string the page queries use: select (columns, checked), eq/lt/lte/gt/gte/in filters, order, offset and limit.
 import { createClient } from "@supabase/supabase-js";
-import type { PolicyApiDatabase } from "@/lib/queries/api-policy";
+import type { ApiDatabase } from "@/lib/queries/api";
 
 export type Row = Record<string, string | number | boolean | null>;
 export type Store = Record<string, Row[]>;
@@ -97,7 +97,7 @@ export function fakePostgrest(store: Store, maxRows = 1000) {
 /** A real supabase-js client on the `api` schema whose requests go to `fakePostgrest(store)`. */
 export function fakeClient(store: Store, maxRows = 1000) {
   const fake = fakePostgrest(store, maxRows);
-  const db = createClient<PolicyApiDatabase, "api">("http://fake.local", "anon-key-for-tests", {
+  const db = createClient<ApiDatabase, "api">("http://fake.local", "anon-key-for-tests", {
     db: { schema: "api" },
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: fake.fetch },

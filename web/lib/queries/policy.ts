@@ -18,13 +18,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   ObservationRow,
   ObservationStepRow,
-  PolicyApiDatabase,
+  ApiDatabase,
   PolicyMeetingRow,
   PolicyRateSettingRow,
-} from "@/lib/queries/api-policy";
+} from "@/lib/queries/api";
 import { IncompleteReadError, readAll, type PageResult } from "@/lib/queries/read";
 
-export type PolicyDb = SupabaseClient<PolicyApiDatabase, "api">;
+export type PolicyDb = SupabaseClient<ApiDatabase, "api">;
 
 /** An inclusive range of calendar dates, YYYY-MM-DD at both ends. */
 export type DateRange = { from: string; to: string };

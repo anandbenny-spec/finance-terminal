@@ -40,9 +40,53 @@ export type TaskFreshnessRow = {
   status: "ok" | "stale" | "failed";
 };
 
+/** api.observation_steps (0011, N2): a step series as the days its value changed, plus its latest day. */
+export type ObservationStepRow = {
+  series_key: string;
+  obs_date: string;
+  value: number;
+  is_latest: boolean;
+};
+
+/** api.observations (0006): one series × date; `label` is the series' label in force that day, if any. */
+export type ObservationRow = {
+  series_key: string;
+  obs_date: string;
+  value: number;
+  label: string | null;
+};
+
+/** api.policy_meetings (0006, both Fed bounds from 0011: F22). */
+export type PolicyMeetingRow = {
+  slug: string;
+  bank: string;
+  status: string;
+  decision_date: string;
+  decision_at: string | null;
+  kind: string;
+  is_rate_decision: boolean;
+  policy_rate_pct: number | null;
+  policy_rate_change_bps: number | null;
+  stance: string | null;
+  stance_display_label: string | null;
+  attribution: string | null;
+  fed_target_lower_pct: number | null;
+  fed_target_upper_pct: number | null;
+};
+
+/** api.policy_rate_settings (0006): every rate in force after a decision, one row per instrument. */
+export type PolicyRateSettingRow = {
+  meeting_slug: string;
+  bank: string;
+  decision_date: string;
+  instrument: "fed_target_lower" | "fed_target_upper" | "repo" | "reverse_repo" | "sdf" | "msf" | "bank_rate" | "crr";
+  value_pct: number;
+  change_bps: number;
+};
+
 type View<Row> = { Row: Row; Relationships: [] };
 
-/** The slice of the `api` schema typed so far, for supabase-js (A1 adds the page queries' views). */
+/** The slice of the `api` schema typed so far, for supabase-js: the shell's views (C2) and the policy pages' (A1). */
 export type ApiDatabase = {
   api: {
     Tables: { [_ in never]: never };
@@ -51,6 +95,10 @@ export type ApiDatabase = {
       series: View<SeriesRow>;
       next_meetings: View<NextMeetingRow>;
       task_freshness: View<TaskFreshnessRow>;
+      observation_steps: View<ObservationStepRow>;
+      observations: View<ObservationRow>;
+      policy_meetings: View<PolicyMeetingRow>;
+      policy_rate_settings: View<PolicyRateSettingRow>;
     };
     Functions: { [_ in never]: never };
   };
