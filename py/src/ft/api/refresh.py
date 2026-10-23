@@ -7,102 +7,128 @@ Flow: the admin check (`require_admin`, on the whole router, so nothing below ru
 its job run back to the request itself (`ft.jobs.runner`, `--request-id`). A failed dispatch is recorded as `failed`
 and doesn't start the cooldown. Visitor refresh isn't built (Spec 01 D10).
 
-The checks and the insert happen in one transaction under a per-task advisory lock (`PgRefreshStore`), so two
-clicks can't both pass the cooldown.
+How the route reaches `ops` (Anand, 24 Oct 2026, option B on issue #8; migration 0016): the checks and the insert
+are `api.admin_open_refresh`, one call under a per-task advisory lock (so two clicks can't both pass the cooldown),
+with `api.admin_finish_refresh` and `api.admin_refresh_status`. They're `security definer` functions only
+`service_role` can execute, called as RPC through the Data API with the secret key, which keeps the Data API
+`api`-only. `SqlRefreshStore` calls the same functions over a Postgres connection (the tests, as `service_role`).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Annotated, Protocol
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ft.api import dispatch as gh
-from ft.api.admin_auth import require_admin
+from ft.api.admin_auth import AuthSettings, auth_http, auth_settings, require_admin
 
-COOLDOWN = timedelta(minutes=45)
 RUN_URL = f"https://github.com/{gh.REPO}/actions/runs/{{}}"
+STATUSES = {"dispatched", "rejected_disabled", "rejected_cooldown", "rejected_nse", "not_found"}
 
 
 @dataclass(frozen=True)
 class Opened:
-    request_id: int | None          # None only when the task doesn't exist (nothing can be recorded)
+    request_id: int | None          # None only when the task doesn't exist (nothing is recorded)
     status: str                     # 'dispatched' (provisionally, until the dispatch answers) or a rejected_* status
 
 
+class StoreError(Exception):
+    """The database didn't answer as expected. The message is for the server log only."""
+
+
 class RefreshStore(Protocol):
-    def open_request(self, task_key: str, cooldown: timedelta) -> Opened: ...
+    def open_request(self, task_key: str) -> Opened: ...
     def finish_request(self, request_id: int, status: str, github_run_id: int | None) -> None: ...
     def request_status(self, request_id: int) -> dict | None: ...
 
 
-class PgRefreshStore:
-    """`ops.refresh_request` through one psycopg connection (autocommit off: one transaction per call)."""
+def _opened(value) -> Opened:
+    if not isinstance(value, dict) or value.get("status") not in STATUSES:
+        raise StoreError("admin_open_refresh returned an unexpected value")
+    rid = value.get("request_id")
+    if value["status"] == "not_found":
+        return Opened(None, "not_found")
+    if not isinstance(rid, int) or isinstance(rid, bool):
+        raise StoreError("admin_open_refresh returned no request id")
+    return Opened(rid, value["status"])
+
+
+def _status(value) -> dict | None:
+    """The status route's body: the function's row plus the run's link."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise StoreError("admin_refresh_status returned an unexpected value")
+    run_id = value.get("github_run_id")
+    return {"request_id": value.get("request_id"), "task": value.get("task"),
+            "requested_at": value.get("requested_at"), "status": value.get("status"), "github_run_id": run_id,
+            "run_url": RUN_URL.format(run_id) if run_id else None, "job_run": value.get("job_run")}
+
+
+class SqlRefreshStore:
+    """The 0016 functions over one psycopg connection that holds `service_role` (the tests)."""
 
     def __init__(self, conn):
         self.conn = conn
 
-    def open_request(self, task_key: str, cooldown: timedelta) -> Opened:
+    def _call(self, sql: str, args: tuple):
         with self.conn.transaction():
-            # serialises requests for one task, so the cooldown check and the insert can't interleave
-            self.conn.execute("select pg_advisory_xact_lock(hashtextextended('ops.refresh_request:' || %s, 0))",
-                              (task_key,))
-            task = self.conn.execute("select enabled, uses_nse, min_interval from ops.task where key = %s",
-                                     (task_key,)).fetchone()
-            if task is None:
-                return Opened(None, "not_found")
-            enabled, uses_nse, min_interval = task
-            if not enabled:
-                status = "rejected_disabled"
-            elif self.conn.execute(
-                    "select 1 from ops.refresh_request where task_key = %s and status = 'dispatched'"
-                    " and requested_at > now() - %s limit 1", (task_key, cooldown)).fetchone():
-                status = "rejected_cooldown"
-            elif uses_nse and self.conn.execute(
-                    "select 1 where exists (select 1 from ops.refresh_request where task_key = %(k)s"
-                    "   and status = 'dispatched' and requested_at > now() - %(i)s)"
-                    " or exists (select 1 from ops.task_run where task_key = %(k)s"
-                    "   and status not in ('skipped_not_due', 'skipped_locked') and started_at > now() - %(i)s)",
-                    {"k": task_key, "i": min_interval}).fetchone():
-                status = "rejected_nse"
-            else:
-                status = "dispatched"
-            rid = self.conn.execute(
-                "insert into ops.refresh_request (task_key, requested_by, status) values (%s, 'admin', %s)"
-                " returning id", (task_key, status)).fetchone()[0]
-        return Opened(rid, status)
+            return self.conn.execute(sql, args).fetchone()[0]
+
+    def open_request(self, task_key: str) -> Opened:
+        return _opened(self._call("select api.admin_open_refresh(%s)", (task_key,)))
 
     def finish_request(self, request_id: int, status: str, github_run_id: int | None) -> None:
-        with self.conn.transaction():
-            self.conn.execute("update ops.refresh_request set status = %s, github_run_id = %s where id = %s",
-                              (status, github_run_id, request_id))
+        if not self._call("select api.admin_finish_refresh(%s, %s, %s)", (request_id, status, github_run_id)):
+            raise StoreError(f"request {request_id} could not be finished")
 
     def request_status(self, request_id: int) -> dict | None:
-        with self.conn.transaction():
-            row = self.conn.execute(
-                "select r.id, r.task_key, r.requested_at, r.status, r.github_run_id, r.job_run_id,"
-                "       j.status, j.started_at, j.finished_at"
-                "  from ops.refresh_request r left join ops.job_run j on j.id = r.job_run_id"
-                " where r.id = %s and r.requested_by = 'admin'", (request_id,)).fetchone()
-        if row is None:
-            return None
-        rid, task, requested_at, status, run_id, job_run_id, job_status, started, finished = row
-        return {"request_id": rid, "task": task, "requested_at": requested_at.isoformat(), "status": status,
-                "github_run_id": run_id, "run_url": RUN_URL.format(run_id) if run_id else None,
-                "job_run": None if job_run_id is None else {
-                    "id": job_run_id, "status": job_status,
-                    "started_at": started.isoformat() if started else None,
-                    "finished_at": finished.isoformat() if finished else None}}
+        return _status(self._call("select api.admin_refresh_status(%s)", (request_id,)))
 
 
-def refresh_store() -> RefreshStore:
-    """How the deployed route reaches `ops` is the open question on issue #8 (the Data API exposes `api` only, and
-    `service_role` can't log in to Postgres). Until Anand decides, the deployed route answers 503."""
-    raise HTTPException(status_code=503)
+class RpcRefreshStore:
+    """The 0016 functions as RPC through the Data API (`/rest/v1/rpc/<fn>`, schema `api`) with the secret key:
+    what the deployed route uses."""
+
+    def __init__(self, settings: AuthSettings, client: httpx.Client):
+        self.settings, self.client = settings, client
+
+    def _rpc(self, fn: str, args: dict):
+        try:
+            resp = self.client.post(
+                f"{self.settings.supabase_url}/rest/v1/rpc/{fn}", json=args,
+                headers={"apikey": self.settings.api_key, "Authorization": f"Bearer {self.settings.api_key}",
+                         "Content-Profile": "api", "Accept-Profile": "api", "Accept": "application/json"})
+        except httpx.HTTPError as e:
+            raise StoreError(f"{fn}: Data API unreachable: {type(e).__name__}") from None
+        if resp.status_code != 200:
+            raise StoreError(f"{fn}: Data API answered {resp.status_code}")
+        try:
+            return resp.json()
+        except ValueError:
+            raise StoreError(f"{fn}: not JSON") from None
+
+    def open_request(self, task_key: str) -> Opened:
+        return _opened(self._rpc("admin_open_refresh", {"p_task_key": task_key}))
+
+    def finish_request(self, request_id: int, status: str, github_run_id: int | None) -> None:
+        if self._rpc("admin_finish_refresh", {"p_request_id": request_id, "p_status": status,
+                                              "p_github_run_id": github_run_id}) is not True:
+            raise StoreError(f"request {request_id} could not be finished")
+
+    def request_status(self, request_id: int) -> dict | None:
+        return _status(self._rpc("admin_refresh_status", {"p_request_id": request_id}))
+
+
+def refresh_store(settings: Annotated[AuthSettings | None, Depends(auth_settings)],
+                  client: Annotated[httpx.Client, Depends(auth_http)]) -> RefreshStore:
+    if settings is None:
+        raise HTTPException(status_code=503)        # not configured (require_admin has refused already anyway)
+    return RpcRefreshStore(settings, client)
 
 
 class RefreshBody(BaseModel):
@@ -114,12 +140,20 @@ REJECTED = {"rejected_disabled": 409, "rejected_cooldown": 429, "rejected_nse": 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_admin)])
 
 
+def _unavailable(e: StoreError) -> HTTPException:
+    print(f"refresh store: {e}")                                              # server log only
+    return HTTPException(status_code=503)
+
+
 @router.post("/refresh")
 def start_refresh(body: RefreshBody, store: Annotated[RefreshStore, Depends(refresh_store)],
                   client: Annotated[httpx.Client, Depends(gh.github_client)],
                   token: Annotated[str | None, Depends(gh.dispatch_token)],
                   target: Annotated[str, Depends(gh.deployment_target)]):
-    opened = store.open_request(body.task, COOLDOWN)
+    try:
+        opened = store.open_request(body.task)
+    except StoreError as e:
+        raise _unavailable(e) from None
     if opened.request_id is None:
         raise HTTPException(status_code=404)
     if opened.status in REJECTED:
@@ -129,17 +163,26 @@ def start_refresh(body: RefreshBody, store: Annotated[RefreshStore, Depends(refr
         run_id = gh.dispatch_refresh(client, token, body.task, opened.request_id, target)
     except gh.DispatchError as e:
         print(f"refresh request {opened.request_id}: dispatch failed: {e}")      # server log only
-        store.finish_request(opened.request_id, "failed", None)
+        try:
+            store.finish_request(opened.request_id, "failed", None)
+        except StoreError as e2:
+            print(f"refresh request {opened.request_id}: not recorded as failed: {e2}")
         return JSONResponse({"request_id": opened.request_id, "status": "failed"}, status_code=502)
-    store.finish_request(opened.request_id, "dispatched", run_id)
+    try:
+        store.finish_request(opened.request_id, "dispatched", run_id)
+    except StoreError as e:            # the run has started: say so, and leave the request as dispatched
+        print(f"refresh request {opened.request_id}: run id {run_id} not recorded: {e}")
     return JSONResponse({"request_id": opened.request_id, "status": "dispatched", "github_run_id": run_id,
                          "run_url": RUN_URL.format(run_id) if run_id else None, "target": target},
                         status_code=202)
 
 
 @router.get("/refresh/{request_id}")
-def refresh_status(request_id: int, store: Annotated[RefreshStore, Depends(refresh_store)]):
-    status = store.request_status(request_id)
+def refresh_status(request_id: Annotated[int, Path(ge=1, le=2**63 - 1)], store: Annotated[RefreshStore, Depends(refresh_store)]):
+    try:
+        status = store.request_status(request_id)
+    except StoreError as e:
+        raise _unavailable(e) from None
     if status is None:
         raise HTTPException(status_code=404)
     return status
