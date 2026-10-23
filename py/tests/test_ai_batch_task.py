@@ -404,9 +404,9 @@ def test_no_diff_summary_while_the_base_is_unpublished_and_a_voyage_error_doesnt
     s1, e1 = meeting(date(2047, 9, 17))
     old = statement(date(2047, 7, 30), e0, FOMC_A, publish=False)
     new = statement(date(2047, 9, 17), e1, FOMC_B, base=old)
-    from voyageai import error as verr
+    from ft.ai.client import VoyageAPIError
     fake = FakeClaude(["ok"])
-    voyage = FakeVoyage(fail=[verr.AuthenticationError("bad key")])
+    voyage = FakeVoyage(fail=[VoyageAPIError(401, "bad key")])
     _, code = watch_once(task([s0, s1], fake, voyage), decision_day(date(2047, 9, 17)))
     r = last_run()
     assert code == 0 and [(g[0], g[1]) for g in outputs(new)] == [("doc_summary", "published")]
