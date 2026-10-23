@@ -14,7 +14,8 @@ JOB, ADMIN = dsn("job_writer"), dsn("postgres")
 
 def test_the_roster_file_loads_with_twelve_voters_on_every_2025_26_meeting_date():
     r = members.load()
-    assert len(r.members) == 18 and all(t.source for m in r.members.values() for t in m.terms)
+    assert sum(m.bank == "FED" for m in r.members.values()) == 18
+    assert all(t.source for m in r.members.values() for t in m.terms)
     for day in (date(2025, 1, 29), date(2025, 5, 7), date(2025, 9, 17), date(2025, 12, 10), date(2026, 1, 28),
                 date(2026, 4, 29), date(2026, 6, 17), date(2026, 10, 28)):
         assert len(r.voters_on("FED", day)) == 12, day
@@ -34,6 +35,40 @@ def test_names_match_without_case_periods_or_spacing_and_through_aliases():
         assert r.match("FED", name).slug == "jerome-h-powell", name
     assert r.match("FED", "Kevin M. Warsh").slug == "kevin-warsh"
     assert r.match("FED", "Nobody Here") is None and r.match("RBI", "Jerome H. Powell") is None
+
+
+# Every MPC meeting from the Dec 2018 baseline to Oct 2026 (its last day), and its members in the minutes (B6).
+MPC_MEETINGS = [date(2018, 12, 5), date(2019, 8, 7), date(2020, 2, 6), date(2020, 8, 6), date(2020, 10, 9),
+                date(2022, 5, 4), date(2024, 10, 9), date(2025, 2, 7), date(2025, 6, 6), date(2025, 10, 1),
+                date(2026, 10, 7)]
+
+
+def test_the_mpc_roster_has_six_members_on_every_meeting_day_with_one_governor():
+    r = members.load()
+    assert sum(m.bank == "RBI" for m in r.members.values()) == 21
+    for d in MPC_MEETINGS:
+        six = r.voters_on("RBI", d)
+        roles = sorted(m.term_on(d).role for m in six)
+        assert roles == ["mpc_external_member"] * 3 + ["rbi_deputy_governor", "rbi_executive_director",
+                                                       "rbi_governor"], d
+    gov = {d: next(m.slug for m in r.voters_on("RBI", d) if m.term_on(d).role == "rbi_governor")
+           for d in (date(2018, 12, 5), date(2024, 12, 6), date(2025, 2, 7))}
+    assert gov == {date(2018, 12, 5): "urjit-r-patel", date(2024, 12, 6): "shaktikanta-das",
+                   date(2025, 2, 7): "sanjay-malhotra"}
+    patra = r.match("RBI", "Dr. Michael Debabrata Patra")          # nominated officer, then Deputy Governor
+    assert [t.role for t in patra.terms] == ["rbi_executive_director", "rbi_deputy_governor"]
+    assert {m.slug for m in r.voters_on("RBI", date(2026, 12, 4))} == {
+        "sanjay-malhotra", "poonam-gupta", "indranil-bhattacharyya", "nagesh-kumar", "saugata-bhattacharya",
+        "ram-singh"}                                               # the next meeting: the open terms
+
+
+@pytest.mark.parametrize("written", ["Prof. Ram Singh", "Prof Ram Singh", "Professor Ram Singh", "Ram Singh",
+                                     "Dr. Ram Singh"])
+def test_rbi_names_match_with_or_without_their_title(written):
+    r = members.load()
+    assert r.match("RBI", written).slug == "ram-singh"
+    assert r.match("RBI", "Shri M Rajeshwar Rao").slug == "m-rajeshwar-rao"
+    assert r.match("FED", "Prof. Ram Singh") is None and members.strip_title("Smt. Gia Menon") == "Gia Menon"
 
 
 def write(tmp_path, text: str):
