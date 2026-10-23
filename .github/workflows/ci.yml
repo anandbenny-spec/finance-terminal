@@ -72,8 +72,9 @@ jobs:
         working-directory: py
         env:
           TEST_PG_CONNINFO: host=localhost port=5432 dbname=ft
+        # With the jobs extra, as the job workflows install it: the document engine's tests need lxml and pypdf (B2).
         run: |
-          uv run --locked pytest -q -rfE 2>&1 | tee pytest.log
+          uv run --locked --extra jobs pytest -q -rfE 2>&1 | tee pytest.log
           status=${PIPESTATUS[0]}
           grep -E '^(FAILED|ERROR) ' pytest.log | head -10 | sed 's/^/::error title=pytest::/'
           echo "::notice title=pytest::$(tail -1 pytest.log)"
