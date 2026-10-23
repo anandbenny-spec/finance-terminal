@@ -5,6 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import re
+import uuid
+from datetime import UTC, datetime, timedelta
 
 import anthropic
 import httpx2
@@ -63,26 +66,53 @@ def good_diff(docs: list[tuple[str, str]]) -> list[dict]:
     return bullets((added[:2] + removed[:1] + added[2:] + removed[1:])[:3])
 
 
+def _error(mode: str) -> httpx2.Response:
+    status = int(mode)
+    headers = {"retry-after": "3"} if mode == "429" else {}
+    kind = {"400": "invalid_request_error", "429": "rate_limit_error", "500": "api_error", "503": "api_error",
+            "529": "overloaded_error"}[mode]
+    return httpx2.Response(status, json={"type": "error", "error": {"type": kind, "message": f"fake {mode}"}},
+                           headers=headers)
+
+
 class FakeClaude:
-    """The Messages API. `script` is a list of behaviours, one per request (the last one repeats):
+    """The Messages API and the Message Batches API. `script` is a list of behaviours, one per request answered (real
+    time, or each request of a batch when its results are made; the last one repeats):
     'ok' · 'bad_number' (the first bullet writes '25 basis points', which its passage doesn't) · 'uncited' (the first
     bullet has no citation) · 'wrong_offsets' (offsets shifted, cited text right: found by search) · 'two_bullets' ·
-    'max_tokens' · 'refusal' · '400' · '429' (with Retry-After: 3) · '529' (no Retry-After)."""
+    'max_tokens' · 'refusal' · '400' · '429' (with Retry-After: 3) · '529' (no Retry-After). In a batch, a request's
+    '400' is an `errored` result, and 'expired' and 'canceled' are those results.
+    Batches: `creates` is a script for each batch create ('ok', '400', '429', '500', '503'); a batch ends on its
+    `ends_after`-th status read (None: never); `truncate` breaks the first results download after that many lines.
+    Results come back in reverse order (the API promises no order)."""
 
-    def __init__(self, script=("ok",)):
+    def __init__(self, script=("ok",), *, creates=("ok",), ends_after: int | None = 1, truncate: int | None = None):
         self.script, self.requests, self.n = list(script), [], 0
+        self.creates, self.ends_after, self.truncate = list(creates), ends_after, truncate
+        self.batches: dict[str, dict] = {}          # id -> {"requests", "reads", "results", "created_at", ...}
+        self.create_calls = 0                       # batch creates attempted, refused ones included
 
-    def __call__(self, request: httpx2.Request) -> httpx2.Response:
-        body = json.loads(request.content)
-        self.requests.append(body)
+    def _mode(self) -> str:
         mode = self.script[min(self.n, len(self.script) - 1)]
         self.n += 1
+        return mode
+
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
+        path = request.url.path
+        if path == "/v1/messages/batches" and request.method == "POST":
+            return self._create(json.loads(request.content))
+        if m := re.fullmatch(r"/v1/messages/batches/([^/]+)/results", path):
+            return self._results(m.group(1))
+        if m := re.fullmatch(r"/v1/messages/batches/([^/]+)", path):
+            return self._retrieve(m.group(1))
+        body = json.loads(request.content)
+        self.requests.append(body)
+        mode = self._mode()
         if mode in ("400", "429", "529"):
-            status = int(mode)
-            headers = {"retry-after": "3"} if mode == "429" else {}
-            kind = {"400": "invalid_request_error", "429": "rate_limit_error", "529": "overloaded_error"}[mode]
-            return httpx2.Response(status, json={"type": "error", "error": {"type": kind, "message": f"fake {mode}"}},
-                                   headers=headers)
+            return _error(mode)
+        return httpx2.Response(200, json=self._message(body, mode))
+
+    def _message(self, body: dict, mode: str) -> dict:
         docs, _ = documents_of(body)
         blocks = good_diff(docs) if len(docs) == 2 else good_summary(docs)
         if mode == "bad_number":
@@ -98,8 +128,64 @@ class FakeClaude:
             blocks = blocks[:4]
         stop = mode if mode in ("max_tokens", "refusal") else "end_turn"
         chars = sum(len(t) for _, t in docs)
-        return httpx2.Response(200, json=message(blocks, stop=stop, input_tokens=600 + chars // 4,
-                                                 mid=f"msg_{self.n}"))
+        return message(blocks, stop=stop, input_tokens=600 + chars // 4, mid=f"msg_{self.n}")
+
+    # ---------------------------------------------------------------------------------------- batches
+    def _create(self, body: dict) -> httpx2.Response:
+        mode = self.creates[min(self.create_calls, len(self.creates) - 1)]
+        self.create_calls += 1
+        if mode != "ok":
+            return _error(mode)
+        bid = f"msgbatch_{uuid.uuid4().hex[:24]}"           # unique: ops.ai_batch.provider_batch_id is
+        self.batches[bid] = {"requests": body["requests"], "reads": 0, "results": None,
+                             "created_at": datetime.now(UTC), "ended_at": None, "downloads": 0}
+        return httpx2.Response(200, json=self._batch(bid))
+
+    def _retrieve(self, bid: str) -> httpx2.Response:
+        if bid not in self.batches:
+            return httpx2.Response(404, json={"type": "error", "error": {"type": "not_found_error",
+                                                                         "message": "fake 404"}})
+        b = self.batches[bid]
+        b["reads"] += 1
+        if b["results"] is None and self.ends_after is not None and b["reads"] >= self.ends_after:
+            b["results"] = [self._result(r) for r in b["requests"]]
+            b["ended_at"] = datetime.now(UTC)
+        return httpx2.Response(200, json=self._batch(bid))
+
+    def _result(self, r: dict) -> dict:
+        self.requests.append(r["params"])
+        mode = self._mode()
+        if mode in ("400", "429", "529"):
+            res = {"type": "errored", "error": {"type": "error", "error": {"type": "invalid_request_error",
+                                                                        "message": "fake"}, "request_id": None}}
+        elif mode in ("expired", "canceled"):
+            res = {"type": mode}
+        else:
+            res = {"type": "succeeded", "message": self._message(r["params"], mode)}
+        return {"custom_id": r["custom_id"], "result": res}
+
+    def _batch(self, bid: str) -> dict:
+        b = self.batches[bid]
+        n, ended = len(b["requests"]), b["results"] is not None
+        counts = {"processing": 0 if ended else n, "succeeded": 0, "errored": 0, "canceled": 0, "expired": 0}
+        for r in b["results"] or []:
+            counts[r["result"]["type"]] += 1
+        created = b["created_at"]
+        return {"id": bid, "type": "message_batch", "processing_status": "ended" if ended else "in_progress",
+                "request_counts": counts, "created_at": created.isoformat(),
+                "expires_at": (created + timedelta(hours=24)).isoformat(),
+                "ended_at": b["ended_at"].isoformat() if ended else None, "archived_at": None,
+                "cancel_initiated_at": None,
+                "results_url": f"https://api.anthropic.com/v1/messages/batches/{bid}/results" if ended else None}
+
+    def _results(self, bid: str) -> httpx2.Response:
+        b = self.batches[bid]
+        b["downloads"] += 1
+        lines = [json.dumps(r) for r in reversed(b["results"])]
+        body = "\n".join(lines) + "\n"
+        if self.truncate is not None and b["downloads"] == 1:
+            body = "\n".join(lines[: self.truncate]) + "\n" + lines[self.truncate][:40]   # cut mid-line
+        return httpx2.Response(200, content=body.encode(), headers={"content-type": "application/binary"})
 
 
 def claude(fake: FakeClaude, *, sleeps: list | None = None) -> Client:
