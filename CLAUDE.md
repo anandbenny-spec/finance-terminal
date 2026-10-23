@@ -188,7 +188,8 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 - **Fresh sessions at break points (Anand, 23 Oct 2026; it saves his plan's usage).** When a sub-prompt job's
   done-when check passes, or the thread grows long, write a short handoff in that job's GitHub issue (done, next,
   open questions, files touched), then tell Anand it's a good point to start a fresh session from this file,
-  the sub-prompt and that issue.
+  the sub-prompt and that issue. **Give him the next session's opening prompt with it** (Anand, 23 Oct 2026), ready
+  to paste: the next job and its issue, what must be merged first, and anything he must do before or during it.
 - **CI runs the full suite (Anand, 23 Oct 2026).** In a session, run the tests the change touches; `ci.yml`
   runs ruff, every SQL script and pytest on each push (and on `workflow_dispatch`, which Claude may start).
   Read the result from the run's annotations: each failing test and the counts are annotated, and Claude's
