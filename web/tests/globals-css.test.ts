@@ -147,45 +147,93 @@ describe("globals.css compiled by Tailwind", () => {
 
 // Design 01 §10.3: shadcn's primitives need no colour edits. Every class they use that sets a colour must come from
 // a token: a colour utility with no token (bg-sidebar) compiles to nothing, and Tailwind's own palette
-// (bg-red-500) or a literal colour would bypass the tokens.
+// (bg-red-500) or a literal colour would bypass the tokens. Our own components (C2 on) are held to the same rule,
+// and to CLAUDE.md §5's "no arbitrary values": a size comes from Tailwind's scale or a token variable that
+// globals.css declares (`h-(--topbar-h)`), never a bracketed value (`h-[48px]`).
+const COLOUR_PREFIX = /^!?-?(bg|text|border(-[xytrblse])?|ring(-offset)?|outline|fill|stroke|decoration|divide|shadow|caret|accent|placeholder|from|via|to)-/;
+const LITERAL = /#[0-9a-f]{3,8}\b|\b(rgba?|hsla?|oklch|oklab|lab|lch|hwb)\(/i;
+
+function classesIn(source: string): string[] {
+  const strings = source.match(/"[^"\n]*"|'[^'\n]*'|`[^`]*`/g) ?? [];
+  return [...new Set(strings.flatMap((s) => s.slice(1, -1).split(/\s+/)).filter(Boolean))];
+}
+
+/** The utility without its variants (`dark:hover:bg-x/50` → `bg-x/50`); brackets may hold colons. */
+function utilityOf(candidate: string): string {
+  const parts = candidate.split(/:(?![^[]*\])/);
+  return parts[parts.length - 1];
+}
+
+function componentFiles(dir: string): string[] {
+  return readdirSync(path.join(WEB, dir), { recursive: true, encoding: "utf8" })
+    .filter((f) => f.endsWith(".tsx") && !f.endsWith(".test.tsx"))
+    .map((f) => `${dir}/${f}`);
+}
+
+/** Colour classes that don't come from a token, in a file's class strings. */
+function colourProblems(file: string): string[] {
+  const candidates = classesIn(readWeb(file));
+  const css = ds.candidatesToCss(candidates);
+  const problems: string[] = [];
+  candidates.forEach((c, i) => {
+    const out = css[i];
+    if (out === null) {
+      // Not a Tailwind class at all is fine (a prop value, `group/button`); a colour class that doesn't compile isn't.
+      if (COLOUR_PREFIX.test(utilityOf(c))) problems.push(`${c}: no such colour`);
+      return;
+    }
+    // Tailwind's own @property defaults (`initial-value: 0 0 #0000`, transparent) aren't the primitive's colours.
+    const rules = out.replace(/@property [^{]+\{[^}]*\}/g, "").replace(/in (oklch|oklab)/g, "");
+    if (/var\(--color-/.test(rules)) problems.push(`${c}: uses Tailwind's palette, not a token`);
+    if (LITERAL.test(rules)) problems.push(`${c}: a literal colour`);
+  });
+  return problems;
+}
+
 describe("components/ui: shadcn's primitives take their colours from the tokens", () => {
-  const dir = path.join(WEB, "components/ui");
-  const files = readdirSync(dir).filter((f) => f.endsWith(".tsx"));
-  const COLOUR_PREFIX = /^!?-?(bg|text|border(-[xytrblse])?|ring(-offset)?|outline|fill|stroke|decoration|divide|shadow|caret|accent|placeholder)-/;
-  const LITERAL = /#[0-9a-f]{3,8}\b|\b(rgba?|hsla?|oklch|oklab|lab|lch|hwb)\(/i;
-
-  function classesIn(source: string): string[] {
-    const strings = source.match(/"[^"\n]*"|'[^'\n]*'|`[^`]*`/g) ?? [];
-    return [...new Set(strings.flatMap((s) => s.slice(1, -1).split(/\s+/)).filter(Boolean))];
-  }
-
-  /** The utility without its variants (`dark:hover:bg-x/50` → `bg-x/50`); brackets may hold colons. */
-  function utilityOf(candidate: string): string {
-    const parts = candidate.split(/:(?![^[]*\])/);
-    return parts[parts.length - 1];
-  }
+  const files = componentFiles("components/ui");
 
   it("has primitives to check", () => {
     expect(files.length).toBeGreaterThan(0);
   });
 
   it.each(files)("%s", (file) => {
-    const candidates = classesIn(readWeb(`components/ui/${file}`));
-    const css = ds.candidatesToCss(candidates);
+    expect(colourProblems(file)).toEqual([]);
+  });
+});
+
+describe("our components (shell, data, ai): tokens only, no arbitrary values (CLAUDE.md §5)", () => {
+  const files = ["components/shell", "components/data", "components/ai"].flatMap(componentFiles);
+
+  it("has components to check", () => {
+    expect(files.length).toBeGreaterThan(0);
+  });
+
+  it.each(files)("%s takes its colours from the tokens", (file) => {
+    expect(colourProblems(file)).toEqual([]);
+  });
+
+  it.each(files)("%s uses no bracketed values, and only declared token variables", (file) => {
     const problems: string[] = [];
-    candidates.forEach((c, i) => {
-      const out = css[i];
-      if (out === null) {
-        // Not a Tailwind class at all is fine (a prop value, `group/button`); a colour class that doesn't compile isn't.
-        if (COLOUR_PREFIX.test(utilityOf(c))) problems.push(`${c}: no such colour`);
-        return;
+    for (const c of classesIn(readWeb(file))) {
+      const utility = utilityOf(c);
+      if (ds.candidatesToCss([c])[0] === null) continue; // not a Tailwind class
+      if (/\[/.test(utility)) problems.push(`${c}: an arbitrary value`);
+      for (const [, name] of utility.matchAll(/\((--[\w-]+)\)/g)) {
+        if (!root.has(name)) problems.push(`${c}: ${name} isn't a token in globals.css`);
       }
-      // Tailwind's own @property defaults (`initial-value: 0 0 #0000`, transparent) aren't the primitive's colours.
-      const rules = out.replace(/@property [^{]+\{[^}]*\}/g, "").replace(/in (oklch|oklab)/g, "");
-      if (/var\(--color-/.test(rules)) problems.push(`${c}: uses Tailwind's palette, not a token`);
-      if (LITERAL.test(rules)) problems.push(`${c}: a literal colour`);
-    });
+    }
     expect(problems).toEqual([]);
+  });
+
+  it("catches what it should", () => {
+    // the checks themselves: a palette colour, a literal and a bracketed size are refused; tokens pass
+    const out = ds.candidatesToCss(["bg-red-500", "bg-[#123456]", "h-[48px]", "h-(--topbar-h)", "bg-panel"]);
+    expect(out[0]).toContain("var(--color-red-500)");
+    expect(LITERAL.test(out[1] ?? "")).toBe(true);
+    expect(utilityOf("md:h-[48px]")).toBe("h-[48px]");
+    expect(out[3]).toContain("var(--topbar-h)");
+    expect(out[4]).toContain("var(--panel)");
   });
 });
 
