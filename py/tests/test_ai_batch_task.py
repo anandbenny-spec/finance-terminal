@@ -1,8 +1,13 @@
-"""policy.ai_batch, part 1, through the runner and the watch loop against the test database as job_writer (Prompt 01
-B7; Architecture 03 §1.1-§1.5; Spec 01 §3.2-§3.3). The Messages API and Voyage are fakes (tests/ai_fakes.py); the
-Anthropic SDK itself runs. Meetings are synthetic: 2045 for the decision-day path with policy.fed_documents, 2046-2048
-for the rest; the task sees only each test's meetings (`scope`)."""
+"""policy.ai_batch through the runner and the watch loop against the test database as job_writer (Prompt 01 B7;
+Architecture 03 §1.1-§1.5; Spec 01 §3.2-§3.3): part 1's real time on decision days, and part 2's Batch API path for
+daily, refresh and backfill runs. The Messages and Message Batches APIs and Voyage are fakes (tests/ai_fakes.py); the
+Anthropic SDK itself runs. The batch poll's clock is a fake too (`Ticker`). Meetings are synthetic: 2045 for the
+decision-day path with policy.fed_documents, 2046-2048 for part 1's tests, 2049-2051 for the batch path; the task sees
+only each test's meetings (`scope`), and only the batches holding their requests."""
+import json
+import re
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -26,7 +31,7 @@ from test_fed_documents_task import (  # noqa: F401 - s3 and roster are fixtures
 from test_fed_documents_task import meeting as fed_meeting
 from test_fed_documents_task import task as fed_task
 
-from ft.ai.client import Prompt, halfvec_literal
+from ft.ai.client import Prompt, batch_custom_id, halfvec_literal
 from ft.engines.document.chunk import chunk_text
 from ft.engines.document.diff import diff_texts
 from ft.engines.document.store import DocumentRef, save_chunks, save_diff, save_version
@@ -104,7 +109,21 @@ def statement(d: date, eid: int, text: str, *, base: int | None = None, publish:
     return saved.document_id
 
 
-def task(slugs, fake: FakeClaude, voyage: FakeVoyage | None = None) -> AiBatch:
+class Ticker:
+    """The batch poll's clock: sleeping moves it on at once."""
+
+    def __init__(self):
+        self.t, self.sleeps = 0.0, []
+
+    def monotonic(self) -> float:
+        return self.t
+
+    def sleep(self, s: float) -> None:
+        self.sleeps.append(s)
+        self.t += s
+
+
+def task(slugs, fake: FakeClaude, voyage: FakeVoyage | None = None, tick: Ticker | None = None) -> AiBatch:
     class T(AiBatch):
         key = KEY
     t = T()
@@ -113,6 +132,8 @@ def task(slugs, fake: FakeClaude, voyage: FakeVoyage | None = None) -> AiBatch:
     t.claude = claude(fake)
     from ft.ai.client import Embedder
     t.embedder = Embedder(client=voyage or FakeVoyage())
+    tick = tick or Ticker()
+    t.sleep, t.monotonic = tick.sleep, tick.monotonic
     return t
 
 
@@ -311,13 +332,22 @@ def test_a_target_left_unfinished_fails_the_poll_and_the_finished_one_isnt_sent_
 
 @pytest.mark.db
 def test_a_daily_run_after_the_statement_doesnt_stand_in_for_the_decision_day_step():
-    """after_decision_document counts only watch runs (a daily run sends nothing in real time)."""
-    (s0, s1), _, new = two_statements(date(2048, 7, 26), date(2048, 9, 20))
+    """after_decision_document counts only watch runs, and a batch run inside a meeting's watch window leaves that
+    meeting's decision documents to the watch (in a batch they'd wait up to an hour, and the watch never sends a
+    request twice): the daily run batches only the previous statement's summary, and the watch then summarises the
+    new statement in real time."""
+    (s0, s1), old, new = two_statements(date(2048, 7, 26), date(2048, 9, 20))
     fake = FakeClaude(["ok"])
     run(JOB, "daily", [task([s0, s1], fake)], only=KEY, force=True, clock=lambda: datetime(2048, 9, 20, 18, tzinfo=UTC))
-    assert fake.requests == []
-    _, code = watch_once(task([s0, s1], fake), decision_day(date(2048, 9, 20), 10))
-    assert code == 0 and fake.n == 2 and [g[1] for g in outputs(new)] == ["published", "published"]
+    r = last_run()                                                           # 14:00 in New York: the window is open
+    assert [len(b["requests"]) for b in fake.batches.values()] == [1] and outputs(new) == []
+    assert f'"held_for_watch": [{new}]' in r["checks"]["batches"]["detail"]
+    assert [(g[0], g[1]) for g in outputs(old)] == [("doc_summary", "published")]
+    rt = FakeClaude(["ok"])
+    _, code = watch_once(task([s0, s1], rt), decision_day(date(2048, 9, 20), 10))
+    assert code == 0 and last_run()["status"] == "success" and rt.n == 2
+    assert sorted((g[0], g[1]) for g in outputs(new)) == [("doc_summary", "published"),
+                                                          ("statement_diff_summary", "published")]
 
 
 @pytest.mark.db
@@ -339,26 +369,30 @@ def test_the_monthly_budget_stops_requests_with_an_alert():
 
 
 @pytest.mark.db
-def test_with_real_time_off_and_on_other_days_it_waits_for_the_batch_path_and_only_embeds():
+def test_with_real_time_off_a_decision_day_goes_to_a_batch_without_polling_and_a_daily_run_collects_it():
     (s0, s1), old, new = two_statements(date(2047, 4, 30), date(2047, 6, 18))
     unpublished_base = statement(date(2047, 6, 19), meeting(date(2047, 6, 19))[1], FOMC_A, publish=False)
-    fake, voyage = FakeClaude(["ok"]), FakeVoyage()
-    # The real-time switch off: a decision day goes to the batch path too (B7 part 2), and only embeds.
+    fake, voyage, tick = FakeClaude(["ok"]), FakeVoyage(), Ticker()
+    # The real-time switch off: the decision day's documents go to a batch, submitted without waiting (the watch's
+    # polls are short); their chunks are embedded.
     x("update ops.setting set value = 'false' where key = 'ai_realtime_on_decision_days'")
     try:
-        watch_once(task([s0, s1], fake, voyage), decision_day(date(2047, 6, 18)))
+        watch_once(task([s0, s1], fake, voyage, tick), decision_day(date(2047, 6, 18)))
     finally:
         x("update ops.setting set value = 'true' where key = 'ai_realtime_on_decision_days'")
-    bp = last_run()["checks"]["batch_path"]
-    assert fake.requests == [] and not bp["passed"] and "2 requests wait" in bp["detail"]
+    r = last_run()
+    sent = [b["requests"] for b in fake.batches.values()]
+    assert r["status"] == "success" and tick.sleeps == [] and fake.create_calls == 1 and len(sent[0]) == 2
+    assert r["checks"]["batches"]["passed"] and outputs(new) == []          # open, not yet read
     assert q("select count(*) from core.chunk_embedding where document_id = %s", new)[0][0] > 0
-    # A daily run: every published document in scope waits for the batch path; their chunks are embedded.
+    # A daily run: collects that batch, and sends the previous statement's summary in a new one.
     code = run(JOB, "daily", [task([s0, s1], fake, voyage)], only=KEY, force=True,
                clock=lambda: datetime(2047, 6, 19, 12, tzinfo=UTC))
     r = last_run()
-    assert code == 0 and fake.requests == [] and outputs(new) == []
-    bp = r["checks"]["batch_path"]
-    assert not bp["passed"] and "3 requests wait" in bp["detail"] and "statement_diff_summary 1" in bp["detail"]
+    assert code == 0 and r["status"] == "success" and fake.create_calls == 2
+    assert sorted((g[0], g[1]) for g in outputs(new)) == [("doc_summary", "published"),
+                                                          ("statement_diff_summary", "published")]
+    assert [(g[0], g[1]) for g in outputs(old)] == [("doc_summary", "published")]
     chunks = q("select count(*) from core.chunk where document_id in (%s, %s)", old, new)[0][0]
     assert q("select count(*) from core.chunk_embedding where document_id in (%s, %s)", old, new)[0][0] == chunks
     assert q("select count(*) from core.chunk_embedding where document_id = %s", unpublished_base)[0][0] == 0
@@ -396,6 +430,358 @@ def test_a_new_prompt_version_supersedes_the_published_output(monkeypatch):
     assert got == [("doc_summary", "superseded", "v1"), ("statement_diff_summary", "superseded", "v1"),
                    ("doc_summary", "published", "v2"), ("statement_diff_summary", "published", "v2")]
     assert as_anon("select count(*) from api.ai_outputs where document_id = %s", new) == [(2,)]
+
+
+# ---------------------------------------------------------------------------------------------- the Batch API (B7.2)
+def daily(t: AiBatch, when: datetime) -> int:
+    return run(JOB, "daily", [t], only=KEY, force=True, clock=lambda: when)
+
+
+def one_statement(d: date) -> tuple[str, int]:
+    s, e = meeting(d)
+    return s, statement(d, e, FOMC_A)
+
+
+def batch_requests(doc_ids: list[int]):
+    return q("""select ai_task, status, coalesce(reject_reason, ''), ai_batch_id is not null
+                  from ops.ai_request where document_id = any(%s) order by created_at, custom_id""", doc_ids)
+
+
+@pytest.mark.db
+def test_a_daily_run_sends_one_batch_polls_it_and_publishes_in_the_same_run():
+    (s0, s1), old, new = two_statements(date(2049, 1, 26), date(2049, 3, 15))
+    fake, tick = FakeClaude(["ok"], ends_after=2), Ticker()
+    assert daily(task([s0, s1], fake, tick=tick), datetime(2049, 3, 16, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    assert fake.create_calls == 1 and tick.sleeps == [30.0, 60.0]         # read once still processing, then ended
+    ((bid, b),) = fake.batches.items()
+    sent = b["requests"]
+    stored = [c for (c,) in q("select custom_id from ops.ai_request where document_id = any(%s)", [old, new])]
+    assert len(stored) == 3 and sorted(s["custom_id"] for s in sent) == sorted(batch_custom_id(c) for c in stored)
+    assert all(re.fullmatch(r"[A-Za-z0-9_-]{1,64}", s["custom_id"]) for s in sent) and all(":" in c for c in stored)
+    assert {s["params"]["cache_control"]["ttl"] for s in sent} == {"1h"}
+    assert sorted((g[0], g[1]) for g in outputs(new)) == [("doc_summary", "published"),
+                                                          ("statement_diff_summary", "published")]
+    assert [(g[0], g[1]) for g in outputs(old)] == [("doc_summary", "published")]
+    # Priced at the batch rate (half the real-time price of the same tokens); the run's spend and the batch's agree.
+    rows = q("select input_tokens, output_tokens, cost_usd from core.ai_output where document_id = any(%s)", [old, new])
+    for tin, tout, cost in rows:
+        assert cost == ((tin * Decimal("0.10") + tout * Decimal("0.50")) / 1_000_000 / 2).quantize(Decimal("0.000001"))
+    total = sum(c for *_, c in rows)
+    assert r["cost"] == total.quantize(Decimal("0.0001"))
+    (row,) = q("""select status, request_count, succeeded, errored, expired, cost_usd, task_run_id, collected_at
+                    from ops.ai_batch where provider_batch_id = %s""", bid)
+    assert row[:5] == ("collected", 3, 3, 0, 0) and abs(row[5] - total) < Decimal("0.0001") and row[6] == r["id"]
+    assert row[7] is not None
+    assert [x[1:] for x in batch_requests([old, new])] == [("succeeded", "", True)] * 3
+    checks = r["checks"]
+    assert checks["batches"]["passed"] and '"turnaround_s"' in checks["batches"]["detail"]
+    assert checks["citation_integrity"]["passed"] and checks["outputs_stored"]["passed"]
+    assert as_anon("select count(*) from api.ai_outputs where document_id = any(%s)", [old, new]) == [(3,)]
+    # Run again: nothing is sent, nothing is written.
+    assert daily(task([s0, s1], fake), datetime(2049, 3, 17, 12, tzinfo=UTC)) == 0
+    assert fake.create_calls == 1 and last_run()["rows"] == 0 and last_run()["checks"]["batches"]["passed"]
+
+
+@pytest.mark.db
+def test_a_batch_still_open_when_the_poll_ends_is_collected_by_the_next_run():
+    s, doc = one_statement(date(2049, 4, 30))
+    fake, tick = FakeClaude(["ok"], ends_after=None), Ticker()
+    assert daily(task([s], fake, tick=tick), datetime(2049, 5, 1, 12, tzinfo=UTC)) == 0
+    first = last_run()
+    assert first["status"] == "success" and first["checks"]["batches"]["passed"] and outputs(doc) == []
+    assert len(tick.sleeps) == 15 and sum(tick.sleeps) <= ai_batch.BATCH_POLL_SECONDS   # 30 s, then 60 s, to 15 min
+    assert batch_requests([doc]) == [("doc_summary", "pending", "", True)]
+    fake.ends_after = 1
+    assert daily(task([s], fake), datetime(2049, 5, 2, 12, tzinfo=UTC)) == 0
+    second = last_run()
+    assert fake.create_calls == 1 and [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+    assert second["cost"] > 0 and not first["cost"]                       # spend goes on the run that collected it
+    assert q("select status, task_run_id from ops.ai_batch where provider_batch_id = %s",
+             next(iter(fake.batches))) == [("collected", first["id"])]   # sent by the first run
+
+
+@pytest.mark.db
+def test_a_reply_rejected_in_a_batch_is_retried_in_a_second_batch_in_the_same_run():
+    s, doc = one_statement(date(2049, 6, 18))
+    fake, tick = FakeClaude(["uncited", "ok"]), Ticker()
+    assert daily(task([s], fake, tick=tick), datetime(2049, 6, 19, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert r["status"] == "success" and fake.create_calls == 2 and tick.sleeps == [30.0, 60.0]
+    retry = list(fake.batches.values())[1]["requests"][0]["params"]
+    assert retry["messages"][0]["content"][-1]["text"].startswith("Your previous answer")
+    got = outputs(doc)
+    assert [(g[0], g[1]) for g in got] == [("doc_summary", "rejected"), ("doc_summary", "published")]
+    assert got[0][2].startswith("retried: bullet 1: no verified citation")
+    assert [x[1] for x in batch_requests([doc])] == ["rejected", "succeeded"]
+    assert r["checks"]["citation_integrity"]["passed"] and r["checks"]["batches"]["passed"]
+
+
+@pytest.mark.db
+def test_errored_and_expired_results_are_sent_again_by_the_next_run_never_twice_in_one():
+    (s0, s1), old, new = two_statements(date(2049, 7, 30), date(2049, 9, 17))
+    fake = FakeClaude(["400", "expired", "ok"])        # in request order: old's summary, new's summary, the diff
+    assert daily(task([s0, s1], fake), datetime(2049, 9, 18, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    b = r["checks"]["batches"]
+    assert r["status"] == "success" and fake.create_calls == 1 and not b["passed"] and not b["blocking"]
+    assert '"errored": 1' in b["detail"] and '"expired": 1' in b["detail"] and '"left_for_next_run": 2' in b["detail"]
+    assert batch_requests([old]) == [("doc_summary", "errored", "batch invalid_request_error", True)]
+    assert sorted(batch_requests([new])) == [("doc_summary", "expired", "batch expired", True),
+                                             ("statement_diff_summary", "succeeded", "", True)]
+    assert outputs(old) == [] and [(g[0], g[1]) for g in outputs(new)] == [("statement_diff_summary", "published")]
+    # The next run sends those two again, in one new batch; nothing is billed twice.
+    assert daily(task([s0, s1], fake), datetime(2049, 9, 19, 12, tzinfo=UTC)) == 0
+    assert fake.create_calls == 2 and len(list(fake.batches.values())[1]["requests"]) == 2
+    assert last_run()["checks"]["batches"]["passed"]
+    assert [(g[0], g[1]) for g in outputs(old)] == [("doc_summary", "published")]
+    assert sorted((g[0], g[1]) for g in outputs(new)) == [("doc_summary", "published"),
+                                                          ("statement_diff_summary", "published")]
+
+
+@pytest.mark.db
+def test_a_refused_batch_leaves_its_requests_for_the_next_run_and_the_embeddings_still_load():
+    s, doc = one_statement(date(2049, 10, 29))
+    fake = FakeClaude(["ok"], creates=["400", "ok"])
+    assert daily(task([s], fake), datetime(2049, 10, 30, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert r["status"] == "success" and fake.create_calls == 1 and not r["checks"]["batches"]["passed"]
+    assert "create: BadRequestError (400)" in r["checks"]["batches"]["detail"]
+    assert batch_requests([doc]) == [("doc_summary", "errored", "batch BadRequestError 400", False)]
+    assert r["checks"]["embeddings"]["passed"]
+    assert q("select count(*) from core.chunk_embedding where document_id = %s", doc)[0][0] > 0
+    assert daily(task([s], fake), datetime(2049, 10, 31, 12, tzinfo=UTC)) == 0
+    assert fake.create_calls == 2 and [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+
+
+@pytest.mark.db
+def test_the_run_estimate_and_the_budget_stop_a_batch_before_it_is_sent(monkeypatch):
+    s, doc = one_statement(date(2050, 1, 26))
+    fake = FakeClaude(["ok"])
+    monkeypatch.setattr(ai_batch, "RUN_LIMIT_USD", Decimal("0.0001"))
+    assert daily(task([s], fake), datetime(2050, 1, 27, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert fake.create_calls == 0 and '"stopped": "run_estimate"' in r["checks"]["ai_spend"]["detail"]
+    assert q("select severity from ops.alert where dedupe_key = 'ai_run_estimate' and resolved_at is null") == [
+        ("error",)]
+    monkeypatch.undo()
+    x("update ops.setting set value = '0' where key = 'ai_monthly_budget_usd'")
+    try:
+        daily(task([s], fake), datetime(2050, 1, 28, 12, tzinfo=UTC))
+    finally:
+        x("update ops.setting set value = '15' where key = 'ai_monthly_budget_usd'")
+    r = last_run()
+    assert fake.create_calls == 0 and '"stopped": "budget"' in r["checks"]["ai_spend"]["detail"]
+    assert q("select count(*) from ops.alert where dedupe_key = 'ai_run_estimate' and resolved_at is null") == [(0,)]
+    month = datetime.now(UTC).strftime("%Y-%m")
+    assert q("select severity from ops.alert where dedupe_key = %s and resolved_at is null", f"ai_budget:{month}") == [
+        ("error",)]
+    x("update ops.alert set resolved_at = now() where dedupe_key = %s", f"ai_budget:{month}")
+    assert batch_requests([doc]) == []                                     # nothing was claimed either
+
+
+@pytest.mark.db
+def test_a_result_whose_input_changed_is_stored_stale_with_its_cost(monkeypatch):
+    s, doc = one_statement(date(2050, 3, 16))
+    fake = FakeClaude(["ok"], ends_after=None)
+    daily(task([s], fake), datetime(2050, 3, 17, 12, tzinfo=UTC))
+    real = ai_batch.load_prompt
+
+    def v2(name, version):
+        p = real(name, version)
+        return Prompt(p.task, "v2", p.text + "\nOne more rule.\n")
+    monkeypatch.setattr(ai_batch, "load_prompt", v2)
+    fake.ends_after = 1
+    assert daily(task([s], fake), datetime(2050, 3, 18, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    got = outputs(doc)
+    assert [(g[0], g[1], g[5]) for g in got] == [("doc_summary", "rejected", "v1"), ("doc_summary", "published", "v2")]
+    assert got[0][2].startswith("stale:") and got[0][4] > 0                # billed, so its cost is kept
+    assert r["cost"] == (got[0][4] + got[1][4]).quantize(Decimal("0.0001"))
+    assert '"stale": 1' in r["checks"]["batches"]["detail"] and r["checks"]["batches"]["passed"]
+    assert q("select count(*) from ops.alert where dedupe_key = %s and resolved_at is null",
+             f"ai_rejected:doc_summary:{doc}") == [(0,)]                    # stale isn't a citation rejection
+    # The v1 prompt again: the stale request's input is a target's again, so it's sent again (its reply was never
+    # checked), and its output supersedes v2's.
+    monkeypatch.undo()
+    assert daily(task([s], fake), datetime(2050, 3, 19, 12, tzinfo=UTC)) == 0
+    assert fake.create_calls == 3 and [(g[1], g[5]) for g in outputs(doc)] == [
+        ("rejected", "v1"), ("superseded", "v2"), ("published", "v1")]
+
+
+@pytest.mark.db
+def test_a_batch_the_api_doesnt_know_isnt_given_up_until_its_results_would_have_expired():
+    """A 404 within 29 days might be passing (or the key's workspace changed): the batch's replies may have been
+    billed, so its requests aren't sent again; the check fails. After 29 days the results are gone anyway."""
+    s, doc = one_statement(date(2050, 4, 27))
+    fake = FakeClaude(["ok"], ends_after=None)
+    daily(task([s], fake), datetime(2050, 4, 28, 12, tzinfo=UTC))
+    lost = next(iter(fake.batches))
+    del fake.batches[lost]
+    fake.ends_after = 1
+    assert daily(task([s], fake), datetime(2050, 4, 29, 12, tzinfo=UTC)) == 0
+    b = last_run()["checks"]["batches"]
+    assert not b["passed"] and b["detail"].count("NotFoundError (404)") == 1     # once, however often it was read
+    assert q("select status from ops.ai_batch where provider_batch_id = %s", lost) == [("submitted",)]
+    assert fake.create_calls == 1 and batch_requests([doc]) == [("doc_summary", "pending", "", True)]
+    x("update ops.ai_batch set submitted_at = submitted_at - interval '30 days' where provider_batch_id = %s", lost)
+    assert daily(task([s], fake), datetime(2050, 4, 30, 12, tzinfo=UTC)) == 0
+    assert q("select status from ops.ai_batch where provider_batch_id = %s", lost) == [("failed",)]
+    assert fake.create_calls == 2 and [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+
+
+@pytest.mark.db
+def test_an_archived_batch_is_given_up_and_its_requests_sent_again():
+    s, doc = one_statement(date(2051, 4, 26))
+    fake = FakeClaude(["ok"], ends_after=None)
+    daily(task([s], fake), datetime(2051, 4, 27, 12, tzinfo=UTC))
+    archived = next(iter(fake.batches))
+    fake.archive(archived)
+    fake.ends_after = 1
+    assert daily(task([s], fake), datetime(2051, 4, 28, 12, tzinfo=UTC)) == 0
+    assert q("select status from ops.ai_batch where provider_batch_id = %s", archived) == [("failed",)]
+    assert fake.create_calls == 2 and [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("cut", ["mid", "clean"])
+def test_a_results_read_that_breaks_off_or_ends_short_is_finished_by_the_next_read(cut):
+    d0, d1 = (date(2050, 6, 15), date(2050, 7, 27)) if cut == "mid" else (date(2050, 6, 16), date(2050, 7, 28))
+    (s0, s1), old, new = two_statements(d0, d1)
+    fake, tick = FakeClaude(["ok"], truncate=1, cut=cut), Ticker()
+    assert daily(task([s0, s1], fake, tick=tick), datetime(2050, 7, 29, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert fake.create_calls == 1 and tick.sleeps == [30.0, 60.0]
+    assert q("select count(*) from core.ai_output where document_id = any(%s)", [old, new]) == [(3,)]   # one each
+    assert [x[1] for x in batch_requests([old, new])] == ["succeeded"] * 3
+    assert r["checks"]["batches"]["passed"]                                # the broken read was finished
+
+
+@pytest.mark.db
+def test_a_request_that_errored_in_a_half_read_batch_waits_for_the_rest_of_the_read():
+    """An errored result read before the read breaks off isn't sent again until its batch has been read to the end
+    (so the rest of the read still maps every result), and not twice in one run."""
+    (s0, s1), _, new = two_statements(date(2051, 1, 25), date(2051, 3, 15))
+    fake = FakeClaude(["ok", "ok", "400", "ok"], truncate=1, cut="clean")   # the diff errors; its result is read first
+    assert daily(task([s0, s1], fake), datetime(2051, 3, 16, 12, tzinfo=UTC)) == 0
+    detail = last_run()["checks"]["batches"]["detail"]
+    assert fake.create_calls == 1 and '"unknown"' not in detail and '"left_for_next_run": 1' in detail
+    assert sorted(batch_requests([new])) == [("doc_summary", "succeeded", "", True),
+                                             ("statement_diff_summary", "errored", "batch invalid_request_error", True)]
+    assert daily(task([s0, s1], fake), datetime(2051, 3, 17, 12, tzinfo=UTC)) == 0
+    assert fake.create_calls == 2 and sorted((g[0], g[1]) for g in outputs(new)) == [
+        ("doc_summary", "published"), ("statement_diff_summary", "published")]
+
+
+@pytest.mark.db
+def test_the_worst_case_of_what_waits_in_open_batches_counts_against_the_budget():
+    days = [date(2050, 9, 1) + timedelta(days=7 * i) for i in range(5)]
+    slugs, docs = [], []
+    for i, d in enumerate(days):
+        s, e = meeting(d)
+        slugs.append(s)
+        docs.append(statement(d, e, FOMC_A, publish=i < 4))
+    fake = FakeClaude(["ok"], ends_after=None)
+    daily(task(slugs, fake), datetime(2050, 10, 2, 12, tzinfo=UTC))
+    assert [len(b["requests"]) for b in fake.batches.values()] == [4]      # still processing
+    x("update core.document set is_published = true where id = %s", docs[4])
+    month = q("select coalesce(sum(ai_cost_usd), 0) from ops.task_run where started_at >= date_trunc('month', now())")
+    # Room for the new request on its own (its worst case is about $0.0023), not with the four in the open batch.
+    x("update ops.setting set value = %s where key = 'ai_monthly_budget_usd'", str(month[0][0] + Decimal("0.004")))
+    try:
+        daily(task(slugs, fake), datetime(2050, 10, 3, 12, tzinfo=UTC))
+    finally:
+        x("update ops.setting set value = '15' where key = 'ai_monthly_budget_usd'")
+    spend = json.loads(last_run()["checks"]["ai_spend"]["detail"])
+    assert fake.create_calls == 1 and spend["stopped"] == "budget"
+    assert Decimal(spend["in_batches_worst_usd"]) >= Decimal("0.008")
+    x("update ops.alert set resolved_at = now() where dedupe_key = %s and resolved_at is null",
+      f"ai_budget:{datetime.now(UTC):%Y-%m}")
+    fake.ends_after = 1
+    assert daily(task(slugs, fake), datetime(2050, 10, 4, 12, tzinfo=UTC)) == 0
+    assert fake.create_calls == 2 and [g[1] for d in docs for g in outputs(d)] == ["published"] * 5
+
+
+@pytest.mark.db
+def test_a_batch_whose_create_timed_out_is_found_and_adopted_not_sent_twice():
+    s, doc = one_statement(date(2050, 10, 26))
+    fake = FakeClaude(["ok"], creates=["lost", "ok"])
+    assert daily(task([s], fake), datetime(2050, 10, 27, 12, tzinfo=UTC)) == 0
+    b = last_run()["checks"]["batches"]
+    assert fake.create_calls == 1 and [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+    assert b["passed"] and '"adopted": ["msgbatch_' in b["detail"]
+    assert batch_requests([doc]) == [("doc_summary", "succeeded", "", True)]
+
+
+@pytest.mark.db
+def test_a_create_that_timed_out_before_making_a_batch_is_sent_again_by_the_next_run():
+    s, doc = one_statement(date(2050, 11, 30))
+    fake = FakeClaude(["ok"], creates=["lost_before", "ok"])
+    assert daily(task([s], fake), datetime(2050, 12, 1, 12, tzinfo=UTC)) == 0
+    b = last_run()["checks"]["batches"]
+    assert not b["passed"] and "create: APITimeoutError" in b["detail"] and fake.batches == {}
+    assert batch_requests([doc]) == [("doc_summary", "errored", "batch APITimeoutError", False)]
+    assert daily(task([s], fake), datetime(2050, 12, 2, 12, tzinfo=UTC)) == 0
+    assert fake.create_calls == 2 and [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+
+
+@pytest.mark.db
+def test_another_tasks_batches_are_left_to_it():
+    s, doc = one_statement(date(2051, 6, 14))
+    jr = q("insert into ops.job_run (workflow, trigger, runner) values ('daily', 'cli', 'local') returning id")[0][0]
+    tr = q("insert into ops.task_run (job_run_id, task_key) values (%s, %s) returning id", jr, FED_KEY)[0][0]
+    other = q("""insert into ops.ai_batch (provider_batch_id, task_run_id, request_count)
+                 values ('msgbatch_another_task_' || md5(random()::text), %s, 1) returning id""", tr)[0][0]
+    x("""insert into ops.ai_request (custom_id, ai_batch_id, ai_task, document_id, input_sha256, model, prompt_version)
+         values (%s, %s, 'doc_summary', %s, sha256('another task'::bytea), 'claude-haiku-5-5', 'v1')""",
+      f"doc_summary:doc-{doc}:feedfacefeedface", other, doc)
+    fake = FakeClaude(["ok"])
+    assert daily(task([s], fake), datetime(2051, 6, 15, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert r["checks"]["batches"]["passed"] and q("select status from ops.ai_batch where id = %s", other) == [
+        ("submitted",)]                                                    # never read (the fake would answer 404)
+    assert json.loads(r["checks"]["ai_spend"]["detail"])["in_batches_worst_usd"] == "0.0000"
+    assert [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+
+
+@pytest.mark.db
+def test_a_reply_the_database_refuses_is_stored_bare_with_its_cost_and_retried():
+    s, doc = one_statement(date(2051, 7, 26))
+    fake = FakeClaude(["nul", "ok"])
+    assert daily(task([s], fake), datetime(2051, 7, 27, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    got = outputs(doc)
+    assert [(g[0], g[1]) for g in got] == [("doc_summary", "rejected"), ("doc_summary", "published")]
+    assert got[0][2].startswith("retried: the reply couldn't be stored") and got[0][4] > 0
+    assert fake.create_calls == 2 and r["cost"] == (got[0][4] + got[1][4]).quantize(Decimal("0.0001"))
+    assert '"unstorable": 1' in r["checks"]["batches"]["detail"] and not r["checks"]["batches"]["passed"]
+
+
+@pytest.mark.db
+def test_a_result_another_run_stored_meanwhile_isnt_stored_again(monkeypatch):
+    s, doc = one_statement(date(2051, 9, 20))
+    fake = FakeClaude(["ok"])
+    real = AiBatch._entry
+
+    def entry(self, db, cid, doc_id, prompts, index):
+        got = real(self, db, cid, doc_id, prompts, index)
+        x("update ops.ai_request set status = 'succeeded' where custom_id = %s", cid)   # as another run would
+        return got
+    monkeypatch.setattr(AiBatch, "_entry", entry)
+    assert daily(task([s], fake), datetime(2051, 9, 21, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert fake.create_calls == 1 and outputs(doc) == [] and not r["cost"]
+
+
+def test_batches_are_split_under_the_request_and_size_limits():
+    from ft.ai.client import Request, Source
+    p = Prompt("doc_summary", "v1", "Summarise.")
+    items = [(None, Request("doc_summary", p, (Source(i, "x" * 1000, "t"),), "Go."), f"c{i}", Decimal(0))
+             for i in range(5)]
+    assert [len(c) for c in ai_batch._chunks(items, max_requests=2)] == [2, 2, 1]
+    assert [len(c) for c in ai_batch._chunks(items, max_bytes=2_500)] == [1, 1, 1, 1, 1]
+    assert [len(c) for c in ai_batch._chunks(items)] == [5]
 
 
 def test_context_line():
