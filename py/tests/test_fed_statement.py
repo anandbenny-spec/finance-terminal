@@ -1,6 +1,6 @@
 """The FOMC statement parser and its checks (Prompt 01 B5; Spec 01 §2 "Fed statement", "Fed votes", "Dissents";
 Anand's 23 Oct 2026 decisions on the checks), on synthetic pages in the real template (tests/policy_docs.py). The last
-tests read the statements saved on the Mac (app/data/fixtures/fed, git-ignored) when they're on this machine."""
+tests read the statements saved in data/fixtures/fed (the private fixtures repo) when they're on this machine."""
 import os
 import re
 from datetime import date, datetime
@@ -255,7 +255,7 @@ NOTATION = {"20191011", "20200323", "20200331", "20200827", "20250822"}
 
 
 @pytest.mark.skipif(not (FED / "monetary20260916a.htm").exists(),
-                    reason="the saved pages are only on the Mac (app/data/fixtures, git-ignored)")
+                    reason="the saved pages aren't checked out (data/fixtures: the private fixtures repo)")
 def test_every_saved_statement_passes_and_every_notation_page_fails():
     """The 64 decision statements saved on 23 Oct 2026 (the Dec 2018 baseline and 63 decisions to Sep 2026) pass
     every page check, with the changes, dissents and formats Spec 01 §5.1 names; the 5 notation-vote pages fail."""
@@ -294,7 +294,7 @@ def test_every_saved_statement_passes_and_every_notation_page_fails():
 
 
 @pytest.mark.skipif(not (FED / "monetary20260916a.htm").exists(),
-                    reason="the saved pages are only on the Mac (app/data/fixtures, git-ignored)")
+                    reason="the saved pages aren't checked out (data/fixtures: the private fixtures repo)")
 def test_the_roster_names_every_2025_26_voter_with_the_right_status():
     """config/members.yaml against every named statement from the 2025 organizational meeting on: every voter is on
     the roster with a term covering the meeting, voting members as voters and alternates as alternates; 12 voters each

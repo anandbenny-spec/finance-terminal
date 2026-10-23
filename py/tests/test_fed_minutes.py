@@ -1,6 +1,6 @@
 """FOMC minutes (Prompt 01 B5 part 2; Spec 01 §1.1, §2 "Fed votes"): the parser and its checks on synthetic pages in the
-saved template (policy_docs.fed_minutes_page), then on the 62 minutes saved on the Mac (app/data/fixtures/fed,
-git-ignored) when they're on this machine."""
+saved template (policy_docs.fed_minutes_page), then on the 62 minutes saved in data/fixtures/fed
+(the private fixtures repo) when they're on this machine."""
 import os
 import re
 from datetime import date, datetime
@@ -131,7 +131,7 @@ FED = FIXTURES / "fed"
 
 
 @pytest.mark.skipif(not (FED / "fomcminutes20260916.htm").exists(),
-                    reason="the saved pages are only on the Mac (app/data/fixtures, git-ignored)")
+                    reason="the saved pages aren't checked out (data/fixtures: the private fixtures repo)")
 def test_every_saved_minutes_passes_with_the_votes_the_statements_name():
     """The 62 minutes saved 23 Oct 2026 (Jan 2019 to Sep 2026) pass every check, with the votes Spec 01 §5.1 names."""
     pages = sorted(FED.glob("fomcminutes*.htm"))

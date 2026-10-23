@@ -744,7 +744,7 @@ def votes_full(s: str):
 
 @pytest.mark.db
 @pytest.mark.skipif(not (FIXTURES / "fomcminutes20260916.htm").exists(),
-                    reason="the saved pages are only on the Mac (app/data/fixtures, git-ignored)")
+                    reason="the saved pages aren't checked out (data/fixtures: the private fixtures repo)")
 def test_a_backfill_over_the_saved_pages_loads_every_statement_minutes_and_transcript_from_the_2018_baseline(s3):
     """B5's done-when over the pages saved 23 Oct 2026 and the real roster (config/members.yaml): every statement from
     the Dec 2018 baseline to Jul 2026 passes its blocking checks, 2019-20 and the unscheduled 3 and 15 Mar 2020 included;
