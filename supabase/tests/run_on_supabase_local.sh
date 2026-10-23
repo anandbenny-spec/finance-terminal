@@ -72,7 +72,7 @@ in_db psql -U postgres -X -q -v ON_ERROR_STOP=1 -f /tmp/ft_tests/test_fixture.sq
 
 status=0
 total_pass=0; total_fail=0
-for t in run_tests.sh run_tests_ai.sh run_tests_review_01.sh; do
+for t in run_tests.sh run_tests_ai.sh run_tests_review_01.sh run_tests_0012.sh run_tests_0013.sh; do
   echo "== $t"
   out=$(in_db bash "/tmp/ft_tests/$t" 2>&1); echo "$out"
   p=$(echo "$out" | grep -c '^PASS'); f=$(echo "$out" | grep -c '^FAIL')
@@ -81,9 +81,9 @@ for t in run_tests.sh run_tests_ai.sh run_tests_review_01.sh; do
   echo "$out" | grep '^FAIL' | head -10 | while read -r line; do echo "::error title=$t::$line"; done
   echo "$out" | grep -q "failed 0$" || status=1
 done
-echo "== total: passed $total_pass, failed $total_fail (CI on plain Postgres: 70 pass)"
+echo "== total: passed $total_pass, failed $total_fail (CI on plain Postgres: 84 pass)"
 {
   echo "### SQL tests on a local Supabase database"
-  echo "passed **$total_pass**, failed **$total_fail** (CI on plain Postgres: 70 pass). Harness changes are the \`harness:\` lines in the log."
+  echo "passed **$total_pass**, failed **$total_fail** (CI on plain Postgres: 84 pass). Harness changes are the \`harness:\` lines in the log."
 } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 exit $status
