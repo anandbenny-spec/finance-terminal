@@ -57,6 +57,40 @@ CI runs all five on Node 24 (`.github/workflows/ci.yml`, job `web`).
   focus as a 3 px `ring-ring/50` instead of the base 2 px amber outline. Both are amber/size choices inside the
   primitive, not colour edits; C2 decides when it first uses a button.
 
+## Shell (C2, 24 Oct 2026)
+
+- `components/shell/`: `AppShell` (the root layout wraps every page in it), `TopBar`, `TickerTape`, `Sidebar` (232 px
+  from `xl`, a 56 px rail with tooltips at `lg`, a drawer below `lg`: `MobileNav`), `StatusBar`, `Footer`. Design 01
+  §4.1, §5.1 and §5.5; Spec 01 §4.1. `app/not-found.tsx` keeps a missing page inside the shell.
+- **Data:** the tape reads `api.series_latest` and `api.series`, the status bar `api.next_meetings` and
+  `api.task_freshness`, with the browser key only (`lib/supabase/public.ts`), through `lib/queries/shell.ts` (`queries`,
+  not `data`: the root `.gitignore` drops every `data/` folder, so raw data never reaches the repo). Every list
+  read goes through `readAll` (`lib/queries/read.ts`): an exact count, then `.range()` pages until every row is in, or
+  an error, never a list the Data API's 1,000-row cap cut short (Review 01, N2; A1 brings every page query under it).
+- **Caching:** the reads are `'use cache'` with `cacheLife("minutes")` (served up to a minute, then refreshed in the
+  background), so the shell is prerendered (`○` in the build) and a decision `watch` stores reaches it within a
+  couple of minutes. A failed read is logged on the server and shows the shell's error state; without
+  `NEXT_PUBLIC_SUPABASE_*` (CI's build) every read fails that way and the build still passes.
+- **Logic is pure and tested** in `lib/shell/`: the tape's items (`tape.ts`), the countdowns and the decision-day
+  switch (`meetings.ts`: days count in each bank's own zone, as `formatCountdown` and `ft/jobs/due.py` do), the
+  freshness summary (`freshness.ts`) and the sidebar (`nav.ts`). `components/shell/shell.test.tsx` renders the tape
+  and the status bar to HTML in every state.
+- **Which tasks count** for freshness: `lib/feeds.ts` lists each live part of the site with the tasks that feed it
+  (the shell: `policy.market_series`, `policy.calendar`). Each page job adds its panels there when they go live.
+- **The countdown is the browser's:** the server sends each bank's next date ("Next FOMC 28 Oct 2026"); after first
+  render `Countdowns` adds "· in 5 days" from the visitor's clock (checked a few times a minute) and switches to
+  "FOMC decision today, 14:00 ET (23:30 IST)" at midnight in the bank's zone. Cached HTML never carries a stale count.
+- **Admin:** the sidebar's admin group and the top bar's badge show when a stored session's `app_metadata.role` is
+  `admin` (display only; the API's check is A3's). `lib/supabase/browser.ts` keeps the session under `ft-auth`, so
+  visitors with no session never load supabase-js in the browser. C6's login calls `useAdmin().recheck()`.
+- `components/ui/tooltip.tsx` and `sheet.tsx` are written by hand on Radix with shadcn's API, because `shadcn add`
+  can't reach its registry from Claude's shells. `tests/globals-css.test.ts` now also holds `components/shell`,
+  `components/data` and `components/ai` to the tokens, and to CLAUDE.md §5's "no arbitrary values": a size is
+  Tailwind's scale or a token variable `globals.css` declares (`h-(--topbar-h)`), never `h-[48px]`.
+- **Checking it by eye in Claude's workspace:** `next build` there needs the fonts swapped for `next/font/local`
+  with `@fontsource/ibm-plex-*` files, and a local stand-in for the Data API (sample rows, never committed). That's
+  how C2's screenshots against the specimen were taken.
+
 ## Install scripts
 
 npm 11 runs a package's install script only once it's approved in `allowScripts` (`package.json`). The one script

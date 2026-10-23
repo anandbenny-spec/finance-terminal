@@ -21,6 +21,8 @@ import {
   formatRateRange,
   formatRelativeTime,
   formatReleaseTime,
+  formatShortDate,
+  dateInZone,
   formatTableDate,
   formatTally,
   formatUsdInr,
@@ -233,6 +235,21 @@ describe("instants", () => {
     expect(formatCountdown("2026-12-03T04:30Z", "Asia/Kolkata", "2026-12-02T18:29Z")).toBe("tomorrow");
     expect(formatCountdown("2026-12-03T04:30Z", "Asia/Kolkata", "2026-12-02T18:30Z")).toBe("today, 10:00 IST");
     expect(() => formatCountdown("2026-12-03T04:30Z", "Asia/Kolkata", "2026-12-04T00:00Z")).toThrow(RangeError);
+  });
+
+  it("drops a short date's year only when it's the current year in the event's zone (C2's status bar)", () => {
+    expect(formatShortDate("2026-12-09", "2026-10-20T12:00Z", "America/New_York")).toBe("9 Dec");
+    expect(formatShortDate("2027-01-27", "2026-12-10T12:00Z", "America/New_York")).toBe("27 Jan 2027");
+    // 31 Dec 2026, 20:00 in New York is already 2027 in IST: the year is read in the zone asked for.
+    expect(formatShortDate("2027-01-27", "2027-01-01T01:00Z", "America/New_York")).toBe("27 Jan 2027");
+    expect(formatShortDate("2027-02-05", "2027-01-01T01:00Z", "Asia/Kolkata")).toBe("5 Feb");
+    expect(() => formatShortDate("2026-13-01", "2026-10-20T12:00Z")).toThrow(RangeError);
+  });
+
+  it("gives an instant's calendar date in a zone, to compare with a stored date", () => {
+    expect(dateInZone("2026-10-28T03:59Z", "America/New_York")).toBe("2026-10-27");
+    expect(dateInZone("2026-10-28T04:00Z", "America/New_York")).toBe("2026-10-28");
+    expect(dateInZone("2026-12-03T18:30Z", "Asia/Kolkata")).toBe("2026-12-04");
   });
 });
 
