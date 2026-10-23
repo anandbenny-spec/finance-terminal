@@ -460,7 +460,7 @@ def test_a_daily_run_sends_one_batch_polls_it_and_publishes_in_the_same_run():
     stored = [c for (c,) in q("select custom_id from ops.ai_request where document_id = any(%s)", [old, new])]
     assert len(stored) == 3 and sorted(s["custom_id"] for s in sent) == sorted(batch_custom_id(c) for c in stored)
     assert all(re.fullmatch(r"[A-Za-z0-9_-]{1,64}", s["custom_id"]) for s in sent) and all(":" in c for c in stored)
-    assert {s["params"]["cache_control"]["ttl"] for s in sent} == {"1h"}
+    assert not any("cache_control" in s["params"] for s in sent)          # batch requests are uncached
     assert sorted((g[0], g[1]) for g in outputs(new)) == [("doc_summary", "published"),
                                                           ("statement_diff_summary", "published")]
     assert [(g[0], g[1]) for g in outputs(old)] == [("doc_summary", "published")]
@@ -687,7 +687,7 @@ def test_the_worst_case_of_what_waits_in_open_batches_counts_against_the_budget(
     assert [len(b["requests"]) for b in fake.batches.values()] == [4]      # still processing
     x("update core.document set is_published = true where id = %s", docs[4])
     month = q("select coalesce(sum(ai_cost_usd), 0) from ops.task_run where started_at >= date_trunc('month', now())")
-    # Room for the new request on its own (its worst case is about $0.0023), not with the four in the open batch.
+    # Room for the new request on its own (its worst case is about $0.0021), not with the four in the open batch.
     x("update ops.setting set value = %s where key = 'ai_monthly_budget_usd'", str(month[0][0] + Decimal("0.004")))
     try:
         daily(task(slugs, fake), datetime(2050, 10, 3, 12, tzinfo=UTC))
@@ -782,6 +782,15 @@ def test_batches_are_split_under_the_request_and_size_limits():
     assert [len(c) for c in ai_batch._chunks(items, max_requests=2)] == [2, 2, 1]
     assert [len(c) for c in ai_batch._chunks(items, max_bytes=2_500)] == [1, 1, 1, 1, 1]
     assert [len(c) for c in ai_batch._chunks(items)] == [5]
+
+
+def test_a_batch_requests_worst_case_is_uncached_input_at_the_batch_price():
+    from ft.ai.client import Request, Source
+    r = Request("doc_summary", Prompt("doc_summary", "v1", "Summarise."), (Source(1, "x" * 3000, "t"),), "Go.")
+    t = AiBatch()
+    tokens, out = Decimal(r.estimated_tokens()), Decimal(r.spec.max_tokens)
+    assert t._worst_case(r, batch=True) == (tokens * Decimal("0.10") + out * Decimal("0.50")) / 1_000_000 / 2
+    assert t._worst_case(r) == (tokens * Decimal("0.125") + out * Decimal("0.50")) / 1_000_000   # a 5-minute write
 
 
 def test_context_line():

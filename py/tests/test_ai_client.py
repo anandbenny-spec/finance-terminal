@@ -53,7 +53,8 @@ def test_citations_request_settings():
     assert p["model"] == "claude-haiku-5-5" and p["max_tokens"] == 8000
     assert p["output_config"] == {"effort": "low"}                      # no format: citations and JSON don't mix
     assert p["cache_control"] == {"type": "ephemeral", "ttl": "5m"}
-    assert req().params(batch=True)["cache_control"]["ttl"] == "1h"     # a batch can outlast five minutes
+    batch = req().params(batch=True)                                    # uncached: nothing would read it back
+    assert "cache_control" not in batch and batch == {k: v for k, v in p.items() if k != "cache_control"}
     assert not {"temperature", "top_p", "top_k"} & set(keys(p))
     assert [m["role"] for m in p["messages"]] == ["user"]               # no assistant prefill
     doc, instruction = p["messages"][0]["content"]
@@ -159,8 +160,8 @@ def test_create_batch_sends_the_batch_params_under_valid_unique_ids():
     assert info.status == "in_progress" and info.counts["processing"] == 2 and not info.ended
     sent = fake.batches[info.id]["requests"]
     assert [r["custom_id"] for r in sent] == ["doc_summary_doc-1_a", "doc_summary_doc-2_b"]
-    assert sent[0]["params"] == req().params(batch=True)                # the real-time shape, 1-hour cache
-    assert sent[0]["params"]["cache_control"]["ttl"] == "1h"
+    assert sent[0]["params"] == req().params(batch=True)                # the real-time shape, uncached
+    assert "cache_control" not in sent[0]["params"]
     for bad in ([("doc:1", req())], [("a", req()), ("a", req())], []):
         with pytest.raises(ValueError):
             c.create_batch(bad)

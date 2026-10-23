@@ -489,12 +489,13 @@ class AiBatch(Task):
         return ids
 
     def _bound(self, model: str, tokens: int, max_tokens: int, *, batch: bool) -> Decimal:
-        """An upper bound on a request's cost: every input token at the dearest input rate (a cache write), and
-        max_tokens of output; in a batch, at the batch price."""
+        """An upper bound on a request's cost: every input token at the dearest rate it can be billed at (a 5-minute
+        cache write in real time; plain input in a batch, which is uncached), and max_tokens of output; in a batch, at
+        the batch price."""
         today = self.claude.today() if self.claude is not None else datetime.now(UTC).date()
         m, factor, _ = price_entry(model, today, path=self.claude.prices if self.claude is not None else PRICES)
         p = m["standard"]
-        rate_in = max(Decimal(str(p[k])) for k in ("input", "cache_write_5m", "cache_write_1h"))
+        rate_in = Decimal(str(p["input"])) if batch else max(Decimal(str(p[k])) for k in ("input", "cache_write_5m"))
         cost = (Decimal(tokens) * rate_in + Decimal(max_tokens) * Decimal(str(p["output"]))) / Decimal(1_000_000)
         return cost * factor if batch else cost
 
