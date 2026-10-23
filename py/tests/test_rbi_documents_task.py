@@ -329,7 +329,7 @@ def test_the_first_sdf_is_measured_against_the_reverse_repo_and_a_between_meetin
 
 
 @pytest.mark.db
-def test_a_floor_moved_between_meetings_keeps_the_meeting_change_with_a_note(s3, roster):
+def test_a_floor_moved_between_meetings_changes_from_the_rate_in_force_with_a_note(s3, roster):
     a, b = date(2045, 3, 27), date(2045, 5, 22)
     slugs = [meeting(a, kind="unscheduled"), meeting(b, kind="unscheduled")]
     a_body = old("keep the policy repo rate under the liquidity adjustment facility (LAF) unchanged at 4.40 per cent.",
@@ -353,7 +353,8 @@ def test_a_floor_moved_between_meetings_keeps_the_meeting_change_with_a_note(s3,
     code, r = go(sites, task(roster, slugs, date(2045, 4, 1)), "backfill", datetime(2045, 6, 1, tzinfo=UTC))
     assert (code, r["status"]) == (0, "success"), r["error"]
     sdf = next(x for x in rates(slugs[1]) if x[0] == "sdf")
-    assert sdf[:3] == ("sdf", "3.750", -40) and "states from 3.95 per cent" in sdf[3]
+    # 3.95 -> 3.75 as the resolution states it, not 4.15 -> 3.75 against the previous meeting (issue #15, 23 Oct 2026)
+    assert sdf[:3] == ("sdf", "3.750", -20) and "the previous MPC meeting set 4.15 per cent (-40 bps from it)" in sdf[3]
     bm = r["checks"]["between_meetings"]
     assert not bm["passed"] and not bm["blocking"] and slugs[1] in bm["detail"]
     assert r["checks"]["cpi_projection"]["passed"]                  # off-cycle meetings publish no projections
@@ -592,4 +593,4 @@ def test_a_backfill_over_the_saved_pages_loads_every_resolution_from_the_2018_ba
     assert sorted(k for k, v in oct26.items() if v[2]) == ["nagesh-kumar", "ram-singh"]
     assert q("select dissent_count from api.policy_meetings where slug = 'mpc-2026-10-07'") in ([(2,)], [])
     may20 = next(x for x in rates("mpc-2020-05-22") if x[0] == "reverse_repo")
-    assert may20[2] == -65 and "states from 3.75 per cent" in may20[3]          # cut between meetings (17 Apr 2020)
+    assert may20[2] == -40 and "the previous MPC meeting set 4 per cent (-65 bps from it)" in may20[3]   # 17 Apr 2020
