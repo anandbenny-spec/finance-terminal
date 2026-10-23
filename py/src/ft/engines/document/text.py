@@ -116,6 +116,13 @@ PROFILES: dict[str, HtmlProfile] = {
         "closing lines: the media contact (its address is a Cloudflare placeholder), the implementation-note link and "
         "the related-links panel (15 Mar 2020). Checked on the 69 saved monetary-policy releases, Dec 2018 to Sep 2026 "
         "(B5, 23 Oct 2026)."),
+    "fed_minutes": HtmlProfile(
+        "fed_minutes",
+        "//div[@id='article']/*[not(self::h3)][not(self::hr)][not(preceding-sibling::hr)]",
+        "The FOMC's minutes (/monetarypolicy/fomcminutesYYYYMMDD.htm): div#article without its title (the <h3>, read "
+        "by ft.policy.fed_minutes) and without the footnotes below the rule (<hr>) that follows the Secretary's "
+        "signature, so the minutes end with the signature. Checked on the 62 saved minutes, Jan 2019 to Sep 2026 "
+        "(B5 part 2, 24 Oct 2026)."),
 }
 
 _BLOCK = {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "ul", "ol", "dl", "dt", "dd", "blockquote", "pre",

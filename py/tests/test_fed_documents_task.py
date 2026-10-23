@@ -3,6 +3,8 @@
 in the real template: policy_docs.fed_page), raw files go to a local S3-protocol server (moto), the clock is the
 test's. Meetings are synthetic, 2039-2044 (`fomc-…` slugs the other tests don't use), and the task sees only each
 test's own meetings (`scope`), with its own roster file and baseline cut-off."""
+import hashlib
+import json
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -14,14 +16,22 @@ import psycopg
 import pytest
 from conftest import dsn
 from moto.server import ThreadedMotoServer
-from policy_docs import fed_named, fed_page, fed_rss, fed_tally
+from policy_docs import (
+    fed_minutes_page,
+    fed_named,
+    fed_page,
+    fed_presconf_page,
+    fed_rss,
+    fed_tally,
+    fed_transcript_pdf,
+)
 from test_policy_calendar import fed_links, fed_row, fed_year
 
 from ft.jobs.fetch import HttpClient
 from ft.jobs.runner import JobRun, run
 from ft.jobs.tasks.fed_documents import FedDocuments
 from ft.jobs.watch import watch
-from ft.policy import fed_calendar, fed_statement
+from ft.policy import fed_calendar, fed_statement, members
 from ft.storage import Storage
 
 JOB, ADMIN = dsn("job_writer"), dsn("postgres")
@@ -79,7 +89,9 @@ def q(sql, *a):
         return c.execute(sql, a).fetchall()
 
 
-def meeting(d: date, *, at: str = "14:00") -> str:
+def meeting(d: date, *, at: str = "14:00", press: bool | None = None) -> str:
+    """A scheduled FOMC meeting held the day before and on `d` (the calendar task's rows); `press`: it has a press
+    conference (the calendar lists one)."""
     s = f"fomc-{d.isoformat()}"
     hh, mm = map(int, at.split(":"))
     with psycopg.connect(JOB, autocommit=True) as c:
@@ -90,9 +102,9 @@ def meeting(d: date, *, at: str = "14:00") -> str:
                         and src.key = 'fed'
                      on conflict (event_type, slug) do nothing""",
                   (s, d - timedelta(days=1), d, datetime(d.year, d.month, d.day, hh, mm, tzinfo=NY), fed_calendar.CALENDAR))
-        c.execute("""insert into policy.meeting (event_id, kind, is_rate_decision, minutes_due_on)
-                     select id, 'scheduled', true, %s from core.event where event_type = 'policy_meeting' and slug = %s
-                     on conflict do nothing""", (d + timedelta(days=21), s))
+        c.execute("""insert into policy.meeting (event_id, kind, is_rate_decision, minutes_due_on, has_press_conference)
+                     select id, 'scheduled', true, %s, %s from core.event where event_type = 'policy_meeting' and slug = %s
+                     on conflict do nothing""", (d + timedelta(days=21), press, s))
     return s
 
 
@@ -120,17 +132,28 @@ def named(d: date, decision: str, *, voters=PEOPLE, against: str = "", extra: st
     return fed_page(fed_named(decision, voting), day=when(d))
 
 
-def calendar(*dates: date) -> str:
+def statement_links(d8: str) -> str:
+    """A calendar row's links before the minutes and the press conference are posted: the statement only."""
+    return (f'<strong>Statement:</strong><br><a href="/monetarypolicy/files/monetary{d8}a1.pdf">PDF</a> | '
+            f'<a href="/newsevents/pressreleases/monetary{d8}a.htm">HTML</a><br>'
+            f'<a href="/newsevents/pressreleases/monetary{d8}a1.htm">Implementation Note</a>')
+
+
+def calendar(*dates: date, docs: tuple[date, ...] = ()) -> str:
+    """The calendar page listing these meetings: each with its statement, and those in `docs` with their press
+    conference and minutes too (fed_links), as the real page lists them once they're posted."""
     years = {}
     for d in dates:
-        years.setdefault(d.year, []).append(fed_row(MONTHS[d.month - 1], f"{d.day - 1}-{d.day}", fed_links(f"{d:%Y%m%d}")))
+        links = fed_links(f"{d:%Y%m%d}") if d in docs else statement_links(f"{d:%Y%m%d}")
+        years.setdefault(d.year, []).append(fed_row(MONTHS[d.month - 1], f"{d.day - 1}-{d.day}", links))
     return "<html><body>" + "".join(fed_year(y, *rows) for y, rows in sorted(years.items())) + "</body></html>"
 
 
 class Sites:
-    """GET pages by URL, with ETags (an unchanged page answers 304). Records every request."""
+    """GET pages by URL (text, or bytes such as a PDF), with ETags (an unchanged page answers 304). Records every
+    request."""
 
-    def __init__(self, pages: dict[str, str]):
+    def __init__(self, pages: dict[str, str | bytes]):
         self.pages, self.seen = pages, []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -139,10 +162,12 @@ class Sites:
         if u not in self.pages:
             return httpx.Response(404)
         body = self.pages[u]
-        etag = '"' + uuid.uuid5(uuid.NAMESPACE_URL, body).hex + '"'
+        data = body if isinstance(body, bytes) else body.encode("utf-8")
+        etag = '"' + uuid.uuid5(uuid.NAMESPACE_URL, hashlib.sha256(data).hexdigest()).hex + '"'
         if request.headers.get("if-none-match") == etag:
             return httpx.Response(304, headers={"ETag": etag})
-        return httpx.Response(200, text=body, headers={"Content-Type": "text/html; charset=utf-8", "ETag": etag})
+        kind = "application/pdf" if u.endswith(".pdf") else "text/html; charset=utf-8"
+        return httpx.Response(200, content=data, headers={"Content-Type": kind, "ETag": etag})
 
 
 def task(roster_path: Path, scope, first_day: date) -> FedDocuments:
@@ -245,10 +270,11 @@ def test_backfill_stores_statements_rates_votes_and_diffs_and_reruns_clean(s3, r
     assert doc == ("FOMC statement, 25 Apr 2040", datetime(2040, 4, 25, 18, 0, tzinfo=UTC), url(c),
                    "html-1/fed_press_release", "/newsevents/pressreleases/monetary20400425a.htm")
 
-    # A re-run reads the stored statements back: no request, no row, no raw file.
+    # A re-run reads the stored statements back: no row, no raw file, and one request, the calendar's (conditional, 304),
+    # read again for the minutes and press conferences it doesn't link yet (part 2).
     sites.seen.clear()
     code, r2 = go(sites, task(roster, slugs, date(2040, 1, 1)), "backfill", datetime(2040, 5, 1, tzinfo=UTC))
-    assert (code, r2["status"], r2["rows"], sites.seen) == (0, "success", 0, [])
+    assert (code, r2["status"], r2["rows"], sites.seen) == (0, "success", 0, [fed_calendar.CALENDAR])
     assert r2["http"].get("new_raw_files", 0) == 0 and r2["checks"]["statements_stored"]["passed"]
 
 
@@ -322,7 +348,8 @@ def test_a_backfill_isolates_a_bad_meeting_alerts_and_resolves_when_fixed(s3, ro
     code, r = go(sites, task(roster, slugs, date(2042, 1, 1)), "daily", datetime(2042, 3, 20, 12, tzinfo=UTC))
     assert (code, r["status"]) == (0, "success"), r["error"]
     assert state(slugs[1]) == ("held", True, True, True, slugs[0]) and len(votes(slugs[1])) == 12
-    assert sites.seen == [fed_calendar.CALENDAR]                             # the calendar's one conditional read
+    # The calendar's one conditional read, and the stored M3 statement's (re-checked for changed text: unchanged, 304).
+    assert sites.seen == [fed_calendar.CALENDAR, url(m3)]
     assert q("select count(*) from ops.alert where dedupe_key = %s and resolved_at is null",
              f"fed_statement_failed:{slugs[1]}")[0][0] == 0
 
@@ -435,3 +462,372 @@ def test_a_decision_day_statement_that_fails_its_checks_is_blocked_and_the_daily
     assert state(slugs[1])[:4] == ("held", True, True, True) and [x[2] for x in rates(slugs[1])] == [25, 25]
     assert q("select count(*) from ops.alert where dedupe_key = %s and resolved_at is null",
              f"task_failed:{KEY}")[0][0] == 0
+
+
+# ---------------------------------------------------------------------------------------------- minutes and transcripts
+SITE = fed_calendar.SITE
+WEEKDAY = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def minutes_url(d: date) -> str:
+    return f"{SITE}/monetarypolicy/fomcminutes{d:%Y%m%d}.htm"
+
+
+def presconf_url(d: date) -> str:
+    return f"{SITE}/monetarypolicy/fomcpresconf{d:%Y%m%d}.htm"
+
+
+def pdf_url(d: date) -> str:
+    return f"{SITE}/mediacenter/files/FOMCpresconf{d:%Y%m%d}.pdf"
+
+
+def names_list(names) -> str:
+    return ", ".join(names[:-1]) + f", and {names[-1]}"
+
+
+def minutes_page(d: date, voters, against: str | None = "None.", *, extra=(), closing: str = "") -> str:
+    """The minutes of the meeting held the day before and on `d`: "Voting for this action: VOTERS." and, unless None,
+    "Voting against this action: AGAINST"."""
+    first = d - timedelta(days=1)
+    voting = [f"<strong>Voting for this action:</strong> {names_list(list(voters))}."]
+    if against is not None:
+        voting.append(f"<strong>Voting against this action:</strong> {against}")
+    return fed_minutes_page(days=f"{MONTHS[d.month - 1]} {first.day}-{d.day}, {d.year}",
+                            held=[f"{WEEKDAY[first.weekday()]}, {when(first)}", f"{WEEKDAY[d.weekday()]}, {when(d)}"],
+                            voting=voting + list(extra), closing=closing)
+
+
+def doc_rows(s: str, doc_type: str):
+    """(version, published, supersedes another, chunks, speakers) of each stored version of the meeting's document."""
+    return q("""select d.version_no, d.is_published, d.supersedes_id is not null,
+                       (select count(*) from core.chunk c where c.document_id = d.id),
+                       (select count(distinct c.speaker) from core.chunk c where c.document_id = d.id)
+                  from core.document d join core.event e on e.id = d.event_id
+                 where e.slug = %s and d.doc_type = %s order by d.version_no""", s, doc_type)
+
+
+def open_alert(key: str) -> bool:
+    return q("select count(*) from ops.alert where dedupe_key = %s and resolved_at is null", key)[0][0] == 1
+
+
+@pytest.mark.db
+def test_backfill_stores_minutes_and_transcripts_and_takes_a_tally_statements_votes_from_its_minutes(s3, roster):
+    base, a, b = date(2052, 12, 13), date(2053, 1, 29), date(2053, 3, 19)
+    slugs = [meeting(d, press=True) for d in (base, a, b)]
+    fred(base - timedelta(days=1), "3", "3.25")
+    dev = PEOPLE[3]
+    pages = {
+        fed_calendar.CALENDAR: calendar(base, a, b, docs=(a, b)),
+        url(base): named(base, "decided to maintain the target range for the federal funds rate at 3 to 3-1/4 percent"),
+        url(a): named(a, "decided to raise the target range for the federal funds rate to 3-1/4 to 3-1/2 percent",
+                      voters=PEOPLE[:11], against=f"Voting against this action was {PEOPLE[11]}, who preferred to "
+                      "maintain the target range for the federal funds rate at this meeting."),
+        url(b): fed_page(fed_tally("11 – 1", "decided to raise the target range for the federal funds rate by 1/4 "
+                                   "percentage point to 3-1/2 to 3-3/4 percent",
+                                   f"Voting against the monetary policy action was {dev}, who preferred to maintain "
+                                   "the target range for the federal funds rate at this meeting."), day=when(b)),
+        minutes_url(a): minutes_page(a, PEOPLE[:11], f"{PEOPLE[11]}."),
+        minutes_url(b): minutes_page(b, [n for n in PEOPLE if n != dev], f"{dev}."),
+        presconf_url(a): fed_presconf_page("January 28-29, 2053", pdf_url(a).removeprefix(SITE)),
+        presconf_url(b): fed_presconf_page("March 18-19, 2053", pdf_url(b).removeprefix(SITE)),
+        pdf_url(a): fed_transcript_pdf(when(a)),
+        pdf_url(b): fed_transcript_pdf(when(b)),
+    }
+    sites = Sites(pages)
+    code, r = go(sites, task(roster, slugs, date(2053, 1, 1)), "backfill", datetime(2053, 5, 1, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    for name in ("meetings_failed", "minutes_failed", "transcripts_failed", "documents_stored", "minutes_votes",
+                 "minutes_roster", "voter_terms", "votes_wait", "documents_missing"):
+        assert r["checks"][name]["passed"], (name, r["checks"][name]["detail"])
+    counts = json.loads(r["checks"]["statements_stored"]["detail"])
+    assert {k: counts[k] for k in ("loaded", "named_votes", "tally_statements", "minutes", "minutes_votes",
+                                   "transcripts")} == {"loaded": 3, "named_votes": 24, "tally_statements": 1,
+                                                       "minutes": 2, "minutes_votes": 12, "transcripts": 2}
+    assert doc_rows(slugs[1], "fomc_minutes") == [(1, True, False, doc_rows(slugs[1], "fomc_minutes")[0][3], 0)]
+    assert doc_rows(slugs[0], "fomc_minutes") == [] and doc_rows(slugs[0], "fomc_presconf_transcript") == []
+    tr = doc_rows(slugs[2], "fomc_presconf_transcript")
+    assert len(tr) == 1 and tr[0][1] and tr[0][4] == 3                       # chunks by speaker: three speakers
+    meta = q("""select d.title, d.published_at, d.source_url, d.extractor_version from core.document d
+                  join core.event e on e.id = d.event_id where e.slug = %s order by d.doc_type""", slugs[2])
+    assert meta == [("FOMC minutes, 19 Mar 2053", datetime(2026, 2, 18, 19, 0, tzinfo=UTC), minutes_url(b),
+                     "html-1/fed_minutes"),                                 # the calendar's "Released …" day, 2 p.m.
+                    ("FOMC press conference transcript, 19 Mar 2053", None, pdf_url(b), "pdf-1"),
+                    ("FOMC statement, 19 Mar 2053", datetime(2053, 3, 19, 18, 0, tzinfo=UTC), url(b),
+                     "html-1/fed_press_release")]
+
+    # The tally statement's votes, from its minutes: eleven for the decision, the dissent from the statement.
+    vb = q("""select p.slug, v.voted_change_bps, v.is_dissent, v.dissent_text, d.doc_type
+                from policy.vote v join core.event e on e.id = v.meeting_event_id
+                join policy.member p on p.id = v.member_id join core.document d on d.id = v.document_id
+               where e.slug = %s""", slugs[2])
+    assert len(vb) == 12
+    assert {x[1:] for x in vb if x[0] != slug(dev)} == {(25, False, None, "fomc_minutes")}
+    assert [x[1:] for x in vb if x[0] == slug(dev)] == [
+        (0, True, "preferred to maintain the target range for the federal funds rate at this meeting", "fomc_statement")]
+    assert len(votes(slugs[1])) == 12                                         # the named statement's, confirmed
+
+    # A re-run reads everything back: no request, no row, no raw file.
+    sites.seen.clear()
+    code, r2 = go(sites, task(roster, slugs, date(2053, 1, 1)), "backfill", datetime(2053, 5, 1, tzinfo=UTC))
+    assert (code, r2["status"], r2["rows"], sites.seen) == (0, "success", 0, []), r2["error"]
+    assert r2["http"].get("new_raw_files", 0) == 0
+
+
+@pytest.mark.db
+def test_daily_takes_the_minutes_once_linked_and_alerts_on_a_transcript_missing_after_30_days(s3, roster):
+    x = date(2054, 1, 28)
+    slugs = [meeting(d, press=True) for d in (date(2053, 12, 10), x)]
+    fred(date(2053, 12, 9), "3", "3.25")
+    pages = {fed_calendar.CALENDAR: calendar(date(2053, 12, 10), x),
+             url(date(2053, 12, 10)): named(date(2053, 12, 10), "decided to maintain the target range for the "
+                                            "federal funds rate at 3 to 3-1/4 percent"),
+             url(x): named(x, "decided to maintain the target range for the federal funds rate at 3 to 3-1/4 percent")}
+    sites = Sites(pages)
+    code, _ = go(sites, task(roster, slugs, date(2054, 1, 1)), "backfill", datetime(2054, 2, 1, tzinfo=UTC))
+    assert code == 0 and state(slugs[1])[:2] == ("held", True)
+
+    # Three weeks on, the calendar links the minutes and the press conference; the transcript isn't posted yet.
+    pages[fed_calendar.CALENDAR] = calendar(date(2053, 12, 10), x, docs=(x,))
+    pages[minutes_url(x)] = minutes_page(x, PEOPLE)
+    pages[presconf_url(x)] = fed_presconf_page("January 27-28, 2054", None)
+    sites.seen.clear()
+    code, r = go(sites, task(roster, slugs, date(2054, 1, 1)), "daily", datetime(2054, 2, 18, 20, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert sites.seen == [fed_calendar.CALENDAR, url(x), minutes_url(x), presconf_url(x)]
+    assert doc_rows(slugs[1], "fomc_minutes")[0][:3] == (1, True, False) and r["checks"]["minutes_votes"]["passed"]
+    assert json.loads(r["checks"]["statements_stored"]["detail"])["transcripts_waiting"] == 1
+    assert not open_alert(f"fed_transcript_missing:{slugs[1]}")
+
+    # 35 days on: the daily run no longer looks for the transcript, and the alert opens.
+    sites.seen.clear()
+    code, r = go(sites, task(roster, slugs, date(2054, 1, 1)), "daily", datetime(2054, 3, 4, 20, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert presconf_url(x) not in sites.seen and open_alert(f"fed_transcript_missing:{slugs[1]}")
+
+    # The Fed posts it: a backfill takes it, and the alert resolves.
+    pages[presconf_url(x)] = fed_presconf_page("January 27-28, 2054", pdf_url(x).removeprefix(SITE))
+    pages[pdf_url(x)] = fed_transcript_pdf(when(x))
+    code, r = go(sites, task(roster, slugs, date(2054, 1, 1)), "backfill", datetime(2054, 3, 5, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert doc_rows(slugs[1], "fomc_presconf_transcript")[0][:2] == (1, True)
+    assert not open_alert(f"fed_transcript_missing:{slugs[1]}")
+
+
+@pytest.mark.db
+def test_a_stored_document_whose_text_changes_becomes_a_new_version_with_an_alert(s3, roster):
+    y = date(2055, 1, 27)
+    slugs = [meeting(d) for d in (date(2054, 12, 9), y)]
+    fred(date(2054, 12, 8), "2", "2.25")
+    decision = "decided to maintain the target range for the federal funds rate at 2 to 2-1/4 percent"
+    pages = {fed_calendar.CALENDAR: calendar(date(2054, 12, 9), y, docs=(y,)),
+             url(date(2054, 12, 9)): named(date(2054, 12, 9), decision), url(y): named(y, decision),
+             minutes_url(y): minutes_page(y, PEOPLE)}
+    sites = Sites(pages)
+    code, r = go(sites, task(roster, slugs, date(2055, 1, 1)), "backfill", datetime(2055, 2, 20, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert [x[:3] for x in doc_rows(slugs[1], "fomc_minutes")] == [(1, True, False)]
+
+    # Only the page's furniture changes: fetched again, but the same text writes nothing.
+    pages[minutes_url(y)] = pages[minutes_url(y)].replace("Last Update:", "Last update:")
+    code, r = go(sites, task(roster, slugs, date(2055, 1, 1)), "daily", datetime(2055, 2, 21, tzinfo=UTC))
+    assert (code, r["status"], r["rows"]) == (0, "success", 0), r["error"]
+    # The minutes and the statement are corrected at the source: each becomes a new version, with an alert.
+    pages[minutes_url(y)] = pages[minutes_url(y)].replace("The meeting adjourned at 10:30 a.m.",
+                                                          "The meeting adjourned at 10:45 a.m.")
+    pages[url(y)] = pages[url(y)].replace("Uncertainty about the economic outlook remains elevated.",
+                                          "Uncertainty about the economic outlook has diminished.")
+    code, r = go(sites, task(roster, slugs, date(2055, 1, 1)), "daily", datetime(2055, 2, 22, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert [x[:3] for x in doc_rows(slugs[1], "fomc_minutes")] == [(1, True, False), (2, True, True)]
+    assert [x[:3] for x in doc_rows(slugs[1], "fomc_statement")] == [(1, True, False), (2, True, True)]
+    latest = q("""select max(d.id) from core.document d join core.event e on e.id = d.event_id
+                   where e.slug = %s and d.doc_type = 'fomc_statement'""", slugs[1])[0][0]
+    assert q("""select distinct r.document_id from policy.rate_setting r join core.event e on e.id = r.meeting_event_id
+                 where e.slug = %s""", slugs[1]) == [(latest,)]               # the rates point at the new version
+    assert open_alert("fed_document_changed:/monetarypolicy/fomcminutes20550127.htm")
+    assert open_alert("fed_document_changed:/newsevents/pressreleases/monetary20550127a.htm")
+
+
+@pytest.mark.db
+def test_minutes_that_disagree_with_the_statement_warn_or_for_a_tally_statement_fail(s3, roster):
+    n1, n2, t1 = date(2055, 12, 10), date(2056, 1, 28), date(2056, 3, 18)
+    slugs = [meeting(d) for d in (n1, n2, t1)]
+    fred(n1 - timedelta(days=1), "2", "2.25")
+    keep = "decided to maintain the target range for the federal funds rate at 2 to 2-1/4 percent"
+    pages = {fed_calendar.CALENDAR: calendar(n1, n2, t1, docs=(n2, t1)),
+             url(n1): named(n1, keep), url(n2): named(n2, keep),
+             url(t1): fed_page(fed_tally("11 – 1", keep.replace("decided", "decided today"),
+                                         f"Voting against the monetary policy action was {PEOPLE[5]}, who preferred to "
+                                         "lower the target range for the federal funds rate by 1/4 percentage point "
+                                         "at this meeting."), day=when(t1)),
+             # N2's minutes name a dissenter the statement doesn't; T1's name the wrong dissenter.
+             minutes_url(n2): minutes_page(n2, PEOPLE[:11], f"{PEOPLE[11]}."),
+             minutes_url(t1): minutes_page(t1, [n for n in PEOPLE if n != PEOPLE[6]], f"{PEOPLE[6]}.")}
+    sites = Sites(pages)
+    code, r = go(sites, task(roster, slugs, date(2056, 1, 1)), "backfill", datetime(2056, 5, 1, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    mv = r["checks"]["minutes_votes"]
+    assert not mv["passed"] and not mv["blocking"] and f"{slugs[1]}: the minutes and the stored votes differ" in mv["detail"]
+    assert doc_rows(slugs[1], "fomc_minutes")[0][:2] == (1, True)            # stored all the same: it's the Fed's text
+    mf = r["checks"]["minutes_failed"]
+    assert not mf["passed"] and f"{slugs[2]}: dissents_match" in mf["detail"]
+    assert doc_rows(slugs[2], "fomc_minutes") == [] and votes(slugs[2]) == {}
+    assert open_alert(f"fed_minutes_failed:{slugs[2]}")
+
+    # In a daily run the same minutes fail the task (the last good data stays); corrected, they load.
+    code, r = go(sites, task(roster, slugs, date(2056, 1, 1)), "daily", datetime(2056, 4, 8, 20, tzinfo=UTC))
+    assert (code, r["status"]) == (1, "checks_failed") and "dissents_match" in r["error"]
+    pages[minutes_url(t1)] = minutes_page(t1, [n for n in PEOPLE if n != PEOPLE[5]], f"{PEOPLE[5]}.")
+    code, r = go(sites, task(roster, slugs, date(2056, 1, 1)), "daily", datetime(2056, 4, 9, 20, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert len(votes(slugs[2])) == 12 and votes(slugs[2])[slug(PEOPLE[5])][:2] == (-25, True)
+    code, r = go(sites, task(roster, slugs, date(2056, 1, 1)), "backfill", datetime(2056, 5, 1, tzinfo=UTC))
+    assert not open_alert(f"fed_minutes_failed:{slugs[2]}")
+
+
+@pytest.mark.db
+def test_a_closing_section_checks_the_votes_of_the_meeting_it_records(s3, roster):
+    """15 Mar 2020's minutes hold the 2-3 Mar 2020 call's vote under "Videoconference meeting of March 2"."""
+    z, call, m = date(2056, 12, 9), date(2057, 3, 3), date(2057, 3, 18)
+    slugs = [meeting(d) for d in (z, call, m)]
+    fred(z - timedelta(days=1), "1", "1.25")
+    first = call - timedelta(days=1)
+
+    def closing(voters):
+        return (f"<p><strong>Videoconference meeting of {MONTHS[first.month - 1]} {first.day}</strong><br />\nA joint "
+                "meeting of the Federal Open Market Committee and the Board of Governors was held by videoconference "
+                f"on {when(first)}, at 7:30 p.m.</p><p><strong>Voting for this action:</strong> {names_list(voters)}.</p>")
+    pages = {fed_calendar.CALENDAR: calendar(z, call, m, docs=(m,)),
+             url(z): named(z, "decided to maintain the target range for the federal funds rate at 1 to 1-1/4 percent"),
+             url(call): named(call, "decided to lower the target range for the federal funds rate by 1/2 percentage "
+                              "point, to 1/2 to 3/4 percent"),
+             url(m): named(m, "decided to lower the target range for the federal funds rate to 0 to 1/4 percent"),
+             minutes_url(m): minutes_page(m, PEOPLE, closing=closing(PEOPLE))}
+    sites = Sites(pages)
+    code, r = go(sites, task(roster, slugs, date(2057, 1, 1)), "backfill", datetime(2057, 5, 1, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert r["checks"]["minutes_votes"]["passed"], r["checks"]["minutes_votes"]["detail"]
+    # The call's vote in the minutes leaves a member out: a warning naming the call.
+    pages[minutes_url(m)] = minutes_page(m, PEOPLE, closing=closing(PEOPLE[:11]))     # the daily run fetches it again
+    code, r = go(sites, task(roster, slugs, date(2057, 1, 1)), "daily", datetime(2057, 4, 8, 20, tzinfo=UTC))
+    mv = r["checks"]["minutes_votes"]
+    assert (code, r["status"]) == (0, "success") and not mv["passed"]
+    assert f"{slugs[1]} ({slugs[2]}'s minutes, 'Videoconference meeting of March 2'): the minutes and the stored" \
+        in mv["detail"]
+    assert not r["checks"]["minutes_roster"]["passed"] and "2057-03-02" in r["checks"]["minutes_roster"]["detail"]
+
+
+# ---------------------------------------------------------------------------------------------- the saved pages
+FIXTURES = Path(__file__).resolve().parents[2] / "data" / "fixtures" / "fed"
+
+
+def saved_site() -> dict[str, bytes]:
+    """Every saved Fed page at the URL it came from (setup/save_fed_fixtures.sh)."""
+    pages = {}
+    for p in FIXTURES.iterdir():
+        n = p.name
+        if n.startswith("monetary"):
+            pages[f"{SITE}/newsevents/pressreleases/{n}"] = p.read_bytes()
+        elif n.startswith(("fomcminutes", "fomcpres", "fomccalendars", "fomchistorical")):
+            pages[f"{SITE}/monetarypolicy/{n}"] = p.read_bytes()
+        elif n.startswith("FOMCpres"):
+            pages[f"{SITE}/mediacenter/files/{n}"] = p.read_bytes()
+    return pages
+
+
+def votes_full(s: str):
+    return {r[0]: r[1:] for r in q("""select p.slug, v.voted_change_bps, v.is_dissent, v.dissent_text, d.doc_type
+                                        from policy.vote v join core.event e on e.id = v.meeting_event_id
+                                        join policy.member p on p.id = v.member_id
+                                        join core.document d on d.id = v.document_id where e.slug = %s""", s)}
+
+
+@pytest.mark.db
+@pytest.mark.skipif(not (FIXTURES / "fomcminutes20260916.htm").exists(),
+                    reason="the saved pages are only on the Mac (app/data/fixtures, git-ignored)")
+def test_a_backfill_over_the_saved_pages_loads_every_statement_minutes_and_transcript_from_the_2018_baseline(s3):
+    """B5's done-when over the pages saved 23 Oct 2026 and the real roster (config/members.yaml): every statement from
+    the Dec 2018 baseline to Jul 2026 passes its blocking checks, 2019-20 and the unscheduled 3 and 15 Mar 2020 included;
+    every voter is stored, the dissents match the statements (Sep 2020's two without bps), the tally statements' votes
+    come from the minutes; the roster matches every minutes' vote; 61 minutes and 61 transcripts load. The meetings come
+    from the saved calendar pages through the calendar's own rules."""
+    from ft.policy import meetings
+
+    rows = fed_calendar.parse_page((FIXTURES / "fomccalendars.htm").read_bytes(), fed_calendar.CALENDAR)
+    for y in (2018, 2019, 2020):
+        rows += fed_calendar.parse_page((FIXTURES / f"fomchistorical{y}.htm").read_bytes(), fed_calendar.historical(y))
+    ms, _ = meetings.fed_meetings(rows, meetings.load_curated(), full=True)
+    real = [m for m in ms if m.is_rate_decision and m.decision_date <= date(2026, 9, 16)]
+    assert len(real) == 64 and real[0].slug == "fomc-2018-12-19"
+    # The SQL fixture (supabase/tests/test_fixture.sql) holds a synthetic statement under fomc-2026-09-16, so that
+    # meeting is left out here (its statement, minutes and press-conference page are checked by the parser tests).
+    real = [m for m in real if m.slug != "fomc-2026-09-16"]
+    slugs = [m.slug for m in real]
+    # test_calendar_task's backfill leaves events under some of these slugs, built from its synthetic pages: set each to
+    # the real calendar's values. Its synthetic calendar pages are stored under the real URLs, so forget them too.
+    with psycopg.connect(JOB, autocommit=True) as c:
+        for m in real:
+            c.execute("""insert into core.event (event_type, entity_id, slug, title, starts_on, ends_on, occurs_at,
+                                                 status, source_id, source_url, is_published)
+                         select 'policy_meeting', b.id, %s, 'FOMC meeting', %s, %s, %s, 'scheduled', src.id, %s, false
+                           from core.entity b, core.source src where b.slug = 'fed' and src.key = 'fed'
+                         on conflict (event_type, slug) do update
+                            set starts_on = excluded.starts_on, ends_on = excluded.ends_on, occurs_at = excluded.occurs_at""",
+                      (m.slug, m.starts_on, m.ends_on, m.occurs_at, m.source_url))
+            c.execute("""insert into policy.meeting (event_id, kind, is_rate_decision, has_press_conference, minutes_due_on)
+                         select id, %s, true, %s, %s from core.event where event_type = 'policy_meeting' and slug = %s
+                         on conflict (event_id) do update set kind = excluded.kind, is_rate_decision = true,
+                                has_press_conference = excluded.has_press_conference,
+                                minutes_due_on = excluded.minutes_due_on""",
+                      (m.kind, m.has_press_conference, m.minutes_due_on, m.slug))
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        c.execute("delete from ops.http_cache where url like %s", (SITE + "/monetarypolicy/fomc%",))
+    fred(date(2018, 12, 18), "2", "2.25")                    # the baseline's change: +25 bps (FRED, the day before)
+    sites = Sites(saved_site())
+    t = task(members.CONFIG, slugs, meetings.FIRST_DAY)
+    code, r = go(sites, t, "backfill", datetime(2026, 10, 23, 12, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    for name in ("meetings_failed", "minutes_failed", "transcripts_failed", "voter_terms", "minutes_votes",
+                 "minutes_roster", "votes_wait", "baseline_change"):
+        assert r["checks"][name]["passed"], (name, r["checks"][name]["detail"])
+    counts = json.loads(r["checks"]["statements_stored"]["detail"])
+    assert counts == {"targets": 63, "loaded": 63, "waiting": 0, "failed": 0, "named_votes": 673, "dissents": 31,
+                      "tally_statements": 2, "rates_pending": 0, "from_rss": 0, "roster": 52, "minutes": 61,
+                      "minutes_votes": 24, "transcripts": 61, "transcripts_waiting": 0, "documents_failed": 0}, counts
+    # Jul 2024's transcript isn't among the saved files (its link is lower-case: fomcpresconf20240731.pdf).
+    assert r["checks"]["documents_missing"]["detail"] == (
+        "fomc-2024-07-31: transcript https://www.federalreserve.gov/mediacenter/files/fomcpresconf20240731.pdf")
+
+    # Every voter of every meeting is stored, each with a document and a span.
+    n = q("""select count(*), count(distinct e.slug) from policy.vote v join core.event e on e.id = v.meeting_event_id
+              where e.slug = any(%s)""", slugs)[0]
+    assert n == (673 + 24, 63)
+    sep20 = votes_full("fomc-2020-09-16")                     # two dissents about guidance, not the rate: no bps
+    assert {k: v[:2] for k, v in sep20.items() if v[1]} == {"robert-s-kaplan": (None, True), "neel-kashkari": (None, True)}
+    assert {k: v[:2] for k, v in votes_full("fomc-2020-03-15").items() if v[1]} == {"loretta-j-mester": (-50, True)}
+    assert len(votes_full("fomc-2020-03-03")) == 10 and len(votes_full("fomc-2018-12-19")) == 10
+    jul26 = votes_full("fomc-2026-07-29")                     # a tally statement: the minutes name the nine for
+    assert len(jul26) == 12 and sum(v[0] == 0 and not v[1] and v[3] == "fomc_minutes" for v in jul26.values()) == 9
+    assert {k: v[:2] + (v[3],) for k, v in jul26.items() if v[1]} == {
+        s: (25, True, "fomc_statement") for s in ("beth-m-hammack", "neel-kashkari", "lorie-k-logan")}
+    assert jul26["beth-m-hammack"][2].startswith("preferred to raise the target range")
+    assert len(votes_full("fomc-2026-06-17")) == 12
+    harker = votes_full("fomc-2022-03-16")["patrick-harker"]  # Boston's seat, empty to Jul 2022: its alternate voted
+    assert harker[:2] == (25, False)                          # the first hike of 2022, +25 bps
+
+    docs = dict(q("""select d.doc_type, count(*) from core.document d join core.event e on e.id = d.event_id
+                      where e.slug = any(%s) and d.is_published group by 1""", slugs))
+    assert docs == {"fomc_statement": 63, "fomc_minutes": 61, "fomc_presconf_transcript": 61}
+    speakers = q("""select count(distinct c.speaker) from core.chunk c join core.document d on d.id = c.document_id
+                     join core.event e on e.id = d.event_id
+                    where e.slug = 'fomc-2026-07-29' and d.doc_type = 'fomc_presconf_transcript'""")[0][0]
+    assert speakers >= 5
+    alerts = {k for (k,) in q("select dedupe_key from ops.alert where resolved_at is null and dedupe_key like 'fed_%%'")}
+    assert "fed_transcript_missing:fomc-2024-07-31" in alerts
+    assert not {a for a in alerts if a.startswith(("fed_statement_failed:", "fed_minutes_failed:",
+                                                   "fed_transcript_failed:")) and a.split(":", 1)[1] in slugs}
+
+    # A re-run reads everything back: no row and no raw file (pages it lacks are asked for again, conditionally).
+    code, r2 = go(sites, task(members.CONFIG, slugs, meetings.FIRST_DAY), "backfill", datetime(2026, 10, 23, 12, tzinfo=UTC))
+    assert (code, r2["status"], r2["rows"]) == (0, "success", 0), r2["error"]
+    assert r2["http"].get("new_raw_files", 0) == 0

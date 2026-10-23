@@ -149,6 +149,29 @@ def transcript_pages() -> list[str]:
     return pages
 
 
+def tiny_pdf(pages: list[list[str]]) -> bytes:
+    """A minimal PDF with one text line per entry, for pypdf to read back."""
+    def esc(s):
+        return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    kids = []
+    for lines in pages:
+        content = "BT /F1 11 Tf 14 TL 72 740 Td " + " ".join(f"({esc(ln)}) Tj T*" for ln in lines) + " ET"
+        objs.append(f"<< /Length {len(content)} >>\nstream\n{content}\nendstream")
+        objs.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> "
+                    f"/Contents {len(objs)} 0 R >>")
+        kids.append(len(objs))
+    objs[1] = f"<< /Type /Pages /Kids [{' '.join(f'{k} 0 R' for k in kids)}] /Count {len(kids)} >>"
+    out, offsets = b"%PDF-1.4\n", []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n{o}\nendobj\n".encode("latin-1")
+    xref = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+    out += b"".join(f"{o:010d} 00000 n \n".encode() for o in offsets)
+    return out + f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+
+
 def fed_page(paragraphs: list[str], *, day: str = "September 16, 2026", title: str = "Federal Reserve issues FOMC statement",
              release: str = "For release at 2:00 p.m. EDT", note_date: str | None = None, panel: bool = False) -> str:
     """The Fed's press-release template around a statement (newsevents/pressreleases/monetaryYYYYMMDDa.htm, checked on
@@ -220,6 +243,109 @@ def fed_rss(*items: tuple[str, str, str]) -> str:
     return ('\ufeff<?xml version="1.0" encoding="utf-8" ?><rss version="2.0"><channel>'
             "<title>FRB: Press Release - Monetary Policy</title><link><![CDATA[https://www.federalreserve.gov/feeds/"
             "feeds.htm]]></link><language>en</language>" + body + "</channel></rss>")
+
+
+# ---------------------------------------------------------------------------------------------- FOMC minutes and
+# press-conference transcripts (B5 part 2). Synthetic, in the shapes of the pages saved 23 Oct 2026: written for the
+# tests, not copied from the source.
+_MINUTES_TOPICS = ["Developments in Financial Markets and Open Market Operations", "Staff Review of the Economic Situation",
+                   "Staff Review of the Financial Situation", "Staff Economic Outlook",
+                   "Participants' Views on Current Conditions and the Economic Outlook"]
+
+
+_FED_TOPICS = ["consumer spending", "business investment", "the labor market", "core inflation", "Treasury yields",
+               "equity prices", "credit conditions", "housing activity", "money market rates", "the dollar"]
+
+
+def _fed_sentence(rng: random.Random) -> str:
+    """A plain-ASCII sentence about the economy (fits a PDF's Latin-1 text)."""
+    a, b = rng.choice(_FED_TOPICS), rng.choice(_FED_TOPICS)
+    return (f"Participants noted that {a} {rng.choice(_VERBS)} over the intermeeting period, while {b} was "
+            f"{rng.randint(1, 9)}.{rng.randint(0, 9)} percent above its level a year earlier.")
+
+
+def _minutes_paragraph(k: int) -> str:
+    rng = random.Random(4000 + k)
+    return " ".join(_fed_sentence(rng) for _ in range(6))
+
+
+def fed_minutes_page(*, days: str, held: list[str], voting: list[str], closing: str = "", body_paragraphs: int = 18,
+                     title: str = "Minutes of the Federal Open Market Committee") -> str:
+    """A minutes page (monetarypolicy/fomcminutesYYYYMMDD.htm): the title, the date line and the opening sentence
+    naming the meeting's days (`held`: "Tuesday, March 13, 2040"), run-in topic headings, the policy action, the
+    voting paragraphs (`voting`: "<strong>Voting for this action:</strong> …" lines, as given), an optional closing
+    section (another meeting held since the last minutes), the Secretary's signature and footnotes below a rule."""
+    opening = (" and continued on ".join(f"{d}, at {'10:00' if i == 0 else '9:00'} a.m." for i, d in enumerate(held)))
+    parts = [(f"<p><strong>{days}</strong><br />\nA joint meeting of the Federal Open Market Committee and the Board of "
+              f"Governors of the Federal Reserve System was held in the offices of the Board of Governors on {opening}"
+              '<a href="#fn1" title="footnote 1"><sup>1</sup></a><a name="f1"></a></p>')]
+    for k in range(body_paragraphs):
+        lead = f"<strong>{_MINUTES_TOPICS[k // 4]}</strong><br />\n" if k % 4 == 0 and k // 4 < len(_MINUTES_TOPICS) else ""
+        parts.append(f"<p>{lead}{_minutes_paragraph(k)}</p>")
+    parts.append("<p><strong>Committee Policy Actions</strong><br />\nAt the conclusion of the discussion, the "
+                 "Committee voted to authorize and direct the Federal Reserve Bank of New York to execute transactions "
+                 "in the System Open Market Account in accordance with the domestic policy directive. The vote also "
+                 "encompassed approval of the statement below for release at 2:00 p.m.:</p>")
+    parts.append('<blockquote><p>"The Committee seeks to achieve maximum employment and inflation at the rate of 2 '
+                 'percent over the longer run."</p></blockquote>')
+    parts += [f"<p>{v}</p>" for v in voting]
+    parts.append("<p>It was agreed that the next meeting of the Committee would be held on Tuesday-Wednesday. The "
+                 "meeting adjourned at 10:30 a.m.</p>")
+    parts.append("<p><strong>Notation Vote</strong><br />\nBy notation vote, the Committee unanimously approved the "
+                 "minutes of the previous meeting.</p>")
+    if closing:
+        parts.append(closing)
+    parts.append('<p style="text-align:center">_______________________</p>')
+    parts.append('<p style="text-align:center"><strong>Ada B. Clerk</strong><br />\n<strong>Secretary</strong></p>')
+    body = "\n\n".join(parts)
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Federal Reserve Board - {title}</title>
+</head><body><div id="content" class="container"><div class="row">
+<div class="col-xs-12 col-sm-4 col-md-3"><a href="/monetarypolicy/fomcminutes.htm">FOMC Minutes</a></div>
+<div id="article" class="col-xs-12 col-sm-8 col-md-9">
+<h3>{title}</h3>
+<!-- Article Area -->
+{body}
+<hr align="left" size="1" width="33%" />
+<p><a name="fn1"></a>1. The Federal Open Market Committee is referenced as the "FOMC" and the "Committee" in these
+minutes. <a href="#f1">Return to text</a></p>
+</div></div>
+<div class="row"><div class='lastUpdate' id="lastUpdate">Last Update: {days}</div></div></div>
+<footer class="container footer"><h6>Board of Governors of the Federal Reserve System</h6></footer></body></html>"""
+
+
+def fed_presconf_page(days: str, pdf: str | None, *, commented: bool = False) -> str:
+    """A press-conference page (monetarypolicy/fomcpresconfYYYYMMDD.htm): the video player, then the related
+    links: the transcript (`pdf`, its path, once posted; `commented`: present only inside an HTML comment, as on
+    16 Sep 2026's page) and the statement and minutes."""
+    link = f'<p><a href="{pdf}">Press Conference Transcript (PDF)</a> </p>' if pdf and not commented else ""
+    hidden = f"<!--{pdf} -->" if pdf and commented else ""
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Federal Reserve Board - FOMC Press
+Conference</title></head><body><div id="content" class="container"><div class="row">
+<div id="article" class="col-xs-12 col-sm-8 col-md-9">
+<h3 class="title">{days} FOMC Meeting</h3>
+<div class="video"><script>var transcriptLinkLabel = "Transcript"; videojs("frb-video1");</script></div>
+{hidden}
+<h4>Related Information</h4>
+{link}
+<p>FOMC Meeting Statement: <a href="/monetarypolicy/files/monetary1a1.pdf">PDF</a> | <a href="/x.htm">HTML</a></p>
+<p>Minutes: <a href="/monetarypolicy/files/fomcminutes1.pdf">PDF</a> | <a href="/y.htm">HTML</a></p>
+</div></div></div></body></html>"""
+
+
+def fed_transcript_pdf(day: str, chair: str = "CHAIR LANE", *, turns: int = 40) -> bytes:
+    """A press-conference transcript PDF: the running header, the title line naming the day, and speaker turns."""
+    header = f"{day} Chair's Press Conference FINAL"
+    lines = ["Transcript of Chair Lane's Press Conference", day, ""]
+    rng = random.Random(77)
+    for k in range(turns):
+        who = chair if k % 2 == 0 else ("MICHELLE SMITH" if k % 4 == 1 else "ADA REPORTER")
+        lines.append(f"{who}. " + _fed_sentence(rng))
+        lines += [_fed_sentence(rng) for _ in range(3)]
+        lines.append("")
+    pages, size = [], 30
+    for n, i in enumerate(range(0, len(lines), size), start=1):
+        pages.append([header, f"Page {n} of {(len(lines) + size - 1) // size}", *lines[i:i + size]])
+    return tiny_pdf(pages)
 
 
 # ---------------------------------------------------------------------------------------------- MPC resolutions (B6)
