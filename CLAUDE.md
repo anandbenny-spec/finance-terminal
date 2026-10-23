@@ -86,7 +86,7 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 
 - **Tests pass before anything is called done:** ruff; `run_all.sh` with every script at "failed 0"; pytest
   with `TEST_PG_CONNINFO` set (database tests skip without it, and a skip isn't a pass); the `web/` checks.
-  Counts only grow (24 Oct: 84 SQL, 455 pytest). Say where they ran: CI on the pushed commit counts (§6).
+  Counts only grow (24 Oct: 84 SQL, 481 pytest). Say where they ran: CI on the pushed commit counts (§6).
 - New behaviour gets a test; a fixed bug gets a regression test.
 - Deleting, skipping or weakening a test, or loosening a data check, is Anand's call (§7).
 - A new dependency or `uv lock --upgrade` is a named, deliberate change. The API service's base dependencies
