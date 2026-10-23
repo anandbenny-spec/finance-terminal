@@ -7,13 +7,15 @@ import json
 import time
 import traceback
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 
 import psycopg
 
 from ft.jobs import due as due_rules
 from ft.jobs.due import Due, Meeting
+from ft.jobs.fetch import Fetcher, HttpClient
+from ft.storage import Storage
 
 
 @dataclass
@@ -46,7 +48,12 @@ KEEPALIVES = {"keepalives": 1, "keepalives_idle": 60, "keepalives_interval": 15,
 
 
 def connect(dsn: str, *, autocommit: bool = False, role: str = "load") -> psycopg.Connection:
-    return psycopg.connect(dsn, autocommit=autocommit, application_name=f"ft-runner-{role}", **KEEPALIVES)
+    """Every session runs in UTC (Architecture 02 §1.5: the prototype's connection inherited an odd server time zone).
+    Set with SET, not a startup option, which the pooler might not pass on; session mode keeps it for the session."""
+    conn = psycopg.connect(dsn, autocommit=True, application_name=f"ft-runner-{role}", **KEEPALIVES)
+    conn.execute("set time zone 'UTC'")
+    conn.autocommit = autocommit
+    return conn
 
 
 class Control:
@@ -111,10 +118,30 @@ class Context:
     as_of: date | None = None
     since: date | None = None
     until: date | None = None
+    open_fetcher: Callable[[], Fetcher] | None = field(default=None, repr=False)
+    _fetcher: Fetcher | None = field(default=None, init=False, repr=False)
 
     @property
     def meeting(self) -> Meeting | None:
         return self.due.meeting
+
+    @property
+    def fetcher(self) -> Fetcher:
+        """The task run's fetcher (fetch.py), opened on first use: every fetch goes through it, and every body it
+        downloads is stored and registered in core.raw_file before the load (Prompt 01 B2)."""
+        if self._fetcher is None:
+            if self.open_fetcher is None:
+                raise RuntimeError("this context has no fetcher")
+            self._fetcher = self.open_fetcher()
+        return self._fetcher
+
+    def close_fetcher(self) -> dict | None:
+        """Close the fetcher, if the task opened one; its stats for ops.task_run."""
+        f, self._fetcher = self._fetcher, None
+        if f is None:
+            return None
+        f.close()
+        return f.stats()
 
 
 class Task:
@@ -163,9 +190,11 @@ class JobRun:
     def __init__(self, dsn: str, workflow: str, *, trigger: str = "cli", runner: str = "local",
                  github_run_id: int | None = None, git_sha: str | None = None, request_id: int | None = None,
                  clock: Callable[[], datetime] = due_rules.utcnow, target: str = "dev", as_of: date | None = None,
-                 since: date | None = None, until: date | None = None):
+                 since: date | None = None, until: date | None = None, http: HttpClient | None = None,
+                 storage: Storage | Callable[[], Storage] = Storage.from_env):
         self.dsn, self.workflow, self.clock = dsn, workflow, clock
         self.ctx = {"target": target, "trigger": trigger, "as_of": as_of, "since": since, "until": until}
+        self.http, self.storage = http, storage                    # one HTTP client (and its pacing) per job run
         self.outcomes: list[tuple[str, str]] = []
         self.db = Control(dsn)                                     # control connection: run log, locks, alerts
         self.id = self.db.execute(
@@ -188,8 +217,15 @@ class JobRun:
                                 "finished_at is null", (self.id,))
             except psycopg.Error:
                 pass
+        if self.http is not None:
+            self.http.close()
         self.db.close()
         return False
+
+    def open_fetcher(self, task_run_id: int) -> Fetcher:
+        if self.http is None:
+            self.http = HttpClient()
+        return Fetcher(self.http, connect(self.dsn, autocommit=True, role="fetch"), self.storage, task_run_id)
 
     def _skip(self, key: str, status: str, reason: str | None, out: list) -> None:
         self.db.execute("""insert into ops.task_run (job_run_id, task_key, status, finished_at, error)
@@ -220,10 +256,14 @@ class JobRun:
             if not self.db.lock(t.key):
                 self.db.execute("update ops.task_run set status='skipped_locked', finished_at=now() where id=%s", (tr,))
                 out.append((t.key, "skipped_locked")); continue
-            status, err, checks, rows = "success", None, [], 0
-            ctx = Context(workflow=self.workflow, job_run_id=self.id, task_run_id=tr, now=now, due=d, **self.ctx)
+            status, err, checks, rows, fetch_stats = "success", None, [], 0, None
+            ctx = Context(workflow=self.workflow, job_run_id=self.id, task_run_id=tr, now=now, due=d,
+                          open_fetcher=lambda tr=tr: self.open_fetcher(tr), **self.ctx)
             try:
-                fetched = t.fetch(ctx)
+                try:
+                    fetched = t.fetch(ctx)
+                finally:
+                    fetch_stats = ctx.close_fetcher()              # the fetch's own connection closes before the load
                 if not self.db.ensure():                           # idle through the fetch: check before loading
                     raise LockLost("control connection dropped during the fetch and another run now holds the task lock")
                 with connect(self.dsn) as txc, txc.transaction():  # one transaction per task load
@@ -240,16 +280,19 @@ class JobRun:
             finally:
                 self.db.unlock()
             self.db.ensure()                                       # a long load can idle the control connection too
-            self._record(t, tr, status, err, checks, rows)
+            self._record(t, tr, status, err, checks, rows, fetch_stats)
             out.append((t.key, status))
         for k, s in out: print(f"  {k}: {s}")
         self.outcomes += out
         return out
 
-    def _record(self, t: Task, tr: int, status: str, err, checks, rows) -> None:
+    def _record(self, t: Task, tr: int, status: str, err, checks, rows, fetch_stats: dict | None = None) -> None:
         db = self.db
-        db.execute("update ops.task_run set status=%s, finished_at=now(), rows_written=%s, error=%s, checks=%s where id=%s",
-                   (status, rows if status == "success" else 0, err, json.dumps([asdict(c) for c in checks]), tr))
+        db.execute("""update ops.task_run set status=%s, finished_at=now(), rows_written=%s, error=%s, checks=%s,
+                             http_stats=%s, files_fetched=%s where id=%s""",
+                   (status, rows if status == "success" else 0, err, json.dumps([asdict(c) for c in checks]),
+                    json.dumps(fetch_stats["http"]) if fetch_stats else None,
+                    fetch_stats["files"] if fetch_stats else 0, tr))
         # Alerts: one open alert per condition; a later run resolves it when the condition clears.
         failed_alert = Alert(f"task_failed:{t.key}", status in BAD, "error", f"{t.key} {status}: {err}")
         warn_alerts = [Alert(f"check:{t.key}:{c.name}", not c.passed, "warn", f"{c.name}: {c.detail}")
