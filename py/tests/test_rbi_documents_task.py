@@ -522,7 +522,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "data" / "fixtures" / "rbi"
 
 
 @pytest.mark.db
-@pytest.mark.skipif(not (FIXTURES / "INDEX.tsv").exists(), reason="the saved pages are only on the Mac (app/data/fixtures)")
+@pytest.mark.skipif(not (FIXTURES / "INDEX.tsv").exists(), reason="the saved pages aren't checked out (data/fixtures)")
 def test_a_backfill_over_the_saved_pages_loads_every_resolution_from_the_2018_baseline(s3):
     """The B6 done-when counts over the 49 saved resolutions (Dec 2018 to Oct 2026) and the real roster: the meetings
     come from the saved Annual Policy pages through the calendar's own rules, the resolutions from their saved pages."""

@@ -343,7 +343,7 @@ def test_baseline_must_exist():
 
 # ---------------------------------------------------------------------------------------------- the full saved pages
 @pytest.mark.skipif(not (FIXTURES / "fed" / "fomccalendars.htm").exists(),
-                    reason="the saved pages are only on the Mac (app/data/fixtures, git-ignored)")
+                    reason="the saved pages aren't checked out (data/fixtures: the private fixtures repo)")
 def test_full_calendars_from_the_saved_pages():
     """B3's done-when counts, from the pages saved on 23 Oct 2026: every meeting both calendars list from 1 Jan 2019,
     the two 2018 baselines and every upcoming meeting. The Fed's regular statements are all released at 2:00 p.m.
