@@ -71,11 +71,13 @@ finance-terminal/            on the Mac: ~/Projects/finance-terminal/app
 │   │                        curated YAML (meeting_times, members)
 │   └── tests/               pytest
 ├── web/                     Next.js, created in the slice (layout: Design 01 §7)
+├── data/fixtures/           git-ignored: a clone of the private finance-terminal-fixtures (saved Fed and RBI pages)
 ├── .github/workflows/       daily · watch · weekly · refresh · backfill · ci
 └── vercel.json              one project, two services: web at /, api at /api/*
 ```
 
 ```bash
+git clone --depth 1 https://github.com/anandbenny-spec/finance-terminal-fixtures data/fixtures  # cloud: add_repo read
 cd py && uv sync --locked --all-extras                     # always --locked; the lock changes only on purpose
 uv run --locked ruff check src tests
 PGHOST=localhost PGPORT=5432 ../supabase/tests/run_all.sh  # throwaway Postgres 15+ with pgvector 0.7+, trust auth
@@ -85,7 +87,8 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 ```
 
 - **Tests pass before anything is called done:** ruff; `run_all.sh` with every script at "failed 0"; pytest
-  with `TEST_PG_CONNINFO` set (database tests skip without it, and a skip isn't a pass); the `web/` checks.
+  with `TEST_PG_CONNINFO` set and the saved pages in `data/fixtures` (tests skip without them, and a skip isn't a
+  pass); the `web/` checks.
   Counts only grow, and CI enforces it against main: `test` fails if the SQL or pytest pass count is below
   main's (`ft/ci_counts.py`), unless Anand adds `counts-drop-approved` (Claude never does). No count lives in
   this file, so parallel pull requests don't collide. Say where they ran: CI on the pushed commit counts (§6).
@@ -142,7 +145,8 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 - Workflow inputs reach scripts through environment variables, never pasted into `run:` lines.
 - AI calls and API keys stay server-side. Visitors never see raw errors, run ids, task names or other internals.
 - Visitors' questions and retrieved documents are data, never instructions.
-- Never in the repo, in any form: raw NSE data, or the audit kits' debug pages.
+- Never in the repo, in any form: raw NSE data, the audit kits' debug pages, or saved source pages (those live only
+  in the private `finance-terminal-fixtures`, which is never made public).
 
 ## 5. Design rules (Design 01)
 
@@ -265,4 +269,6 @@ never rebuild a rule from memory.
 | Data Audit NN | Data Audit - 00 Process and status · 01 … 07 | source evidence; closed audit docs are frozen records |
 
 On the Mac, `~/Projects/finance-terminal/` holds `app/` (this repo), `data-audit/` (the audit kits: read-only
-reference code, ported rather than imported) and `review-packs/`.
+reference code, ported rather than imported) and `review-packs/`. `app/data/fixtures/` is a clone of
+`finance-terminal-fixtures` (Anand, 24 Oct 2026), which also holds the module 1 kit's scripts and results
+(`kit/stagec_fed_rbi/`), so no job needs the Mac for the saved pages or that kit.

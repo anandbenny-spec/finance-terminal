@@ -1,6 +1,6 @@
 """FOMC press-conference transcripts (Prompt 01 B5 part 2; Spec 01 §1.1 "Fed press conference"; Data Audit 01 #2):
 the press-conference page's transcript link and the PDF's checks, on synthetic pages (policy_docs), then on the pages
-and PDFs saved on the Mac (app/data/fixtures/fed, git-ignored) when they're on this machine."""
+and PDFs saved in data/fixtures/fed (the private fixtures repo) when they're on this machine."""
 import os
 import re
 from datetime import date, datetime
@@ -63,7 +63,7 @@ FED = FIXTURES / "fed"
 
 
 @pytest.mark.skipif(not (FED / "FOMCpresconf20260729.pdf").exists(),
-                    reason="the saved pages are only on the Mac (app/data/fixtures, git-ignored)")
+                    reason="the saved pages aren't checked out (data/fixtures: the private fixtures repo)")
 def test_every_saved_transcript_the_pages_link_passes():
     """The press-conference pages saved 23 Oct 2026 (Jan 2019 to Sep 2026): 62 link a transcript, Sep 2026's doesn't
     (its link is commented out); every linked PDF that was saved passes. Jul 2024's link is lower-case, which the
