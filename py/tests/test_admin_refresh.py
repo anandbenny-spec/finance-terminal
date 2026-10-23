@@ -1,6 +1,7 @@
 """`/api/admin/refresh` and its status route (Prompt 01 A3; Architecture 02 §1.6): the rejections, the dispatch of
-`refresh.yml` with the right inputs and target, the run id stored, and `PgRefreshStore`'s SQL against the test
-database as `service_role` (the role Architecture 01 §1.9 gives the Vercel routes)."""
+`refresh.yml` with the right inputs and target, the run id stored, the Data API RPC calls the deployed route makes, and
+migration 0016's functions against the test database as `service_role` (the role Architecture 01 §1.9 gives the
+Vercel routes)."""
 import json
 from datetime import timedelta
 
@@ -20,8 +21,7 @@ class MemStore:
     def __init__(self, status="dispatched"):
         self.status, self.rows = status, {}
 
-    def open_request(self, task_key, cooldown):
-        assert cooldown == timedelta(minutes=45)
+    def open_request(self, task_key):
         if task_key == "policy.nonexistent":
             return refresh.Opened(None, "not_found")
         rid = len(self.rows) + 1
@@ -152,7 +152,7 @@ def test_status_route(make):
     assert client.get("/api/admin/refresh/99").status_code == 404
 
 
-# ---------------------------------------------------------------- PgRefreshStore against the test database
+# ---------------------------------------------------------------- 0016's functions against the test database
 
 ADMIN = dsn("postgres")
 KEYS = ("test.a3_on", "test.a3_off", "test.a3_nse")
@@ -187,18 +187,18 @@ def _age(rid, minutes):
 
 @pytest.mark.db
 def test_pg_store_cooldown_and_statuses(pg):
-    store = refresh.PgRefreshStore(pg)
-    assert store.open_request("test.a3_missing", refresh.COOLDOWN) == refresh.Opened(None, "not_found")
-    assert store.open_request("test.a3_off", refresh.COOLDOWN).status == "rejected_disabled"
-    first = store.open_request("test.a3_on", refresh.COOLDOWN)
+    store = refresh.SqlRefreshStore(pg)
+    assert store.open_request("test.a3_missing") == refresh.Opened(None, "not_found")
+    assert store.open_request("test.a3_off").status == "rejected_disabled"
+    first = store.open_request("test.a3_on")
     assert first.status == "dispatched"
     store.finish_request(first.request_id, "dispatched", 123)
-    assert store.open_request("test.a3_on", refresh.COOLDOWN).status == "rejected_cooldown"
+    assert store.open_request("test.a3_on").status == "rejected_cooldown"
     _age(first.request_id, 46)
-    again = store.open_request("test.a3_on", refresh.COOLDOWN)
+    again = store.open_request("test.a3_on")
     assert again.status == "dispatched"
     store.finish_request(again.request_id, "failed", None)            # a failed dispatch doesn't start the cooldown
-    assert store.open_request("test.a3_on", refresh.COOLDOWN).status == "dispatched"
+    assert store.open_request("test.a3_on").status == "dispatched"
     s = store.request_status(first.request_id)
     assert s["status"] == "dispatched" and s["github_run_id"] == 123 and s["job_run"] is None
     assert s["run_url"].endswith("/actions/runs/123") and store.request_status(10**12) is None
@@ -206,17 +206,17 @@ def test_pg_store_cooldown_and_statuses(pg):
 
 @pytest.mark.db
 def test_pg_store_nse_minimum_interval(pg):
-    store = refresh.PgRefreshStore(pg)
-    first = store.open_request("test.a3_nse", refresh.COOLDOWN)
+    store = refresh.SqlRefreshStore(pg)
+    first = store.open_request("test.a3_nse")
     assert first.status == "dispatched"
     _age(first.request_id, 60)                                        # past the cooldown, inside the 7-day interval
-    assert store.open_request("test.a3_nse", refresh.COOLDOWN).status == "rejected_nse"
+    assert store.open_request("test.a3_nse").status == "rejected_nse"
 
 
 @pytest.mark.db
 def test_pg_store_links_the_job_run(pg):
-    store = refresh.PgRefreshStore(pg)
-    rid = store.open_request("test.a3_on", refresh.COOLDOWN).request_id
+    store = refresh.SqlRefreshStore(pg)
+    rid = store.open_request("test.a3_on").request_id
     with psycopg.connect(dsn("job_writer"), autocommit=True) as c:    # what the run does with --request-id
         jr = c.execute("insert into ops.job_run (workflow, trigger, runner, status) values"
                        " ('refresh', 'admin', 'github', 'success') returning id").fetchone()[0]
@@ -224,3 +224,139 @@ def test_pg_store_links_the_job_run(pg):
     assert store.request_status(rid)["job_run"]["status"] == "success"
     with psycopg.connect(ADMIN, autocommit=True) as c:
         c.execute("update ops.refresh_request set job_run_id = null where id = %s", (rid,))
+
+
+# ---------------------------------------------------------------- the deployed store: RPC through the Data API
+
+SETTINGS = refresh.AuthSettings("https://proj.supabase.co", "sb_secret_test_only")
+
+
+class FakeDataApi:
+    """Answers `/rest/v1/rpc/<fn>` like PostgREST does for the 0016 functions."""
+
+    def __init__(self, answers, status=200):
+        self.answers, self.status, self.requests = answers, status, []
+
+    def handler(self, request):
+        self.requests.append(request)
+        if self.status != 200:
+            return httpx.Response(self.status, json={"message": "permission denied for function"})
+        body = json.dumps(self.answers[request.url.path.rsplit("/", 1)[-1]])      # a null result is the body `null`
+        return httpx.Response(200, content=body.encode(), headers={"content-type": "application/json"})
+
+
+def _rpc_store(api):
+    return refresh.RpcRefreshStore(SETTINGS, httpx.Client(transport=httpx.MockTransport(api.handler)))
+
+
+def test_rpc_store_calls_the_0016_functions_with_the_secret_key():
+    api = FakeDataApi({"admin_open_refresh": {"status": "dispatched", "request_id": 17},
+                       "admin_finish_refresh": True,
+                       "admin_refresh_status": {"request_id": 17, "task": "policy.calendar", "status": "dispatched",
+                                                "requested_at": "2026-10-24T04:30:00+05:30", "github_run_id": 55,
+                                                "job_run": None}})
+    store = _rpc_store(api)
+    assert store.open_request("policy.calendar") == refresh.Opened(17, "dispatched")
+    store.finish_request(17, "dispatched", 55)
+    assert store.request_status(17)["run_url"].endswith("/actions/runs/55")
+    paths = [r.url.path for r in api.requests]
+    assert paths == ["/rest/v1/rpc/admin_open_refresh", "/rest/v1/rpc/admin_finish_refresh",
+                     "/rest/v1/rpc/admin_refresh_status"]
+    assert [json.loads(r.content) for r in api.requests] == [
+        {"p_task_key": "policy.calendar"}, {"p_request_id": 17, "p_status": "dispatched", "p_github_run_id": 55},
+        {"p_request_id": 17}]
+    for r in api.requests:
+        assert r.method == "POST" and str(r.url).startswith("https://proj.supabase.co/rest/v1/rpc/")
+        assert r.headers["apikey"] == "sb_secret_test_only"
+        assert r.headers["authorization"] == "Bearer sb_secret_test_only"
+        assert r.headers["content-profile"] == "api" and r.headers["accept-profile"] == "api"
+
+
+def test_rpc_store_not_found_and_missing_status():
+    store = _rpc_store(FakeDataApi({"admin_open_refresh": {"status": "not_found", "request_id": None},
+                                    "admin_refresh_status": None}))
+    assert store.open_request("policy.nonexistent") == refresh.Opened(None, "not_found")
+    assert store.request_status(5) is None
+
+
+@pytest.mark.parametrize("answer", [None, [], {"status": "dispatched"}, {"status": "weird", "request_id": 1},
+                                    {"status": "dispatched", "request_id": True}])
+def test_rpc_store_refuses_an_unexpected_answer(answer):
+    with pytest.raises(refresh.StoreError):
+        _rpc_store(FakeDataApi({"admin_open_refresh": answer})).open_request("policy.calendar")
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 500])
+def test_rpc_store_errors_are_store_errors(status):
+    with pytest.raises(refresh.StoreError):
+        _rpc_store(FakeDataApi({}, status=status)).open_request("policy.calendar")
+
+
+def test_rpc_store_finish_that_changed_nothing_is_an_error():
+    with pytest.raises(refresh.StoreError):
+        _rpc_store(FakeDataApi({"admin_finish_refresh": False})).finish_request(1, "failed", None)
+
+
+def test_refresh_store_unconfigured_is_503():
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as e:
+        refresh.refresh_store(None, httpx.Client())
+    assert e.value.status_code == 503
+    assert isinstance(refresh.refresh_store(SETTINGS, httpx.Client()), refresh.RpcRefreshStore)
+
+
+class BrokenStore(MemStore):
+    def __init__(self, fail_on):
+        super().__init__()
+        self.fail_on = fail_on
+
+    def open_request(self, task_key):
+        if self.fail_on == "open":
+            raise refresh.StoreError("down")
+        return super().open_request(task_key)
+
+    def finish_request(self, request_id, status, github_run_id):
+        if self.fail_on == "finish":
+            raise refresh.StoreError("down")
+        super().finish_request(request_id, status, github_run_id)
+
+    def request_status(self, request_id):
+        raise refresh.StoreError("down")
+
+
+def test_store_down_is_a_bare_503_and_nothing_is_dispatched(make):
+    _store, github, client = make(store=BrokenStore("open"))
+    r = client.post("/api/admin/refresh", json={"task": "policy.calendar"})
+    assert r.status_code == 503 and "down" not in r.text and github.requests == []
+    assert client.get("/api/admin/refresh/1").status_code == 503
+
+
+def test_run_started_but_not_recorded_still_reports_dispatched(make):
+    _store, github, client = make(store=BrokenStore("finish"))
+    r = client.post("/api/admin/refresh", json={"task": "policy.calendar"})
+    assert r.status_code == 202 and r.json()["github_run_id"] == 987654321 and len(github.requests) == 1
+
+
+@pytest.mark.parametrize("rid", ["0", "-1", str(2**63), "abc"])
+def test_status_route_refuses_out_of_range_ids(make, rid):
+    _store, _github, client = make()
+    assert client.get(f"/api/admin/refresh/{rid}").status_code == 422
+
+
+@pytest.mark.db
+def test_sql_store_finish_refuses_a_request_already_finished(pg):
+    store = refresh.SqlRefreshStore(pg)
+    rid = store.open_request("test.a3_on").request_id
+    store.finish_request(rid, "dispatched", 321)
+    with pytest.raises(refresh.StoreError):
+        store.finish_request(rid, "failed", None)
+    assert store.request_status(rid)["github_run_id"] == 321
+
+
+@pytest.mark.db
+def test_anon_and_authenticated_cannot_call_the_functions():
+    for role in ("anon", "authenticated"):
+        with psycopg.connect(ADMIN) as c:
+            c.execute(f"set role {role}")
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                c.execute("select api.admin_open_refresh('policy.calendar')")
