@@ -43,14 +43,17 @@ the fallback. NSE tasks are never visitor-refreshable.
   timestamp (`Freshness`). Index levels are end-of-day only.
 - The four US index series also carry a copyright line: S&P Dow Jones Indices LLC (S&P 500, Dow) and
   Nasdaq, Inc. (Nasdaq Composite, Nasdaq-100).
+- **Never link to RBI's pages** (decided by Anand, 24 Oct 2026; its site's terms, Brief §6.2): an RBI figure or
+  document names the document, its date and RBI's press-release number instead. RBI's documents are still shown in
+  full; Fed and other sources keep their links.
 - **Data ownership statement** (decided by Anand, 22 Oct 2026), opening the "About and privacy" note: every
   piece of data belongs to its owner, named on each figure, and the project is non-commercial: it earns no
   money, and sells, licenses or exports no data. It promises no monetary gain and no data resale, not that
   nothing is shown, and it doesn't replace permission: anything an owner objects to is still removed.
 - "Informational only, not investment advice" on every page. Valuations and rankings are informational, never
   buy/sell recommendations, verdicts or upside percentages (Brief §11).
-- Other sources' terms (CoinGecko, Coin Metrics, SEBI, transcripts, Yahoo) are in Brief §6.2: read the entry
-  before touching that source.
+- Other sources' terms (CoinGecko, Coin Metrics, SEBI, RBI, the Fed, transcripts, Yahoo) are in Brief §6.2: read
+  the entry before touching that source.
 
 ## 2. Repo layout and commands
 
