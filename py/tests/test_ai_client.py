@@ -142,6 +142,74 @@ def test_over_the_token_limit_or_without_a_price_nothing_is_sent():
     assert fake.requests == []
 
 
+# ---------------------------------------------------------------------------------------------- the Batch API (B7.2)
+def test_batch_custom_id_keeps_only_what_the_api_allows():
+    cid = "doc_summary:doc-123:0123456789abcdef"
+    assert ai.batch_custom_id(cid) == "doc_summary_doc-123_0123456789abcdef"
+    assert ai.BATCH_ID.fullmatch(ai.batch_custom_id(cid))
+    assert ai.batch_custom_id("statement_diff_summary:doc-123456789:" + "f" * 16) == (
+        "statement_diff_summary_doc-123456789_" + "f" * 16)
+    assert len(ai.batch_custom_id("x:" * 50)) == 64
+
+
+def test_create_batch_sends_the_batch_params_under_valid_unique_ids():
+    fake = FakeClaude()
+    c = claude(fake)
+    info = c.create_batch([("doc_summary_doc-1_a", req()), ("doc_summary_doc-2_b", req(TEXT + " More."))])
+    assert info.status == "in_progress" and info.counts["processing"] == 2 and not info.ended
+    sent = fake.batches[info.id]["requests"]
+    assert [r["custom_id"] for r in sent] == ["doc_summary_doc-1_a", "doc_summary_doc-2_b"]
+    assert sent[0]["params"] == req().params(batch=True)                # the real-time shape, 1-hour cache
+    assert sent[0]["params"]["cache_control"]["ttl"] == "1h"
+    for bad in ([("doc:1", req())], [("a", req()), ("a", req())], []):
+        with pytest.raises(ValueError):
+            c.create_batch(bad)
+    with pytest.raises(TooLong):                                         # one request too long: nothing is sent
+        c.create_batch([("ok_1", req()), ("long_2", req("x" * 400_000))])
+    assert fake.create_calls == 1
+
+
+def test_a_batch_create_is_retried_only_where_the_api_refused_it():
+    fake, sleeps = FakeClaude(creates=["429", "529", "ok"]), []
+    info = claude(fake, sleeps=sleeps).create_batch([("a", req())])
+    assert info.id in fake.batches and fake.create_calls == 3 and sleeps[0] == 3.0
+    for mode in ("500", "400"):                                          # a 500 might have created it: never resent
+        fake = FakeClaude(creates=[mode, "ok"])
+        with pytest.raises(CallError) as e:
+            claude(fake).create_batch([("a", req())])
+        assert e.value.status == int(mode) and fake.create_calls == 1 and fake.batches == {}
+
+
+def test_batch_results_come_priced_at_the_batch_rate_with_each_kind():
+    fake = FakeClaude(["ok", "max_tokens", "400", "expired"], ends_after=2)
+    c = claude(fake)
+    info = c.create_batch([(f"r{i}", req(TEXT + " " * i)) for i in range(4)])
+    assert not c.batch(info.id).ended                                     # the first read: still processing
+    info = c.batch(info.id)
+    assert info.ended and info.counts == {"processing": 0, "succeeded": 2, "errored": 1, "canceled": 0, "expired": 1}
+    got = {r.custom_id: r for r in c.batch_results(info, model_of=lambda cid: "claude-haiku-5-5")}
+    assert {k: (r.kind, r.error) for k, r in got.items()} == {
+        "r0": ("succeeded", None), "r1": ("succeeded", None), "r2": ("errored", "invalid_request_error"),
+        "r3": ("expired", None)}
+    ok, cut = got["r0"].reply, got["r1"].reply
+    assert ok.stop_reason == "end_turn" and cut.stop_reason == "max_tokens" and cut.cost_usd > 0   # billed anyway
+    assert ok.cost_usd == cost_usd("claude-haiku-5-5", ok.usage, batch=True)
+    assert ok.cost_usd * 2 == cost_usd("claude-haiku-5-5", ok.usage)       # half the real-time price
+    assert len([p for p in ok.parts() if p.citations]) == 3
+
+
+def test_a_broken_results_stream_raises_after_the_results_before_it():
+    fake = FakeClaude(["ok"], truncate=1)
+    c = claude(fake)
+    info = c.batch(c.create_batch([("a", req()), ("b", req(TEXT + " More."))]).id)
+    seen = []
+    with pytest.raises(CallError, match="ResultsStream"):
+        for r in c.batch_results(info):
+            seen.append(r.custom_id)
+    assert seen == ["b"]                                                   # reverse order; the cut line raised
+    assert sorted(r.custom_id for r in c.batch_results(info)) == ["a", "b"]   # a second read is whole
+
+
 # ---------------------------------------------------------------------------------------------- prices
 def test_cost_from_the_dated_price_table():
     u = Usage(input=1_000_000, output=1_000_000, cache_write_5m=1_000_000, cache_write_1h=1_000_000,

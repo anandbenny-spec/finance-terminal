@@ -27,7 +27,14 @@ dimensions (stored as halfvec). The client is left to pick its endpoint from the
 API key goes to https://ai.mongodb.com/v1, a Voyage key to https://api.voyageai.com/v1 (voyageai 0.5.0's
 `util.get_default_base_url`; Anand, 23 Oct 2026). Retries honour `Retry-After` the same way.
 
-The batch path (submit, poll, collect) builds the same `Request.params(batch=True)`; it lands with B7 part 2.
+**The Batch API** (Architecture 03 §1.3; B7 part 2): `create_batch` sends many requests as one batch, each with the
+same `Request.params(batch=True)` as real time (the 1-hour cache) under a batch `custom_id` (`batch_custom_id`: the
+API allows only `^[a-zA-Z0-9_-]{1,64}$`, so ops.ai_request's `<task>:<target>:<hash16>` is sent with `_` for `:`
+and mapped back by the caller). `batch` reads its status; `batch_results` streams its results once it has ended, each
+succeeded reply priced at the batch rate on the batch's creation date. A batch is created only once: `create_batch` is
+retried only on 429, 503 and 529, where the API refused it, never after a lost connection or another 5xx, which might
+have created it (the caller marks its requests errored, and a later run sends them again). Reading a batch or its
+results is idempotent and retried like a real-time call.
 """
 from __future__ import annotations
 
@@ -35,8 +42,9 @@ import hashlib
 import json
 import math
 import random
+import re
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -55,6 +63,8 @@ MAX_REQUEST_TOKENS = 100_000          # CLAUDE.md §6; Architecture 03 §1.1
 CHARS_PER_TOKEN = 3.0                 # a deliberate over-estimate (English runs about 4 characters a token)
 REQUEST_OVERHEAD_TOKENS = 1_500       # citations' own system additions, document framing
 RETRY_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504, 529})
+CREATE_RETRY_STATUS = frozenset({429, 503, 529})   # a batch create the API refused: safe to send again
+BATCH_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")      # the Batch API's custom_id (docs, checked 23 Oct 2026)
 MILLION = Decimal(1_000_000)
 
 
@@ -316,6 +326,44 @@ class Reply:
         return json.loads(self.text())
 
 
+def batch_custom_id(custom_id: str) -> str:
+    """ops.ai_request's custom_id as the Batch API accepts it: every character outside [A-Za-z0-9_-] becomes '_'.
+    `doc_summary:doc-123:0123456789abcdef` → `doc_summary_doc-123_0123456789abcdef`."""
+    out = re.sub(r"[^A-Za-z0-9_-]", "_", custom_id)[:64]
+    if not out:
+        raise ValueError("an empty custom_id")
+    return out
+
+
+@dataclass(frozen=True)
+class BatchInfo:
+    """A batch as the API reports it."""
+    id: str                           # msgbatch_…: ops.ai_batch.provider_batch_id
+    status: str                       # in_progress | canceling | ended
+    created_at: datetime
+    ended_at: datetime | None
+    counts: dict[str, int]            # processing, succeeded, errored, canceled, expired
+
+    @classmethod
+    def of(cls, b) -> BatchInfo:
+        c = b.request_counts
+        return cls(b.id, str(b.processing_status), b.created_at, b.ended_at,
+                   {k: int(getattr(c, k, 0) or 0) for k in ("processing", "succeeded", "errored", "canceled", "expired")})
+
+    @property
+    def ended(self) -> bool:
+        return self.status == "ended"
+
+
+@dataclass(frozen=True)
+class BatchResult:
+    """One request's result in an ended batch."""
+    custom_id: str                    # the batch custom_id it was sent with
+    kind: str                         # succeeded | errored | canceled | expired (only succeeded is billed)
+    reply: Reply | None = None        # succeeded: the reply, whatever its stop reason
+    error: str | None = None          # errored: the error's type ('invalid_request_error', …)
+
+
 def _retry_after(headers) -> float | None:
     if headers is None:
         return None
@@ -352,25 +400,23 @@ class Client:
         if (n := req.estimated_tokens()) > MAX_REQUEST_TOKENS:
             raise TooLong(f"{req.task}: about {n:,} input tokens, over the {MAX_REQUEST_TOKENS:,} limit")
 
-    def send(self, req: Request) -> Reply:
-        """One real-time call. Returns the reply (stop_reason end_turn); Failed if it stopped otherwise (billed);
-        CallError if the API refused it or the retries ran out (not billed); TooLong / NoPrice before sending."""
+    def _call(self, fn: Callable[[], object], *, retry_status: frozenset[int] = RETRY_STATUS,
+              retry_lost: bool = True):
+        """Call the API, retrying `retry_status` answers (and lost connections, if `retry_lost`) up to `retries` times,
+        waiting what Retry-After asks (up to max_wait), else backing off with jitter. CallError otherwise."""
         import anthropic
-        self.check(req)
-        params = req.params()
         attempt = 0
         while True:
             try:
                 self.calls += 1
-                msg = self._api.messages.create(**params)
-                break
+                return fn()
             except anthropic.APIStatusError as e:
                 status = e.status_code
-                if status not in RETRY_STATUS or attempt >= self.retries:
+                if status not in retry_status or attempt >= self.retries:
                     raise CallError(type(e).__name__, status, str(getattr(e, "message", e))) from None
                 wait = _retry_after(getattr(e.response, "headers", None))
             except anthropic.APIConnectionError as e:   # includes timeouts
-                if attempt >= self.retries:
+                if not retry_lost or attempt >= self.retries:
                     raise CallError(type(e).__name__, None, str(e)) from None
                 wait = None
             wait = _backoff(attempt) if wait is None else wait
@@ -378,12 +424,69 @@ class Client:
                 raise CallError("RetryAfterTooLong", None, f"the API asked to wait {wait:.0f} s")
             self.sleep(wait)
             attempt += 1
+
+    def send(self, req: Request) -> Reply:
+        """One real-time call. Returns the reply (stop_reason end_turn); Failed if it stopped otherwise (billed);
+        CallError if the API refused it or the retries ran out (not billed); TooLong / NoPrice before sending."""
+        self.check(req)
+        params = req.params()
+        msg = self._call(lambda: self._api.messages.create(**params))
         usage = Usage.of(msg.usage)
         reply = Reply(msg.model or req.model_id, msg.id, msg.stop_reason, usage,
                       cost_usd(req.model_id, usage, on=self.today(), path=self.prices), list(msg.content))
         if msg.stop_reason != "end_turn":
             raise Failed(str(msg.stop_reason), reply)
         return reply
+
+    # ------------------------------------------------------------------ the Batch API (Architecture 03 §1.3)
+    def create_batch(self, items: Sequence[tuple[str, Request]]) -> BatchInfo:
+        """Send `items` ((batch custom_id, request)) as one batch. Each request is checked first (price, token limit:
+        nothing is sent if one fails). Retried only where the API refused the batch (module docstring)."""
+        if not items:
+            raise ValueError("an empty batch")
+        seen: set[str] = set()
+        requests = []
+        for cid, req in items:
+            if not BATCH_ID.fullmatch(cid) or cid in seen:
+                raise ValueError(f"batch custom_id {cid!r} isn't valid or isn't unique in the batch")
+            seen.add(cid)
+            self.check(req)
+            requests.append({"custom_id": cid, "params": req.params(batch=True)})
+        b = self._call(lambda: self._api.messages.batches.create(requests=requests),
+                       retry_status=CREATE_RETRY_STATUS, retry_lost=False)
+        return BatchInfo.of(b)
+
+    def batch(self, batch_id: str) -> BatchInfo:
+        """A batch's status (idempotent)."""
+        return BatchInfo.of(self._call(lambda: self._api.messages.batches.retrieve(batch_id)))
+
+    def batch_results(self, info: BatchInfo, model_of: Callable[[str], str | None] = lambda cid: None
+                      ) -> Iterator[BatchResult]:
+        """An ended batch's results, streamed (in any order: match them by custom_id). A succeeded reply is returned
+        whatever its stop reason (the caller treats anything but end_turn as a billed failure), priced at the batch
+        rate for `model_of(custom_id)` (the model the request named; else the reply's) on the batch's creation date.
+        A stream that breaks off raises CallError: what was read before it stands."""
+        import anthropic
+        import httpx2
+        on = info.created_at.astimezone(UTC).date()
+        stream = self._call(lambda: self._api.messages.batches.results(info.id))
+        try:
+            for line in stream:
+                r = line.result
+                if r.type == "succeeded":
+                    msg = r.message
+                    model = model_of(line.custom_id) or msg.model
+                    usage = Usage.of(msg.usage)
+                    yield BatchResult(line.custom_id, "succeeded", Reply(
+                        msg.model or model, msg.id, msg.stop_reason, usage,
+                        cost_usd(model, usage, batch=True, on=on, path=self.prices), list(msg.content)))
+                elif r.type == "errored":
+                    err = getattr(getattr(r, "error", None), "error", None)
+                    yield BatchResult(line.custom_id, "errored", error=str(getattr(err, "type", None) or "error"))
+                else:                                   # canceled, expired: not billed
+                    yield BatchResult(line.custom_id, str(r.type))
+        except (anthropic.APIError, httpx2.HTTPError, ValueError) as e:
+            raise CallError("ResultsStream", None, f"{type(e).__name__}: {e}") from None
 
 
 # ---------------------------------------------------------------------------------------------- embeddings
