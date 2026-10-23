@@ -74,6 +74,12 @@ def _numbers(s: str) -> list[Decimal]:
     return out
 
 
+def numbers_in(s: str) -> list[Decimal]:
+    """Every number written in `s` (signs kept), parsed as numbers_grounded parses them (B7's summaries check that
+    a bullet's numbers are in its cited passages)."""
+    return _numbers(s)
+
+
 def numbers_grounded(summary: str, rows: list[dict], sql: str = "") -> tuple[bool, list[str]]:
     """Every number in a one-line answer summary must come from the result rows (allowing the rounding the
     summary shows), be the row count, appear in a returned date, or be a literal in the guarded query itself

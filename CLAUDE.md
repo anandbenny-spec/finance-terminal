@@ -61,14 +61,14 @@ finance-terminal/            on the Mac: ~/Projects/finance-terminal/app
 ├── supabase/config.toml     Data API: schemas = ["api"], max_rows = 1000; sign-ups off
 ├── py/                      one uv project, Python 3.13 (>=3.13,<3.14); uv.lock covers the Mac and Linux
 │   ├── src/ft/storage.py    the one storage function
-│   ├── src/ft/ai/           sqlguard, citations; the model wrapper (client.py) comes in the slice
+│   ├── src/ft/ai/           sqlguard, citations, client (the model wrapper: Claude and Voyage), summaries
 │   ├── src/ft/jobs/         run.py (CLI), config, due rules, runner, watch loop, fetch.py; tasks/
 │   ├── src/ft/engines/      document/ (canonical text, chunker, differ, store); time series, events (to come)
 │   ├── src/ft/policy/       module 1's source parsers and rules: dates, fed_calendar, rbi_calendar, meetings,
 │   │                        fed_statement, members (the rosters)
 │   ├── src/ft/api/app.py    FastAPI service on Vercel at /api/* (entrypoint py/main.py, main:app)
-│   ├── config/              tasks.yaml · prompts/<task>/vN.md + schema · eval/sets/ · curated YAML (meeting_times,
-│   │                        members)
+│   ├── config/              tasks.yaml · prompts/<task>/vN.md + schema · ai_prices.yaml (dated) · eval/sets/ ·
+│   │                        curated YAML (meeting_times, members)
 │   └── tests/               pytest
 ├── web/                     Next.js, created in the slice (layout: Design 01 §7)
 ├── .github/workflows/       daily · watch · weekly · refresh · backfill · ci
