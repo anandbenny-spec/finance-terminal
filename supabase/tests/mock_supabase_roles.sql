@@ -7,4 +7,4 @@ grant anon, authenticated, service_role to authenticator;
 create schema extensions;
 create extension vector schema extensions;
 create extension btree_gist schema extensions;
-grant usage on schema extensions to public;
+grant usage on schema extensions to anon, authenticated, service_role;   -- as Supabase: not PUBLIC (day-1 item 5, 22 Oct)
