@@ -663,7 +663,7 @@ def test_a_request_that_errored_in_a_half_read_batch_waits_for_the_rest_of_the_r
     """An errored result read before the read breaks off isn't sent again until its batch has been read to the end
     (so the rest of the read still maps every result), and not twice in one run."""
     (s0, s1), _, new = two_statements(date(2051, 1, 25), date(2051, 3, 15))
-    fake = FakeClaude(["ok", "ok", "400"], truncate=1, cut="clean")   # the diff errors; its result is read first
+    fake = FakeClaude(["ok", "ok", "400", "ok"], truncate=1, cut="clean")   # the diff errors; its result is read first
     assert daily(task([s0, s1], fake), datetime(2051, 3, 16, 12, tzinfo=UTC)) == 0
     detail = last_run()["checks"]["batches"]["detail"]
     assert fake.create_calls == 1 and '"unknown"' not in detail and '"left_for_next_run": 1' in detail
