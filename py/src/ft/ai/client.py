@@ -13,9 +13,14 @@ Messages API call and returns the reply with its usage and cost.
   output may be cut off or not match the schema. It's still billed, so `Failed` carries the reply's usage and cost.
 - 408, 409, 429 and 5xx answers (and lost connections) are retried up to 3 times, waiting what `Retry-After` asks
   (up to `max_wait`), else backing off with jitter. Anything else raises `CallError` at once.
-- Prompt caching: one top-level `cache_control` (5 minutes in real time, 1 hour in a batch, which can outlast five
-  minutes); the API caches the prefix once it passes the model's minimum (512 tokens on Haiku 5.5 and Sonnet 5.5).
-  A retry's note goes in its own last block, so the retry reads the first attempt's cached prefix.
+- Prompt caching, in real time only: one top-level `cache_control` (5 minutes); the API caches the prefix once it
+  passes the model's minimum (512 tokens on Haiku 5.5 and Sonnet 5.5). A retry's note goes in its own last block, so
+  the retry, sent seconds later, reads the first attempt's cached prefix. **Batch requests carry no cache_control**
+  (decided by Claude where Anand delegated, 23 Oct 2026; Architecture 03 §1.1 had them on the 1-hour cache): the cached
+  prefix would hold the request's own document (the prompts alone, about 380 and 490 tokens, don't reach the 512-token
+  minimum, so no prefix is shared between documents), so a 1-hour cache write, at twice the batch input price, would
+  be read back only by that request's retry within the hour, and a batch's retry goes in a later batch, often a later
+  run. Uncached, a batch request's input costs half as much.
 - Every request stays under 100,000 input tokens (Haiku costs five times as much above that): an estimate over the
   limit is refused before sending (`TooLong`).
 - Cost comes from the dated price table (config/ai_prices.yaml); a model without a price is refused before sending.
@@ -28,7 +33,7 @@ API key goes to https://ai.mongodb.com/v1, a Voyage key to https://api.voyageai.
 `util.get_default_base_url`; Anand, 23 Oct 2026). Retries honour `Retry-After` the same way.
 
 **The Batch API** (Architecture 03 §1.3; B7 part 2): `create_batch` sends many requests as one batch, each with the
-same `Request.params(batch=True)` as real time (the 1-hour cache) under a batch `custom_id` (`batch_custom_id`: the
+same `Request.params(batch=True)` as real time but uncached, under a batch `custom_id` (`batch_custom_id`: the
 API allows only `^[a-zA-Z0-9_-]{1,64}$`, so ops.ai_request's `<task>:<target>:<hash16>` is sent with `_` for `:`
 and mapped back by the caller). `batch` reads its status; `batch_results` streams its results once it has ended, each
 succeeded reply priced at the batch rate on the batch's creation date. A batch is created only once: `create_batch` is
@@ -259,7 +264,8 @@ class Request:
         return math.ceil(chars / CHARS_PER_TOKEN) + REQUEST_OVERHEAD_TOKENS
 
     def params(self, *, batch: bool = False) -> dict:
-        """The Messages API parameters (the same for real time and a batch request's `params`)."""
+        """The Messages API parameters: real time, or a batch request's `params`, which are the same but uncached
+        (module docstring, "Prompt caching")."""
         cite = self.spec.route == "citations"
         content: list[dict] = []
         for s in self.sources:
@@ -276,9 +282,11 @@ class Request:
         output_config: dict = {"effort": self.spec.effort}
         if not cite:
             output_config["format"] = {"type": "json_schema", "schema": self.schema}
-        return {"model": self.model_id, "max_tokens": self.spec.max_tokens, "system": self.prompt.text,
-                "messages": [{"role": "user", "content": content}], "output_config": output_config,
-                "cache_control": {"type": "ephemeral", "ttl": "1h" if batch else "5m"}}
+        params = {"model": self.model_id, "max_tokens": self.spec.max_tokens, "system": self.prompt.text,
+                  "messages": [{"role": "user", "content": content}], "output_config": output_config}
+        if not batch:
+            params["cache_control"] = {"type": "ephemeral", "ttl": "5m"}
+        return params
 
 
 # ---------------------------------------------------------------------------------------------- replies
