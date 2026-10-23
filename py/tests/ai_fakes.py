@@ -66,6 +66,30 @@ def good_diff(docs: list[tuple[str, str]]) -> list[dict]:
     return bullets((added[:2] + removed[:1] + added[2:] + removed[1:])[:3])
 
 
+def schema_of(body: dict) -> dict | None:
+    """A JSON-route request's schema (output_config.format), or None for the citations route."""
+    fmt = (body.get("output_config") or {}).get("format")
+    return fmt["schema"] if fmt else None
+
+
+def good_stance(docs: list[tuple[str, str]]) -> dict:
+    """A stance_extraction answer: the first sentence that says the MPC decided a stance, read as B6's parser reads
+    it, quoted exactly."""
+    from ft.policy import rbi_resolution
+    _, text = docs[0]
+    for s, e in sentence_spans(text):
+        sent = text[s:e]
+        if "decided" in sent and (label := rbi_resolution.stance_label(sent)):
+            return {"stance": label, "quote": sent}
+    return {"stance": "other", "quote": text[:80]}
+
+
+def json_message(answer, *, stop: str = "end_turn", mid: str = "msg_json", chars: int = 0) -> dict:
+    text = answer if isinstance(answer, str) else json.dumps(answer)
+    return message([{"type": "text", "text": text}], stop=stop, input_tokens=900 + chars // 4, output_tokens=120,
+                   mid=mid)
+
+
 def _error(mode: str) -> httpx2.Response:
     status = int(mode)
     headers = {"retry-after": "3"} if mode == "429" else {}
@@ -87,12 +111,16 @@ class FakeClaude:
     and then the connection times out, 'lost_before': it times out before anything is created); a batch ends on its
     `ends_after`-th status read (None: never); `truncate` cuts the first results download after that many lines, mid
     -line (`cut='mid'`) or cleanly (`cut='clean'`, a short read). `archive(id)` archives an ended batch. Results come
-    back in reverse order (the API promises no order). The list endpoint returns the newest batches first."""
+    back in reverse order (the API promises no order). The list endpoint returns the newest batches first.
+    JSON-route requests (structured outputs) are answered by `answer(body)` (default: `good_stance` for a stance
+    schema, no projections otherwise), or, in 'not_json', with text that isn't JSON; the error and stop modes apply to
+    them too, and `answered` lists (schema's first property, answer) for each."""
 
     def __init__(self, script=("ok",), *, creates=("ok",), ends_after: int | None = 1, truncate: int | None = None,
-                 cut: str = "mid"):
+                 cut: str = "mid", answer=None):
         self.script, self.requests, self.n = list(script), [], 0
         self.creates, self.ends_after, self.truncate, self.cut = list(creates), ends_after, truncate, cut
+        self.answer, self.answered = answer, []
         self.batches: dict[str, dict] = {}          # id -> {"requests", "reads", "results", "created_at", ...}
         self.create_calls = 0                       # batch creates attempted, refused ones included
 
@@ -127,6 +155,16 @@ class FakeClaude:
 
     def _message(self, body: dict, mode: str) -> dict:
         docs, _ = documents_of(body)
+        if (schema := schema_of(body)) is not None:
+            kind = next(iter(schema["properties"]))
+            if self.answer is not None:
+                got = self.answer(body)
+            else:
+                got = good_stance(docs) if kind == "stance" else {"projections": []}
+            got = "Here is the stance: neutral" if mode == "not_json" else got
+            self.answered.append((kind, got))
+            stop = mode if mode in ("max_tokens", "refusal") else "end_turn"
+            return json_message(got, stop=stop, mid=f"msg_{self.n}", chars=sum(len(t) for _, t in docs))
         blocks = good_diff(docs) if len(docs) == 2 else good_summary(docs)
         if mode == "bad_number":
             blocks[1] = {**blocks[1], "text": "The Committee cut the rate by 25 basis points."}

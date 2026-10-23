@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "properties": {
+    "projections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "variable": {"type": "string", "enum": ["cpi", "gdp"]},
+          "target_label": {"type": "string", "description": "Q2 2026-27, H1 2019-20 or FY 2026-27"},
+          "target_start": {"type": "string", "format": "date"},
+          "target_end": {"type": "string", "format": "date"},
+          "value": {"anyOf": [{"type": "number"}, {"type": "null"}], "description": "A single figure, else null"},
+          "low": {"anyOf": [{"type": "number"}, {"type": "null"}], "description": "A range's lower figure, else null"},
+          "high": {"anyOf": [{"type": "number"}, {"type": "null"}], "description": "A range's higher figure, else null"},
+          "quote": {"type": "string", "description": "A passage of a given sentence stating the period and the figure, copied exactly"}
+        },
+        "required": ["variable", "target_label", "target_start", "target_end", "value", "low", "high", "quote"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["projections"],
+  "additionalProperties": false
+}

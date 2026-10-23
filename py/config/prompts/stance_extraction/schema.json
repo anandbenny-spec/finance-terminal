@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "stance": {
+      "type": "string",
+      "enum": [
+        "calibrated tightening",
+        "neutral",
+        "accommodative",
+        "accommodative, focused on withdrawal of accommodation",
+        "withdrawal of accommodation",
+        "other"
+      ],
+      "description": "The monetary policy stance the MPC decided at this meeting, or other"
+    },
+    "quote": {
+      "type": "string",
+      "description": "The sentence of the resolution that states that stance, copied exactly"
+    }
+  },
+  "required": ["stance", "quote"],
+  "additionalProperties": false
+}

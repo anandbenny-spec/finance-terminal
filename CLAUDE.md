@@ -61,7 +61,7 @@ finance-terminal/            on the Mac: ~/Projects/finance-terminal/app
 ├── supabase/config.toml     Data API: schemas = ["api"], max_rows = 1000; sign-ups off
 ├── py/                      one uv project, Python 3.13 (>=3.13,<3.14); uv.lock covers the Mac and Linux
 │   ├── src/ft/storage.py    the one storage function
-│   ├── src/ft/ai/           sqlguard, citations, client (the model wrapper: Claude and Voyage), summaries
+│   ├── src/ft/ai/           sqlguard, citations, client (the model wrapper: Claude and Voyage), summaries, extraction
 │   ├── src/ft/jobs/         run.py (CLI), config, due rules, runner, watch loop, fetch.py; tasks/
 │   ├── src/ft/engines/      document/ (canonical text, chunker, differ, store); time series, events (to come)
 │   ├── src/ft/policy/       module 1's source parsers and rules: dates, fed_calendar, rbi_calendar, meetings,
