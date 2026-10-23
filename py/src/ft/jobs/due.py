@@ -3,8 +3,10 @@
 - `every <interval>`: since the task's last success, in any workflow.
 - `fomc_decision_day` / `mpc_decision_day`: the bank's decision date is today in its own time zone, its decision
   document (the statement or the resolution) isn't stored, and the run is inside that meeting's watch window.
-- `after_decision_document`: a decision-day document is stored, the AI step hasn't succeeded since it was
-  stored, and the meeting's watch window is still open (the AI step polls like the fetch: Architecture 03 §1.3).
+- `after_decision_document`: a decision-day document is stored, the AI step hasn't succeeded in a watch run since it
+  was stored, and the meeting's watch window is still open (the AI step polls like the fetch: Architecture 03 §1.3).
+  Only watch runs count: a daily, refresh or backfill run of the AI step sends nothing in real time (B7), so it
+  mustn't stand in for the decision-day step.
 
 The watch window is anchored to the meeting's release time (core.event.occurs_at, else the bank's usual time),
 not to when the run started, so a run started early isn't cut short and a delayed start still polls. It opens
@@ -101,9 +103,13 @@ def meetings_on(db, day: date) -> list[Meeting]:
     return sorted(found, key=lambda m: m.release_at)
 
 
-def _last_success(db, task_key: str) -> datetime | None:
-    return db.execute("select max(finished_at) from ops.task_run where task_key = %s and status = 'success'",
-                      (task_key,)).fetchone()[0]
+def _last_success(db, task_key: str, workflow: str | None = None) -> datetime | None:
+    if workflow is None:
+        return db.execute("select max(finished_at) from ops.task_run where task_key = %s and status = 'success'",
+                          (task_key,)).fetchone()[0]
+    return db.execute("""select max(t.finished_at) from ops.task_run t join ops.job_run j on j.id = t.job_run_id
+                          where t.task_key = %s and t.status = 'success' and j.workflow = %s""",
+                      (task_key, workflow)).fetchone()[0]
 
 
 def _decision_day(db, bank: Bank, now: datetime) -> Due:
@@ -130,7 +136,7 @@ def _after_decision_document(db, task_key: str, now: datetime) -> Due:
             reasons.append(f"{m.slug}: the {bank.decision_doc} isn't stored yet")
         elif not m.is_open(now):
             reasons.append(f"{m.slug}: outside the watch window")
-        elif (last := _last_success(db, task_key)) is not None and last > m.stored_at:
+        elif (last := _last_success(db, task_key, "watch")) is not None and last > m.stored_at:
             reasons.append(f"{m.slug}: already ran after the {bank.decision_doc} was stored")
         else:
             return Due(True, f"{m.slug}: the {bank.decision_doc} is stored", meeting=m, until=m.closes_at)
