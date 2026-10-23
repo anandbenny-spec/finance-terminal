@@ -35,7 +35,7 @@ from ft.ai.extraction import Parsed
 from ft.jobs import due as due_rules
 from ft.jobs.runner import JobRun, run
 from ft.jobs.tasks.ai_batch import AiBatch
-from ft.policy import rbi_calendar
+from ft.policy import rbi_calendar, rbi_resolution
 
 JOB, ADMIN = dsn("job_writer"), dsn("postgres")
 KEY = "test.b7_extraction"
@@ -183,10 +183,11 @@ def resolution_id(slug: str) -> int:
 
 # ---------------------------------------------------------------------------------------------- the batch path
 @pytest.mark.db
-def test_a_daily_run_publishes_each_stance_and_the_projections_the_regex_missed_through_a_batch(s3, roster):  # noqa: F811
+def test_a_daily_run_publishes_each_stance_and_the_projections_the_regex_missed_through_a_batch(s3, roster,  # noqa: F811
+                                                                                            monkeypatch):
     feb, apr = date(2013, 2, 6), date(2013, 4, 3)
-    base, cut = load((feb, 83001, keep()), (apr, 83101, CUT_BODY), first_day=date(2013, 3, 1), roster_path=roster,
-                     current=((apr, 83101),), earlier=((feb, 83001),))
+    base, cut = load((feb, 89001, keep()), (apr, 89101, CUT_BODY), first_day=date(2013, 3, 1), roster_path=roster,
+                     current=((apr, 89101),), earlier=((feb, 89001),))
     # B6 read the cut's CPI sentence only in part: the year's 4.4 per cent, not its quarters.
     assert [x[:6] for x in forecasts(cut)] == [("rbi.proj_cpi", "FY 2013-14", "4.4", None, None, "parsed"),
                                                ("rbi.proj_gdp", "FY 2013-14", "7.1", None, None, "parsed")]
@@ -235,11 +236,32 @@ def test_a_daily_run_publishes_each_stance_and_the_projections_the_regex_missed_
     assert daily(ai_task([base, cut], fake), datetime(2014, 3, 3, tzinfo=UTC)) == 0
     assert fake.n == n and last_run()["rows"] == 0 and last_run()["status"] == "success"
 
+    # Later the regex improves (review of #45). B6 first: a target it now reads replaces the AI's row, and its
+    # blocking count still holds. (Here the GDP row is made the AI's by hand, to stand in for such a target.)
+    out_id = q("""select id from core.ai_output where task = 'projection_extraction' and status = 'published'
+                   and document_id = %s""", resolution_id(cut))[0][0]
+    q("""update core.forecast set method = 'ai_extracted', ai_output_id = %s
+          where vintage_date = %s and series_id = (select id from core.series where key = 'rbi.proj_gdp')""", out_id, apr)
+    code, r = rbi_go(Sites({}), rbi_task(roster, [base, cut], date(2013, 3, 1)), "backfill",
+                     datetime(2014, 3, 4, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success") and r["checks"]["resolutions_stored"]["passed"], r["error"]
+    assert [x[5] for x in forecasts(cut)] == ["parsed", "ai_extracted", "ai_extracted", "parsed"]
+    assert q("""select count(*) from core.forecast where vintage_date = %s and method = 'parsed'
+                  and ai_output_id is not null""", apr) == [(0,)]
+    # Then the AI step: a resolution the regex reads in full has no projection target, so its AI output is retired
+    # and its AI-extracted rows go, with nothing sent.
+    monkeypatch.setattr(rbi_resolution, "read_projections", lambda text: ((), ()))
+    assert daily(ai_task([base, cut], fake), datetime(2014, 3, 5, tzinfo=UTC)) == 0
+    assert last_run()["status"] == "success" and fake.n == n
+    assert q("select status, status_reason from core.ai_output where id = %s", out_id) == [
+        ("superseded", "superseded by the regex: it reads every projection sentence of this resolution now")]
+    assert [x[5] for x in forecasts(cut)] == ["parsed", "parsed"]
+
 
 @pytest.mark.db
 def test_a_stance_that_disagrees_with_the_parse_is_held_and_published_once_the_parse_agrees(s3, roster, monkeypatch):  # noqa: F811
     aug = date(2013, 8, 7)
-    slug, = load((aug, 83201, keep()), first_day=date(2013, 9, 1), roster_path=roster, current=((aug, 83201),))
+    slug, = load((aug, 89201, keep()), first_day=date(2013, 9, 1), roster_path=roster, current=((aug, 89201),))
     # The AI quotes the dissent: it states "neutral", but the MPC decided calibrated tightening (the parser's reading).
     fake = FakeClaude(["ok"], answer=answers(stance={"stance": "neutral", "quote": DISSENT}))
     assert daily(ai_task([slug], fake), datetime(2014, 3, 2, tzinfo=UTC)) == 0
@@ -276,8 +298,8 @@ def test_a_stance_that_disagrees_with_the_parse_is_held_and_published_once_the_p
 @pytest.mark.db
 def test_on_a_decision_day_a_bad_quote_is_retried_other_is_held_and_a_wrong_figure_is_rejected(s3, roster):  # noqa: F811
     oct_ = date(2013, 10, 30)
-    slug, = load((oct_, 83301, keep(projections=(CPI,))), first_day=date(2013, 11, 1), roster_path=roster,
-                 current=((oct_, 83301),))
+    slug, = load((oct_, 89301, keep(projections=(CPI,))), first_day=date(2013, 11, 1), roster_path=roster,
+                 current=((oct_, 89301),))
     calls = []
 
     def stance(docs):

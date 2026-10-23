@@ -689,6 +689,51 @@ def quoted_pairs(quote: str) -> list[tuple[str, str | None, Decimal | tuple[Deci
     return [(p, fy, f) for (p, fy), (_, f) in zip(periods, figures, strict=True)]
 
 
+def _set_aside(s: str) -> str:
+    return _EARLIER.sub(lambda m: " " * len(m.group(0)), s)
+
+
+def period_years(text: str, sentence: tuple[int, int]) -> list[tuple[int, int, str, str | None]]:
+    """The periods a projection sentence names, as (start, end, 'Q2' | 'H1' | 'FY', fiscal year), each bare quarter
+    given the fiscal year the regex gives it: the last one named before it in the sentence, else the last one named
+    earlier in its paragraph, else the next one named after it in the sentence (None if there's none). Earlier
+    vintages are set aside first, as the regex does."""
+    s, e = sentence
+    found = []
+    for m in _PERIOD.finditer(_set_aside(text[s:e])):
+        fy = m["fy1"] or m["fy2"] or m["fy"]
+        found.append([s + m.start(), s + m.end(), m["q"].upper() if m["q"] else "FY", _norm_fy(fy) if fy else None])
+    block = text.rfind("\n\n", 0, s)
+    last = None
+    for m in _PERIOD.finditer(_set_aside(text[(block + 2 if block >= 0 else 0):s])):
+        if fy := m["fy1"] or m["fy2"] or m["fy"]:
+            last = _norm_fy(fy)
+    ctx = []
+    for p in found:
+        if p[3]:
+            last = p[3]
+        ctx.append(last)
+    for i, p in enumerate(found):
+        if p[3] is None:
+            p[3] = ctx[i] or next((x[3] for x in found[i + 1:] if x[3]), None)
+    return [tuple(p) for p in found]
+
+
+def subject_at(text: str, sentence: tuple[int, int], pos: int) -> str | None:
+    """What a projection at `pos` is about, by the regex's subjects: the last CPI-inflation or GDP-growth mention in
+    its sentence before `pos` ('cpi' | 'gdp'); None if there's none, or it's core, food or fuel inflation, GVA or
+    inflation 'excluding' something."""
+    s, e = sentence
+    last = None
+    for m in _SUBJECT.finditer(text, s, e):
+        if m.start() >= pos:
+            break
+        last = m
+    if last is None or _SKIP_SUBJECT.search(text[max(s, last.start() - 12):min(e, last.end() + 12)]):
+        return None
+    return "gdp" if last.lastgroup == "gdp" else "cpi"
+
+
 # ---------------------------------------------------------------------------------------------- parse
 def parse(data: bytes, url: str) -> Resolution:
     """A resolution page. Raises ResolutionError if it isn't an RBI press release; what can't be read in one that is
