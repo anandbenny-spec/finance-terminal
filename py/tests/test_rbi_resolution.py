@@ -1,6 +1,6 @@
 """MPC resolutions (Prompt 01 B6; Spec 01 §2 "RBI rates", "RBI votes (D4)", "Dissents (F23)", "Projections"; §3.3):
 the parser and its page checks, against synthetic resolutions in the real template (policy_docs; real pages stay out of
-the repo). The last tests read the 49 resolutions saved on the Mac (app/data/fixtures/rbi, git-ignored) when they're on
+the repo). The last tests read the 49 resolutions saved in data/fixtures/rbi (the private fixtures repo) when they're on
 this machine, and check the spot values of Prompt 01 B6's done-when."""
 import csv
 import os
@@ -285,7 +285,7 @@ def saved() -> list[tuple[date, rr.Resolution]]:
     return [(date.fromisoformat(r["posted_on"]), rr.parse((RBI / r["file"]).read_bytes(), r["url"])) for r in rows]
 
 
-@pytest.mark.skipif(not (RBI / "INDEX.tsv").exists(), reason="the saved pages are only on the Mac (app/data/fixtures)")
+@pytest.mark.skipif(not (RBI / "INDEX.tsv").exists(), reason="the saved pages aren't checked out (data/fixtures)")
 def test_every_saved_resolution_passes_and_the_spot_checks_hold():
     res = saved()
     assert len(res) == 49 and res[0][0] == date(2018, 12, 5) and res[-1][0] == date(2026, 10, 7)
