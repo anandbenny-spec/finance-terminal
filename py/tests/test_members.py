@@ -1,5 +1,5 @@
 """config/members.yaml and its loader (Spec 01 D12; Prompt 01 B5): the file is a valid roster with a source note per
-term, the 2025-26 voters are on it, and sync() loads it into policy.member and policy.member_term (re-runs write
+term, the voters from Dec 2018 on are on it, and sync() loads it into policy.member and policy.member_term (re-runs write
 nothing)."""
 from datetime import date
 
@@ -12,13 +12,23 @@ from ft.policy import members
 JOB, ADMIN = dsn("job_writer"), dsn("postgres")
 
 
-def test_the_roster_file_loads_with_twelve_voters_on_every_2025_26_meeting_date():
+def test_the_roster_file_loads_with_the_voting_members_of_every_meeting_from_dec_2018():
     r = members.load()
-    assert sum(m.bank == "FED" for m in r.members.values()) == 18
+    assert sum(m.bank == "FED" for m in r.members.values()) == 31          # everyone who voted from Dec 2018 (B5 part 2)
     assert all(t.source for m in r.members.values() for t in m.terms)
     for day in (date(2025, 1, 29), date(2025, 5, 7), date(2025, 9, 17), date(2025, 12, 10), date(2026, 1, 28),
                 date(2026, 4, 29), date(2026, 6, 17), date(2026, 10, 28)):
         assert len(r.voters_on("FED", day)) == 12, day
+    # Vacancies, as the minutes' attendance lists them: the Board had five members to Dec 2020 and three in early 2022
+    # (Clarida and Quarles gone, Cook, Jefferson and Barr not yet appointed), Boston's seat was empty to Jul 2022,
+    # Brainard left in Feb 2023 (Kugler joined in Sep) and Cleveland's seat was empty in Jul 2024.
+    seats = {date(2018, 12, 19): 10, date(2019, 6, 19): 10, date(2020, 3, 15): 10, date(2021, 1, 27): 11,
+             date(2022, 3, 16): 8, date(2022, 6, 15): 10, date(2022, 7, 27): 12, date(2023, 3, 22): 11,
+             date(2023, 9, 20): 12, date(2024, 7, 31): 11, date(2024, 9, 18): 12}
+    assert {d: len(r.voters_on("FED", d)) for d in seats} == seats
+    assert r.match("FED", "Eric Rosengren").slug == r.match("FED", "Eric S. Rosengren").slug == "eric-s-rosengren"
+    harker = r.match("FED", "Patrick Harker")                               # Boston's alternate in 2022, then a member
+    assert [harker.term_on(d).is_voter for d in (date(2022, 3, 16), date(2023, 3, 22))] == [False, True]
     chair = {d: next(m.name for m in r.voters_on("FED", d) if m.term_on(d).role == "fed_chair")
              for d in (date(2026, 5, 21), date(2026, 5, 22))}
     assert chair == {date(2026, 5, 21): "Jerome H. Powell", date(2026, 5, 22): "Kevin Warsh"}
