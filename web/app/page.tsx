@@ -1,10 +1,10 @@
-// A0 baseline placeholder (Prompt 01, A0). The shell (C2) and the /policy page (C3) replace it; until then it
-// shows no data, so there's nothing here for the accuracy rule to check. The tokens arrived in C1; the shell is C2.
+// A placeholder until the landing page (3–12 Nov; Spec 01 §6). The shell (C2) frames it; /policy comes in C3.
+// It shows no data, so there's nothing here for the accuracy rule to check.
 export default function Home() {
   return (
-    <main>
-      <h1>Finance Terminal</h1>
-      <p>Informational only, not investment advice.</p>
-    </main>
+    <>
+      <h1 className="text-page">Finance Terminal</h1>
+      <p className="mt-1 text-ink-2">An AI research terminal for Indian and US markets, plus crypto.</p>
+    </>
   );
 }
