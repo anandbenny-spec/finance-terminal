@@ -86,7 +86,9 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 
 - **Tests pass before anything is called done:** ruff; `run_all.sh` with every script at "failed 0"; pytest
   with `TEST_PG_CONNINFO` set (database tests skip without it, and a skip isn't a pass); the `web/` checks.
-  Counts only grow (24 Oct: 84 SQL, 507 pytest). Say where they ran: CI on the pushed commit counts (§6).
+  Counts only grow, and CI enforces it against main: `test` fails if the SQL or pytest pass count is below
+  main's (`ft/ci_counts.py`), unless Anand adds `counts-drop-approved` (Claude never does). No count lives in
+  this file, so parallel pull requests don't collide. Say where they ran: CI on the pushed commit counts (§6).
 - New behaviour gets a test; a fixed bug gets a regression test.
 - Deleting, skipping or weakening a test, or loosening a data check, is Anand's call (§7).
 - A new dependency or `uv lock --upgrade` is a named, deliberate change. The API service's base dependencies
@@ -190,8 +192,9 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 - **Fresh sessions at break points (Anand, 23 Oct 2026; it saves his plan's usage).** When a sub-prompt job's
   done-when check passes, or the thread grows long, write a short handoff in that job's GitHub issue (done, next,
   open questions, files touched), then tell Anand it's a good point to start a fresh session from this file,
-  the sub-prompt and that issue. **Give him the next session's opening prompt with it** (Anand, 23 Oct 2026), ready
-  to paste: the next job and its issue, what must be merged first, and anything he must do before or during it.
+  the sub-prompt and that issue. **The next session's opening prompt is `/next-job`** (Anand, 24 Oct 2026: his
+  skill that takes the next job in tracker #30's order), plus anything he must do first. Write a full prompt only
+  when a job needs instructions its issue doesn't hold.
 - **CI runs the full suite (Anand, 23 Oct 2026).** In a session, run the tests the change touches; `ci.yml`
   runs ruff, every SQL script and pytest on each push (and on `workflow_dispatch`, which Claude may start).
   Read the result from the run's annotations: each failing test and the counts are annotated, and Claude's
@@ -200,7 +203,8 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   every other session. After writing a file to the Mac, read it back there.
 - **Branches and pull requests (Anand, 23 Oct 2026; replaces "Anand commits and pushes").** Claude commits in
   its own cloud clone, pushes only to `claude/<job>` branches it created, and opens a pull request; CI runs on
-  it. **Claude merges its own pull requests (Anand, 23 Oct 2026, 22:16 IST, so the build never waits on him):**
+  it. If `main` moves, merge `main` into the branch; never rebase a branch that's been pushed (Anand, 24 Oct 2026).
+  **Claude merges its own pull requests (Anand, 23 Oct 2026, 22:16 IST, so the build never waits on him):**
   once every check on the pull request's latest commit has passed (`test`, `web`, `secrets`) and the handoff
   comment is written, Claude merges it into `main` with a merge commit through GitHub's merge API. A pull request
   holding anything §7 or the sub-prompt's stop conditions name waits for Anand, and so does one he's asked to see
@@ -211,6 +215,11 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   `git show` and `git --no-optional-locks diff` are fine.
 - **Flag a conflict with a decided rule instead of changing it.** Decisions are dated in the docs, and Anand
   reverses them. Build progress lives in git and GitHub issues, never in this file or the planning docs.
+- **Standing delegation (Anand, 24 Oct 2026).** Where the docs are silent and a choice only tightens a rule or
+  check, or picks between options that keep every rule, Claude decides, records it on the job's issue as "Decided
+  by Claude (standing delegation, 24 Oct 2026)" with the reason and the alternative, and carries on. Anand reviews
+  these when he chooses and reverses what he doesn't want. Everything in §7 and the sub-prompt's stop conditions
+  still stops for him.
 - **Where things run (checked 22 Oct 2026):** Claude's shells (the session's cloud workspace and the Mac's Linux
   VM) reach GitHub, PyPI, npm and the Anthropic API, but not the data sources or Supabase. So unit and SQL tests
   run in Claude's workspace (on a local Postgres with pgvector) or in CI. Anything that touches a live source or
