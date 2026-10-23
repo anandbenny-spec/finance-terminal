@@ -1,5 +1,49 @@
 # web
 
-The Next.js front end (a Vercel service at `/`). Created in the slice with `create-next-app` after the thin
-design system (planning step 4). It reads published data with the anon key from the `api` schema only, and
-calls the Python `api` service under `/api/*` for the command bar and admin actions.
+The Next.js front end (a Vercel service at `/`). It reads published data with the browser key from the `api`
+schema only, and calls the Python `api` service under `/api/*` for the command bar and admin actions
+(`CLAUDE.md` §2). Layout: Design 01 §7. Created in A0 (Prompt 01, 23 Oct 2026); the design base comes in C1.
+
+## Commands
+
+```bash
+npm ci               # always from the lock file
+npm run lint         # ESLint (eslint-config-next, core web vitals + TypeScript)
+npm run typecheck    # next typegen, then tsc --noEmit (the route types LayoutProps needs come from typegen)
+npm test             # Vitest, once (tests beside their code, or in tests/ for checks on the package)
+npm run build        # next build (Turbopack)
+```
+
+CI runs all five on Node 24 (`.github/workflows/ci.yml`, job `web`).
+
+## Versions
+
+- **Node 24** (`engines.node`), **npm 11**. Every direct dependency is pinned to an exact version, and
+  `tests/package-pins.test.ts` fails if one gets a range, TanStack Table leaves 8.21, or a library leaves the
+  major Design 01 §8.4 names. An upgrade is a named, deliberate change: version, lock and test in one commit.
+- Next 16.4.2, React 19.3.1, Tailwind 4.3.3 (wired through `@tailwindcss/turbopack` in `next.config.ts`; there is
+  no PostCSS config), TanStack Table **8.21.3** (not v9), Lightweight Charts 5.2.1, supabase-js 2.118.0,
+  lucide-react 1.60.0, Vitest 4.1.12 (the 4.1 line; 5.0 is a month old).
+- **shadcn 4.22.1**, base **Radix**, preset **Nova** (`components.json`, style `radix-nova`). `cn()` comes from
+  shadcn's own `cn` package (a compiled replacement for clsx + tailwind-merge). The `shadcn` package is a dev
+  dependency: only the CSS build reads it (`@import "shadcn/tailwind.css"`).
+- `next.config.ts` keeps create-next-app 16.4's defaults `cacheComponents` and `partialPrefetching`; how pages cache
+  Supabase reads is decided when the first page reads data (C3).
+
+## Install scripts
+
+npm 11 runs a package's install script only once it's approved in `allowScripts` (`package.json`). The one script
+in the tree, `unrs-resolver`'s postinstall (ESLint's import resolver), is **denied**: it only fetches a native
+binding when the platform package is missing, and the Linux and macOS bindings arrive as optional dependencies.
+A new package with a script shows in `npm install-scripts ls`; approve or deny it on purpose.
+
+## Working notes for Claude's sessions
+
+- Claude's shells reach npm and GitHub but **not `ui.shadcn.com` or Google Fonts** (checked 23 Oct 2026).
+  - `shadcn init` and `shadcn add …` fetch from `ui.shadcn.com`: Anand runs them in macOS Terminal in a scratch
+    copy outside the repo (`~/Projects/finance-terminal/setup/shadcn-init/`), and Claude copies the files they write
+    into its branch. That's how A0's `shadcn init` ran.
+  - `next build` downloads the fonts through `next/font/google`, so it fails in Claude's workspace; CI and Vercel
+    build normally. To check the rest of a build locally, build once with the font imports removed and put them back.
+- This workspace's npm 10.9 fails on this tree (`Cannot read properties of null (reading 'edgesOut')`, an arborist
+  bug with the WebAssembly fallbacks' peers); npm 11 doesn't, and is what Node 24 ships.
