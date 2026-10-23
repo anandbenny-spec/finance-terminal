@@ -1,5 +1,6 @@
-# Lint, the SQL tests and the Python tests on every push and pull request (Architecture 04 §1.5).
-# Failing tests and the counts are written as annotations, which Claude reads through the API (CLAUDE.md §6).
+# Lint, the SQL tests, the Python tests and the web/ checks on every push and pull request (Architecture 04 §1.5,
+# §1.6 item 4). Failing tests and the counts are written as annotations, which Claude reads through the API
+# (CLAUDE.md §6).
 name: ci
 on:
   push:
@@ -76,4 +77,48 @@ jobs:
           status=${PIPESTATUS[0]}
           grep -E '^(FAILED|ERROR) ' pytest.log | head -10 | sed 's/^/::error title=pytest::/'
           echo "::notice title=pytest::$(tail -1 pytest.log)"
+          exit "$status"
+  web:
+    # The front end (Architecture 04 §1.6 item 4; added in A0, 23 Oct 2026): lint, typecheck, unit tests and the
+    # production build, on the Node version web/package.json's engines field names. setup-node's problem matchers
+    # annotate ESLint and tsc errors; the steps below add the failing tests and the counts.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/package.json
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install from the lock file
+        run: |
+          echo "::notice title=web toolchain::node $(node -v), npm $(npm -v)"
+          npm ci --no-audit --no-fund
+      - name: Lint
+        run: |
+          npm run lint 2>&1 | tee lint.log
+          status=${PIPESTATUS[0]}
+          echo "::notice title=eslint::$(grep -E '^✖ [0-9]+ problem' lint.log || echo 'no problems')"
+          exit "$status"
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: |
+          npm test 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          grep -E '^ +(FAIL|×) ' test.log | head -10 | sed 's/^ */::error title=vitest::/'
+          echo "::notice title=vitest::$(grep -E '^ +Tests +' test.log | tr -s ' ' | sed 's/^ //')"
+          exit "$status"
+      - name: Build
+        run: |
+          npm run build 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          grep -E '^(Error|Type error|Failed to compile)' build.log | head -5 | sed 's/^/::error title=next build::/'
+          echo "::notice title=next build::$([ "$status" = 0 ] && echo "built $(grep -cE '^[├└┌] ' build.log) routes" || echo failed)"
           exit "$status"
