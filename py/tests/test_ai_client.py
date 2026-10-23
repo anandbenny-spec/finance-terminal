@@ -1,13 +1,15 @@
 """The model wrapper (Prompt 01 B7; Architecture 03 §1.1): request settings, the two routes, the input hash, failures,
 retries honouring Retry-After, the token limit, the dated price table, and the Voyage embedder. The Anthropic SDK runs
 for real against a mock transport (tests/ai_fakes.py), so these check what would actually be sent."""
+import base64
+import json
+import struct
 from datetime import date
 from decimal import Decimal
 
+import httpx
 import pytest
-import voyageai
 from ai_fakes import FakeClaude, FakeVoyage, claude
-from voyageai import error as verr
 
 from ft.ai import client as ai
 from ft.ai.client import (
@@ -20,6 +22,8 @@ from ft.ai.client import (
     Source,
     TooLong,
     Usage,
+    VoyageAPIError,
+    VoyageHTTP,
     cost_usd,
     halfvec_literal,
     load_prompt,
@@ -301,21 +305,80 @@ def test_embedder_sends_voyage_4_at_512_in_small_batches(monkeypatch):
 
 def test_embedder_retries_honour_retry_after_and_check_dimensions():
     sleeps = []
-    fake = FakeVoyage(fail=[verr.RateLimitError("slow down", headers={"retry-after": "2"}),
-                            verr.ServiceUnavailableError("busy")])
+    fake = FakeVoyage(fail=[VoyageAPIError(429, "slow down", {"retry-after": "2"}), VoyageAPIError(503, "busy"),
+                            httpx.ConnectError("lost")])
     got = Embedder(client=fake, sleep=sleeps.append).embed_documents(["a", "b"])
-    assert len(got.vectors) == 2 and sleeps[0] == 2.0 and len(sleeps) == 2
-    with pytest.raises(CallError):
-        Embedder(client=FakeVoyage(fail=[verr.AuthenticationError("bad key")])).embed_documents(["a"])
+    assert len(got.vectors) == 2 and sleeps[0] == 2.0 and len(sleeps) == 3
+    with pytest.raises(CallError, match=r"AuthenticationError \(401\)"):
+        Embedder(client=FakeVoyage(fail=[VoyageAPIError(401, "bad key")])).embed_documents(["a"])
+    with pytest.raises(CallError, match="ReadTimeout"):
+        Embedder(client=FakeVoyage(fail=[httpx.ReadTimeout("slow")] * 4), sleep=lambda s: None,
+                 retries=3).embed_documents(["a"])
+    with pytest.raises(CallError, match="RetryAfterTooLong"):
+        Embedder(client=FakeVoyage(fail=[VoyageAPIError(429, "later", {"retry-after": "600"})]),
+                 sleep=lambda s: None).embed_documents(["a"])
     with pytest.raises(CallError, match="BadEmbeddings"):
         Embedder(client=FakeVoyage(dimension=1024)).embed_documents(["a"])
 
 
-def test_the_voyage_client_picks_its_endpoint_from_the_key():
-    """voyageai 0.5.0: an Atlas model API key ('al-…') goes to ai.mongodb.com, a Voyage key to api.voyageai.com.
-    The keys here are fake; nothing is sent."""
-    assert Embedder(client=voyageai.Client(api_key="al-fake-test-key")).host == "ai.mongodb.com"
-    assert Embedder(client=voyageai.Client(api_key="pa-fake-test-key")).host == "api.voyageai.com"
+def _b64(v):
+    return base64.b64encode(struct.pack(f"<{len(v)}f", *v)).decode()
+
+
+def _voyage(handler, key="al-fake-test-key"):
+    return VoyageHTTP(key, transport=httpx.MockTransport(handler))
+
+
+def test_voyage_http_sends_what_the_sdk_sent_and_decodes_base64_float32():
+    """The request voyageai 0.5.0 built (the module docstring): the same path, headers, body and base64 encoding."""
+    seen = []
+
+    def handler(req):
+        seen.append(req)
+        body = json.loads(req.content)
+        data = [{"object": "embedding", "embedding": _b64([i + 0.5, -0.25] + [0.0] * 510), "index": i}
+                for i in range(len(body["input"]))]
+        return httpx.Response(200, json={"object": "list", "data": data[::-1], "model": body["model"],
+                                         "usage": {"total_tokens": 7}})
+
+    got = Embedder(client=_voyage(handler)).embed_documents(["first", "second"])
+    req = seen[0]
+    assert req.method == "POST" and str(req.url) == "https://ai.mongodb.com/v1/embeddings"
+    assert req.headers["authorization"] == "Bearer al-fake-test-key"
+    assert req.headers["content-type"] == "application/json"
+    assert json.loads(req.content) == {"input": ["first", "second"], "model": "voyage-4", "input_type": "document",
+                                       "truncation": False, "output_dtype": "float", "output_dimension": 512,
+                                       "encoding_format": "base64"}
+    # Put back in input order by `index`; the float32 values decode exactly.
+    assert [v[:2] for v in got.vectors] == [[0.5, -0.25], [1.5, -0.25]] and got.tokens == 7 and got.requests == 1
+
+
+def test_voyage_http_errors_keep_the_sdks_names_and_retry_after():
+    answers = iter([httpx.Response(429, json={"detail": "slow down"}, headers={"retry-after": "3"}),
+                    httpx.Response(200, json={"data": [{"embedding": [0.1] * 512, "index": 0}],
+                                              "usage": {"total_tokens": 1}})])
+    sleeps = []
+    got = Embedder(client=_voyage(lambda req: next(answers)), sleep=sleeps.append).embed_query("q")
+    assert sleeps == [3.0] and len(got) == 512
+    with pytest.raises(CallError) as e:
+        Embedder(client=_voyage(lambda req: httpx.Response(401, json={"detail": "Provided API key is invalid."})),
+                 sleep=lambda s: None).embed_query("q")
+    assert e.value.kind == "AuthenticationError" and e.value.status == 401 and "invalid" in str(e.value)
+    with pytest.raises(CallError, match="BadResponse"):
+        Embedder(client=_voyage(lambda req: httpx.Response(200, json={"data": [{"embedding": "AAA", "index": 0}],
+                                                                     "usage": {"total_tokens": 1}}))).embed_query("q")
+
+
+def test_the_voyage_endpoint_comes_from_the_key(monkeypatch):
+    """voyageai 0.5.0's rule: an Atlas model API key ('al-…') goes to ai.mongodb.com, a Voyage key to
+    api.voyageai.com. The keys here are fake; nothing is sent."""
+    assert Embedder("al-fake-test-key").host == "ai.mongodb.com"
+    assert Embedder("pa-fake-test-key").host == "api.voyageai.com"
+    monkeypatch.setenv("VOYAGE_API_KEY", "al-from-the-environment")
+    assert Embedder().host == "ai.mongodb.com"
+    monkeypatch.delenv("VOYAGE_API_KEY")
+    with pytest.raises(CallError, match="NoKey"):
+        Embedder()
 
 
 def test_halfvec_literal():

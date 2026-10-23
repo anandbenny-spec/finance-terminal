@@ -28,9 +28,15 @@ Messages API call and returns the reply with its usage and cost.
   ops.ai_request keys on it, so an unchanged input is never sent twice.
 
 **Voyage** (`Embedder`): `voyage-4` for documents and `voyage-4-lite` for questions (one embedding space), 512
-dimensions (stored as halfvec). The client is left to pick its endpoint from the key: an unscoped MongoDB Atlas model
-API key goes to https://ai.mongodb.com/v1, a Voyage key to https://api.voyageai.com/v1 (voyageai 0.5.0's
+dimensions (stored as halfvec). The endpoint comes from the key: an unscoped MongoDB Atlas model API key ('al-…') goes
+to https://ai.mongodb.com/v1, a Voyage key to https://api.voyageai.com/v1 (voyageai 0.5.0's
 `util.get_default_base_url`; Anand, 23 Oct 2026). Retries honour `Retry-After` the same way.
+- **Over `httpx`, not the voyageai SDK** (decided by Claude where Anand delegated, 24 Oct 2026, 03:16 IST; issue #9).
+  The SDK brought 36 of the api service's 69 packages (langchain-core, langsmith, huggingface-hub, tokenizers, numpy,
+  pillow, aiohttp…), about 152 MB of its 239 MB bundle, and Vercel installed them at every cold start (2.5 s of a
+  3.5 s cold start, A4). `VoyageHTTP` sends the request the SDK sent: POST `<base>/embeddings` with the texts, model,
+  input type, `truncation` false, `output_dtype` float, `output_dimension` 512 and `encoding_format` base64 (the
+  SDK's default), and decodes each vector as little-endian float32.
 
 **The Batch API** (Architecture 03 §1.3; B7 part 2): `create_batch` sends many requests as one batch, each with the
 same `Request.params(batch=True)` as real time but uncached, under a batch `custom_id` (`batch_custom_id`: the
@@ -44,11 +50,14 @@ a batch, the list or the results is idempotent and retried like a real-time call
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
+import os
 import random
 import re
+import struct
 import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -539,42 +548,106 @@ class Embedded:
     requests: int
 
 
+@dataclass(frozen=True)
+class EmbedReply:
+    embeddings: list[list[float]]
+    total_tokens: int
+
+
+# The voyageai SDK's error names for these statuses, kept so run logs and reject reasons read as before.
+VOYAGE_ERROR_KIND = {400: "InvalidRequestError", 401: "AuthenticationError", 422: "MalformedRequestError",
+                     429: "RateLimitError", 500: "ServerError", 502: "ServiceUnavailableError",
+                     503: "ServiceUnavailableError", 504: "ServiceUnavailableError"}
+
+
+class VoyageAPIError(Exception):
+    """Voyage answered with an error status. `kind` is the SDK's name for it; `headers` carry any Retry-After."""
+
+    def __init__(self, status: int, message: str, headers=None):
+        self.status, self.headers = status, headers or {}
+        self.kind = VOYAGE_ERROR_KIND.get(status, "APIError")
+        super().__init__(message)
+
+
+def voyage_base_url(api_key: str) -> str:
+    """voyageai 0.5.0's rule (`util.get_default_base_url`): an Atlas model API key goes to MongoDB's endpoint."""
+    return "https://ai.mongodb.com/v1" if api_key.startswith("al-") else "https://api.voyageai.com/v1"
+
+
+class VoyageHTTP:
+    """Voyage's embeddings endpoint over httpx, sending what the voyageai SDK sent (module docstring). No retries
+    here: the Embedder retries. `transport` is for tests (httpx.MockTransport)."""
+
+    def __init__(self, api_key: str, *, base_url: str | None = None, timeout: float = 300.0, transport=None):
+        import httpx
+        self.base_url = (base_url or voyage_base_url(api_key)).rstrip("/")
+        self._http = httpx.Client(headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout,
+                                  transport=transport)
+
+    def embed(self, texts, model=None, input_type=None, truncation=True, output_dtype=None,
+              output_dimension=None) -> EmbedReply:
+        body = {"input": list(texts), "model": model, "input_type": input_type, "truncation": truncation,
+                "output_dtype": output_dtype, "output_dimension": output_dimension, "encoding_format": "base64"}
+        r = self._http.post(f"{self.base_url}/embeddings", json={k: v for k, v in body.items() if v is not None})
+        if r.status_code != 200:
+            try:
+                message = str(r.json().get("detail") or r.text)
+            except ValueError:
+                message = r.text
+            raise VoyageAPIError(r.status_code, message[:500], r.headers)
+        try:
+            got = r.json()
+            data = sorted(got["data"], key=lambda d: d["index"])
+            vectors = [_vector(d["embedding"]) for d in data]
+            return EmbedReply(vectors, int(got["usage"]["total_tokens"]))
+        except (ValueError, KeyError, TypeError) as e:
+            raise CallError("BadResponse", r.status_code, f"{type(e).__name__}: {e}") from None
+
+
+def _vector(v) -> list[float]:
+    """A base64 vector (little-endian float32, as the SDK decoded it with numpy), or a plain list."""
+    if isinstance(v, str):
+        raw = base64.b64decode(v, validate=True)
+        if len(raw) % 4:
+            raise ValueError(f"a float32 vector of {len(raw)} bytes")
+        return list(struct.unpack(f"<{len(raw) // 4}f", raw))
+    return [float(x) for x in v]
+
+
 class Embedder:
     """Voyage embeddings: documents with voyage-4, questions with voyage-4-lite, 512 dimensions. `client` is a
-    voyageai.Client (or a test double with the same `embed`)."""
+    VoyageHTTP (or a test double with the same `embed`); without one, the key is `api_key` or VOYAGE_API_KEY."""
 
     def __init__(self, api_key: str | None = None, *, client=None, sleep: Callable[[float], None] = time.sleep,
                  retries: int = 3, max_wait: float = 120.0):
         if client is None:
-            import voyageai
-            client = voyageai.Client(api_key=api_key, max_retries=0)   # base_url left to the key (module docstring)
+            key = (api_key or os.environ.get("VOYAGE_API_KEY", "")).strip()
+            if not key:
+                raise CallError("NoKey", None, "VOYAGE_API_KEY is not set")
+            client = VoyageHTTP(key)
         self._vo, self.sleep, self.retries, self.max_wait = client, sleep, retries, max_wait
 
     @property
     def host(self) -> str | None:
         """The endpoint's host the client picked (for the run log; never the key)."""
-        base = (getattr(self._vo, "_params", None) or {}).get("base_url")
+        base = getattr(self._vo, "base_url", None)
         return urlsplit(base).hostname if base else None
 
     def _embed(self, texts: list[str], model: str, input_type: str):
-        from voyageai import error as verr
+        import httpx
         attempt = 0
         while True:
             try:
                 return self._vo.embed(texts, model=model, input_type=input_type, truncation=False,
                                       output_dtype="float", output_dimension=DIMENSION)
-            except (verr.RateLimitError, verr.ServiceUnavailableError, verr.ServerError, verr.Timeout,
-                    verr.APIConnectionError, verr.TryAgain) as e:
+            except VoyageAPIError as e:
+                if e.status not in RETRY_STATUS or attempt >= self.retries:
+                    raise CallError(e.kind, e.status, str(e)) from None
+                wait = _retry_after(e.headers)
+            except httpx.TransportError as e:            # timeouts, lost connections
                 if attempt >= self.retries:
-                    raise CallError(type(e).__name__, getattr(e, "http_status", None), str(e)) from None
-                wait = _retry_after(getattr(e, "headers", None) or {})
-            except verr.APIError as e:
-                status = getattr(e, "http_status", None)
-                if status not in RETRY_STATUS or attempt >= self.retries:
-                    raise CallError(type(e).__name__, status, str(e)) from None
-                wait = _retry_after(getattr(e, "headers", None) or {})
-            except verr.VoyageError as e:
-                raise CallError(type(e).__name__, getattr(e, "http_status", None), str(e)) from None
+                    raise CallError(type(e).__name__, None, str(e)) from None
+                wait = None
             wait = _backoff(attempt) if wait is None else wait
             if wait > self.max_wait:
                 raise CallError("RetryAfterTooLong", None, f"Voyage asked to wait {wait:.0f} s")
