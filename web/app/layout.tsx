@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AppShell } from "@/components/shell/AppShell";
 import { plexMono, plexSans } from "./fonts";
 import "./globals.css";
 
@@ -9,11 +10,13 @@ export const metadata: Metadata = {
 
 // Fonts: Design 01 §2.7 (fonts.ts). `dark`: the site is dark only, and globals.css keeps shadcn's class-based
 // `dark:` variant so its primitives look the same whatever the viewer's OS setting (see globals.css, part 1).
-// The shell (C2) replaces the body's placeholder layout.
+// Every page renders inside the shell (C2: Design 01 §4.1, §5.1).
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${plexSans.variable} ${plexMono.variable} dark h-full`}>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full">
+        <AppShell>{children}</AppShell>
+      </body>
     </html>
   );
 }

@@ -72,7 +72,7 @@ in_db psql -U postgres -X -q -v ON_ERROR_STOP=1 -f /tmp/ft_tests/test_fixture.sq
 
 status=0
 total_pass=0; total_fail=0
-for t in run_tests.sh run_tests_ai.sh run_tests_review_01.sh run_tests_0012.sh run_tests_0013.sh; do
+for t in run_tests.sh run_tests_ai.sh run_tests_review_01.sh run_tests_0012.sh run_tests_0013.sh run_tests_0014.sh run_tests_0015.sh; do
   echo "== $t"
   out=$(in_db bash "/tmp/ft_tests/$t" 2>&1); echo "$out"
   p=$(echo "$out" | grep -c '^PASS'); f=$(echo "$out" | grep -c '^FAIL')
