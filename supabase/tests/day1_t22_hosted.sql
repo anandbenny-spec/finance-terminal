@@ -1,7 +1,8 @@
 -- Day-1 check 3 (T22, Architecture 01 §8; GitHub issue #1) on a hosted project. Read-only: it changes nothing.
 -- Paste into the project's SQL editor (Dashboard → SQL Editor → New query), run, and copy the result table into
 -- issue #1. Dev's result (22 Oct): 360 functions, all in extensions; reset not executable; no pg_net/http/dblink;
--- only semantic.search_chunks in our schemas; both definer functions pin their search path.
+-- only semantic.search_chunks in our schemas; both definer functions pin their search path. Rows 7 and 8 change
+-- with 0013 (no unpinned functions; job_writer can use extensions).
 with f as (
   select n.nspname, p.oid
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -40,6 +41,9 @@ select 7, 'functions in our schemas without a pinned search_path (advisor findin
                  where n.nspname in ('ops', 'core', 'policy', 'api', 'semantic')
                    and not coalesce(array_to_string(p.proconfig, ';') like '%search_path=%', false)), 'none')
 union all
-select 8, 'Postgres and pgvector',
+select 8, 'job_writer can use the extensions schema (0013 grants it; false before 0013)',
+       has_schema_privilege('job_writer', 'extensions', 'usage')::text
+union all
+select 9, 'Postgres and pgvector',
        split_part(version(), ' ', 2) || ' / vector ' || coalesce((select extversion from pg_extension where extname = 'vector'), 'missing')
 order by n;

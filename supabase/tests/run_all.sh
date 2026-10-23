@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds a fresh test database (Supabase's roles mimicked), applies every migration in order, loads the
-# fixture and runs both test scripts. Needs Postgres 15+ with pgvector 0.7+ and trust auth for the test
+# fixture and runs every test script. Needs Postgres 15+ with pgvector 0.7+ and trust auth for the test
 # roles (CI uses the pgvector/pgvector image; locally, any throwaway cluster).
 # Usage: PGHOST=... PGPORT=... supabase/tests/run_all.sh
 set -u
@@ -18,7 +18,7 @@ for f in "$HERE"/../migrations/*.sql; do
 done
 $P -d $PGDATABASE -f "$HERE/test_fixture.sql" || exit 1
 status=0
-for t in run_tests.sh run_tests_ai.sh run_tests_review_01.sh; do
+for t in run_tests.sh run_tests_ai.sh run_tests_review_01.sh run_tests_0012.sh run_tests_0013.sh; do
   out=$(bash "$HERE/$t"); echo "$out"
   echo "$out" | grep -q "failed 0$" || status=1
 done
