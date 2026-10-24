@@ -6,8 +6,15 @@ import { describe, expect, it } from "vitest";
 import {
   FED_TARGET_SERIES,
   POLICY_START,
+  readAdjacentMeetings,
   readAiOutput,
+  readChunks,
   readCitations,
+  readDiff,
+  readMeeting,
+  readMeetingDocuments,
+  readMeetingSettings,
+  readProjections,
   readDailySeries,
   readDecisionDocument,
   readFieldPolicy,
@@ -348,5 +355,51 @@ describe("C3's reads keep the row-limit guard (N2)", () => {
     });
     expect(await readFieldPolicy(db)).toHaveLength(1);
     expect((await readSeriesInfo(db, [FED_TARGET_SERIES.upper])).map((s) => s.key)).toEqual([FED_TARGET_SERIES.upper]);
+  });
+});
+
+// ------------------------------------------------------------------ C4's reads (the meeting pages)
+
+describe("C4's reads keep the row-limit guard (N2)", () => {
+  it("reads a meeting whatever its status, and its neighbours of the same bank (cancelled skipped)", async () => {
+    const store = realisticStore();
+    const fed: Row[] = store.policy_meetings.filter((m) => m.bank === "Fed").map((m) => ({ ...m, has_press_conference: true }));
+    const target = fed[5];
+    const cancelled = { ...fed[4], slug: "fomc-cancelled", decision_date: String(fed[5].decision_date).replace(/-\d\d$/, "-01"), status: "cancelled" };
+    const { db } = fakeClient({ policy_meetings: [...fed, cancelled, ...store.policy_meetings.filter((m) => m.bank === "RBI").map((m) => ({ ...m, has_press_conference: null }))] });
+    expect((await readMeeting(db, String(target.slug)))?.slug).toBe(target.slug);
+    expect(await readMeeting(db, "fomc-1999-01-01")).toBeNull();
+    const { previous, next } = await readAdjacentMeetings(db, "Fed", String(target.decision_date));
+    expect(previous?.slug).toBe(fed[4].slug);
+    expect(next?.slug).toBe(fed[6].slug);
+    const scheduled = fed.find((m) => m.status === "scheduled")!;
+    expect((await readAdjacentMeetings(db, "Fed", String(scheduled.decision_date))).next).toBeNull();
+  });
+
+  it("reads a long transcript's chunks whole (1,200 chunks), in order", async () => {
+    const chunks = Array.from({ length: 1200 }, (_, k): Row => ({
+      document_id: 4, chunk_no: k + 1, char_start: k * 10, char_end: k * 10 + 10, section: null, speaker: null, body: "0123456789",
+    }));
+    const { db } = fakeClient({ document_chunks: [...chunks].reverse() });
+    const rows = await readChunks(db, 4);
+    expect(rows).toHaveLength(1200);
+    expect(rows.map((r) => r.chunk_no)).toEqual(chunks.map((c) => c.chunk_no));
+  });
+
+  it("reads a meeting's rates, documents, projections and diff", async () => {
+    const setting: Row = { meeting_slug: "mpc-2026-10-07", bank: "RBI", decision_date: "2026-10-07", instrument: "repo", value_pct: 5.5, change_bps: 25, crosscheck: null, document_id: 9, char_start: 1, char_end: 2 };
+    const doc = (id: number, doc_type: string): Row => ({ id, doc_type, doc_type_label: doc_type, entity_slug: "rbi", event_slug: "mpc-2026-10-07", title: "t", source_url: null, attribution: null, published_at: null, version_no: 1 });
+    const forecast = (series_key: string, vintage_date: string): Row => ({ series_key, series_name: "x", vintage_date, target_label: "Q3", target_start: null, target_end: null, value: 4, value_low: null, value_high: null, label: null, document_id: 9, char_start: 1, char_end: 2 });
+    const { db } = fakeClient({
+      policy_rate_settings: [setting, { ...setting, meeting_slug: "mpc-2026-08-06" }],
+      documents: [doc(9, "mpc_resolution"), doc(10, "mpc_minutes"), { ...doc(11, "fomc_statement"), event_slug: "fomc-2026-09-17" }],
+      forecasts: [forecast("rbi.proj_cpi", "2026-10-07"), forecast("rbi.proj_gdp", "2026-10-07"), forecast("rbi.proj_cpi", "2026-08-06"), forecast("fred.X", "2026-10-07")],
+      document_diffs: [{ document_id: 9, base_document_id: 7, segments: null, words_added: 3, words_removed: 1 }],
+    });
+    expect(await readMeetingSettings(db, "mpc-2026-10-07")).toHaveLength(1);
+    expect((await readMeetingDocuments(db, "mpc-2026-10-07")).map((d) => d.id)).toEqual([10, 9]);
+    expect((await readProjections(db, "2026-10-07")).map((f) => f.series_key)).toEqual(["rbi.proj_cpi", "rbi.proj_gdp"]);
+    expect((await readDiff(db, 9))?.base_document_id).toBe(7);
+    expect(await readDiff(db, 10)).toBeNull();
   });
 });

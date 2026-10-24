@@ -2,7 +2,7 @@
 // It serves in-memory rows per view and behaves like the hosted project where it matters here: at most `maxRows`
 // rows per request (supabase/config.toml `max_rows` = 1,000), cut WITHOUT an error, with the exact count in
 // Content-Range only when the request asks for it (`Prefer: count=exact`). It understands the parts of the query
-// string the page queries use: select (columns, checked), eq/lt/lte/gt/gte/in filters, order, offset and limit.
+// string the page queries use: select (columns, checked), eq/neq/lt/lte/gt/gte/in filters, order, offset and limit.
 import { createClient } from "@supabase/supabase-js";
 import type { ApiDatabase } from "@/lib/queries/api";
 
@@ -10,7 +10,7 @@ export type Row = Record<string, string | number | boolean | null>;
 export type Store = Record<string, Row[]>;
 export type SeenRequest = { view: string; params: URLSearchParams; countExact: boolean; returned: number };
 
-const OPS = ["eq", "lt", "lte", "gt", "gte", "in"] as const;
+const OPS = ["eq", "neq", "lt", "lte", "gt", "gte", "in"] as const;
 type Op = (typeof OPS)[number];
 const RESERVED = new Set(["select", "order", "offset", "limit"]);
 
@@ -27,6 +27,7 @@ function matches(value: Row[string], op: Op, arg: string): boolean {
     return list.includes(String(value));
   }
   if (op === "eq") return String(value) === arg;
+  if (op === "neq") return value !== null && String(value) !== arg; // PostgREST's neq, like SQL's <>, drops nulls
   if (value === null) return false;
   const v = typeof value === "number" ? value : String(value);
   const x = typeof value === "number" ? Number(arg) : arg;
