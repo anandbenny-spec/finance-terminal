@@ -7,8 +7,10 @@ import { describe, expect, it } from "vitest";
 import { Gated } from "@/components/data/Gated";
 import { HistoryPanel } from "@/components/policy/HistoryPanel";
 import { PolicyCard } from "@/components/policy/PolicyCard";
+import { ReactionsPanel } from "@/components/policy/ReactionsPanel";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { historyRows } from "@/lib/policy/decisions";
+import { REACTION_SERIES, reactionRows } from "@/lib/policy/reactions";
 import type { AiCitationRow, AiOutputRow, FieldPolicyRow, PolicyMeetingRow, PolicyVoteRow } from "@/lib/queries/api";
 import type { LatestDecision } from "@/lib/queries/overview";
 
@@ -117,6 +119,35 @@ describe("HistoryPanel", () => {
 
   it("says so when nothing matches", () => {
     expect(text(html(<HistoryPanel rows={[]} stanceLabel={null} footer="" />))).toContain("No decisions match these filters.");
+  });
+});
+
+describe("ReactionsPanel (Pass 1b, #70)", () => {
+  const series = REACTION_SERIES.map((s) => ({ key: s.key, name: s.key, market: null, attribution: null }));
+  const move = (series_key: string, change: number, unit: "bps" | "pct") => ({
+    meeting_slug: FED.slug, series_key, series_name: series_key, pre_obs_date: "2026-09-16", post_obs_date: "2026-09-17",
+    pre_value: 3.61, post_value: 3.52, change, change_unit: unit, is_surprise_measure: series_key === "fred.DGS2", attribution: null,
+  });
+
+  it("shows each decision's moves as signed deltas, says they're derived, and waits for the rest", () => {
+    const rows = reactionRows(historyRows([FED, RBI], []), [move("fred.DGS2", -9, "bps"), move("yf.^GSPC", 0.4213, "pct")], series);
+    const out = html(<ReactionsPanel rows={rows} footer="Sources" />);
+    const t = text(out);
+    expect(t).toContain("Decision-day moves");
+    expect(t).toContain("How did markets react to each decision?");
+    expect(t).toContain("Derived:");
+    expect(t).toContain("US 2Y (bps)");
+    expect(t).toContain("down 9");
+    expect(t).toContain("up 0.42");
+    expect(out).toContain("text-down");
+    expect(out).toContain("text-up");
+    expect(t).toContain("Waiting for the first close after the decision.");
+    expect(t).toContain("2 decisions");
+    expect(out).toContain('href="/policy/fed/2026-09-17"');
+  });
+
+  it("is never blank when no decision is listed", () => {
+    expect(text(html(<ReactionsPanel rows={[]} footer="" />))).toContain("No decisions match this filter.");
   });
 });
 

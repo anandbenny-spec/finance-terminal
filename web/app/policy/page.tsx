@@ -2,7 +2,7 @@
 // the rates chart), the latest decisions (a PolicyCard per bank: D13) and every decision since 2019. Every figure is
 // a row an `api` view returned with the browser key (lib/queries/overview.ts), formatted by lib/format.ts; every
 // panel says the question it answers and carries SourceLine and Freshness; no panel is ever blank (StateNote).
-// No hawk/dove UI (D9). The Pass 1b panels (change strip, long rates, decision-day moves) join later.
+// No hawk/dove UI (D9). Pass 1b adds the decision-day moves (#70); the change strip and long rates join later.
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Countdown } from "@/components/data/Countdown";
@@ -16,11 +16,13 @@ import { Stat, StatRow } from "@/components/data/Stat";
 import { StateNote } from "@/components/data/StateNote";
 import { HistoryPanel } from "@/components/policy/HistoryPanel";
 import { PolicyCard } from "@/components/policy/PolicyCard";
+import { ReactionsPanel } from "@/components/policy/ReactionsPanel";
 import { RatesPanel } from "@/components/policy/RatesPanel";
 import { FEEDS, type TaskKey } from "@/lib/feeds";
 import { NOT_AVAILABLE, formatAxisNumber, formatAxisRange, formatDate, formatReleaseTime, type EventZone } from "@/lib/format";
 import { changeInWords, historyRows, lastMove, stanceText } from "@/lib/policy/decisions";
 import { pressReleaseLabel } from "@/lib/policy/document";
+import { reactionRows, reactionSources } from "@/lib/policy/reactions";
 import type { NextMeetingRow, PolicyMeetingRow, TaskFreshnessRow } from "@/lib/queries/api";
 import { readPolicyOverview, type LatestDecision } from "@/lib/queries/overview";
 import { POLICY_START, type Bank } from "@/lib/queries/policy";
@@ -216,6 +218,19 @@ export default async function PolicyPage() {
             />
           ) : (
             <ErrorPanel title="Every decision since 2019" id="panel-history" refresh={FEEDS.policyHistory} />
+          )}
+          {o.history.ok && o.reactions.ok ? (
+            <ReactionsPanel
+              rows={reactionRows(historyRows(o.history.decisions, o.history.votes), o.reactions.rows, o.reactions.series)}
+              footer={foot(
+                reactionSources(o.reactions.series),
+                FEEDS.policyReactions,
+                latestOf(...o.reactions.rows.map((r) => r.post_obs_date)),
+              )}
+              refresh={FEEDS.policyReactions}
+            />
+          ) : (
+            <ErrorPanel title="Decision-day moves" id="panel-reactions" refresh={FEEDS.policyReactions} />
           )}
         </PanelGrid>
       </Section>

@@ -87,6 +87,22 @@ export type PolicyRateSettingDetailRow = PolicyRateSettingRow & {
   char_end: number | null;
 };
 
+/** api.market_reactions (0006): one market's move around one decision (policy.reactions, Pass 1b). `change` is in
+ * basis points for yields and in percent otherwise (`change_unit`); the two observations it comes from are given. */
+export type MarketReactionRow = {
+  meeting_slug: string;
+  series_key: string;
+  series_name: string;
+  pre_obs_date: string;
+  post_obs_date: string;
+  pre_value: number;
+  post_value: number;
+  change: number;
+  change_unit: "bps" | "pct";
+  is_surprise_measure: boolean;
+  attribution: string | null;
+};
+
 /** api.document_chunks (0006): a document's text in order; the chunks reproduce it exactly (code-point offsets). */
 export type DocumentChunkRow = {
   document_id: number;
@@ -196,7 +212,7 @@ export type PolicyRateSettingRow = {
 
 type View<Row> = { Row: Row; Relationships: [] };
 
-/** The slice of the `api` schema typed so far, for supabase-js: the shell's views (C2), the policy pages' (A1, C3, C4). */
+/** The slice of the `api` schema typed so far, for supabase-js: the shell's views (C2), the policy pages' (A1, C3, C4, Pass 1b). */
 export type ApiDatabase = {
   api: {
     Tables: { [_ in never]: never };
@@ -217,6 +233,7 @@ export type ApiDatabase = {
       ai_outputs: View<AiOutputRow>;
       ai_citations: View<AiCitationRow>;
       field_policy: View<FieldPolicyRow>;
+      market_reactions: View<MarketReactionRow>;
     };
     Functions: { [_ in never]: never };
   };

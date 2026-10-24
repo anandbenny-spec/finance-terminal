@@ -23,8 +23,19 @@ def test_repo_config_loads():
     assert tasks["policy.calendar"].min_interval == timedelta(days=25)
     assert tasks["policy.fed_documents"].min_interval == timedelta(hours=20)
     assert tasks["policy.fed_documents"].overdue_after == timedelta(days=3)
-    # policy.reactions is disabled until Pass 1b; every other task is enabled
-    assert [k for k, t in tasks.items() if not t.enabled] == ["policy.reactions"]
+    # every task is enabled since Pass 1b built policy.reactions (#70); `enabled: false` is still honoured (below)
+    assert [k for k, t in tasks.items() if not t.enabled] == []
+
+
+def with_reactions_disabled(tmp_path):
+    """The repo config with policy.reactions switched off, as it was until Pass 1b (#70): the disabled path's tests
+    keep running against a real config."""
+    f = tmp_path / "tasks.yaml"
+    text = config.CONFIG.read_text()
+    marker = "  overdue_after: 4 days\npolicy.ai_batch:"
+    assert text.count(marker) == 1      # policy.reactions' last line, just before policy.ai_batch
+    f.write_text(text.replace(marker, "  overdue_after: 4 days\n  enabled: false\npolicy.ai_batch:"))
+    return f
 
 
 @pytest.mark.parametrize("body, message", [
@@ -48,26 +59,35 @@ def test_bad_config_is_refused(tmp_path, body, message):
 
 
 @pytest.mark.db
-def test_sync_mirrors_the_config_into_ops_task():
+def test_sync_mirrors_the_config_into_ops_task(tmp_path):
+    disabled = config.load(with_reactions_disabled(tmp_path))
     tasks = config.load()
-    with psycopg.connect(JOB, autocommit=True) as c:
-        config.sync(c, tasks)
-        config.sync(c, tasks)                     # idempotent
+    try:
+        with psycopg.connect(JOB, autocommit=True) as c:
+            config.sync(c, disabled)
+        with psycopg.connect(ADMIN) as c:
+            off = c.execute("select enabled from ops.task where key = 'policy.reactions'").fetchone()[0]
+            off_health = c.execute("select is_overdue from ops.task_health where key = 'policy.reactions'").fetchone()[0]
+    finally:
+        with psycopg.connect(JOB, autocommit=True) as c:
+            config.sync(c, tasks)
+            config.sync(c, tasks)                 # idempotent
+    assert off is False
+    assert off_health is False                    # disabled: the health page doesn't flag it
     with psycopg.connect(ADMIN) as c:
         rows = {r[0]: r[1:] for r in c.execute(
             "select key, workflows, due_rules, run_after, min_interval, overdue_after, enabled from ops.task")}
-        health = dict(c.execute("select key, is_overdue from ops.task_health").fetchall())
     for key, t in tasks.items():
         assert rows[key] == (list(t.workflows), t.rules, list(t.run_after), t.min_interval, t.overdue_after, t.enabled)
     assert rows["policy.fed_documents"][1] == {"daily": "every 20 hours", "watch": "fomc_decision_day"}
-    assert rows["policy.reactions"][-1] is False
-    assert health["policy.reactions"] is False    # disabled: the health page doesn't flag it
+    assert rows["policy.reactions"][-1] is True
 
 
-def test_build_tasks_configures_registered_classes_and_names_the_rest():
+def test_build_tasks_configures_registered_classes_and_names_the_rest(tmp_path):
     class Fed(Task):
         key = "policy.fed_documents"
-    tasks, missing = build_tasks(config.load(), {"policy.fed_documents": Fed, "policy.reactions": Fed})
+    tasks, missing = build_tasks(config.load(with_reactions_disabled(tmp_path)),
+                                 {"policy.fed_documents": Fed, "policy.reactions": Fed})
     assert [t.key for t in tasks] == ["policy.fed_documents"]     # reactions is disabled, so it isn't built
     fed = tasks[0]
     assert fed.workflows == ("daily", "watch") and fed.rules["watch"] == "fomc_decision_day"
@@ -105,13 +125,15 @@ def test_refresh_skips_the_due_check_except_an_nse_tasks_minimum_interval():
     (["--workflow", "daily", "--as-of", "2026-09-17"], {}, "dev project only"),
     (["--workflow", "daily"], {"GITHUB_EVENT_NAME": "schedule"}, "always targets production"),
     (["--workflow", "refresh", "--task", "policy.nope"], {}, "unknown task"),
-    (["--workflow", "refresh", "--task", "policy.reactions"], {}, "disabled"),
+    (["--workflow", "refresh", "--task", "policy.reactions", "--config", "DISABLED"], {}, "disabled"),
     (["--workflow", "refresh", "--task", "policy.calendar"], {}, "isn't built yet"),
     (["--workflow", "weekly", "--task", "policy.fed_documents"], {}, "doesn't run in the weekly"),
     (["--workflow", "daily"], {"JOB_DATABASE_URL": " "}, "JOB_DATABASE_URL is not set"),
     (["--workflow", "daily", "--as-of", "28-10-2026"], {}, "not a date"),
 ])
-def test_cli_refuses_bad_arguments(capsys, argv, env, message):
+def test_cli_refuses_bad_arguments(capsys, tmp_path, argv, env, message):
+    argv = [str(with_reactions_disabled(tmp_path)) if a == "DISABLED" else a for a in argv]
+
     class Fed(Task):
         key = "policy.fed_documents"
     with pytest.raises(SystemExit) as e:
