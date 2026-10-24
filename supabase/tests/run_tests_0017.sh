@@ -31,7 +31,7 @@ as_pg "insert into ops.task (key, module, description, workflows, min_interval, 
          ('test.h17_fail', 'admin', 'rejected_cooldown', now() - interval '5 minutes')" >/dev/null
 
 check "H01 admin_health is security definer, owned by postgres, stable, with a pinned search_path" \
-  "$(as_pg "select p.prosecdef||':'||pg_get_userbyid(p.proowner)||':'||p.provolatile||':'||array_to_string(p.proconfig,';') from pg_proc p where p.oid = $FN")" \
+  "$(as_pg "select p.prosecdef||':'||pg_get_userbyid(p.proowner)||':'||p.provolatile::text||':'||array_to_string(p.proconfig,';') from pg_proc p where p.oid = $FN")" \
   '^true:postgres:s:search_path=pg_catalog, ops$'
 check "H02 only service_role (and the owner) can execute it: not anon, authenticated, job_writer, sql_reader" \
   "$(as_pg "select string_agg(r, ',' order by r) from unnest(array['anon','authenticated','service_role','job_writer','sql_reader','semantic_owner','retrieval_owner']) r where has_function_privilege(r, $FN, 'execute')")" '^service_role$'
