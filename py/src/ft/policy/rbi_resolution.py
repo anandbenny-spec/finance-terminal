@@ -159,6 +159,7 @@ class Resolution:
     unparsed: tuple[tuple[int, int], ...]   # projection sentences the regex couldn't fully read
     meeting_no: int | None                  # "held its 63rd meeting" (from 2025)
     problems: tuple[str, ...] = ()
+    press_release: str | None = None        # "2026-2027/1264" (press_release_no)
 
     @property
     def repo(self) -> Rate | None:
@@ -166,7 +167,26 @@ class Resolution:
 
 
 # ---------------------------------------------------------------------------------------------- the page
-def _header(data: bytes) -> tuple[str, date | None]:
+_PRESS_RELEASE = re.compile(r"\bPress Release\s*:\s*(?P<no>\d{4}\s?-\s?\d{4}\s?/\s?\d+)\b", re.IGNORECASE)
+
+
+def press_release_no(text: str) -> str | None:
+    """RBI's press-release number, the body's last line on every press-release page ("Press Release: 2026-2027/1264"
+    -> "2026-2027/1264"); None if the text has none. The site names it instead of linking RBI's page (Brief §6.2;
+    Anand, 24 Oct 2026)."""
+    found = list(_PRESS_RELEASE.finditer(text))
+    return re.sub(r"\s", "", found[-1]["no"]) if found else None
+
+
+def titled(title: str, press_release: str | None) -> str:
+    """A document's title with RBI's press-release number after it, where it has one: "MPC resolution, 7 Oct 2026 ·
+    Press Release: 2026-2027/1264". core.document.title is the field that carries it (issue #15, 24 Oct 2026: a field
+    that already exists; a column of its own would be a migration)."""
+    return f"{title} · Press Release: {press_release}" if press_release else title
+
+
+def header(data: bytes) -> tuple[str, date | None]:
+    """(the title, the page's date) from an old-site press-release page's header rows."""
     doc = lxml_html.fromstring(data)
     cells = [normalize_inline(td.text_content()) for td in doc.xpath(
         "//table[contains(concat(' ', normalize-space(@class), ' '), ' tablebg ')]"
@@ -182,16 +202,19 @@ def _header(data: bytes) -> tuple[str, date | None]:
     return title, page_date
 
 
-def _decision_zone(ex: Extracted) -> tuple[int, int]:
+def _decision_zone(ex: Extracted, within: tuple[int, int] | None = None) -> tuple[int, int]:
     """The decision part: from the start to the first heading after the repo rate's first mention (else 4,000
-    characters on)."""
+    characters on). `within`: a part of the text holding a resolution (the minutes' copy), else all of it."""
+    lo, hi = within or (0, len(ex.text))
     seen = False
     for b in ex.blocks:
+        if b.start < lo or b.end > hi:
+            continue
         if seen and b.kind == "heading":
-            return 0, b.start
+            return lo, b.start
         if not seen and re.search(r"\brepo rate\b", ex.block_text(b), re.IGNORECASE):
             seen = True
-    return 0, min(len(ex.text), 4000)
+    return lo, min(hi, lo + 4000)
 
 
 # ---------------------------------------------------------------------------------------------- rates
@@ -294,12 +317,12 @@ def stance_label(clause: str) -> str | None:
     return None
 
 
-def _stance(ex: Extracted, zone: tuple[int, int]) -> Stance | None:
+def _stance(ex: Extracted, zone: tuple[int, int], within: tuple[int, int] | None = None) -> Stance | None:
     text = ex.text
     for s, e in sentence_spans(text, *zone):
         if _STANCE_WORDS.search(text[s:e]) and (label := stance_label(text[s:e])) is not None:
             return Stance(label, (s, e), text[s:e])
-    for s, e in sentence_spans(text):                       # the decision part doesn't state it: the vote sentences
+    for s, e in sentence_spans(text, *(within or (0, len(text)))):   # not in the decision part: the vote sentences
         sent = text[s:e]
         if _STANCE_WORDS.search(sent) and re.search(r"\b(?:decided|voted|votes|decision)\b", sent) and not re.search(
                 r"\b(?:Fed|ECB|central banks?|BoJ|BoE)\b", sent) and (label := stance_label(sent)) is not None:
@@ -390,10 +413,11 @@ def _stance_content(content: str, context: str) -> tuple[str | None, str | None]
     return label, part
 
 
-def _votes(ex: Extracted, problems: list[str]) -> Votes:
+def _votes(ex: Extracted, problems: list[str], within: tuple[int, int] | None = None) -> Votes:
     text = ex.text
-    sentences = [(s, e) for s, e in sentence_spans(text) if _VOTE_SENTENCE.search(text[s:e])]
-    flat = " ".join(text.split())
+    lo, hi = within or (0, len(text))
+    sentences = [(s, e) for s, e in sentence_spans(text, lo, hi) if _VOTE_SENTENCE.search(text[s:e])]
+    flat = " ".join(text[lo:hi].split())
     members: tuple[str, ...] = ()
     members_from = "none"
     if m := _ATTENDANCE.search(flat):
@@ -402,7 +426,7 @@ def _votes(ex: Extracted, problems: list[str]) -> Votes:
     v = Votes(members, members_from, {}, sentences=tuple(sentences))
     seen_names: dict[str, str] = {}
     prev_decided = ""
-    for s, e in sentence_spans(text):
+    for s, e in sentence_spans(text, lo, hi):
         sent = text[s:e]
         if not _VOTE_SENTENCE.search(sent):
             if re.search(r"\bdecided to\b", sent):
@@ -738,7 +762,7 @@ def subject_at(text: str, sentence: tuple[int, int], pos: int) -> str | None:
 def parse(data: bytes, url: str) -> Resolution:
     """A resolution page. Raises ResolutionError if it isn't an RBI press release; what can't be read in one that is
     is left for the checks to report."""
-    title, page_date = _header(data)
+    title, page_date = header(data)
     ex = extract_html(data, PROFILE)
     problems: list[str] = []
     zone = _decision_zone(ex)
@@ -749,7 +773,24 @@ def parse(data: bytes, url: str) -> Resolution:
     projections, unparsed = _projections(ex, problems)
     m = re.search(r"\bheld its\s+(\d+)(?:st|nd|rd|th)\s+meeting\b", ex.text)
     return Resolution(page_url(url), external_key(url), title, page_date, ex, rates, stance, votes, projections,
-                      unparsed, int(m[1]) if m else None, tuple(problems))
+                      unparsed, int(m[1]) if m else None, tuple(problems), press_release_no(ex.text))
+
+
+@dataclass(frozen=True)
+class Copy:
+    """What a copy of a resolution inside another document (the minutes) says about the stance and the votes: enough
+    for `member_votes`. Spans are into that document's text."""
+    stance: Stance | None
+    votes: Votes
+    problems: tuple[str, ...] = ()
+
+
+def read_copy(ex: Extracted, within: tuple[int, int]) -> Copy:
+    """The stance and the votes the resolution copied into `ex` at `within` states, read as a resolution is."""
+    problems: list[str] = []
+    stance = _stance(ex, _decision_zone(ex, within), within)
+    votes = _votes(ex, problems, within)
+    return Copy(stance, votes, tuple(problems + votes.problems))
 
 
 # ---------------------------------------------------------------------------------------------- each member's vote
@@ -765,9 +806,12 @@ class Vote:
     span: tuple[int, int]
     rate_how: str | None             # 'named' | 'all members' (the resolution's names) | 'roster' (D4) | None
     stance_how: str | None           # the same, or 'elimination'
+    rate_text: str | None = None     # the rate clause, verbatim (where named)
+    stance_text: str | None = None   # the stance clause, verbatim (where named)
+    stance_span: tuple[int, int] | None = None
 
 
-def member_votes(r: Resolution, decision_bps: int, roster_names: tuple[str, ...] = ()) -> list[Vote]:
+def member_votes(r: Resolution | Copy, decision_bps: int, roster_names: tuple[str, ...] = ()) -> list[Vote]:
     """Every member's vote (Spec 01 §2, "RBI votes (D4)", "Dissents (F23)"; Anand, 23 Oct 2026, issue #15).
 
     "All members" are the members the resolution names (the attendance sentence, or the six its vote sentences name);
@@ -804,7 +848,7 @@ def member_votes(r: Resolution, decision_bps: int, roster_names: tuple[str, ...]
         stance_dissent = stance is not None and adopted is not None and stance != adopted
         texts = [t for t, d in ((rate_text, rate_dissent), (stance_text, stance_dissent)) if d and t]
         out.append(Vote(name, bps, rate is not None, stance, rate_dissent or stance_dissent, "; ".join(texts) or None,
-                        rate_span or stance_span, rate_how, stance_how))
+                        rate_span or stance_span, rate_how, stance_how, rate_text, stance_text, stance_span))
     return out
 
 

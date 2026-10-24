@@ -441,3 +441,142 @@ def test_runner_sessions_are_utc_whatever_the_server_default():
             assert c.execute("show timezone").fetchone()[0] == "UTC"
             assert c.autocommit is autocommit
             assert c.execute("select now()").fetchone()[0].utcoffset() == timedelta(0)
+
+
+# ------------------------------------------------------------------ browser impersonation (Yahoo: issue #13, option (a))
+YAHOO = "https://query2.finance.yahoo.com/v8/finance/chart/%5EGSPC"
+
+
+def test_yahoo_impersonates_chrome_by_default_and_no_other_site_does():
+    c = HttpClient()
+    try:
+        for url in (YAHOO, "https://query1.finance.yahoo.com/v1/test/getcrumb", "https://fc.yahoo.com/"):
+            t = c._http._transport_for_url(httpx.URL(url))
+            assert isinstance(t, fetch.CurlTransport) and t.target == "chrome", url
+        for url in (FED, RBI, FRED):
+            assert not isinstance(c._http._transport_for_url(httpx.URL(url)), fetch.CurlTransport), url
+    finally:
+        c.close()
+    assert [s.key for s in fetch.SITES if s.impersonate] == ["yahoo"]
+
+
+def test_an_impersonating_site_keeps_pacing_retries_and_counts():
+    ft, plain, yahoo = FakeTime(), replies(httpx.Response(200, text="fed")), replies(
+        httpx.Response(429, headers={"Retry-After": "7"}), httpx.Response(200, text="chart"))
+    c = HttpClient(transport=httpx.MockTransport(plain), site_transport=lambda s: httpx.MockTransport(yahoo),
+                   monotonic=ft.monotonic, sleep=ft.sleep, rand=lambda: 0.0, clock=ft.clock)
+    stats = Counter()
+    assert c.get(FED, stats=stats).body == b"fed"
+    r = c.get(YAHOO, stats=stats)
+    assert r.body == b"chart" and r.attempts == 2
+    assert len(plain.seen) == 1 and len(yahoo.seen) == 2            # each site through its own transport
+    assert ft.sleeps == [7.0]                                         # Retry-After honoured (more than the backoff)
+    assert stats == Counter({"200": 2, "429": 1, "retries": 1})
+
+
+def test_a_cookie_request_can_leave_a_redirect_unfollowed():
+    h = replies(httpx.Response(302, headers={"Location": "https://www.example.com/", "Set-Cookie": "A3=v; Domain=.yahoo.com"}))
+    c, _ = client(h)
+    r = c.get("https://fc.yahoo.com/", follow_redirects=False)
+    assert r.status == 302 and len(h.seen) == 1                      # the unlisted host is never contacted
+
+
+class FakeCurl:
+    """Stands in for a curl_cffi Session: records each call, answers `reply` or raises it."""
+
+    def __init__(self, reply):
+        self.reply, self.calls, self.closed = reply, [], False
+
+    def request(self, method, url, **kw):
+        self.calls.append((method, url, kw))
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply
+
+    def close(self):
+        self.closed = True
+
+
+class CurlReply:
+    def __init__(self, status, headers, content):
+        self.status_code, self.headers, self.content = status, httpx.Headers(headers), content
+
+
+def test_the_curl_transport_sends_the_browsers_headers_and_hands_cookies_to_the_client():
+    body = b'{"chart": {}}'
+    fake = FakeCurl(CurlReply(200, [("content-encoding", "gzip"), ("content-length", "9"), ("etag", '"e1"'),
+                                    ("set-cookie", "A3=one; Domain=.yahoo.com; Path=/"),
+                                    ("set-cookie", "B=two; Domain=.yahoo.com; Path=/")], body))
+    t = fetch.CurlTransport("chrome", session=fake)
+    c = HttpClient(transport=httpx.MockTransport(ok(1)), site_transport=lambda s: t, sleep=lambda s: None)
+    r = c.get(YAHOO, params={"interval": "1d"}, headers={"If-None-Match": '"e0"'})
+    assert r.status == 200 and r.body == body                        # already decoded: not gunzipped again
+    assert "content-encoding" not in r.headers and r.headers["etag"] == '"e1"'
+    method, url, kw = fake.calls[0]
+    assert method == "GET" and url == YAHOO + "?interval=1d"
+    sent = {k.lower(): v for k, v in kw["headers"]}
+    assert sent == {"if-none-match": '"e0"'}                          # no httpx User-Agent, Accept or Accept-Language
+    assert kw["allow_redirects"] is False and kw["discard_cookies"] is True and kw["impersonate"] == "chrome"
+    c.get(YAHOO)                                                      # the client's jar now sends both cookies
+    assert {k.lower(): v for k, v in fake.calls[1][2]["headers"]}["cookie"] in ("A3=one; B=two", "B=two; A3=one")
+    c.close()
+    assert fake.closed
+
+
+def test_curl_errors_become_retried_network_errors_without_the_url():
+    from curl_cffi.requests import exceptions as cx
+    secret_url = FRED + "?api_key=" + SECRET
+    for err, kind in ((cx.Timeout(secret_url), "ReadTimeout"), (cx.ConnectionError(secret_url), "ConnectError")):
+        fake = FakeCurl(err)
+        c = HttpClient(transport=httpx.MockTransport(ok(1)),
+                       site_transport=lambda s, fake=fake: fetch.CurlTransport("chrome", session=fake),
+                       sleep=lambda s: None)
+        stats = Counter()
+        with pytest.raises(FetchError) as e:
+            c.get(YAHOO, stats=stats)
+        assert kind in str(e.value) and SECRET not in str(e.value) and e.value.__cause__ is None
+        assert len(fake.calls) == 4 and stats["errors"] == 4 and stats["retries"] == 3
+
+
+def test_the_curl_transport_impersonates_chrome_on_the_wire():
+    """A real curl_cffi request to a local server: Chrome's User-Agent (not ours), a gzip body decoded once, and the
+    server's cookies kept by the client."""
+    import gzip
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from curl_cffi import requests as curl
+    seen = []
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(dict(self.headers.items()))
+            z = gzip.compress(b'{"ok": true}')
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(z)))
+            self.send_header("Set-Cookie", "A3=wire; Path=/")
+            self.end_headers()
+            self.wfile.write(z)
+
+        def log_message(self, *a):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        site = fetch.Site("local", ("127.0.0.1",), 0.0, impersonate="chrome")
+        session = curl.Session(impersonate="chrome", trust_env=False)    # no proxy for a local server
+        c = HttpClient(sites=(site,), site_transport=lambda s: fetch.CurlTransport("chrome", session=session))
+        url = f"http://127.0.0.1:{srv.server_address[1]}/chart"
+        r = c.get(url)
+        assert r.status == 200 and r.body == b'{"ok": true}'
+        c.get(url)
+        c.close()
+    finally:
+        srv.shutdown()
+    ua = seen[0].get("User-Agent", "")
+    assert "Chrome/" in ua and "FinanceTerminal" not in ua
+    first, second = ({k.lower(): v for k, v in h.items()} for h in seen)
+    assert "cookie" not in first and second.get("cookie") == "A3=wire"

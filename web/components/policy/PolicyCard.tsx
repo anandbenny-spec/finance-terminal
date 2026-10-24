@@ -10,6 +10,7 @@ import { DecisionLine } from "@/components/ai/DecisionLine";
 import { Gated, type FieldPolicies } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
 import { StateNote } from "@/components/data/StateNote";
+import { FEEDS } from "@/lib/feeds";
 import { formatDate, formatReleaseTime } from "@/lib/format";
 import { stanceCitations, summaryBlock } from "@/lib/policy/ai";
 import { decisionLine, meetingHref, stanceText, tally } from "@/lib/policy/decisions";
@@ -49,6 +50,7 @@ export function PolicyCard({
       market={fed ? "US" : "IN"}
       span={6}
       footer={footer}
+      refresh={fed ? FEEDS.policyLatestFed : FEEDS.policyLatestRbi}
     >
       {children}
     </Panel>

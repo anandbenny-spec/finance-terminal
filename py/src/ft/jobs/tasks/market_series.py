@@ -9,9 +9,13 @@ Fetches, for every observed series of the `fred` and `yfinance` sources in core.
   today, one request per series.
 FRED through its API (`FRED_API_KEY`, sent as a secret parameter, never recorded); Yahoo through its chart API, the
 endpoint the yfinance library reads, so both go through the shared HTTP client (pacing, retries, counts) and every
-response is stored as a raw file before the load (B2's open question 4, decided here: issue #13). Yahoo is asked
-as an ordinary HTTP client with the project's own User-Agent; no browser fingerprint is imitated. If Yahoo refuses
-that from GitHub's runners (429s, counted in `http_stats`), the route is Anand's call (issue #13).
+response is stored as a raw file before the load (B2's open question 4, decided here: issue #13). Yahoo refused a
+plain HTTP client from GitHub's runners (HTTP 429 on every attempt, 24 Oct 2026), so, as Anand decided (option (a)
+on #13, 24 Oct 2026), the client sends Yahoo's requests with Chrome's fingerprint (`ft.jobs.fetch.CurlTransport`)
+and this task gets Yahoo's cookie and crumb first, the way yfinance does: fc.yahoo.com for the cookie, then
+`/v1/test/getcrumb`. The crumb goes on each chart request as a secret parameter, so the recorded URLs stay the same
+from run to run; neither response is data, so neither is stored. Without a crumb the charts are still asked for
+(yfinance does the same), and the `yahoo_session` warning says why.
 
 Loads every point as a core.observation; a stored value that differs is updated (the trigger logs the revision).
 Checks (Architecture 02 §2; Spec 01 §2), B blocking, W warning:
@@ -19,7 +23,8 @@ Checks (Architecture 02 §2; Spec 01 §2), B blocking, W warning:
 - (B) `bounds`: yields and rates −1% to 25%; USD/INR 50–150; index levels above 0 with a daily move under 20%;
 - (B) `revisions`: no more than 5% of the run's look-back values revised;
 - (B) `gspc_vs_sp500`: `yf.^GSPC` within 0.05% of `fred.SP500` on every date both have, over the full stored overlap;
-- (W) `lag`: each series' latest value within its lag (daily 5 days, weekly-published 12, monthly 75).
+- (W) `lag`: each series' latest value within its lag (daily 5 days, weekly-published 12, monthly 75);
+- (W) `yahoo_session`: whether Yahoo's crumb was received.
 Then a series is published once a load has passed its bounds and lag checks (Spec 01 §2); `fred.SP500` never is
 (Spec 01 D3). Published series stay published: a later lag warning shows as stale, it doesn't hide the series.
 """
@@ -31,6 +36,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from itertools import pairwise
 
+from ft.jobs.fetch import FetchError
 from ft.jobs.runner import Check, Context, Task
 from ft.jobs.tasks import register
 from ft.policy import series_sources as src
@@ -87,6 +93,19 @@ class Fetched:
     now: datetime
     full: bool
     got: list[Got] = field(default_factory=list)
+    yahoo_session: str | None = None       # None: no Yahoo series fetched; else "crumb received" or why not
+
+
+def yahoo_crumb(fetcher) -> tuple[str | None, str]:
+    """Yahoo's cookie (kept in the run's HttpClient, sent with every later Yahoo request) and crumb, as yfinance
+    gets them. Returns (crumb or None, what happened). Counted in http_stats like every request; not stored."""
+    try:
+        fetcher.http.get(src.YAHOO_COOKIE_URL, stats=fetcher.counts, follow_redirects=False)
+        r = fetcher.http.get(src.YAHOO_CRUMB_URL, stats=fetcher.counts)
+    except FetchError as e:
+        return None, f"no crumb: {e}"
+    crumb = src.parse_crumb(r.status, r.body)
+    return (crumb, "crumb received") if crumb else (None, f"no crumb: getcrumb answered HTTP {r.status}")
 
 
 @register
@@ -132,8 +151,10 @@ class MarketSeries(Task):
                 body = got.body if got.body is not None else f.read(got.raw_file_id)
                 out.got.append(Got(s, start, end, src.parse_fred(body, s.code)))
             else:
+                if out.yahoo_session is None:
+                    crumb, out.yahoo_session = yahoo_crumb(f)
                 got = f.get(src.yahoo_url(s.code), source="yfinance", params=src.yahoo_params(start, end),
-                            media_type="application/json")
+                            secret_params={"crumb": crumb} if crumb else None, media_type="application/json")
                 body = got.body if got.body is not None else f.read(got.raw_file_id)
                 chart = src.parse_yahoo(body, s.code, s.unit, fetched_at=got.fetched_at, fixing_time=s.fixing_time,
                                         fixing_tz=s.fixing_tz)
@@ -241,6 +262,8 @@ class MarketSeries(Task):
                 late[g.series.key] = f"{g.series.key}: latest {last or 'none'} ({g.series.lag_kind}, " \
                                      f"allowed {LAGS[g.series.lag_kind].days} days)"
         out.append(Check("lag", not late, "; ".join(late.values()), blocking=False))
+        if f.yahoo_session is not None:
+            out.append(Check("yahoo_session", f.yahoo_session == "crumb received", f.yahoo_session, blocking=False))
 
         # Publish each series whose load passed its bounds and lag checks (only if the whole load stands).
         if all(c.passed for c in out if c.blocking):
