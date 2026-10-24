@@ -18,6 +18,12 @@ export const FEEDS = {
   // Shell (C2; Spec 01 §4.1)
   tickerTape: ["policy.market_series"],
   statusBarCountdown: ["policy.calendar"],
+  // /policy (C3; Spec 01 §4.2, the S rows). The stance is AI-extracted (policy.ai_batch); summaries too.
+  policyRatesStand: ["policy.calendar", "policy.fed_documents", "policy.rbi_documents", "policy.ai_batch"],
+  policyRatesChart: ["policy.market_series", "policy.rbi_documents"],
+  policyLatestFed: ["policy.fed_documents", "policy.ai_batch"],
+  policyLatestRbi: ["policy.rbi_documents", "policy.ai_batch"],
+  policyHistory: ["policy.fed_documents", "policy.rbi_documents", "policy.ai_batch"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 
 export type Surface = keyof typeof FEEDS;

@@ -8,7 +8,7 @@
 // - "Checked" is the oldest of the counted tasks' last successes, so it never claims the data is fresher than its
 //   least recent part.
 import type { TaskFreshnessRow } from "@/lib/queries/api";
-import { formatCheckedTime, type Instant } from "@/lib/format";
+import { formatCheckedTime, formatDate, type Instant } from "@/lib/format";
 
 export type TaskState = "current" | "delayed" | "stale";
 
@@ -39,4 +39,31 @@ export function summarise(rows: readonly TaskFreshnessRow[], tasks: readonly str
   if (tasks.length === 0) return { state: "current", text: "All data current", delayed: 0, stale: 0 };
   const oldest = tasks.map((t) => byKey.get(t)!.last_success_at!).reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b));
   return { state: "current", text: `All data current · checked ${formatCheckedTime(oldest, now)}`, delayed: 0, stale: 0 };
+}
+
+/** A panel's footer freshness (Design 01 §1.8, §4.2): the date its data runs to, and when its tasks last succeeded. */
+export type PanelFreshness = { text: string; delayed: boolean };
+
+/**
+ * "Data to 17 Oct 2026 · checked 20 Oct, 06:41 IST" for a panel fed by `tasks`. "Checked" is the oldest of their
+ * last successes (never fresher than the least recent part); `delayed` when any of them isn't current (its last
+ * run failed, or its runs stopped), so the panel shows "Update delayed" and keeps its last good data. With no
+ * freshness rows read, only the data's own date is claimed.
+ */
+export function panelFreshness(
+  rows: readonly TaskFreshnessRow[] | null,
+  tasks: readonly string[],
+  dataTo: string | null,
+  now: Instant,
+): PanelFreshness {
+  const parts = dataTo ? [`Data to ${formatDate(dataTo)}`] : [];
+  if (rows === null) return { text: parts.join(" · "), delayed: false };
+  const byKey = new Map(rows.map((r) => [r.task_key, r]));
+  const delayed = tasks.some((t) => taskState(byKey.get(t)) !== "current");
+  const successes = tasks.map((t) => byKey.get(t)?.last_success_at).filter((t): t is string => Boolean(t));
+  if (successes.length === tasks.length && successes.length > 0) {
+    const oldest = successes.reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b));
+    parts.push(`checked ${formatCheckedTime(oldest, now)}`);
+  }
+  return { text: parts.join(" · "), delayed };
 }
