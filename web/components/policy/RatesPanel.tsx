@@ -86,12 +86,14 @@ export function RatesPanel({
   decisions,
   from,
   footer,
+  refresh,
 }: {
   fed: { upper: StepSeries; lower: StepSeries };
   rbi: PolicyRateSettingRow[];
   decisions: PolicyMeetingRow[];
   from: string;
   footer: ReactNode;
+  refresh?: readonly string[];
 }) {
   const data = useMemo(() => buildRateChart(fed, rbi, decisions, from), [fed, rbi, decisions, from]);
   const [asTable, setAsTable] = useState(false);
@@ -137,6 +139,7 @@ export function RatesPanel({
       actions={data.days.length > 0 ? toggle : undefined}
       variant="flush"
       footer={footer}
+      refresh={refresh}
     >
       {data.days.length === 0 ? (
         <div className="p-3">

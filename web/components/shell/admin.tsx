@@ -6,12 +6,14 @@
 import { ShieldCheck } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-type AdminState = { isAdmin: boolean; recheck: () => void };
+/** `ready`: the session has been checked (so a page can tell "not the admin" from "not known yet"). */
+type AdminState = { isAdmin: boolean; ready: boolean; recheck: () => void };
 
-const AdminContext = createContext<AdminState>({ isAdmin: false, recheck: () => {} });
+const AdminContext = createContext<AdminState>({ isAdmin: false, ready: false, recheck: () => {} });
 
 export function AdminProvider({ children }: { children: ReactNode }) {
   const [isAdmin, setIsAdmin] = useState(false);
+  const [ready, setReady] = useState(false);
   const [checks, setChecks] = useState(0);
   const recheck = useCallback(() => setChecks((n) => n + 1), []);
 
@@ -19,12 +21,17 @@ export function AdminProvider({ children }: { children: ReactNode }) {
     let alive = true;
     let unsubscribe: (() => void) | undefined;
     import("@/lib/supabase/browser").then(async ({ browserClient, hasStoredSession, isAdminUser }) => {
-      if (!alive || !hasStoredSession()) return;
-      const db = browserClient();
-      if (!db) return;
+      if (!alive) return;
+      const db = hasStoredSession() ? browserClient() : null;
+      if (!db) {
+        setIsAdmin(false);
+        setReady(true);
+        return;
+      }
       const { data } = await db.auth.getSession();
       if (!alive) return;
       setIsAdmin(isAdminUser(data.session?.user));
+      setReady(true);
       const { data: sub } = db.auth.onAuthStateChange((_event, session) => setIsAdmin(isAdminUser(session?.user)));
       unsubscribe = () => sub.subscription.unsubscribe();
     });
@@ -34,7 +41,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
     };
   }, [checks]);
 
-  const value = useMemo(() => ({ isAdmin, recheck }), [isAdmin, recheck]);
+  const value = useMemo(() => ({ isAdmin, ready, recheck }), [isAdmin, ready, recheck]);
   return <AdminContext.Provider value={value}>{children}</AdminContext.Provider>;
 }
 

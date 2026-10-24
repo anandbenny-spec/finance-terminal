@@ -30,7 +30,7 @@ function Filter({ label, value, onChange, options }: { label: string; value: str
   );
 }
 
-export function HistoryPanel({ rows, stanceLabel, footer }: { rows: HistoryRow[]; stanceLabel: string | null; footer: ReactNode }) {
+export function HistoryPanel({ rows, stanceLabel, footer, refresh }: { rows: HistoryRow[]; stanceLabel: string | null; footer: ReactNode; refresh?: readonly string[] }) {
   const [bank, setBank] = useState("all");
   const [year, setYear] = useState("all");
   const [move, setMove] = useState<"all" | Direction>("all");
@@ -85,6 +85,7 @@ export function HistoryPanel({ rows, stanceLabel, footer }: { rows: HistoryRow[]
       subtitle="When did each bank move, and by how much?"
       variant="flush"
       footer={footer}
+      refresh={refresh}
     >
       <div className="flex flex-wrap gap-x-4 gap-y-2 border-b border-line px-3 py-2">
         <Filter label="Bank" value={bank} onChange={setBank} options={[["all", "Both"], ["Fed", "Fed"], ["RBI", "RBI"]]} />
