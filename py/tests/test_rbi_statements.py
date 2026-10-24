@@ -91,6 +91,20 @@ def test_the_annual_policy_page_gives_each_meeting_its_statement_and_its_transcr
     assert cal.doc_problems == ()
 
 
+def test_a_page_without_a_charset_keeps_the_statements_apostrophe():
+    """Regression (PR #66's first CI run): the task hands parse_page the raw bytes, and lxml read a page that declares
+    no charset as Latin-1, so "Governor’s Statement" no longer matched. Bytes decode as the extractor's do (UTF-8)."""
+    page = annual_page(rbi_group("Oct 07, 2026", "Bi-monthly Monetary Policy Statement, 2026-2027",
+                                 rbi_item("Governor’s Statement: October 7, 2026", PR + "63744")
+                                 + rbi_item(RESOLUTION, PR + "63742", True)))
+    assert "charset" not in page
+    cal = rbi_calendar.calendar([rbi_calendar.parse_page(page.encode("utf-8"))])
+    assert {d: link.title for d, link in cal.statements.items()} == {
+        date(2026, 10, 7): "Governor’s Statement: October 7, 2026"}
+    cp1252 = page.replace("<html>", '<html><head><meta charset="windows-1252"></head>', 1).encode("cp1252")
+    assert list(rbi_calendar.calendar([rbi_calendar.parse_page(cp1252)]).statements) == [date(2026, 10, 7)]
+
+
 def test_links_that_fit_no_single_meeting_are_listed_not_guessed():
     page = annual_page(
         rbi_group("Mar 20, 2040", "Bi-monthly Monetary Policy Statement, 2039-40",
