@@ -24,6 +24,7 @@ import {
   readFedTargetSteps,
   readLatestDecision,
   readRbiRateSettings,
+  readReactions,
 } from "@/lib/queries/policy";
 import { IncompleteReadError, MAX_ROWS, readAll } from "@/lib/queries/read";
 import { fakeClient, type Row, type Store } from "@/tests/fake-postgrest";
@@ -355,6 +356,28 @@ describe("C3's reads keep the row-limit guard (N2)", () => {
     });
     expect(await readFieldPolicy(db)).toHaveLength(1);
     expect((await readSeriesInfo(db, [FED_TARGET_SERIES.upper])).map((s) => s.key)).toEqual([FED_TARGET_SERIES.upper]);
+  });
+});
+
+// ------------------------------------------------------------------ Pass 1b's reads (#70: decision-day moves)
+
+describe("Pass 1b's reads keep the row-limit guard (N2)", () => {
+  it("reads every market reaction whole (1,200 rows, over one request's cap), in order, none lost or doubled", async () => {
+    const keys = ["fred.DGS2", "fred.DGS10", "yf.^GSPC", "fred.DEXINUS", "yf.^NSEI", "yf.^NSEBANK"];
+    const slugs = days("2019-01-01", "2026-12-31").filter((_, i) => i % 14 === 0).slice(0, 200).map((d) => `fomc-${d}`);
+    const reactions = slugs.flatMap((meeting_slug) =>
+      keys.map((series_key): Row => ({
+        meeting_slug, series_key, series_name: series_key, pre_obs_date: "2024-09-17", post_obs_date: "2024-09-18",
+        pre_value: 1, post_value: 2, change: 1, change_unit: "bps", is_surprise_measure: series_key === "fred.DGS2", attribution: null,
+      })),
+    );
+    const { db, seen } = fakeClient({ market_reactions: [...reactions].reverse() });
+    const rows = await readReactions(db);
+    expect(rows).toHaveLength(1200);
+    expect(new Set(rows.map((r) => `${r.meeting_slug}/${r.series_key}`)).size).toBe(1200);
+    expect(rows[0].meeting_slug <= rows[1199].meeting_slug).toBe(true);
+    expect(seen.length).toBeGreaterThan(1);
+    expect(seen.every((r) => r.countExact)).toBe(true);
   });
 });
 
