@@ -2,7 +2,7 @@
 // by" only for a span a published citation points at exactly. Test rows, not real documents.
 import { describe, expect, it } from "vitest";
 import type { AiCitationRow, AiOutputRow, DocumentRow } from "@/lib/queries/api";
-import { bankOf, citedBy, documentDate, documentSource, meetingOf, officialUrl, parseDocumentId, parseSpan } from "./document";
+import { bankOf, citedBy, documentDate, documentSource, documentTitle, meetingOf, officialUrl, parseDocumentId, parseSpan, pressReleaseLabel, pressReleaseNo } from "./document";
 
 const doc = (over: Partial<DocumentRow> = {}): DocumentRow => ({
   id: 12,
@@ -102,6 +102,23 @@ describe("the document's bank, date and source", () => {
     expect(officialUrl(doc({ source_url: "http://example.com" }), "Fed")).toBeNull();
     expect(documentSource(rbiDoc, "RBI")).toBe("Source: Reserve Bank of India · MPC resolution · 7 Oct 2026");
     expect(officialUrl(rbiDoc, "RBI")).toBeNull();
+  });
+
+  // Brief §6.2 (Anand, 24 Oct 2026): RBI's documents are found on rbi.org.in by their press-release number, which
+  // policy.rbi_documents stores at the end of the title (B6 part 2): the source line carries it, the title drops it.
+  it("names the RBI's press-release number in the source line, not in the title", () => {
+    const numbered = { ...rbiDoc, title: "MPC resolution, 7 Oct 2026 · Press Release: 2026-2027/1264" };
+    expect(pressReleaseNo(numbered)).toBe("2026-2027/1264");
+    expect(pressReleaseLabel(numbered)).toBe("Press Release: 2026-2027/1264");
+    expect(documentTitle(numbered)).toBe("MPC resolution, 7 Oct 2026");
+    expect(documentSource(numbered, "RBI")).toBe(
+      "Source: Reserve Bank of India · MPC resolution · 7 Oct 2026 · Press Release: 2026-2027/1264");
+    // A title without one (the Fed's, or an RBI page that has none) is shown as stored, with no number.
+    expect(pressReleaseNo(doc())).toBeNull();
+    expect(documentTitle(doc({ title: "FOMC statement, 16 Sep 2026" }))).toBe("FOMC statement, 16 Sep 2026");
+    expect(documentSource(rbiDoc, "RBI")).not.toContain("Press Release");
+    // Only the stored shape counts: a title that merely mentions a press release keeps it.
+    expect(pressReleaseNo({ title: "Press Release: 2026-2027/1264 and more" })).toBeNull();
   });
 });
 
