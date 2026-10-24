@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DocumentView } from "@/components/ai/DocumentView";
 import { Redline } from "@/components/ai/Redline";
+import { NumbersChanged } from "@/components/ai/NumbersChanged";
 import { VoteDotPlot } from "@/components/ai/VoteDotPlot";
 import { VoteGrid } from "@/components/ai/VoteGrid";
 import { buildRedline, parsePairs } from "@/lib/policy/redline";
@@ -103,5 +104,28 @@ describe("VoteDotPlot", () => {
 
   it("uses the RBI's violet", () => {
     expect(renderToStaticMarkup(<VoteDotPlot plot={plot} bank="RBI" rows={rows} stance caption="Votes" />)).toContain("bg-series-2");
+  });
+});
+
+describe("NumbersChanged", () => {
+  const items = [
+    { key: "repo", label: "Policy repo rate", previous: "5.50%", next: "5.25%", change: "−25 bps", changed: true, qualifier: null },
+    { key: "stance", label: "Stance", previous: "Neutral", next: "Accommodative", change: null, changed: true, qualifier: "AI-extracted" },
+    { key: "msf", label: "Bank rate", previous: "5.75%", next: "5.75%", change: "0 bps", changed: false, qualifier: null },
+  ];
+
+  it("lists what changed with its dates and sign, folds the rest into one line, and uses no colour", () => {
+    const out = renderToStaticMarkup(<NumbersChanged items={items} previousDate="2026-08-06" newDate="2026-10-07" />);
+    expect(text(out)).toContain("Previous (6 Aug 2026)");
+    expect(text(out)).toContain("New (7 Oct 2026)");
+    expect(text(out)).toContain("Policy repo rate 5.50% 5.25% −25 bps");
+    expect(text(out)).toContain("Stance AI-extracted");
+    expect(text(out)).toContain("Unchanged: Bank rate (5.75%)");
+    expect(out).not.toMatch(/text-up|text-down|bg-up|bg-down/);
+  });
+
+  it("says so when nothing changed", () => {
+    const out = renderToStaticMarkup(<NumbersChanged items={[items[2]]} previousDate="2026-08-06" newDate="2026-10-07" />);
+    expect(text(out)).toContain("None of the numbers below changed.");
   });
 });
