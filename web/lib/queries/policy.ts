@@ -16,11 +16,17 @@
 // goes to the server log only. Nothing here computes a figure: every number is a row the database returned.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
+  AiCitationRow,
+  AiOutputRow,
+  ApiDatabase,
+  DocumentRow,
+  FieldPolicyRow,
   ObservationRow,
   ObservationStepRow,
-  ApiDatabase,
   PolicyMeetingRow,
   PolicyRateSettingRow,
+  PolicyVoteRow,
+  SeriesRow,
 } from "@/lib/queries/api";
 import { IncompleteReadError, readAll, type PageResult } from "@/lib/queries/read";
 
@@ -149,7 +155,7 @@ export async function readRbiRateSettings(db: PolicyDb, range: DateRange): Promi
 }
 
 const MEETING_COLUMNS =
-  "slug, bank, status, decision_date, decision_at, kind, is_rate_decision, policy_rate_pct, policy_rate_change_bps, stance, stance_display_label, attribution, fed_target_lower_pct, fed_target_upper_pct";
+  "slug, bank, status, decision_date, decision_at, kind, is_rate_decision, meeting_no, minutes_due_on, policy_rate_pct, policy_rate_change_bps, stance, stance_display_label, dissent_count, attribution, fed_target_lower_pct, fed_target_upper_pct";
 
 /**
  * Every held rate decision in the range, both banks, oldest first: the chart's decision markers and the history
@@ -208,6 +214,105 @@ export async function readDailySeries(db: PolicyDb, seriesKey: string, range: Da
       .gte("obs_date", range.from)
       .lte("obs_date", range.to)
       .order("obs_date")
+      .range(from, to),
+  );
+}
+
+// ------------------------------------------------------------------ Votes, documents and AI outputs (C3)
+
+const VOTE_COLUMNS = "meeting_slug, member_slug, member_name, voted_change_bps, stance_vote, is_dissent, dissent_text";
+
+/** Slugs per request: keeps each `in.(…)` filter's URL short (a meeting slug is 15 characters). */
+const SLUGS_PER_REQUEST = 40;
+
+/**
+ * Every vote at the given meetings (api.policy_votes), by meeting then member. The slugs go in batches of 40, each
+ * batch read whole (readAll), so ~110 meetings × up to 12 voters never meets the 1,000-row cut unseen.
+ */
+export async function readVotes(db: PolicyDb, slugs: readonly string[]): Promise<PolicyVoteRow[]> {
+  const unique = [...new Set(slugs)].sort();
+  const batches: string[][] = [];
+  for (let i = 0; i < unique.length; i += SLUGS_PER_REQUEST) batches.push(unique.slice(i, i + SLUGS_PER_REQUEST));
+  const pages = await Promise.all(
+    batches.map((batch, i) =>
+      readAll<PolicyVoteRow>(`api.policy_votes (batch ${i + 1} of ${batches.length})`, (from, to) =>
+        db
+          .from("policy_votes")
+          .select(VOTE_COLUMNS, { count: "exact" })
+          .in("meeting_slug", batch)
+          .order("meeting_slug")
+          .order("member_slug")
+          .range(from, to),
+      ),
+    ),
+  );
+  return pages.flat();
+}
+
+/** The decision document of each bank: the FOMC statement, the MPC resolution. */
+export const DECISION_DOC_TYPES = { Fed: "fomc_statement", RBI: "mpc_resolution" } as const;
+
+const DOCUMENT_COLUMNS = "id, doc_type, doc_type_label, entity_slug, event_slug, title, source_url, attribution, published_at, version_no";
+
+/** A meeting's decision document, its latest version (a changed text is a new version), or null if none is stored. */
+export async function readDecisionDocument(db: PolicyDb, slug: string, bank: Bank): Promise<DocumentRow | null> {
+  return readFirst<DocumentRow>(
+    `api.documents decision document of ${slug}`,
+    db
+      .from("documents")
+      .select(DOCUMENT_COLUMNS)
+      .eq("event_slug", slug)
+      .eq("doc_type", DECISION_DOC_TYPES[bank])
+      .order("version_no", { ascending: false })
+      .limit(1),
+  );
+}
+
+const OUTPUT_COLUMNS = "id, task, document_id, event_slug, scope, body, output_label, content, display_label, model, created_at";
+
+/**
+ * The published output of an AI task for one target (a document, or a meeting), or null. The view lists only
+ * published outputs whose field policy is shown or labelled, and the database keeps one per task and target.
+ */
+export async function readAiOutput(
+  db: PolicyDb,
+  task: string,
+  target: { documentId: number } | { eventSlug: string },
+): Promise<AiOutputRow | null> {
+  let query = db.from("ai_outputs").select(OUTPUT_COLUMNS).eq("task", task).eq("scope", "");
+  query = "documentId" in target ? query.eq("document_id", target.documentId) : query.eq("event_slug", target.eventSlug);
+  return readFirst<AiOutputRow>(`api.ai_outputs ${task} ${JSON.stringify(target)}`, query.order("id").limit(1));
+}
+
+const CITATION_COLUMNS = "ai_output_id, citation_no, claim_path, document_id, document_title, source_url, char_start, char_end, quote";
+
+/** Every verified citation of an output, by number; each quote is rebuilt from our stored text by the view. */
+export async function readCitations(db: PolicyDb, outputId: number): Promise<AiCitationRow[]> {
+  return readAll<AiCitationRow>(`api.ai_citations of output ${outputId}`, (from, to) =>
+    db
+      .from("ai_citations")
+      .select(CITATION_COLUMNS, { count: "exact" })
+      .eq("ai_output_id", outputId)
+      .order("citation_no")
+      .range(from, to),
+  );
+}
+
+/** Every field policy row (a few dozen): what <Gated> decides from. A field without a row is hidden. */
+export async function readFieldPolicy(db: PolicyDb): Promise<FieldPolicyRow[]> {
+  return readAll<FieldPolicyRow>("api.field_policy", (from, to) =>
+    db.from("field_policy").select("field_key, status, label", { count: "exact" }).order("field_key").range(from, to),
+  );
+}
+
+/** Published series by key, with their source lines (the series' own attribution, else its source's). */
+export async function readSeriesInfo(db: PolicyDb, keys: readonly string[]): Promise<SeriesRow[]> {
+  return readAll<SeriesRow>(`api.series ${keys.join(", ")}`, (from, to) =>
+    db
+      .from("series")
+      .select("key, name, market, attribution", { count: "exact" })
+      .in("key", [...keys])
+      .order("key")
       .range(from, to),
   );
 }

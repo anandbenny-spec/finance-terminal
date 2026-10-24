@@ -4,28 +4,12 @@
 // decision date; after first render the browser adds the countdown from its own clock, checked a few times a
 // minute, so "tomorrow" turns into "FOMC decision today, 14:00 ET (23:30 IST)" at midnight in the bank's zone
 // (lib/shell/meetings.ts). No ticking seconds (Design 01 §3).
-import { useSyncExternalStore } from "react";
 import { cn } from "cn";
+import { useMinute } from "@/lib/clock";
 import { countdownLines, type CountdownLine, type UpcomingMeeting } from "@/lib/shell/meetings";
 
-const MINUTE = 60_000;
-
-function subscribe(onChange: () => void) {
-  const timer = setInterval(onChange, 15_000); // a few checks a minute: the switch is at most this late
-  const onVisible = () => document.visibilityState === "visible" && onChange();
-  document.addEventListener("visibilitychange", onVisible);
-  return () => {
-    clearInterval(timer);
-    document.removeEventListener("visibilitychange", onVisible);
-  };
-}
-
-/** The current minute, so the snapshot stays the same between checks within it. */
-const clientMinute = () => Math.floor(Date.now() / MINUTE) * MINUTE;
-const serverMinute = () => null;
-
 export function Countdowns({ meetings, initial }: { meetings: UpcomingMeeting[]; initial: CountdownLine[] }) {
-  const minute = useSyncExternalStore(subscribe, clientMinute, serverMinute);
+  const minute = useMinute();
   const lines = minute === null ? initial : countdownLines(meetings, new Date(minute));
   return (
     <>

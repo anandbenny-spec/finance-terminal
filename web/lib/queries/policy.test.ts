@@ -6,7 +6,13 @@ import { describe, expect, it } from "vitest";
 import {
   FED_TARGET_SERIES,
   POLICY_START,
+  readAiOutput,
+  readCitations,
   readDailySeries,
+  readDecisionDocument,
+  readFieldPolicy,
+  readSeriesInfo,
+  readVotes,
   readDecisions,
   readFedTargetSteps,
   readLatestDecision,
@@ -62,6 +68,7 @@ function meeting(bank: "Fed" | "RBI", date: string, i: number): Row {
   return {
     slug: `${fed ? "fomc" : "mpc"}-${date}`, bank, status: "held", decision_date: date,
     decision_at: `${date}T${fed ? "18:00:00+00:00" : "04:30:00+00:00"}`, kind: "scheduled", is_rate_decision: true,
+    meeting_no: fed ? null : 14 + i, minutes_due_on: null, dissent_count: 0,
     policy_rate_pct: fed ? 4 + (i % 4) / 4 : 6.5 - (i % 3) / 4, policy_rate_change_bps: (i % 3) * 25 - 25,
     stance: fed ? null : "neutral", stance_display_label: fed ? null : "AI-extracted",
     attribution: fed ? "Source: Federal Reserve Board" : "Source: Reserve Bank of India",
@@ -278,5 +285,68 @@ describe("every chart and table query returns as many rows as the database holds
     expect(both.length).toBe(held.length);
     expect(rbi.length).toBe(held.filter((m) => m.bank === "RBI").length);
     expect(new Set(both.map((m) => m.slug)).size).toBe(both.length); // no page overlaps another
+  });
+});
+
+// ------------------------------------------------------------------ C3's reads (the /policy page)
+
+function vote(slug: string, k: number): Row {
+  return {
+    meeting_slug: slug, member_slug: `m${String(k).padStart(2, "0")}`, member_name: `Member ${k}`,
+    voted_change_bps: -25, stance_vote: null, is_dissent: false, dissent_text: null,
+  };
+}
+
+describe("C3's reads keep the row-limit guard (N2)", () => {
+  it("reads every vote at 120 meetings × 12 voters (1,440 rows), batch by batch, none lost or doubled", async () => {
+    const slugs = days("2019-01-01", "2026-12-31").filter((_, i) => i % 24 === 0).slice(0, 120).map((d) => `fomc-${d}`);
+    const store: Store = { policy_votes: [...slugs.flatMap((s) => Array.from({ length: 12 }, (_, k) => vote(s, k))), vote("fomc-2018-12-19", 0)] };
+    const { db, seen } = fakeClient(store);
+    const rows = await readVotes(db, slugs);
+    expect(rows).toHaveLength(1440);
+    expect(new Set(rows.map((r) => `${r.meeting_slug}/${r.member_slug}`)).size).toBe(1440);
+    expect(rows.some((r) => r.meeting_slug === "fomc-2018-12-19")).toBe(false);
+    expect(seen.every((r) => r.countExact)).toBe(true);
+  });
+
+  it("reads the votes for no meetings as none, without a request", async () => {
+    const { db, seen } = fakeClient({ policy_votes: [] });
+    expect(await readVotes(db, [])).toEqual([]);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("reads a meeting's decision document at its latest version", async () => {
+    const doc = (id: number, version_no: number, doc_type = "fomc_statement"): Row => ({
+      id, doc_type, doc_type_label: "FOMC statement", entity_slug: "fed", event_slug: "fomc-2026-09-17", title: "FOMC statement",
+      source_url: "https://www.federalreserve.gov/x.htm", attribution: "Source: Federal Reserve Board", published_at: "2026-09-17T18:00:00+00:00", version_no,
+    });
+    const { db } = fakeClient({ documents: [doc(1, 1), doc(2, 2), doc(3, 1, "fomc_minutes")] });
+    expect((await readDecisionDocument(db, "fomc-2026-09-17", "Fed"))?.id).toBe(2);
+    expect(await readDecisionDocument(db, "fomc-2026-07-30", "Fed")).toBeNull();
+  });
+
+  it("reads an AI output by document or by meeting, and every citation of it", async () => {
+    const out = (id: number, task: string, document_id: number | null, event_slug: string | null): Row => ({
+      id, task, document_id, event_slug, scope: "", body: "b", output_label: null, content: null, display_label: "AI summary",
+      model: "claude-haiku-5-5", created_at: "2026-09-17T18:30:00+00:00",
+    });
+    const citations = Array.from({ length: 1100 }, (_, k): Row => ({
+      ai_output_id: 1, citation_no: k + 1, claim_path: "/bullets/0", document_id: 2, document_title: "t", source_url: null,
+      char_start: k, char_end: k + 1, quote: "q",
+    }));
+    const { db } = fakeClient({ ai_outputs: [out(1, "doc_summary", 2, null), out(3, "stance_extraction", null, "mpc-2026-10-07")], ai_citations: citations });
+    expect((await readAiOutput(db, "doc_summary", { documentId: 2 }))?.id).toBe(1);
+    expect((await readAiOutput(db, "stance_extraction", { eventSlug: "mpc-2026-10-07" }))?.id).toBe(3);
+    expect(await readAiOutput(db, "doc_summary", { documentId: 9 })).toBeNull();
+    expect(await readCitations(db, 1)).toHaveLength(1100);
+  });
+
+  it("reads the field policy and the series' source lines whole", async () => {
+    const { db } = fakeClient({
+      field_policy: [{ field_key: "ai.doc_summary", status: "labelled", label: "AI summary" }],
+      series: [{ key: FED_TARGET_SERIES.upper, name: "u", market: "US", attribution: "Source: FRED, Federal Reserve Bank of St. Louis" }, { key: "x", name: "x", market: null, attribution: null }],
+    });
+    expect(await readFieldPolicy(db)).toHaveLength(1);
+    expect((await readSeriesInfo(db, [FED_TARGET_SERIES.upper])).map((s) => s.key)).toEqual([FED_TARGET_SERIES.upper]);
   });
 });
