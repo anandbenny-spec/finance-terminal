@@ -104,6 +104,27 @@ PROFILES: dict[str, HtmlProfile] = {
         "/tbody/tr[contains(concat(' ', normalize-space(@class), ' '), ' tablecontent1 ')]/td",
         "RBI's old site (BS_PressReleaseDisplay.aspx): the row below the PDF link, date and title rows. Checked on the "
         "module 1 kit's nine saved press-release pages, 2019-2025 (23 Oct 2026)."),
+    "rbi_view_content": HtmlProfile(
+        "rbi_view_content",
+        "//table[contains(concat(' ', normalize-space(@class), ' '), ' tablebg ')]"
+        "[not(ancestor::table[contains(concat(' ', normalize-space(@class), ' '), ' tablebg ')])]"
+        "/tr[th]/following-sibling::tr[1]/td"
+        " | //table[contains(concat(' ', normalize-space(@class), ' '), ' tablebg ')]"
+        "[not(ancestor::table[contains(concat(' ', normalize-space(@class), ' '), ' tablebg ')])]"
+        "/tbody/tr[th]/following-sibling::tr[1]/td",
+        "RBI's old site, bs_viewcontent.aspx (the Governor's statements to Oct 2020, the press-conference transcripts "
+        "to Apr 2022): the outer tablebg table's row after its title row (a <th>, below the PDF link; no date row, no "
+        "tablecontent1 class). A transcript's speakers sit in a nested table, a name cell beside each turn. Checked on "
+        "the 29 saved pages (12 statements, 17 transcripts), Dec 2018 to Apr 2022 (B6 part 3, 24 Oct 2026)."),
+    "rbi_speech": HtmlProfile(
+        "rbi_speech",
+        "//table[contains(concat(' ', normalize-space(@class), ' '), ' tablebg ')]"
+        "/tr[contains(concat(' ', normalize-space(@class), ' '), ' tablecontent2 ')]/td"
+        " | //table[contains(concat(' ', normalize-space(@class), ' '), ' tablebg ')]"
+        "/tbody/tr[contains(concat(' ', normalize-space(@class), ' '), ' tablecontent2 ')]/td",
+        "RBI's old site, BS_SpeechesView.aspx (the press-conference transcripts from Jun 2022): the press release's "
+        "header (PDF link, date, title) above a tablecontent2 row. Checked on the 27 saved transcripts, Jun 2022 to "
+        "Oct 2026 (B6 part 3, 24 Oct 2026)."),
     "fed_press_release": HtmlProfile(
         "fed_press_release",
         "//div[@id='article']/div[contains(concat(' ', normalize-space(@class), ' '), ' col-sm-8 ')]"
@@ -339,6 +360,29 @@ def transcript_speaker(paragraph: str) -> str | None:
         return None
     name = m.group(1)
     return name if sum(c.isalpha() for c in name) >= 4 and any(len(w) >= 2 for w in name.split()) else None
+
+
+# The RBI's press-conference transcripts (bs_viewcontent.aspx to Apr 2022, BS_SpeechesView.aspx from Jun 2022) label a
+# turn with the speaker's name and a colon, alone in its paragraph ("Shaktikanta Das:", a name cell beside the turn) or
+# opening it ("Govardhan Rangan: Economic Times Thank you, Governor."), sometimes with a role or outlet in brackets
+# ("Yogesh Dayal (Moderator):"). A label is one to six capitalised words or initials. The participants list's own
+# labels ("Participants from the RBI:", "Moderator:") aren't turns. Checked on the 44 saved transcripts (Dec 2018 to
+# Oct 2026; B6 part 3, 24 Oct 2026): every label found is a person's name, and none is missed in a sentence such as
+# "To summarise:" (a lower-case word).
+_RBI_WORD = r"(?:[A-Z][A-Za-z'’\-]*\.?|[A-Z]\.(?:[A-Z]\.)*)"
+_RBI_SPEAKER = re.compile(rf"^(?P<name>{_RBI_WORD}(?:[ ]{_RBI_WORD}){{0,5}})(?:[ ]?\([^()\n]{{1,40}}\))?[ ]?:(?=\s|$)")
+_RBI_NOT_A_TURN = re.compile(r"^(?:Participants?\b.*\bfrom\b.*|Moderator)$"          # the participants list
+                             r"|^(?:The|A|An|This|That|These|Those|Our|My|Its|In|On|At|As|For|Of|And|But|So|To|We|I)\b",
+                             re.IGNORECASE)                                            # a run-in phrase, not a name
+
+
+def rbi_transcript_speaker(paragraph: str) -> str | None:
+    """The speaker label opening an RBI transcript paragraph ("Yogesh Dayal (Moderator):" -> "Yogesh Dayal"), without
+    its bracket; None if the paragraph doesn't open with one."""
+    m = _RBI_SPEAKER.match(paragraph)
+    if not m or _RBI_NOT_A_TURN.match(m["name"]) or len(m["name"]) > 60:
+        return None
+    return m["name"]
 
 
 def _furniture(pages: list[list[str]]) -> set[str]:

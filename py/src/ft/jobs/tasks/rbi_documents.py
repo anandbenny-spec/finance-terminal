@@ -1,5 +1,5 @@
-"""policy.rbi_documents (Prompt 01 B6; Architecture 02 §2; Spec 01 §1.1, §2, §3.1): MPC resolutions (part 1) and
-minutes (part 2). The Governor's statements and the press-conference transcripts are part 3 (issue #15).
+"""policy.rbi_documents (Prompt 01 B6; Architecture 02 §2; Spec 01 §1.1, §2, §3.1): MPC resolutions (part 1), minutes
+(part 2), and the Governor's statements and press-conference transcripts (part 3; issue #15).
 
 **Which document is a meeting's resolution.** The Annual Policy page's link decides (Spec 01 §1.1): the old site
 only, the current fiscal year's page as served, earlier years by the page's own form post (policy.calendar stores
@@ -15,9 +15,12 @@ fiscal year's page.
 - watch, on an MPC decision day until the resolution is stored: one look at the feed and the current Annual Policy
   page per poll (conditional requests), then the resolution once it appears; never the minutes;
 - daily (every 20 hours): any rate decision of the last 60 days released without a stored resolution, or not yet
-  marked held; and its minutes, once a page or the feed links them;
+  marked held; and its minutes, Governor's statement and press-conference transcript, once a page (or, for the
+  minutes and the statement, the feed) links them;
 - backfill (`--task policy.rbi_documents [--since] [--until]`): every rate decision in the range, from the Dec 2018
-  baseline, and the minutes of each one after the baseline (the baseline is its decision document only: Spec 01 §2).
+  baseline, and the minutes and Governor's statement of each one after the baseline (the baseline is its decision
+  document only: Spec 01 §2), and every press-conference transcript from the baseline's (Anand, 23 Oct 2026: from Dec
+  2018).
   A document already stored is read back from its raw file, not fetched again, and an unchanged one writes nothing
   (B8); each meeting and each minutes loads in its own savepoint (Arch 02 §1.8).
 
@@ -52,11 +55,24 @@ Checks (B): the page is these minutes, with six votes and six statements; the vo
 the rate it names); a majority voted for the decision; every member is on the roster. A row the minutes write is
 never overwritten from the resolution again (part 1's rule).
 
+**The Governor's statement and the press-conference transcript** (part 3; rbi_statements, rbi_calendar): the statement
+the decision's Annual Policy group lists (released with the resolution: never in watch, which ends once the resolution
+is stored, so the next daily run takes it), the transcript its own group days later (Dec 2018 to Apr 2022 on
+bs_viewcontent.aspx, from Jun 2022 on BS_SpeechesView.aspx; none for the four 2020 COVID meetings or the off-cycle 4 May
+2022). Each stores its raw file, its document (the page's HTML body: every saved page has one, so no PDF is read),
+chunks (a transcript's carry each turn's speaker) and is published. Its checks (B): the statement's length and the MPC
+named in it, its dates the decision's; the transcript's length, the press conference it names the decision's, the
+Governor on the roster that day among its speakers. The statement's `published_at` is the decision's release (they come
+out together); the transcript's, its posting day at 00:00 India time (the page's date, else its Annual Policy group's).
+The speeches feed isn't read: the Annual Policy page lists every transcript, and none is urgent.
+
 **Press-release numbers** (Brief §6.2; Anand, 24 Oct 2026; issue #15): every document's title carries RBI's number
 where its page has one ("MPC minutes, 7 Oct 2026 · Press Release: 2026-2027/1361"), so the site names the document
-instead of linking RBI's page. A stored document's title is brought up to date when it's read again.
+instead of linking RBI's page. A stored document's title is brought up to date when it's read again. The viewcontent
+and speech pages carry none: their title and date stand.
 
-**Alerts:** a failed resolution or minutes (a backfill's, one each), resolved once it's published; the minutes still
+**Alerts:** a failed resolution, minutes, statement or transcript (a backfill's, one each), resolved once it's
+published; the minutes still
 missing 15 days after a meeting (s.45ZL: published on the fourteenth day), resolved once stored; `votes_changed`; and
 the old site unreachable for 3 days (`rbi_site_unreachable`: raised by a failing run whose fetch couldn't reach
 rbi.org.in, once the failures since the last good run span 3 days; resolved by the next good run).
@@ -79,14 +95,18 @@ from ft.engines.document.text import ExtractError
 from ft.jobs.fetch import FetchError
 from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
-from ft.policy import dates, members, rbi_calendar, rbi_minutes, rbi_resolution
+from ft.policy import dates, members, rbi_calendar, rbi_minutes, rbi_resolution, rbi_statements
 from ft.policy.meetings import FIRST_DAY
 from ft.policy.rbi_minutes import Minutes, MinutesError
 from ft.policy.rbi_resolution import Resolution, ResolutionError, Vote
+from ft.policy.rbi_statements import StatementError
 
 INDIA = ZoneInfo("Asia/Kolkata")
 DOC_TYPE = "mpc_resolution"
 MINUTES_TYPE = "mpc_minutes"
+STATEMENT_TYPE = "rbi_governor_statement"
+TRANSCRIPT_TYPE = "rbi_presconf_transcript"
+KINDS = {"statement": STATEMENT_TYPE, "transcript": TRANSCRIPT_TYPE}   # part 3's documents, by kind
 CATCH_UP = timedelta(days=60)            # daily: rate decisions this recent without a stored resolution or minutes
 CLOSED_AFTER = timedelta(days=60)        # a fiscal year's page is final this long after 31 March (as policy.calendar)
 MINUTES_DUE = timedelta(days=14)         # RBI Act s.45ZL: the minutes on the fourteenth day after the meeting
@@ -139,6 +159,16 @@ class Meeting:
     minutes_id: int | None = None        # the latest stored minutes version with text
     minutes_raw: int | None = None
     minutes_url: str | None = None
+    statement_id: int | None = None      # the latest stored Governor's statement version with text
+    statement_raw: int | None = None
+    statement_url: str | None = None
+    transcript_id: int | None = None     # the latest stored press-conference transcript version with text
+    transcript_raw: int | None = None
+    transcript_url: str | None = None
+
+    def doc(self, kind: str) -> tuple[int | None, int | None, str | None]:
+        """A part-3 document's (id, raw file id, source URL), as stored: kind 'statement' or 'transcript'."""
+        return getattr(self, f"{kind}_id"), getattr(self, f"{kind}_raw"), getattr(self, f"{kind}_url")
 
     def released(self, now: datetime) -> bool:
         return self.occurs_at <= now if self.occurs_at else self.decision_date < now.astimezone(INDIA).date()
@@ -170,6 +200,14 @@ class Fetched:
     minutes_resolutions: dict[str, Page] = field(default_factory=dict)  # by slug: the resolution each goes with
     minutes_links: dict[date, str] = field(default_factory=dict)    # on the Annual Policy pages read, by last day
     not_found: list[str] = field(default_factory=list)
+    # Part 3: by kind ('statement', 'transcript'), the pages to load by slug; the links on the Annual Policy pages read
+    # (canonical, by decision date); when each link's group was posted; meetings whose decision group links no statement
+    # (after the baseline); and what the pages list that couldn't be given to one meeting.
+    companions: dict[str, dict[str, Page]] = field(default_factory=lambda: {k: {} for k in KINDS})
+    doc_links: dict[str, dict[date, str]] = field(default_factory=lambda: {k: {} for k in KINDS})
+    posted: dict[tuple[str, str], date] = field(default_factory=dict)
+    unlinked: list[str] = field(default_factory=list)
+    doc_problems: list[str] = field(default_factory=list)
 
 
 class MeetingFailed(Exception):
@@ -207,6 +245,19 @@ class MinutesOutcome:
     changed: list[str] = field(default_factory=list)   # those whose stored vote this run changed to the minutes'
 
 
+@dataclass
+class DocOutcome:
+    """A Governor's statement or a press-conference transcript (part 3)."""
+    slug: str
+    kind: str                            # 'statement' | 'transcript'
+    status: str                          # 'loaded' | 'failed'
+    checks: list[Check] = field(default_factory=list)
+    written: int = 0
+    external_key: str | None = None
+    char_count: int | None = None
+    how: str | None = None
+
+
 def _today(now: datetime) -> date:
     return now.astimezone(INDIA).date()
 
@@ -221,6 +272,10 @@ def _title(d: date) -> str:
 
 def _minutes_title(d: date) -> str:
     return f"MPC minutes, {_day(d)}"
+
+
+def _companion_title(kind: str, d: date) -> str:
+    return f"Governor's statement, {_day(d)}" if kind == "statement" else f"RBI press conference transcript, {_day(d)}"
 
 
 def _rss_date(item: rbi_resolution.RssItem) -> date | None:
@@ -258,18 +313,22 @@ class RbiDocuments(Task):
             f"""select e.id, e.slug, coalesce(e.ends_on, e.starts_on), e.occurs_at, e.status, e.is_published, m.kind,
                        m.meeting_no, d.id, d.raw_file_id, d.source_url,
                        exists (select 1 from policy.rate_setting r where r.meeting_event_id = e.id),
-                       m.minutes_due_on, mi.id, mi.raw_file_id, mi.source_url
+                       m.minutes_due_on, mi.id, mi.raw_file_id, mi.source_url, st.id, st.raw_file_id, st.source_url,
+                       tr.id, tr.raw_file_id, tr.source_url
                   from core.event e
                   join core.entity b on b.id = e.entity_id and b.kind = 'central_bank' and b.slug = 'rbi'
                   join policy.meeting m on m.event_id = e.id
                   {_latest("d", DOC_TYPE)}
                   {_latest("mi", MINUTES_TYPE)}
+                  {_latest("st", STATEMENT_TYPE)}
+                  {_latest("tr", TRANSCRIPT_TYPE)}
                  where e.event_type = 'policy_meeting' and m.is_rate_decision and e.status <> 'cancelled'
                    and e.slug ~ '^mpc-[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$'
                  order by coalesce(e.ends_on, e.starts_on), e.id""").fetchall()
         rows = [r for r in rows if self.scope is None or r[1] in self.scope]
         out = [Meeting(*r[:12], baseline=False, minutes_due_on=r[12], minutes_id=r[13], minutes_raw=r[14],
-                       minutes_url=r[15]) for r in rows]
+                       minutes_url=r[15], statement_id=r[16], statement_raw=r[17], statement_url=r[18],
+                       transcript_id=r[19], transcript_raw=r[20], transcript_url=r[21]) for r in rows]
         if out and out[0].decision_date < self.first_day:
             out[0] = replace(out[0], baseline=True)
         return out
@@ -334,6 +393,18 @@ class RbiDocuments(Task):
         else:
             docs = [m for m in allm if not m.baseline and m.released(now) and m.minutes_id is None
                     and m.decision_date >= today - CATCH_UP]
+        # Part 3, the same way (never in watch): Governor's statements after the baseline, transcripts from it.
+        companions: dict[str, list[Meeting]] = {}
+        for kind in KINDS:
+            mine = [m for m in allm if (kind == "transcript" or not m.baseline) and m.released(now)]
+            if ctx.meeting is not None or wf == "watch":
+                companions[kind] = []
+            elif wf == "backfill":
+                companions[kind] = [m for m in mine if m.decision_date <= until
+                                    and (ctx.since is None or m.decision_date >= ctx.since)]
+            else:
+                companions[kind] = [m for m in mine if m.doc(kind)[0] is None and m.decision_date >= today - CATCH_UP]
+        to_find = {kind: [m for m in ms if m.doc(kind)[0] is None] for kind, ms in companions.items()}
         slugs = [m.slug for m in targets]
         needed = []                                                   # previous resolutions the targets need
         for m in targets:
@@ -350,12 +421,26 @@ class RbiDocuments(Task):
         # from the RSS is checked against the page's link once the page lists it (`annual_policy_link`).
         years = {fiscal_end(m.decision_date) for m in to_get}
         years |= {y for m in to_link for y in (fiscal_end(m.decision_date), fiscal_end(m.due))}
-        cal = self._annual_pages(f, years, wf not in ("backfill", "watch") or bool(to_get) or bool(to_link), today)
+        years |= {fiscal_end(m.decision_date) for m in to_find["statement"]}       # the decision's own group
+        years |= {y for m in to_find["transcript"] for y in (fiscal_end(m.decision_date), fiscal_end(
+            m.decision_date + timedelta(days=rbi_calendar.TRANSCRIPT_WITHIN)))}  # its group, days later
+        cal = self._annual_pages(f, years, wf not in ("backfill", "watch") or bool(to_get) or bool(to_link)
+                                 or any(to_find.values()), today)
         links = {r.decision_date: rbi_resolution.page_url(r.url) for r in cal.resolutions}
         minutes_links = {d: rbi_resolution.page_url(u) for d, u in cal.minutes_links.items()}
+        doc_links: dict[str, dict[date, tuple[str, date]]] = {k: {} for k in KINDS}
+        problems = list(cal.doc_problems)
+        for kind, found in (("statement", cal.statements), ("transcript", cal.transcripts)):
+            for d, link in found.items():
+                try:
+                    doc_links[kind][d] = (rbi_statements.doc_url(link.url), link.posted_on)
+                except StatementError as e:
+                    problems.append(f"the {kind} of the decision of {d}: {e}")
         rss: dict[date, str] = {}
         rss_minutes: dict[date, str] = {}
+        rss_statements: dict[date, str] = {}
         awaited = [m for m in to_link if m.decision_date not in minutes_links and m.due <= today]
+        awaited += [m for m in to_find["statement"] if m.decision_date not in doc_links["statement"]]
         if (to_get or awaited) and wf != "backfill":                  # the trigger: only while a document is awaited
             got = f.get(rbi_resolution.RSS, source="rbi")
             for item in rbi_resolution.parse_rss(got.body if got.body is not None else f.read(got.raw_file_id)):
@@ -367,6 +452,11 @@ class RbiDocuments(Task):
                                                rbi_resolution.page_url(item.link))
                     except dates.DateParseError:
                         pass
+                elif rbi_calendar.is_governor_statement(item.title) and "prid=" in item.link.lower():
+                    d = rbi_calendar.title_date(item.title) or (
+                        item.published.astimezone(INDIA).date() if item.published else None)
+                    if d is not None:
+                        rss_statements.setdefault(d, rbi_resolution.page_url(item.link))
 
         out: dict[str, Page] = {}
         missing = []
@@ -407,6 +497,33 @@ class RbiDocuments(Task):
             elif m.resolution_raw is not None:
                 fetched.minutes_resolutions[m.slug] = Page(m.resolution_url, "stored", m.resolution_raw,
                                                            f.read(m.resolution_raw))
+
+        # Part 3: the Governor's statement (its decision group's link, else the feed's) and the transcript (its group's).
+        fetched.doc_links = {k: {d: u for d, (u, _) in v.items()} for k, v in doc_links.items()}
+        fetched.doc_problems = problems
+        for kind, ms in companions.items():
+            for m in ms:
+                doc_id, raw, stored_url = m.doc(kind)
+                if doc_id is not None:                                # backfill: read back
+                    fetched.companions[kind][m.slug] = Page(stored_url, "stored", raw, f.read(raw))
+                    continue
+                url, how, posted = None, None, None
+                if m.decision_date in doc_links[kind]:
+                    (url, posted), how = doc_links[kind][m.decision_date], "annual policy"
+                elif kind == "statement" and m.decision_date in rss_statements:
+                    url, how = rss_statements[m.decision_date], "rss"
+                if url is None:
+                    if kind == "statement":
+                        fetched.unlinked.append(m.slug)               # (W) every decision since 2019 has had one
+                    continue                                          # a transcript: none at some meetings (2020)
+                got = f.get(url, source="rbi", allow=(404,))
+                if got.status == 404:
+                    fetched.not_found.append(f"{m.slug}: {kind} {url}")
+                    continue
+                fetched.companions[kind][m.slug] = Page(url, how, got.raw_file_id, got.body if got.body is not None
+                                                        else f.read(got.raw_file_id))
+                if posted is not None:
+                    fetched.posted[(kind, m.slug)] = posted
         return fetched
 
     # ------------------------------------------------------------------ load (one transaction; a savepoint per document)
@@ -444,8 +561,24 @@ class RbiDocuments(Task):
                 d = MinutesOutcome(slug, "failed", [Check("load_error", False, f"{slug} minutes: {type(e).__name__}: {e}")])
             docs.append(d)
             written += d.written
-        self.result = {"outcomes": outcomes, "docs": docs, "gate": gate, "d4": self._d4, "today": _today(f.now),
-                       "roster": sum(m.bank == "RBI" for m in roster.members.values())}
+        companions: list[DocOutcome] = []
+        for kind in KINDS:
+            for slug in sorted(f.companions[kind], key=order.__getitem__):
+                c = DocOutcome(slug, kind, "failed")
+                try:
+                    with tx.transaction():
+                        c = self._companion(tx, f, kind, slug, roster)
+                except MeetingFailed as e:
+                    c = DocOutcome(slug, kind, "failed", e.checks)
+                except Exception as e:
+                    if f.workflow != "backfill":
+                        raise
+                    c = DocOutcome(slug, kind, "failed", [Check("load_error", False,
+                                                                f"{slug} {kind}: {type(e).__name__}: {e}")])
+                companions.append(c)
+                written += c.written
+        self.result = {"outcomes": outcomes, "docs": docs, "companions": companions, "gate": gate, "d4": self._d4,
+                       "today": _today(f.now), "roster": sum(m.bank == "RBI" for m in roster.members.values())}
         return written
 
     def _fail(self, name: str, detail: str, earlier: list[Check] = ()):
@@ -964,6 +1097,40 @@ class RbiDocuments(Task):
         o.votes = tx.execute("select count(*) from policy.vote where meeting_event_id = %s", (m.event_id,)).fetchone()[0]
         return n
 
+    # ------------------------------------------------------------------ Governor's statements and transcripts (part 3)
+    def _companion(self, tx, f: Fetched, kind: str, slug: str, roster: members.Roster) -> DocOutcome:
+        m = next(x for x in f.meetings if x.slug == slug)
+        page = f.companions[kind][slug]
+        try:
+            doc = rbi_statements.parse(page.body, page.url, kind)
+        except (StatementError, ExtractError, ValueError) as e:
+            self._fail(f"{kind}_page", f"{slug}: {e}")
+        posted = f.posted.get((kind, slug))
+        if kind == "statement":
+            results = rbi_statements.statement_checks(doc, m.decision_date)
+            published = m.occurs_at                   # released with the resolution (the decision group's date: B)
+        else:
+            results = rbi_statements.transcript_checks(doc, m.decision_date,
+                                                       rbi_statements.governor_keys(roster, m.decision_date), posted)
+            day = doc.page_date or posted
+            published = datetime.combine(day, time(0), INDIA) if day else None
+        checks = [Check(r.name, r.passed, f"{slug}: {r.detail}") for r in results]
+        if not all(c.passed for c in checks):
+            raise MeetingFailed(checks)
+        title = rbi_resolution.titled(_companion_title(kind, m.decision_date), doc.press_release)
+        ref = DocumentRef(KINDS[kind], self._rbi_id(tx), self._source_id(tx), doc.external_key, doc.url, title,
+                          m.event_id, page.raw_file_id, published)
+        saved = save_version(tx, ref, doc.text)
+        doc_id, n = saved.document_id, (1 if saved.new_text else 0)
+        n += self._retitle(tx, doc_id, title)
+        if saved.new_text or not tx.execute("select 1 from core.chunk where document_id = %s limit 1",
+                                            (doc_id,)).fetchone():
+            n += save_chunks(tx, doc_id, doc.text.text, chunk_text(
+                doc.text, speakers="rbi_transcript" if kind == "transcript" else None))
+        n += tx.execute("update core.document set is_published = true where id = %s and not is_published",
+                        (doc_id,)).rowcount
+        return DocOutcome(slug, kind, "loaded", checks, n, doc.external_key, doc.text.char_count, page.how)
+
     def _text(self, tx, document_id: int) -> str:
         return tx.execute("select string_agg(body, '' order by chunk_no) from core.chunk where document_id = %s",
                           (document_id,)).fetchone()[0] or ""
@@ -978,11 +1145,13 @@ class RbiDocuments(Task):
     def checks(self, tx, f: Fetched, task_run_id) -> list[Check]:
         outcomes: list[Outcome] = self.result["outcomes"]
         docs: list[MinutesOutcome] = self.result["docs"]
+        companions: list[DocOutcome] = self.result["companions"]
         backfill = f.workflow == "backfill"
         out: list[Check] = []
 
         failed = [o for o in outcomes if o.status == "failed"]
         failed_docs = [d for d in docs if d.status == "failed"]
+        failed_companions = {k: [c for c in companions if c.kind == k and c.status == "failed"] for k in KINDS}
         if backfill:
             def listed(items):
                 return "; ".join(f"{o.slug}: " + ", ".join(f"{c.name} ({c.detail.split(': ', 1)[-1]})"
@@ -990,9 +1159,11 @@ class RbiDocuments(Task):
                                  for o in items)
             out.append(Check("meetings_failed", not failed, listed(failed), blocking=False))
             out.append(Check("minutes_failed", not failed_docs, listed(failed_docs), blocking=False))
+            for kind, items in failed_companions.items():
+                out.append(Check(f"{kind}s_failed", not items, listed(items), blocking=False))
         else:
             by_name: dict[str, list[str]] = {}
-            for o in [*failed, *failed_docs]:
+            for o in [*failed, *failed_docs, *failed_companions["statement"], *failed_companions["transcript"]]:
                 for c in o.checks:
                     if c.blocking and not c.passed:
                         by_name.setdefault(c.name, []).append(c.detail)
@@ -1052,6 +1223,31 @@ class RbiDocuments(Task):
                          f"{sum(d.status == 'loaded' for d in docs)} minutes, "
                          f"{sum(d.from_minutes for d in docs if d.status == 'loaded')} votes written from them"))
 
+        # (B) Statements and transcripts that loaded: text, chunks, published; a transcript's chunks carry its speakers.
+        for kind, doc_type in KINDS.items():
+            wrong = []
+            loaded_kind = [c for c in companions if c.kind == kind and c.status == "loaded"]
+            for c in loaded_kind:
+                row = tx.execute(
+                    """select d.is_published, d.char_count,
+                              (select count(*) from core.chunk c where c.document_id = d.id),
+                              (select count(distinct c.speaker) from core.chunk c where c.document_id = d.id)
+                         from core.document d join core.event e on e.id = d.event_id
+                        where e.slug = %s and d.doc_type = %s and d.external_key = %s and d.text_sha256 is not null
+                        order by d.version_no desc limit 1""", (c.slug, doc_type, c.external_key)).fetchone()
+                if row is None:
+                    wrong.append(f"{c.slug} {kind}: no document")
+                    continue
+                pub, chars, chunks, speakers = row
+                bad = [what for what, ok in (("published", pub), ("text", chars == c.char_count), ("chunks", chunks > 0),
+                                             ("speakers", kind != "transcript" or speakers >= 2)) if not ok]
+                if bad:
+                    wrong.append(f"{c.slug} {kind}: {', '.join(bad)}")
+            out.append(Check(f"{kind}s_stored", not wrong, "; ".join(wrong) if wrong else f"{len(loaded_kind)} {kind}s"))
+        out.append(Check("statement_link", not f.unlinked, "no Governor's statement in the decision's Annual Policy "
+                         "group (or the feed): " + ", ".join(f.unlinked), blocking=False))
+        out.append(Check("annual_policy_docs", not f.doc_problems, "; ".join(f.doc_problems), blocking=False))
+
         # Warn checks from the documents that loaded, one per name.
         warn: dict[str, list[str]] = {}
         for o in [*loaded, *(d for d in docs if d.status == "loaded")]:
@@ -1081,6 +1277,14 @@ class RbiDocuments(Task):
             mlink = f.minutes_links.get(m.decision_date)
             if m.minutes_url and mlink and mlink != m.minutes_url:
                 odd.append(f"{m.slug}: stored minutes {m.minutes_url}, the Annual Policy page links {mlink}")
+            for kind in KINDS:
+                stored, link = m.doc(kind)[2], f.doc_links[kind].get(m.decision_date)
+                if stored and link and link != stored:
+                    odd.append(f"{m.slug}: stored {kind} {stored}, the Annual Policy page links {link}")
+        for c in companions:
+            m = next(x for x in f.meetings if x.slug == c.slug)
+            if c.status == "loaded" and c.how == "rss" and m.decision_date not in f.doc_links[c.kind]:
+                odd.append(f"{c.slug}: {c.kind} taken from the RSS item; the Annual Policy page doesn't link it yet")
         out.append(Check("annual_policy_link", not odd, "; ".join(odd), blocking=False))
 
         if f.workflow not in ("watch", "backfill"):
@@ -1105,19 +1309,25 @@ class RbiDocuments(Task):
             "minutes_votes": sum(d.from_minutes for d in docs if d.status == "loaded"),
             "minutes_differ": sum(len(d.differ) for d in docs if d.status == "loaded"),
             "d4": self.result["d4"],
+            **{f"{k}s": sum(c.kind == k and c.status == "loaded" for c in self.result["companions"]) for k in KINDS},
+            **{f"{k}s_failed": sum(c.kind == k and c.status == "failed" for c in self.result["companions"])
+               for k in KINDS},
         }
 
     # ------------------------------------------------------------------ alerts (after the load)
     def alerts(self, db) -> list[Alert]:
-        """A backfill's failed resolutions and minutes, one alert each, resolved once published; minutes still missing
-        15 days after the meeting, resolved once stored; the votes the minutes changed, open for a week; and the site
-        reachable again (resolves `rbi_site_unreachable`)."""
+        """A backfill's failed resolutions, minutes, statements and transcripts, one alert each, resolved once published;
+        minutes still missing 15 days after the meeting, resolved once stored; the votes the minutes changed, open for
+        a week; and the site reachable again (resolves `rbi_site_unreachable`)."""
         out: list[Alert] = []
         docs: list[MinutesOutcome] = self.result.get("docs", [])
+        companions: list[DocOutcome] = self.result.get("companions", [])
         failures = {
             ("rbi_resolution_failed", DOC_TYPE): {o.slug: o for o in self.result.get("outcomes", [])
                                                   if o.status == "failed"},
             ("rbi_minutes_failed", MINUTES_TYPE): {d.slug: d for d in docs if d.status == "failed"},
+            **{(f"rbi_{k}_failed", doc_type): {c.slug: c for c in companions if c.kind == k and c.status == "failed"}
+               for k, doc_type in KINDS.items()},
         }
         for (prefix, doc_type), failed in failures.items():
             out += [Alert(f"{prefix}:{s}", True, "warn", f"{s}: " + "; ".join(

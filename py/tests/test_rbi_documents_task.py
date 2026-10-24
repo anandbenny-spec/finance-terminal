@@ -16,7 +16,17 @@ import psycopg
 import pytest
 from conftest import dsn
 from moto.server import ThreadedMotoServer
-from policy_docs import mpc_minutes, mpc_new, mpc_old, mpc_title
+from policy_docs import (
+    mpc_minutes,
+    mpc_new,
+    mpc_old,
+    mpc_title,
+    rbi_speech_page,
+    rbi_statement_body,
+    rbi_transcript_speech,
+    rbi_transcript_view,
+    rbi_view_page,
+)
 from policy_docs import rbi_page as press_release
 from test_policy_calendar import rbi_group, rbi_item
 from test_policy_calendar import rbi_page as annual_page
@@ -25,7 +35,7 @@ from ft.jobs.fetch import HttpClient
 from ft.jobs.runner import JobRun, run
 from ft.jobs.tasks.rbi_documents import RbiDocuments
 from ft.jobs.watch import watch
-from ft.policy import rbi_calendar, rbi_resolution
+from ft.policy import rbi_calendar, rbi_resolution, rbi_statements
 
 JOB, ADMIN = dsn("job_writer"), dsn("postgres")
 IST = ZoneInfo("Asia/Kolkata")
@@ -107,17 +117,36 @@ def resolution(d: date, body: str) -> str:
     return press_release(body, title=mpc_title(days_of(d), f"{d.year}-{d.year % 100 + 1:02d}"), day=f"{d:%b %d, %Y}")
 
 
-def annual(*items: tuple[date, int], years: dict[str, str], minutes: tuple[tuple[date, int], ...] = ()) -> str:
-    """An Annual Policy page whose groups are these decisions (date, prid) and minutes (the meeting's decision date,
-    prid; posted 14 days on), newest first, above a report's group."""
+def statement_link(prid: int) -> str:
+    """The Governor's statement the decision group with this resolution prid lists (its own prid: `prid` and a 9)."""
+    return PR + f"{prid}9"
+
+
+def annual(*items: tuple[date, int], years: dict[str, str], minutes: tuple[tuple[date, int], ...] = (),
+           statements: dict[date, str] | None = None,
+           transcripts: tuple[tuple[date, str, int, bool], ...] = ()) -> str:
+    """An Annual Policy page whose groups are these decisions (date, prid), each listing its Governor's statement
+    (statement_link(prid), or `statements`' link for the date: None lists none), minutes (the meeting's decision date,
+    prid; posted 14 days on) and press-conference transcripts (the decision date, the link, days after it, whether the
+    title names the date), newest first, above a report's group."""
+    statements = statements or {}
+
+    def statement(d: date, prid: int) -> str:
+        link = statements.get(d, statement_link(prid))
+        return rbi_item(f"Governor’s Statement: {d:%B} {d.day}, {d.year}", link) if link else ""
     groups = [(d, rbi_group(f"{d:%b %d, %Y}", "Bi-monthly Monetary Policy Statement",
-                            rbi_item("Governor’s Statement", PR + str(prid + 1)) + rbi_item(RESOLUTION, PR + str(prid), True)))
+                            statement(d, prid) + rbi_item(RESOLUTION, PR + str(prid), True)))
               for d, prid in items]
     groups += [(d + timedelta(days=14), rbi_group(f"{d + timedelta(days=14):%b %d, %Y}",
                                                   "Minutes of the Monetary Policy Committee",
                                                   rbi_item(f"Minutes of the Monetary Policy Committee Meeting, {days_of(d)}",
                                                            PR + str(prid))))
                for d, prid in minutes]
+    groups += [(d + timedelta(days=after), rbi_group(
+        f"{d + timedelta(days=after):%b %d, %Y}", "Bi-monthly Monetary Policy Statement",
+        rbi_item("Edited Transcript of the Reserve Bank of India’s Monetary Policy Press Conference"
+                 + (f": {d:%B} {d.day}, {d.year}" if dated else ""), url)))
+        for d, url, after, dated in transcripts]
     out = [g for _, g in sorted(groups, key=lambda x: x[0], reverse=True)]
     out.append(rbi_group("Jan 02, 2000", "Monetary Policy Report",
                          rbi_item("Monetary Policy Report", "https://rbi.org.in/Scripts/PublicationsView.aspx?id=1")))
@@ -301,15 +330,56 @@ FEB_MINUTES = minutes(FEB, FEB_COPY, [(n, "Yes") for n in SIX[:4]] + [(n, "No") 
 APR_MINUTES = minutes(APR, APR_COPY, [(n, "Yes") for n in SIX], heading_in_table=True,
                       heading="Voting on the Resolution to keep the policy repo rate unchanged at 6.25 per cent")
 
+# Part 3: the Governor's statements (a press release; a viewcontent page without a date) and the transcripts (a
+# viewcontent page dated on its first line; a speech page dated by its title). SIX[0], Ada Rao, is the Governor.
+VIEW, SPEECH = "https://www.rbi.org.in/Scripts/bs_viewcontent.aspx?Id=", "https://www.rbi.org.in/Scripts/BS_SpeechesView.aspx?Id="
+TURNS = ["Ada Rao:", "Latha Venkatesh (CNBC-TV18):", "Ada Rao:", "Dr. Ben Iyer:", "Ada Rao:"] * 4
+CAST = ["Dr. Ada Rao – Governor", "Dr. Ben Iyer – Deputy Governor"]
+
+
+def gov_statement(d: date, *, number: str | None = None) -> str:
+    return press_release(rbi_statement_body(f"The Monetary Policy Committee (MPC) met on {days_of(d)}.",
+                                            press_release=number),
+                         title=f"Governor’s Statement: {d:%B} {d.day}, {d.year}", day=f"{d:%b %d, %Y}")
+
+
+def view_transcript(d: date, turns=TURNS) -> str:
+    return rbi_view_page(rbi_transcript_view(turns, date_line=f"{d:%B} {d.day:02d}, {d.year}", participants=CAST),
+                         title="Edited Transcript of Reserve Bank of India’s Fifth Bi-monthly Monetary Policy Press "
+                               "Conference")
+
+
+def speech_transcript(d: date, posted: date, turns=TURNS) -> str:
+    return rbi_speech_page(rbi_transcript_speech(turns, participants=CAST), day=f"{posted:%b %d, %Y}",
+                           title="Edited Transcript of the Reserve Bank of India’s Post-Monetary Policy Press "
+                                 f"Conference: {d:%B} {d.day}, {d.year} (Wednesday)")
+
+
+def part3_docs(s: str):
+    """(doc type, title, published_at, source_url, extractor version, the chunks' speakers) of the meeting's statement
+    and transcript."""
+    return [(r[0], r[1], r[2], r[3], r[4], set(r[5]) - {None}) for r in q(
+        """select d.doc_type, d.title, d.published_at, d.source_url, d.extractor_version, array_agg(distinct c.speaker)
+             from core.document d join core.event e on e.id = d.event_id
+             left join core.chunk c on c.document_id = d.id
+            where e.slug = %s and d.doc_type in ('rbi_governor_statement', 'rbi_presconf_transcript') and d.is_published
+            group by d.id order by d.doc_type, d.version_no""", s)]
+
 
 @pytest.mark.db
 def test_backfill_stores_resolutions_rates_votes_projections_and_diffs_and_reruns_clean(s3, roster):
     slugs = [meeting(d) for d in (BASE, FEB, APR)]
     years = {"2012-2013": "2013", "2011-2012": "2012"}
-    fy12 = annual((BASE, 81001), (FEB, 81101), years=years, minutes=((FEB, 81102),))
-    pages = {rbi_calendar.ANNUAL_POLICY: annual((APR, 81201), years=years, minutes=((APR, 81202),)),
+    fy12 = annual((BASE, 81001), (FEB, 81101), years=years, minutes=((FEB, 81102),),
+                  transcripts=((BASE, VIEW + "81000", 4, False), (FEB, SPEECH + "81100", 2, True)))
+    pages = {rbi_calendar.ANNUAL_POLICY: annual((APR, 81201), years=years, minutes=((APR, 81202),),
+                                                statements={APR: "https://rbi.org.in/scripts/bs_viewcontent.aspx?Id=81200"}),
              PR + "81001": resolution(BASE, BASE_BODY), PR + "81101": resolution(FEB, FEB_BODY),
-             PR + "81201": resolution(APR, APR_BODY), PR + "81102": FEB_MINUTES, PR + "81202": APR_MINUTES}
+             PR + "81201": resolution(APR, APR_BODY), PR + "81102": FEB_MINUTES, PR + "81202": APR_MINUTES,
+             statement_link(81101): gov_statement(FEB, number="2011-2012/1499"),
+             VIEW + "81200": rbi_view_page(rbi_statement_body("Over the past three days the MPC reviewed conditions."),
+                                           title="Statement by Governor - First Bi-monthly Monetary Policy, 2012-13"),
+             VIEW + "81000": view_transcript(BASE), SPEECH + "81100": speech_transcript(FEB, FEB + timedelta(days=2))}
     sites = Sites(pages, {"2012": fy12})
     t = task(roster, slugs, date(2012, 1, 1))
     code, r = go(sites, t, "backfill", datetime(2012, 7, 1, tzinfo=UTC))
@@ -317,6 +387,27 @@ def test_backfill_stores_resolutions_rates_votes_projections_and_diffs_and_rerun
     assert r["checks"]["resolutions_stored"]["passed"], r["checks"]["resolutions_stored"]["detail"]
     assert r["checks"]["meetings_failed"]["passed"]
     assert f"POST {rbi_calendar.ANNUAL_POLICY} hdnYear=2012" in sites.seen     # the earlier fiscal year, by form post
+
+    # Part 3: the Governor's statements after the baseline (never the baseline's: its decision document only), the
+    # transcripts from it (Anand, 23 Oct 2026), each published with its chunks; a transcript's chunks carry its speakers.
+    for name in ("statements_stored", "transcripts_stored", "statements_failed", "transcripts_failed",
+                 "statement_link", "annual_policy_docs", "documents_missing", "annual_policy_link"):
+        assert r["checks"][name]["passed"], (name, r["checks"][name]["detail"])
+    assert statement_link(81001) not in sites.seen
+    assert {k: v for k, v in json_counts(r).items() if k.startswith(("statements", "transcripts"))} == {
+        "statements": 2, "statements_failed": 0, "transcripts": 2, "transcripts_failed": 0}
+    speakers = {"Ada Rao", "Latha Venkatesh", "Dr. Ben Iyer"}
+    assert part3_docs(slugs[0]) == [
+        ("rbi_presconf_transcript", "RBI press conference transcript, 7 Dec 2011", datetime(2011, 12, 11, tzinfo=IST),
+         VIEW + "81000", "html-1/rbi_view_content", speakers)]
+    assert part3_docs(slugs[1]) == [
+        ("rbi_governor_statement", "Governor's statement, 8 Feb 2012 · Press Release: 2011-2012/1499",
+         datetime(2012, 2, 8, 10, tzinfo=IST), statement_link(81101), "html-1/rbi_press_release", set()),
+        ("rbi_presconf_transcript", "RBI press conference transcript, 8 Feb 2012", datetime(2012, 2, 10, tzinfo=IST),
+         SPEECH + "81100", "html-1/rbi_speech", speakers)]
+    assert part3_docs(slugs[2]) == [
+        ("rbi_governor_statement", "Governor's statement, 4 Apr 2012", datetime(2012, 4, 4, 10, tzinfo=IST),
+         VIEW + "81200", "html-1/rbi_view_content", set())]
 
     # The minutes (never the baseline's: Spec 01 §2), each member's statement its own speaker; they agree with the
     # resolutions, so the votes stand as the resolutions stated them, and the roster matches both (D4's check).
@@ -365,11 +456,13 @@ def test_backfill_stores_resolutions_rates_votes_projections_and_diffs_and_rerun
                    PR + "81201",
                    "html-1/rbi_press_release", "/Scripts/BS_PressReleaseDisplay.aspx?prid=81201")
 
-    # A re-run reads the stored resolutions and minutes back: no request, no row, no raw file.
+    # A re-run reads the stored resolutions, minutes, statements and transcripts back: no request, no row, no raw file.
     sites.seen.clear()
     code, r2 = go(sites, task(roster, slugs, date(2012, 1, 1)), "backfill", datetime(2012, 7, 1, tzinfo=UTC))
     assert (code, r2["status"], r2["rows"], sites.seen) == (0, "success", 0, [])
     assert r2["http"].get("new_raw_files", 0) == 0 and r2["checks"]["resolutions_stored"]["passed"]
+    assert r2["checks"]["statements_stored"]["passed"] and r2["checks"]["transcripts_stored"]["passed"]
+    assert json_counts(r2)["statements"] == 2 and json_counts(r2)["transcripts"] == 2
 
 
 @pytest.mark.db
@@ -862,6 +955,69 @@ def test_the_old_site_unreachable_for_3_days_raises_an_alert_that_the_next_good_
     assert RbiDocuments().failure_alerts(None, "failed", "ResolutionError: no tableheader cells") == []
 
 
+# ---------------------------------------------------------------------------------------------- part 3, daily
+@pytest.mark.db
+def test_daily_takes_the_statement_from_the_feed_and_the_transcript_days_later_and_a_bad_one_waits_with_an_alert(
+        s3, roster):
+    """Part 3 (issue #15): on the day after a decision the Annual Policy page lists no statement yet, so the feed's is
+    taken (W until the page links it); the transcript comes days later on its own group; one the Governor doesn't
+    speak in fails its checks (a daily run rolls back; a backfill lists it with an alert), and the fixed page loads and
+    resolves the alert."""
+    base, d = date(2046, 2, 7), date(2046, 4, 4)
+    slugs = [meeting(x) for x in (base, d)]
+    years = {"2046-2047": "2047", "2045-2046": "2046"}
+    fy46 = annual((base, 93001), years=years)
+    stmt = PR + "93105"
+    resolutions = {PR + "93001": resolution(base, BASE_BODY), PR + "93101": resolution(d, FEB_BODY)}
+    feed = rss((f"Governor’s Statement: {d:%B} {d.day}, {d.year}", stmt.replace("https://www.", "https://"),
+                f"{d:%a, %d %b %Y} 10:05:00"))
+    pages = {rbi_calendar.ANNUAL_POLICY: annual((d, 93101), years=years, statements={d: None}), **resolutions,
+             rbi_resolution.RSS: feed, stmt: gov_statement(d, number="2046-2047/12")}
+    sites = Sites(pages, {"2046": fy46})
+
+    def t():
+        return task(roster, slugs, date(2046, 3, 1))
+    code, r = go(sites, t(), "daily", datetime(2046, 4, 5, 1, 7, tzinfo=UTC))          # 06:37 IST the next day
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert [x[:2] for x in part3_docs(slugs[1])] == [
+        ("rbi_governor_statement", "Governor's statement, 4 Apr 2046 · Press Release: 2046-2047/12")]
+    link = r["checks"]["annual_policy_link"]
+    assert not link["passed"] and "statement taken from the RSS item" in link["detail"]
+    assert r["checks"]["statement_link"]["passed"] and r["checks"]["transcripts_stored"]["passed"]
+
+    # Four days on the page lists the statement and the transcript, which the Governor (Ada Rao) doesn't speak in.
+    later = d + timedelta(days=4)
+    bad = speech_transcript(d, later, turns=["Dr. Ben Iyer:", "Latha Venkatesh:"] * 10)
+    tr = SPEECH + "93100"
+    pages[rbi_calendar.ANNUAL_POLICY] = annual((d, 93101), years=years, statements={d: stmt},
+                                               transcripts=((d, tr, 4, True),))
+    pages[tr] = bad
+    code, r = go(sites, t(), "daily", datetime(2046, 4, 9, 1, 7, tzinfo=UTC))
+    assert code != 0 and r["status"] == "checks_failed"
+    assert not r["checks"]["transcript_governor"]["passed"], r["checks"]
+    assert "not among them" in r["checks"]["transcript_governor"]["detail"]
+    assert [x[0] for x in part3_docs(slugs[1])] == ["rbi_governor_statement"]        # the statement stays
+
+    # A backfill lists it and alerts; the fixed page loads, and the next good run resolves the alert.
+    code, r = go(sites, t(), "backfill", datetime(2046, 4, 9, 2, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert not r["checks"]["transcripts_failed"]["passed"] and slugs[1] in r["checks"]["transcripts_failed"]["detail"]
+    assert alerts("rbi_transcript_failed:") == [f"rbi_transcript_failed:{slugs[1]}"]
+    assert r["checks"]["annual_policy_link"]["passed"]                                 # the page links the stored one
+    pages[tr] = speech_transcript(d, later)
+    code, r = go(sites, t(), "daily", datetime(2046, 4, 9, 3, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert [x[:4] for x in part3_docs(slugs[1])] == [
+        ("rbi_governor_statement", "Governor's statement, 4 Apr 2046 · Press Release: 2046-2047/12",
+         datetime(2046, 4, 4, 10, tzinfo=IST), stmt),
+        ("rbi_presconf_transcript", "RBI press conference transcript, 4 Apr 2046", datetime(2046, 4, 8, tzinfo=IST), tr)]
+    assert alerts("rbi_transcript_failed:") == []
+    # Both stored: the daily run no longer looks for them.
+    sites.seen.clear()
+    code, r = go(sites, t(), "daily", datetime(2046, 4, 10, 3, tzinfo=UTC))
+    assert (code, r["rows"]) == (0, 0) and stmt not in sites.seen and tr not in sites.seen
+
+
 # ---------------------------------------------------------------------------------------------- the saved pages
 FIXTURES = Path(__file__).resolve().parents[2] / "data" / "fixtures" / "rbi"
 
@@ -889,6 +1045,9 @@ def test_a_backfill_over_the_saved_pages_loads_every_resolution_and_minutes_from
     for r in csv.DictReader((FIXTURES / "INDEX.tsv").open(encoding="utf-8"), delimiter="\t"):
         if r["kind"] in ("resolution", "minutes"):
             pages[rbi_resolution.page_url(r["url"])] = (FIXTURES / r["file"]).read_text(encoding="utf-8", errors="replace")
+        elif r["kind"] in ("governor_statement", "transcript"):                     # part 3 (and the pages' others)
+            pages[rbi_statements.doc_url(r["url"])] = (FIXTURES / r["file"]).read_text(encoding="utf-8",
+                                                                                      errors="replace")
     cal = rbi_calendar.calendar(parsed)
     curated = meetings.load_curated()
     ms = meetings.number_rbi(meetings.rbi_meetings(cal, curated, date(2026, 10, 23), full=True), {}, curated)
@@ -934,8 +1093,32 @@ def test_a_backfill_over_the_saved_pages_loads_every_resolution_and_minutes_from
     assert counts | {"roster": 21} == {"targets": 49, "loaded": 49, "waiting": 0, "failed": 0, "rates": 196,
                                        "votes": 294, "rate_votes": 294, "dissents": 44, "projections": 419,
                                        "from_rss": 0, "roster": 21, "minutes": 48, "minutes_failed": 0,
-                                       "minutes_votes": 0, "minutes_differ": 0, "d4": True}, counts
+                                       "minutes_votes": 0, "minutes_differ": 0, "d4": True,
+                                       "statements": 48, "statements_failed": 0, "transcripts": 44,
+                                       "transcripts_failed": 0}, counts
     assert r["checks"]["minutes_changed_vote"]["passed"]
+    # Part 3: every decision since 2019 has its Governor's statement, every press conference from Dec 2018 its transcript
+    # (none for the four 2020 COVID meetings or 4 May 2022); the pages' other statements are left out; nothing 404s.
+    for name in ("statements_stored", "transcripts_stored", "statements_failed", "transcripts_failed", "statement_link",
+                 "annual_policy_docs", "documents_missing", "annual_policy_link"):
+        assert r["checks"][name]["passed"], (name, r["checks"][name]["detail"])
+    part3 = q("""select d.doc_type, count(*), count(*) filter (where d.title like '%% · Press Release: %%'),
+                        min(e.slug), count(distinct e.id)
+                   from core.document d join core.event e on e.id = d.event_id
+                  where e.slug = any(%s) and d.doc_type in ('rbi_governor_statement', 'rbi_presconf_transcript')
+                    and d.is_published group by 1 order by 1""", slugs)
+    assert part3 == [("rbi_governor_statement", 48, 38, "mpc-2019-02-07", 48),
+                     ("rbi_presconf_transcript", 44, 0, "mpc-2018-12-05", 44)], part3
+    assert sorted(s for s in slugs if not part3_docs(s) or part3_docs(s)[-1][0] != "rbi_presconf_transcript") == [
+        "mpc-2020-03-27", "mpc-2020-05-22", "mpc-2020-08-06", "mpc-2020-10-09", "mpc-2022-05-04"]
+    oct26 = part3_docs("mpc-2026-10-07")
+    assert [x[:4] for x in oct26] == [
+        ("rbi_governor_statement", "Governor's statement, 7 Oct 2026 · Press Release: 2026-2027/1266",
+         datetime(2026, 10, 7, 10, tzinfo=IST), PR + "63744"),
+        ("rbi_presconf_transcript", "RBI press conference transcript, 7 Oct 2026", datetime(2026, 10, 10, tzinfo=IST),
+         "https://www.rbi.org.in/Scripts/BS_SpeechesView.aspx?Id=1583")]
+    assert "Sanjay Malhotra" in oct26[1][5]
+    assert "Dr. Urjit R. Patel" in part3_docs("mpc-2018-12-05")[0][5]                # the baseline's press conference
     assert sorted(votes("mpc-2018-12-05")) == ["chetan-ghate", "michael-debabrata-patra", "pami-dua",
                                                "ravindra-h-dholakia", "urjit-r-patel", "viral-v-acharya"]
     oct26 = minutes_docs("mpc-2026-10-07")
