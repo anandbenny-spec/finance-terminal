@@ -1,0 +1,10 @@
+{
+  "rule_version": 1,
+  "chosen_from": null,
+  "sets": {
+    "policy_hawk_dove": [],
+    "policy_stance": [],
+    "policy_member_hawk_dove": []
+  },
+  "rbi_stance_drafts": {}
+}

@@ -1,0 +1,40 @@
+# Choosing the labelling items (Prompt 01 E1; py ft/eval/labelling.py): reads the loaded meetings, decision
+# documents and MPC minutes as job_writer in a read-only session and prints the chosen items, plus the RBI stance
+# sentences Claude drafts from, as annotations (Claude's workspace can't download logs). Manual only; dev by default
+# (dev runs are a manual check workflow, CLAUDE.md §6). Writes nothing, calls no source and no model.
+name: eval-items
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Project to read
+        type: choice
+        options: [dev, production]
+        default: dev
+concurrency:
+  group: eval-items
+  cancel-in-progress: false
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: py
+jobs:
+  run:
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026; the audit's G1/S1 ran on 24.04
+    timeout-minutes: 10
+    env:
+      # Same rule as the job workflows (GitHub issue #2, item 1): dev unless production is chosen; a missing DEV_
+      # secret leaves the variable empty (the script then stops), never falling back to production's.
+      FT_TARGET: ${{ inputs.target == 'production' && 'production' || 'dev' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0, pinned by SHA (setup-uv publishes no v8+ major tags)
+        with:
+          enable-cache: true
+          cache-dependency-glob: py/uv.lock
+      - run: uv sync --locked --extra jobs
+      - name: Choose
+        run: uv run --locked python -m ft.eval.labelling --target "$FT_TARGET"
+        env:
+          JOB_DATABASE_URL: ${{ env.FT_TARGET == 'production' && secrets.JOB_DATABASE_URL || env.FT_TARGET == 'dev' && secrets.DEV_JOB_DATABASE_URL || '' }}
