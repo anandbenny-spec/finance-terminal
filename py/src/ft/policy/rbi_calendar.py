@@ -94,6 +94,7 @@ class Calendar:
     minutes: dict[date, date]         # last day -> first day, from the minutes titles
     schedule: tuple[ScheduleRow, ...]
     reschedules: tuple[Notice, ...]
+    minutes_links: dict[date, str] = field(default_factory=dict)   # last day -> the minutes' press-release link
 
 
 def _text(el) -> str:
@@ -145,11 +146,21 @@ def parse_page(content: bytes | str) -> Page:
     return Page(tuple(groups), years, form, button)
 
 
+def minutes_days(title: str) -> tuple[date, date]:
+    """The meeting days a minutes title names: "Minutes of the Monetary Policy Committee Meeting, October 5 to 7,
+    2026" -> (5 Oct, 7 Oct 2026). Raises dates.DateParseError if it names none."""
+    m = _MINUTES.match(" ".join(title.split()))
+    if not m:
+        raise dates.DateParseError(f"not a minutes title: {title!r}")
+    return dates.span(m["days"])
+
+
 def calendar(pages: list[Page]) -> Calendar:
     """The meetings the pages list: every resolution, the minutes' meeting days, the schedules and reschedule notices.
     A page's year can be fetched more than once (the current year is also a selectable year): duplicates collapse."""
     resolutions: dict[date, Resolution] = {}
     minutes: dict[date, date] = {}
+    minutes_links: dict[date, str] = {}
     schedule: dict[tuple[str, date], ScheduleRow] = {}
     notices: dict[tuple[date, str], Notice] = {}
     for page in pages:
@@ -183,11 +194,13 @@ def calendar(pages: list[Page]) -> Calendar:
                     except dates.DateParseError as e:
                         raise PageError(f"minutes title: {e}") from None
                     minutes[last] = first
+                    if item.url and "prid=" in item.url:
+                        minutes_links[last] = item.url
                 elif _RESCHEDULE.search(item.title):
                     notices[(g.posted_on, item.title)] = Notice(g.posted_on, item.title, item.url)
     return Calendar(tuple(sorted(resolutions.values(), key=lambda r: r.decision_date)), minutes,
                     tuple(sorted(schedule.values(), key=lambda r: r.days[1])),
-                    tuple(sorted(notices.values(), key=lambda n: n.posted_on)))
+                    tuple(sorted(notices.values(), key=lambda n: n.posted_on)), minutes_links)
 
 
 def year_form(page: Page, year_value: str) -> dict[str, str]:

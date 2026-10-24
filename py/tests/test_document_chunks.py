@@ -115,6 +115,23 @@ def test_minutes_chunks_carry_each_members_statement():
     assert minutes_speaker("Voting on the Resolution") is None
 
 
+def test_the_rbis_plain_statement_headings_carry_their_speaker_too():
+    """The RBI's minutes set "Statement by …" in plain type (the 49 saved, Dec 2018 to Oct 2026), so the extractor reads
+    paragraphs: in minutes mode a paragraph that is only "Statement by <member>" starts that member's statement (B6
+    part 2). A sentence that merely begins so doesn't."""
+    body = _paragraph(random.Random(9), 6)
+    doc = plain(["Resolution", "5. The MPC decided to keep the policy repo rate unchanged.", "Statement by Dr. Nagesh Kumar",
+                 body, "Statement by M. Rajeshwar Rao", body,
+                 "Statement by the Governor on the outlook was read into the record at the end of the meeting.", body])
+    chunks = chunk_text(doc, root="Minutes", speakers="minutes")
+    assert [(c.speaker, c.section) for c in chunks] == [
+        (None, "Minutes"), ("Dr. Nagesh Kumar", "Minutes > Statement by Dr. Nagesh Kumar"),
+        ("M. Rajeshwar Rao", "Minutes > Statement by M. Rajeshwar Rao")]
+    assert chunks[2].body.count("Statement by") == 2                   # the sentence stays in Rao's statement
+    assert chunk_text(doc) == chunk_text(doc, speakers=None)            # outside minutes mode, nothing changes
+    assert {c.speaker for c in chunk_text(doc)} == {None}
+
+
 def test_transcript_chunks_break_at_each_change_of_speaker():
     doc, kw = documents()["fed_transcript"]
     chunks = chunk_text(doc, **kw)
