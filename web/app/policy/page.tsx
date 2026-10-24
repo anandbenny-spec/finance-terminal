@@ -20,6 +20,7 @@ import { RatesPanel } from "@/components/policy/RatesPanel";
 import { FEEDS, type TaskKey } from "@/lib/feeds";
 import { NOT_AVAILABLE, formatAxisNumber, formatAxisRange, formatDate, formatReleaseTime, type EventZone } from "@/lib/format";
 import { changeInWords, historyRows, lastMove, stanceText } from "@/lib/policy/decisions";
+import { pressReleaseLabel } from "@/lib/policy/document";
 import type { NextMeetingRow, PolicyMeetingRow, TaskFreshnessRow } from "@/lib/queries/api";
 import { readPolicyOverview, type LatestDecision } from "@/lib/queries/overview";
 import { POLICY_START, type Bank } from "@/lib/queries/policy";
@@ -191,8 +192,12 @@ export default async function PolicyPage() {
             policies={policies}
             now={now}
             footer={foot(
-              // RBI documents are named, never linked (Anand, 24 Oct 2026): the source line names the document and its date.
-              [rbiDoc && rbi?.meeting ? `${rbiSource} · ${rbiDoc.doc_type_label} · ${formatDate(rbi.meeting.decision_date)}` : rbiSource],
+              // RBI documents are named, never linked (Anand, 24 Oct 2026): the source line names the document, its date
+              // and RBI's press-release number (Brief §6.2).
+              [rbiDoc && rbi?.meeting
+                ? [rbiSource, rbiDoc.doc_type_label, formatDate(rbi.meeting.decision_date), pressReleaseLabel(rbiDoc)]
+                    .filter(Boolean).join(" · ")
+                : rbiSource],
               FEEDS.policyLatestRbi,
               rbi?.meeting?.decision_date ?? null,
             )}
