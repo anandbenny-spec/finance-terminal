@@ -24,6 +24,7 @@ import type {
   DocumentRow,
   ForecastRow,
   FieldPolicyRow,
+  MarketReactionRow,
   ObservationRow,
   ObservationStepRow,
   PolicyMeetingRow,
@@ -219,6 +220,21 @@ export async function readDailySeries(db: PolicyDb, seriesKey: string, range: Da
       .lte("obs_date", range.to)
       .order("obs_date")
       .range(from, to),
+  );
+}
+
+// ------------------------------------------------------------------ Decision-day moves (Pass 1b, #70)
+
+const REACTION_COLUMNS =
+  "meeting_slug, series_key, series_name, pre_obs_date, post_obs_date, pre_value, post_value, change, change_unit, is_surprise_measure, attribution";
+
+/**
+ * Every market reaction the database holds (api.market_reactions: about 110 decisions × 3 or 6 series), read whole
+ * against an exact count (readAll), by meeting then series. The page keeps the ones for the decisions it lists.
+ */
+export async function readReactions(db: PolicyDb): Promise<MarketReactionRow[]> {
+  return readAll<MarketReactionRow>("api.market_reactions", (from, to) =>
+    db.from("market_reactions").select(REACTION_COLUMNS, { count: "exact" }).order("meeting_slug").order("series_key").range(from, to),
   );
 }
 
