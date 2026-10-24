@@ -240,7 +240,8 @@ export async function readReactions(db: PolicyDb): Promise<MarketReactionRow[]> 
 
 // ------------------------------------------------------------------ Votes, documents and AI outputs (C3)
 
-const VOTE_COLUMNS = "meeting_slug, member_slug, member_name, voted_change_bps, stance_vote, is_dissent, dissent_text";
+const VOTE_COLUMNS =
+  "meeting_slug, member_slug, member_name, voted_change_bps, stance_vote, is_dissent, dissent_text, document_id, char_start, char_end";
 
 /** Slugs per request: keeps each `in.(…)` filter's URL short (a meeting slug is 15 characters). */
 const SLUGS_PER_REQUEST = 40;

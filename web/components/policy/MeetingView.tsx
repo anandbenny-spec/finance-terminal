@@ -12,6 +12,7 @@ import { Cited } from "@/components/ai/CitationChip";
 import { DecisionLine } from "@/components/ai/DecisionLine";
 import { DocumentView } from "@/components/ai/DocumentView";
 import { Redline } from "@/components/ai/Redline";
+import { VoteDotPlot } from "@/components/ai/VoteDotPlot";
 import { VoteGrid } from "@/components/ai/VoteGrid";
 import { Freshness } from "@/components/data/Freshness";
 import { Gated, type FieldPolicies } from "@/components/data/Gated";
@@ -42,6 +43,7 @@ import {
   votesAbsentNote,
 } from "@/lib/policy/meeting";
 import { buildRedline, parsePairs } from "@/lib/policy/redline";
+import { dotPlot } from "@/lib/policy/votedots";
 import { paragraphAt, paragraphs, textFromChunks, type Paragraph } from "@/lib/policy/text";
 import type { DocumentChunkRow, DocumentRow, PolicyMeetingRow } from "@/lib/queries/api";
 import { readDocumentChunks, readMeetingDiff, readMeetingPage, type CitedOutput, type MeetingPage } from "@/lib/queries/meeting";
@@ -178,6 +180,9 @@ async function Overview({ ctx }: { ctx: Ctx }) {
   const stanceChips = stance ? stanceCitations(stance.output, stance.citations) : [];
 
   const t = page.votes.ok ? tally(m, page.votes.rows) : null;
+  const voteList = page.votes.ok ? page.votes.rows : [];
+  const rows = voteRows(m, voteList);
+  const plot = t?.kind === "tally" ? dotPlot(m, voteList) : null;
   const rates = settings ? rateRows(settings, paras, decisionDoc?.id ?? null) : null;
   const projections = page.projections.ok ? projectionRows(page.projections.rows, paras, decisionDoc?.id ?? null) : null;
   const market = fed ? "US" : "IN";
@@ -236,7 +241,11 @@ async function Overview({ ctx }: { ctx: Ctx }) {
                   Stance tally from the resolution: members it doesn&apos;t name as preferring another stance are counted with the decision.
                 </p>
               )}
-              <VoteGrid rows={voteRows(m, page.votes.ok ? page.votes.rows : [])} stance={!fed} caption={`Votes at the ${meetingTitle(m)}`} />
+              {plot ? (
+                <VoteDotPlot plot={plot} bank={fed ? "Fed" : "RBI"} rows={rows} stance={!fed} caption={`Votes at the ${meetingTitle(m)}`} />
+              ) : (
+                <VoteGrid rows={rows} stance={!fed} caption={`Votes at the ${meetingTitle(m)}`} />
+              )}
             </>
           )}
         </Panel>
