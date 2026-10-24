@@ -19,11 +19,15 @@ import type {
   AiCitationRow,
   AiOutputRow,
   ApiDatabase,
+  DocumentChunkRow,
+  DocumentDiffRow,
   DocumentRow,
+  ForecastRow,
   FieldPolicyRow,
   ObservationRow,
   ObservationStepRow,
   PolicyMeetingRow,
+  PolicyRateSettingDetailRow,
   PolicyRateSettingRow,
   PolicyVoteRow,
   SeriesRow,
@@ -314,5 +318,106 @@ export async function readSeriesInfo(db: PolicyDb, keys: readonly string[]): Pro
       .in("key", [...keys])
       .order("key")
       .range(from, to),
+  );
+}
+
+// ------------------------------------------------------------------ The meeting page (C4)
+
+/** A meeting by its slug, whatever its status (held, scheduled, or a 2018 baseline); null if there's none. */
+export async function readMeeting(db: PolicyDb, slug: string): Promise<PolicyMeetingRow | null> {
+  return readFirst<PolicyMeetingRow>(
+    `api.policy_meetings ${slug}`,
+    db.from("policy_meetings").select(`${MEETING_COLUMNS}, has_press_conference`).eq("slug", slug).limit(1),
+  );
+}
+
+/** The bank's meetings just before and after a date (any status but cancelled), for the header's links. */
+export async function readAdjacentMeetings(
+  db: PolicyDb,
+  bank: Bank,
+  date: string,
+): Promise<{ previous: PolicyMeetingRow | null; next: PolicyMeetingRow | null }> {
+  const side = (before: boolean) => {
+    const base = db.from("policy_meetings").select(MEETING_COLUMNS).eq("bank", bank).neq("status", "cancelled");
+    return readFirst<PolicyMeetingRow>(
+      `api.policy_meetings ${bank} ${before ? "before" : "after"} ${date}`,
+      (before ? base.lt("decision_date", date) : base.gt("decision_date", date))
+        .order("decision_date", { ascending: !before })
+        .limit(1),
+    );
+  };
+  const [previous, next] = await Promise.all([side(true), side(false)]);
+  return { previous, next };
+}
+
+/** Every rate a meeting set, with its passage and cross-check note. */
+export async function readMeetingSettings(db: PolicyDb, slug: string): Promise<PolicyRateSettingDetailRow[]> {
+  return readAll<PolicyRateSettingDetailRow>(`api.policy_rate_settings ${slug}`, (from, to) =>
+    db
+      .from("policy_rate_settings")
+      .select(`${SETTING_COLUMNS}, crosscheck, document_id, char_start, char_end`, { count: "exact" })
+      .eq("meeting_slug", slug)
+      .order("instrument")
+      .range(from, to),
+  );
+}
+
+/** Every document of a meeting, every version (the page keeps each type's latest). */
+export async function readMeetingDocuments(db: PolicyDb, slug: string): Promise<DocumentRow[]> {
+  return readAll<DocumentRow>(`api.documents of ${slug}`, (from, to) =>
+    db
+      .from("documents")
+      .select(DOCUMENT_COLUMNS, { count: "exact" })
+      .eq("event_slug", slug)
+      .order("doc_type")
+      .order("version_no")
+      .range(from, to),
+  );
+}
+
+/** One document by id, or null. */
+export async function readDocument(db: PolicyDb, id: number): Promise<DocumentRow | null> {
+  return readFirst<DocumentRow>(`api.documents ${id}`, db.from("documents").select(DOCUMENT_COLUMNS).eq("id", id).limit(1));
+}
+
+/** The RBI's projections published with one resolution (vintage = its decision date). */
+export async function readProjections(db: PolicyDb, vintage: string): Promise<ForecastRow[]> {
+  return readAll<ForecastRow>(`api.forecasts vintage ${vintage}`, (from, to) =>
+    db
+      .from("forecasts")
+      .select(
+        "series_key, series_name, vintage_date, target_label, target_start, target_end, value, value_low, value_high, label, document_id, char_start, char_end",
+        { count: "exact" },
+      )
+      .in("series_key", ["rbi.proj_cpi", "rbi.proj_gdp"])
+      .eq("vintage_date", vintage)
+      .order("series_key")
+      .order("target_start")
+      .order("target_label")
+      .range(from, to),
+  );
+}
+
+/** A document's chunks in order (a minutes or transcript runs to a few dozen); their bodies rebuild its text. */
+export async function readChunks(db: PolicyDb, documentId: number): Promise<DocumentChunkRow[]> {
+  return readAll<DocumentChunkRow>(`api.document_chunks of ${documentId}`, (from, to) =>
+    db
+      .from("document_chunks")
+      .select("document_id, chunk_no, char_start, char_end, section, speaker, body", { count: "exact" })
+      .eq("document_id", documentId)
+      .order("chunk_no")
+      .range(from, to),
+  );
+}
+
+/** The diff of a statement or resolution against the one before it, or null (a baseline has none). */
+export async function readDiff(db: PolicyDb, documentId: number): Promise<DocumentDiffRow | null> {
+  return readFirst<DocumentDiffRow>(
+    `api.document_diffs of ${documentId}`,
+    db
+      .from("document_diffs")
+      .select("document_id, base_document_id, segments, words_added, words_removed")
+      .eq("document_id", documentId)
+      .limit(1),
   );
 }
