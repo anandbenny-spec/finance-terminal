@@ -1,8 +1,8 @@
 // web/lib/shell/nav.ts: the sidebar's groups (Design 01 §1.11, §4.1; Spec 01 §4.1). Live pages only: a page joins
 // the list when it ships, never as "coming soon". Start here (the landing page, 3–12 Nov), Policy Day (Pass 1b)
-// and How it's built (stage 2) join then. The admin group shows only to the logged-in admin (C6 builds the login).
+// and How it's built (stage 2) join then. About (#86) is live: the data ownership statement and privacy note. The admin group shows only to the logged-in admin (C6 builds the login).
 
-export type NavIcon = "policy" | "admin" | "health" | "labelling";
+export type NavIcon = "policy" | "about" | "admin" | "health" | "labelling";
 
 export type NavItem = { href: string; label: string; icon: NavIcon };
 
@@ -10,6 +10,7 @@ export type NavGroup = { heading: string; items: NavItem[]; adminOnly?: boolean 
 
 export const NAV: readonly NavGroup[] = [
   { heading: "Macro and policy", items: [{ href: "/policy", label: "Fed vs RBI", icon: "policy" }] },
+  { heading: "About", items: [{ href: "/about", label: "About and privacy", icon: "about" }] },
   {
     heading: "Admin",
     adminOnly: true,

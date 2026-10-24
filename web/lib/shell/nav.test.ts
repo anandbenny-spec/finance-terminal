@@ -5,13 +5,16 @@ import { activeHref, NAV, visibleGroups } from "./nav";
 
 describe("sidebar", () => {
   it("lists Macro and policy › Fed vs RBI for visitors, and adds the admin group for the admin", () => {
-    expect(visibleGroups(false).map((g) => [g.heading, g.items.map((i) => i.label)])).toEqual([["Macro and policy", ["Fed vs RBI"]]]);
-    expect(visibleGroups(true).map((g) => g.heading)).toEqual(["Macro and policy", "Admin"]);
+    expect(visibleGroups(false).map((g) => [g.heading, g.items.map((i) => i.label)])).toEqual([
+      ["Macro and policy", ["Fed vs RBI"]],
+      ["About", ["About and privacy"]],
+    ]);
+    expect(visibleGroups(true).map((g) => g.heading)).toEqual(["Macro and policy", "About", "Admin"]);
   });
 
   it("names no page that isn't built (no 'coming soon')", () => {
     const hrefs = NAV.flatMap((g) => g.items.map((i) => i.href));
-    expect(hrefs).toEqual(["/policy", "/admin", "/admin/health", "/admin/labelling"]);
+    expect(hrefs).toEqual(["/policy", "/about", "/admin", "/admin/health", "/admin/labelling"]);
   });
 
   it("marks the item a path belongs to, the most specific one first", () => {
@@ -20,6 +23,7 @@ describe("sidebar", () => {
     expect(activeHref("/admin/health")).toBe("/admin/health");
     expect(activeHref("/admin")).toBe("/admin");
     expect(activeHref("/admin/labelling")).toBe("/admin/labelling");
+    expect(activeHref("/about")).toBe("/about");
     expect(activeHref("/policyx")).toBeNull();
     expect(activeHref("/")).toBeNull();
     expect(activeHref(null)).toBeNull();
