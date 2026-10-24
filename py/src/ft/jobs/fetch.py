@@ -13,6 +13,10 @@ here, and every body it downloads reaches the storage function and `core.raw_fil
   this URL last returned is unchanged too (same hash: no new object, no new raw file).
 - **UTC:** `fetched_at` is timezone-aware UTC and HTTP dates are read as UTC; database sessions are UTC
   (`runner.connect`).
+- **Browser impersonation, per site** (`Site.impersonate`): Yahoo refuses a plain HTTP client from GitHub's runners
+  (HTTP 429 on every attempt: issue #13, 24 Oct 2026), so its requests go out through curl_cffi with Chrome's TLS
+  fingerprint and default headers, as the yfinance library's do (Anand, 24 Oct 2026: option (a) on #13). Only the
+  transport changes: pacing, retries, the counts, conditional requests and raw files are the same for every site.
 - **Secrets are sent, never recorded:** `secret_params` (FRED's `api_key`) go on the request only, so the URLs in
   `ops.http_cache`, `core.raw_file`, errors and logs never hold them.
 """
@@ -44,6 +48,7 @@ class Site:
     domains: tuple[str, ...]       # a host matches a domain itself or any subdomain of it
     gap: float                     # seconds from the end of one request to the start of the next
     jitter: float = 0.0            # plus up to this many seconds, at random
+    impersonate: str | None = None  # a curl_cffi browser target ("chrome"): this site's requests go through curl_cffi
 
     def matches(self, host: str) -> bool:
         host = host.lower().rstrip(".")
@@ -56,7 +61,8 @@ SITES: tuple[Site, ...] = (
     Site("fred", ("stlouisfed.org",), 0.5),              # api.stlouisfed.org, fred.stlouisfed.org
     Site("fed", ("federalreserve.gov",), 1.0, 1.0),
     Site("rbi", ("rbi.org.in",), 1.0, 1.0),              # rbi.org.in, website.rbi.org.in, rbidocs.rbi.org.in
-    Site("yahoo", ("finance.yahoo.com",), 1.5),
+    # query1/query2.finance.yahoo.com (the chart API and the crumb) and fc.yahoo.com (the cookie): one source.
+    Site("yahoo", ("finance.yahoo.com", "fc.yahoo.com"), 1.5, impersonate="chrome"),
 )
 
 RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
@@ -126,15 +132,69 @@ class Response:
     attempts: int
 
 
+# Headers httpx adds on its own. An impersonated request drops them, so the browser's own defaults go out instead (a
+# User-Agent that disagrees with the TLS fingerprint is itself a tell).
+_HTTPX_DEFAULTS = frozenset({"host", "user-agent", "accept", "accept-encoding", "accept-language", "connection"})
+# curl_cffi has already decoded the body, so these no longer describe it.
+_DECODED = frozenset({"content-encoding", "content-length", "transfer-encoding"})
+
+
+class CurlTransport(httpx.BaseTransport):
+    """An httpx transport that sends each request through curl_cffi impersonating a browser (`target`, e.g.
+    "chrome"). Redirects aren't followed here (HttpClient checks each hop) and cookies aren't kept here: the
+    HttpClient's jar holds them and sends them as the request's Cookie header. The body is read whole; a site using
+    this transport answers with small JSON (Yahoo's chart API), and HttpClient still refuses one over MAX_BYTES."""
+
+    def __init__(self, target: str, session=None):
+        if session is None:
+            # The `jobs` extra; the API service never imports this module.
+            from curl_cffi import requests as curl
+            session = curl.Session(impersonate=target)
+        self.target, self._session = target, session
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        from curl_cffi.requests import exceptions as cx
+        headers = [(k, v) for k, v in request.headers.multi_items() if k.lower() not in _HTTPX_DEFAULTS]
+        try:
+            r = self._session.request(request.method, str(request.url), headers=headers,
+                                      data=request.read() or None, allow_redirects=False, impersonate=self.target,
+                                      timeout=(TIMEOUT.connect, TIMEOUT.read), discard_cookies=True)
+        except cx.Timeout:                              # never str(e): it may hold the URL, with a secret parameter
+            raise httpx.ReadTimeout("curl_cffi: timed out", request=request) from None
+        except cx.RequestException as e:
+            raise httpx.ConnectError(f"curl_cffi: {type(e).__name__}", request=request) from None
+        out = [(k, v) for k, v in r.headers.multi_items() if k.lower() not in _DECODED]
+        return httpx.Response(r.status_code, headers=out, content=r.content, request=request)
+
+    def close(self) -> None:
+        self._session.close()
+
+
+def curl_transport(site: Site) -> httpx.BaseTransport:
+    return CurlTransport(site.impersonate)
+
+
 class HttpClient:
     """One per job run: the pacing state lives here, so every task in the run, and every watch poll, shares it."""
 
     def __init__(self, *, transport: httpx.BaseTransport | None = None, sites: tuple[Site, ...] = SITES,
                  monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
-                 rand: Callable[[], float] = random.random, clock: Callable[[], datetime] = utcnow):
+                 rand: Callable[[], float] = random.random, clock: Callable[[], datetime] = utcnow,
+                 site_transport: Callable[[Site], httpx.BaseTransport] | None = None):
+        """`site_transport` gives each impersonating site its transport; by default curl_cffi's, unless `transport`
+        is given (a test's mock then answers every site, impersonating or not)."""
         self.sites, self._mono, self._sleep, self._rand, self._clock = sites, monotonic, sleep, rand, clock
         self._last: dict[str, float] = {}           # site key -> when its last request ended (monotonic)
-        self._http = httpx.Client(transport=transport, timeout=TIMEOUT, follow_redirects=False,
+        if site_transport is None and transport is None:
+            site_transport = curl_transport
+        mounts: dict[str, httpx.BaseTransport] = {}
+        for s in sites:
+            if s.impersonate and site_transport is not None:
+                t = site_transport(s)
+                for d in s.domains:
+                    mounts[f"all://{d}"] = mounts[f"all://*.{d}"] = t
+        self._http = httpx.Client(transport=transport, mounts=mounts or None, timeout=TIMEOUT,
+                                  follow_redirects=False,
                                   headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"})
 
     def close(self) -> None:
@@ -150,13 +210,14 @@ class HttpClient:
     def _backoff(self, attempt: int) -> float:
         return BACKOFF * 2 ** attempt + BACKOFF * self._rand()
 
-    def _once(self, url: str, record: str, params, headers, data=None) -> tuple[int, httpx.Headers, bytes]:
-        """One attempt. Redirects are followed here, each hop checked first, so an unlisted host is never contacted.
-        A form post (`data`) that redirects continues as a GET, as browsers do."""
+    def _once(self, url: str, record: str, params, headers, data=None,
+              follow: bool = True) -> tuple[int, httpx.Headers, bytes]:
+        """One attempt. Redirects are followed here (unless `follow` is False), each hop checked first, so an
+        unlisted host is never contacted. A form post (`data`) that redirects continues as a GET, as browsers do."""
         method = "POST" if data is not None else "GET"
         for _ in range(MAX_REDIRECTS + 1):
             with self._http.stream(method, url, params=params, headers=headers, data=data) as r:
-                if r.status_code in REDIRECT_STATUS and (location := r.headers.get("location")):
+                if follow and r.status_code in REDIRECT_STATUS and (location := r.headers.get("location")):
                     nxt = r.url.join(location)
                     if nxt.scheme not in ("http", "https") or not any(s.matches(nxt.host) for s in self.sites):
                         raise FetchError(record, f"redirected to {nxt.host or nxt.scheme}, which isn't a listed source")
@@ -175,17 +236,18 @@ class HttpClient:
 
     def get(self, url: str, *, record_url: str | None = None, params: Mapping[str, str] | None = None,
             headers: Mapping[str, str] | None = None, stats: Counter | None = None,
-            data: Mapping[str, str] | None = None) -> Response:
+            data: Mapping[str, str] | None = None, follow_redirects: bool = True) -> Response:
         """GET, or a form post with `data`, with pacing and retries. Returns the last response whatever its status
         (the caller decides what a 404 means); raises FetchError for an unlisted host, an oversized body, a
-        Retry-After beyond MAX_WAIT or a network error that outlasts the retries."""
+        Retry-After beyond MAX_WAIT or a network error that outlasts the retries. follow_redirects=False returns a
+        redirect as it is (a request made only for the cookie it sets)."""
         record = record_url or url
         site = site_for(url, self.sites)
         stats = Counter() if stats is None else stats
         for attempt in range(RETRIES + 1):
             self._pace(site)
             try:
-                status, hdrs, body = self._once(url, record, params, headers, data)
+                status, hdrs, body = self._once(url, record, params, headers, data, follow_redirects)
             except httpx.TransportError as e:        # DNS, TLS, timeouts, resets: never str(e), which may hold the URL
                 self._last[site.key] = self._mono()
                 stats["errors"] += 1
