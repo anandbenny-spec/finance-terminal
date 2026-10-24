@@ -24,6 +24,64 @@ def rbi_page(body: str, *, title: str = RBI_TITLE, charset: str = "utf-8", day: 
 <div class="footer">© Reserve Bank of India. All Rights Reserved.</div></form></body></html>"""
 
 
+def rbi_view_page(body: str, *, title: str) -> str:
+    """The old site's bs_viewcontent.aspx template around a body (the Governor's statements to Oct 2020, the
+    transcripts to Apr 2022; checked 24 Oct 2026): the PDF link, a <th> title and the body row, no date row."""
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Reserve Bank of India</title></head><body>
+<form id="form1"><div class="container_12"><div class="grid_12 omega"><div class="text1" id="example-min"><div>
+<table width="100%" border="0" cellpadding="0" cellspacing="0" class="tablebg">
+<tr><td class="tableheader"><a href="https://rbidocs.rbi.org.in/rdocs/Content/PDFs/X.PDF"><img alt="PDF - {title}"
+src="../Images/pdf.gif"></a> (<span aria-hidden="true">174 kb</span>)</td></tr><tr><th>{title}</th></tr>
+<tr><td><table width="100%" border="0" align="center" class="td"><tr><td>{body}</td></tr></table></td></tr>
+</table></div></div></div></div><div class="footer">© Reserve Bank of India. All Rights Reserved.</div></form></body></html>"""
+
+
+def rbi_speech_page(body: str, *, title: str, day: str) -> str:
+    """The old site's BS_SpeechesView.aspx template around a body (the transcripts from Jun 2022; checked 24 Oct 2026):
+    the press release's header rows (PDF link, date, title) above a tablecontent2 row."""
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Reserve Bank of India</title></head><body>
+<form id="form1"><div><table class="tablebg" cellpadding="0" cellspacing="0" width="100%">
+<tr><td class="tableheader"><a href="https://rbidocs.rbi.org.in/rdocs/Speeches/PDFs/X.PDF"><img alt="PDF"
+src="../Images/pdf.gif"></a> (<span aria-hidden="true">209 kb</span>)</td></tr>
+<tr><td align="right" class="tableheader"><b> Date : {day}</b></td></tr>
+<tr><td align="center" class="tableheader"><b>{title}</b></td></tr>
+<tr class="tablecontent2"><td>{body}</td></tr></table></div></form></body></html>"""
+
+
+def rbi_statement_body(opening: str, rng: random.Random | None = None, *, press_release: str | None = None) -> str:
+    """A Governor's statement: an opening paragraph, then numbered ones and a heading, as the RBI sets them."""
+    rng = rng or random.Random(5)
+    paras = [f"<p>{k}. {_paragraph(rng, rng.randint(4, 8))}</p>" for k in range(2, 12)]
+    tail = f'<p class="head">Press Release: {press_release}</p>' if press_release else ""
+    return (f"<p>{opening}</p>{''.join(paras[:4])}<p><b>Decisions and Deliberations of the Monetary Policy Committee "
+            f"(MPC)</b></p>{''.join(paras[4:])}{tail}")
+
+
+def _turn_text(rng: random.Random) -> str:
+    return _paragraph(rng, rng.randint(2, 6))
+
+
+def rbi_transcript_view(turns: list[str], *, date_line: str | None, participants: list[str],
+                        rng: random.Random | None = None) -> str:
+    """A viewcontent-era transcript body: the date line (to Feb 2020), the participants, then a nested table of turns,
+    a name cell ("Shaktikanta Das:") beside each turn's paragraphs. `turns`: the speakers' labels, in order."""
+    rng = rng or random.Random(13)
+    head = (f"<p>{date_line}</p>" if date_line else "") + "<p><b>Participants from RBI:</b></p><p>" + "<br>".join(
+        participants) + "</p>"
+    rows = "".join(f'<tr><td class="head">{who}</td><td><p>{_turn_text(rng)}</p><p>{_turn_text(rng)}</p></td></tr>'
+                   for who in turns)
+    return f'<table class="tablebg"><tr><td colspan="2">{head}</td></tr>{rows}</table>'
+
+
+def rbi_transcript_speech(turns: list[str], *, participants: list[str], rng: random.Random | None = None) -> str:
+    """A speech-era transcript body: the participants list, the moderator's line, then each turn as a paragraph whose
+    first line is the speaker's label."""
+    rng = rng or random.Random(17)
+    head = ("<p>Participants from the Reserve Bank of India:<br>" + "<br>".join(participants) + "</p>"
+            "<p>Moderator:<br>Shri Puneet Pancholy – Chief General Manager, Reserve Bank of India</p>")
+    return head + "".join(f"<p>{who}<br>{_turn_text(rng)}</p><p>{_turn_text(rng)}</p>" for who in turns)
+
+
 _RNG = random.Random(20261023)
 _TOPICS = ["headline inflation", "core inflation", "food prices", "the rupee", "bank credit", "the fiscal deficit",
            "capital flows", "crude oil prices", "rural demand", "urban consumption", "services exports",

@@ -69,7 +69,7 @@ finance-terminal/            on the Mac: ~/Projects/finance-terminal/app
 │   ├── src/ft/engines/      document/ (canonical text, chunker, differ, store); time series, events (to come)
 │   ├── src/ft/policy/       module 1's source parsers and rules: dates, fed_calendar, rbi_calendar, meetings,
 │   │                        fed_statement, fed_minutes, fed_transcript, rbi_resolution, rbi_minutes,
-│   │                        members (the rosters)
+│   │                        rbi_statements (Governor's statements, transcripts), members (the rosters)
 │   ├── src/ft/api/app.py    FastAPI service on Vercel at /api/* (entrypoint py/main.py, main:app)
 │   ├── config/              tasks.yaml · prompts/<task>/vN.md + schema · ai_prices.yaml (dated) · eval/sets/ ·
 │   │                        curated YAML (meeting_times, members)

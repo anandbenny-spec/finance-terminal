@@ -27,6 +27,10 @@ defaults:
     working-directory: py
 jobs:
   run:
+    # Issue #69: a scheduled run does nothing unless the repository variable PRODUCTION_SCHEDULES is 'on'
+    # (unset = off), so the workflow can stay enabled for manual dev runs while production's schedules stay off.
+    # Manual runs are unchanged. py/tests/test_workflows.py fails CI for a scheduled workflow without this guard.
+    if: github.event_name != 'schedule' || vars.PRODUCTION_SCHEDULES == 'on'
     runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026; the audit's G1/S1 ran on 24.04
     timeout-minutes: 75
     env:
