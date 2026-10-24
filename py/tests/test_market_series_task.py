@@ -25,6 +25,7 @@ ENDPOINT = f"http://127.0.0.1:{PORT}"
 KEY = "test.b4_market_series"
 NOW = datetime(2026, 10, 23, 10, 0, tzinfo=UTC)       # 06:00 New York: the 22 Oct close is in, 23 Oct's isn't
 API_KEY = "fred-secret-key-b4"
+CRUMB, A3 = "b4Crumb.x7Q", "d=AQABBb4cookie&S=AQAAAtest"
 _n = itertools.count(1)
 
 
@@ -115,11 +116,23 @@ class Data:
         }
         self.yahoo_meta = {"^GSPC": ("^GSPC", "USD"), "INR=X": ("INR=X", "INR")}
         self.yahoo_live = {"^GSPC": 7000.0}       # a bar for the fetch day's session, still trading
+        # Yahoo's session, as it answers yfinance: fc.yahoo.com a 404 that sets the A3 cookie, getcrumb the crumb
+        # (only with that cookie). The chart requires neither here; the tests check what's sent.
+        self.crumb_reply: httpx.Response | None = None
         self.seen: list[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.seen.append(request)
         url, p = request.url, request.url.params
+        if url.host == "fc.yahoo.com":
+            return httpx.Response(404, text="<html>not found</html>",
+                                  headers=[("set-cookie", f"A3={A3}; Domain=.yahoo.com; Path=/; Secure"),
+                                           ("set-cookie", "B=x; Domain=.yahoo.com; Path=/")])
+        if url.host == "query1.finance.yahoo.com" and url.path == "/v1/test/getcrumb":
+            if self.crumb_reply is not None:
+                return self.crumb_reply
+            ok = f"A3={A3}" in request.headers.get("cookie", "")
+            return httpx.Response(200, text=CRUMB) if ok else httpx.Response(401, text="<html>no</html>")
         if url.host == "api.stlouisfed.org":
             assert p["api_key"] == API_KEY
             s, e = date.fromisoformat(p["observation_start"]), date.fromisoformat(p["observation_end"])
@@ -185,7 +198,9 @@ def test_first_load_publishes_every_series_but_sp500_and_a_rerun_writes_nothing(
     assert max(obs(prefix, "INR=X")) == date(2026, 10, 22)
     assert sorted(obs(prefix, "IN10Y")) == [date(2026, 8, 1), date(2026, 9, 1)]
     assert str(obs(prefix, "^GSPC")[date(2026, 10, 22)]) == str(obs(prefix, "SP500")[date(2026, 10, 22)])
-    assert tr[5]["200"] == 6                          # one response per series, each stored as a raw file
+    # One response per series, each stored as a raw file, plus getcrumb's 200 and fc.yahoo.com's 404 (not stored).
+    assert tr[5]["200"] == 7 and tr[5]["404"] == 1 and tr[5]["new_raw_files"] == 6
+    assert check(tr, "yahoo_session")["passed"] and check(tr, "yahoo_session")["detail"] == "crumb received"
 
     code, tr2 = series_run(prefix, data)
     assert tr2[1] == "success" and tr2[2] == 0, tr2
@@ -204,6 +219,37 @@ def test_the_fred_key_is_sent_but_never_recorded(s3):
               *[f"%{API_KEY}%"] * 3)
     assert leaks == [(0,)]
     assert q("select count(*) from ops.http_cache where url like %s", "%series_id=DGS10%")[0][0] >= 1
+
+
+@pytest.mark.db
+def test_yahoo_gets_its_cookie_and_crumb_first_and_the_crumb_is_never_recorded(s3):
+    prefix, data = make_series(), Data()
+    code, tr = series_run(prefix, data)
+    assert code == 0 and tr[1] == "success", tr
+    hosts = [r.url.host for r in data.seen if "yahoo" in r.url.host]
+    assert hosts[:2] == ["fc.yahoo.com", "query1.finance.yahoo.com"]          # once per run, before any chart
+    assert hosts.count("fc.yahoo.com") == 1 and hosts.count("query1.finance.yahoo.com") == 1
+    charts = [r for r in data.seen if r.url.host == "query2.finance.yahoo.com"]
+    assert len(charts) == 2
+    assert all(r.url.params["crumb"] == CRUMB and f"A3={A3}" in r.headers["cookie"] for r in charts)
+    leaks = q("""select (select count(*) from ops.http_cache where url like %s)
+                      + (select count(*) from core.raw_file where source_url like %s)""", *[f"%{CRUMB}%"] * 2)
+    assert leaks == [(0,)]
+    assert q("select count(*) from core.raw_file where source_url like %s", "%yahoo.com/v1/%")[0][0] == 0
+    assert q("select count(*) from ops.http_cache where url like %s", "%fc.yahoo.com%")[0][0] == 0
+
+
+@pytest.mark.db
+def test_without_a_crumb_the_charts_are_still_asked_for_with_a_warning(s3):
+    prefix, data = make_series(), Data()
+    data.crumb_reply = httpx.Response(429, text="Too Many Requests")
+    code, tr = series_run(prefix, data)
+    assert code == 0 and tr[1] == "success", tr                       # the warning doesn't block the load
+    c = check(tr, "yahoo_session")
+    assert not c["passed"] and not c["blocking"] and "HTTP 429" in c["detail"]
+    charts = [r for r in data.seen if r.url.host == "query2.finance.yahoo.com"]
+    assert len(charts) == 2 and all("crumb" not in r.url.params for r in charts)
+    assert tr[5]["429"] == 4                                          # getcrumb, retried 3 times
 
 
 @pytest.mark.db
