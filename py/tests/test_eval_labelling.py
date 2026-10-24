@@ -102,7 +102,9 @@ def test_the_rule_is_deterministic_and_refuses_an_unbalanced_set():
 def test_stance_sentences():
     text = ("The MPC decided to keep the policy repo rate unchanged. The MPC also decided to remain focused on "
             "withdrawal of accommodation. Its stance is neutral.\nThe stance was retained by 5 to 1.")
-    assert stance_sentences(text) == ["Its stance is neutral.", "The stance was retained by 5 to 1."]
+    assert stance_sentences(text) == ["The MPC also decided to remain focused on withdrawal of accommodation.",
+                                      "Its stance is neutral.", "The stance was retained by 5 to 1."]
+    assert stance_sentences(text, limit=1) == ["The MPC also decided to remain focused on withdrawal of accommodation."]
     assert stance_sentences("No such word.") == []
 
 

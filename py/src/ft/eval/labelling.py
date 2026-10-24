@@ -205,10 +205,12 @@ def document_text(conn, document_id: int) -> str:
         "select body from core.chunk where document_id = %s order by chunk_no", (document_id,)).fetchall())
 
 
-_SENTENCE = re.compile(r"[^.!?\n]*\bstance\b[^.!?\n]*[.!?]?", re.IGNORECASE)
+# "stance", or "accommodation": 2022–24 resolutions state it without the word ("remain focused on withdrawal of
+# accommodation").
+_SENTENCE = re.compile(r"[^.!?\n]*\b(?:stance|accommodation)\b[^.!?\n]*[.!?]?", re.IGNORECASE)
 
 
-def stance_sentences(text: str, limit: int = 3, width: int = 400) -> list[str]:
+def stance_sentences(text: str, limit: int = 4, width: int = 300) -> list[str]:
     """The sentences that name a stance, for drafting RBI's half of `policy_stance` (never published)."""
     out = []
     for m in _SENTENCE.finditer(text):
