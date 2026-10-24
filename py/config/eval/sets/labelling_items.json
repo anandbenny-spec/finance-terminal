@@ -1,10 +1,634 @@
 {
   "rule_version": 1,
-  "chosen_from": null,
+  "chosen_from": "dev: eval-items run 40121454520 on 4cd66ed, 24 Oct 2026",
   "sets": {
-    "policy_hawk_dove": [],
-    "policy_stance": [],
-    "policy_member_hawk_dove": []
+    "policy_hawk_dove": [
+      {
+        "id": "policy_hawk_dove:fomc-2019-09-18",
+        "bank": "Fed",
+        "meeting": "fomc-2019-09-18",
+        "decision_date": "2019-09-18",
+        "doc_type": "fomc_statement",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2019-12-11",
+        "bank": "Fed",
+        "meeting": "fomc-2019-12-11",
+        "decision_date": "2019-12-11",
+        "doc_type": "fomc_statement",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2020-03-03",
+        "bank": "Fed",
+        "meeting": "fomc-2020-03-03",
+        "decision_date": "2020-03-03",
+        "doc_type": "fomc_statement",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2021-01-27",
+        "bank": "Fed",
+        "meeting": "fomc-2021-01-27",
+        "decision_date": "2021-01-27",
+        "doc_type": "fomc_statement",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2022-01-26",
+        "bank": "Fed",
+        "meeting": "fomc-2022-01-26",
+        "decision_date": "2022-01-26",
+        "doc_type": "fomc_statement",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2022-05-04",
+        "bank": "Fed",
+        "meeting": "fomc-2022-05-04",
+        "decision_date": "2022-05-04",
+        "doc_type": "fomc_statement",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2022-09-21",
+        "bank": "Fed",
+        "meeting": "fomc-2022-09-21",
+        "decision_date": "2022-09-21",
+        "doc_type": "fomc_statement",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2022-12-14",
+        "bank": "Fed",
+        "meeting": "fomc-2022-12-14",
+        "decision_date": "2022-12-14",
+        "doc_type": "fomc_statement",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2023-03-22",
+        "bank": "Fed",
+        "meeting": "fomc-2023-03-22",
+        "decision_date": "2023-03-22",
+        "doc_type": "fomc_statement",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2024-05-01",
+        "bank": "Fed",
+        "meeting": "fomc-2024-05-01",
+        "decision_date": "2024-05-01",
+        "doc_type": "fomc_statement",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2024-12-18",
+        "bank": "Fed",
+        "meeting": "fomc-2024-12-18",
+        "decision_date": "2024-12-18",
+        "doc_type": "fomc_statement",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2025-09-17",
+        "bank": "Fed",
+        "meeting": "fomc-2025-09-17",
+        "decision_date": "2025-09-17",
+        "doc_type": "fomc_statement",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2025-12-10",
+        "bank": "Fed",
+        "meeting": "fomc-2025-12-10",
+        "decision_date": "2025-12-10",
+        "doc_type": "fomc_statement",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2026-03-18",
+        "bank": "Fed",
+        "meeting": "fomc-2026-03-18",
+        "decision_date": "2026-03-18",
+        "doc_type": "fomc_statement",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_hawk_dove:fomc-2026-09-16",
+        "bank": "Fed",
+        "meeting": "fomc-2026-09-16",
+        "decision_date": "2026-09-16",
+        "doc_type": "fomc_statement",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2019-02-07",
+        "bank": "RBI",
+        "meeting": "mpc-2019-02-07",
+        "decision_date": "2019-02-07",
+        "doc_type": "mpc_resolution",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2019-06-06",
+        "bank": "RBI",
+        "meeting": "mpc-2019-06-06",
+        "decision_date": "2019-06-06",
+        "doc_type": "mpc_resolution",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2019-10-04",
+        "bank": "RBI",
+        "meeting": "mpc-2019-10-04",
+        "decision_date": "2019-10-04",
+        "doc_type": "mpc_resolution",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2020-08-06",
+        "bank": "RBI",
+        "meeting": "mpc-2020-08-06",
+        "decision_date": "2020-08-06",
+        "doc_type": "mpc_resolution",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2021-08-06",
+        "bank": "RBI",
+        "meeting": "mpc-2021-08-06",
+        "decision_date": "2021-08-06",
+        "doc_type": "mpc_resolution",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2022-06-08",
+        "bank": "RBI",
+        "meeting": "mpc-2022-06-08",
+        "decision_date": "2022-06-08",
+        "doc_type": "mpc_resolution",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2022-08-05",
+        "bank": "RBI",
+        "meeting": "mpc-2022-08-05",
+        "decision_date": "2022-08-05",
+        "doc_type": "mpc_resolution",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2022-09-30",
+        "bank": "RBI",
+        "meeting": "mpc-2022-09-30",
+        "decision_date": "2022-09-30",
+        "doc_type": "mpc_resolution",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2022-12-07",
+        "bank": "RBI",
+        "meeting": "mpc-2022-12-07",
+        "decision_date": "2022-12-07",
+        "doc_type": "mpc_resolution",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2023-06-08",
+        "bank": "RBI",
+        "meeting": "mpc-2023-06-08",
+        "decision_date": "2023-06-08",
+        "doc_type": "mpc_resolution",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2024-06-07",
+        "bank": "RBI",
+        "meeting": "mpc-2024-06-07",
+        "decision_date": "2024-06-07",
+        "doc_type": "mpc_resolution",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2025-04-09",
+        "bank": "RBI",
+        "meeting": "mpc-2025-04-09",
+        "decision_date": "2025-04-09",
+        "doc_type": "mpc_resolution",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2025-12-05",
+        "bank": "RBI",
+        "meeting": "mpc-2025-12-05",
+        "decision_date": "2025-12-05",
+        "doc_type": "mpc_resolution",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2026-04-08",
+        "bank": "RBI",
+        "meeting": "mpc-2026-04-08",
+        "decision_date": "2026-04-08",
+        "doc_type": "mpc_resolution",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_hawk_dove:mpc-2026-10-07",
+        "bank": "RBI",
+        "meeting": "mpc-2026-10-07",
+        "decision_date": "2026-10-07",
+        "doc_type": "mpc_resolution",
+        "phase": "tightening"
+      }
+    ],
+    "policy_stance": [
+      {
+        "id": "policy_stance:fomc-2019-10-30",
+        "bank": "Fed",
+        "meeting": "fomc-2019-10-30",
+        "decision_date": "2019-10-30",
+        "doc_type": "fomc_statement",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_stance:fomc-2020-04-29",
+        "bank": "Fed",
+        "meeting": "fomc-2020-04-29",
+        "decision_date": "2020-04-29",
+        "doc_type": "fomc_statement",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_stance:fomc-2021-06-16",
+        "bank": "Fed",
+        "meeting": "fomc-2021-06-16",
+        "decision_date": "2021-06-16",
+        "doc_type": "fomc_statement",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_stance:fomc-2022-07-27",
+        "bank": "Fed",
+        "meeting": "fomc-2022-07-27",
+        "decision_date": "2022-07-27",
+        "doc_type": "fomc_statement",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_stance:fomc-2023-02-01",
+        "bank": "Fed",
+        "meeting": "fomc-2023-02-01",
+        "decision_date": "2023-02-01",
+        "doc_type": "fomc_statement",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_stance:fomc-2023-05-03",
+        "bank": "Fed",
+        "meeting": "fomc-2023-05-03",
+        "decision_date": "2023-05-03",
+        "doc_type": "fomc_statement",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_stance:fomc-2023-12-13",
+        "bank": "Fed",
+        "meeting": "fomc-2023-12-13",
+        "decision_date": "2023-12-13",
+        "doc_type": "fomc_statement",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_stance:fomc-2024-11-07",
+        "bank": "Fed",
+        "meeting": "fomc-2024-11-07",
+        "decision_date": "2024-11-07",
+        "doc_type": "fomc_statement",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_stance:fomc-2025-07-30",
+        "bank": "Fed",
+        "meeting": "fomc-2025-07-30",
+        "decision_date": "2025-07-30",
+        "doc_type": "fomc_statement",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_stance:fomc-2025-10-29",
+        "bank": "Fed",
+        "meeting": "fomc-2025-10-29",
+        "decision_date": "2025-10-29",
+        "doc_type": "fomc_statement",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_stance:mpc-2019-04-04",
+        "bank": "RBI",
+        "meeting": "mpc-2019-04-04",
+        "decision_date": "2019-04-04",
+        "doc_type": "mpc_resolution",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_stance:mpc-2020-05-22",
+        "bank": "RBI",
+        "meeting": "mpc-2020-05-22",
+        "decision_date": "2020-05-22",
+        "doc_type": "mpc_resolution",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_stance:mpc-2020-12-04",
+        "bank": "RBI",
+        "meeting": "mpc-2020-12-04",
+        "decision_date": "2020-12-04",
+        "doc_type": "mpc_resolution",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_stance:mpc-2022-02-10",
+        "bank": "RBI",
+        "meeting": "mpc-2022-02-10",
+        "decision_date": "2022-02-10",
+        "doc_type": "mpc_resolution",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_stance:mpc-2022-06-08",
+        "bank": "RBI",
+        "meeting": "mpc-2022-06-08",
+        "decision_date": "2022-06-08",
+        "doc_type": "mpc_resolution",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_stance:mpc-2022-09-30",
+        "bank": "RBI",
+        "meeting": "mpc-2022-09-30",
+        "decision_date": "2022-09-30",
+        "doc_type": "mpc_resolution",
+        "phase": "tightening"
+      },
+      {
+        "id": "policy_stance:mpc-2024-02-08",
+        "bank": "RBI",
+        "meeting": "mpc-2024-02-08",
+        "decision_date": "2024-02-08",
+        "doc_type": "mpc_resolution",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_stance:mpc-2025-06-06",
+        "bank": "RBI",
+        "meeting": "mpc-2025-06-06",
+        "decision_date": "2025-06-06",
+        "doc_type": "mpc_resolution",
+        "phase": "easing"
+      },
+      {
+        "id": "policy_stance:mpc-2026-02-06",
+        "bank": "RBI",
+        "meeting": "mpc-2026-02-06",
+        "decision_date": "2026-02-06",
+        "doc_type": "mpc_resolution",
+        "phase": "holding"
+      },
+      {
+        "id": "policy_stance:mpc-2026-10-07",
+        "bank": "RBI",
+        "meeting": "mpc-2026-10-07",
+        "decision_date": "2026-10-07",
+        "doc_type": "mpc_resolution",
+        "phase": "tightening"
+      }
+    ],
+    "policy_member_hawk_dove": [
+      {
+        "id": "policy_member_hawk_dove:mpc-2019-02-07:dr-pami-dua",
+        "bank": "RBI",
+        "meeting": "mpc-2019-02-07",
+        "decision_date": "2019-02-07",
+        "doc_type": "mpc_minutes",
+        "phase": "easing",
+        "speaker": "Dr. Pami Dua"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2019-06-06:dr-ravindra-h-dholakia",
+        "bank": "RBI",
+        "meeting": "mpc-2019-06-06",
+        "decision_date": "2019-06-06",
+        "doc_type": "mpc_minutes",
+        "phase": "easing",
+        "speaker": "Dr. Ravindra H. Dholakia"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2019-08-07:dr-chetan-ghate",
+        "bank": "RBI",
+        "meeting": "mpc-2019-08-07",
+        "decision_date": "2019-08-07",
+        "doc_type": "mpc_minutes",
+        "phase": "easing",
+        "speaker": "Dr. Chetan Ghate"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2020-03-27:shri-shaktikanta-das",
+        "bank": "RBI",
+        "meeting": "mpc-2020-03-27",
+        "decision_date": "2020-03-27",
+        "doc_type": "mpc_minutes",
+        "phase": "easing",
+        "speaker": "Shri Shaktikanta Das"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2020-08-06:dr-mridul-k-saggar",
+        "bank": "RBI",
+        "meeting": "mpc-2020-08-06",
+        "decision_date": "2020-08-06",
+        "doc_type": "mpc_minutes",
+        "phase": "holding",
+        "speaker": "Dr. Mridul K. Saggar"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2021-04-07:dr-michael-debabrata-patra",
+        "bank": "RBI",
+        "meeting": "mpc-2021-04-07",
+        "decision_date": "2021-04-07",
+        "doc_type": "mpc_minutes",
+        "phase": "holding",
+        "speaker": "Dr. Michael Debabrata Patra"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2021-12-08:dr-shashanka-bhide",
+        "bank": "RBI",
+        "meeting": "mpc-2021-12-08",
+        "decision_date": "2021-12-08",
+        "doc_type": "mpc_minutes",
+        "phase": "holding",
+        "speaker": "Dr. Shashanka Bhide"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2022-05-04:prof-jayanth-r-varma",
+        "bank": "RBI",
+        "meeting": "mpc-2022-05-04",
+        "decision_date": "2022-05-04",
+        "doc_type": "mpc_minutes",
+        "phase": "tightening",
+        "speaker": "Prof. Jayanth R. Varma"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2022-06-08:dr-ashima-goyal",
+        "bank": "RBI",
+        "meeting": "mpc-2022-06-08",
+        "decision_date": "2022-06-08",
+        "doc_type": "mpc_minutes",
+        "phase": "tightening",
+        "speaker": "Dr. Ashima Goyal"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2022-08-05:dr-rajiv-ranjan",
+        "bank": "RBI",
+        "meeting": "mpc-2022-08-05",
+        "decision_date": "2022-08-05",
+        "doc_type": "mpc_minutes",
+        "phase": "tightening",
+        "speaker": "Dr. Rajiv Ranjan"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2022-12-07:dr-shashanka-bhide",
+        "bank": "RBI",
+        "meeting": "mpc-2022-12-07",
+        "decision_date": "2022-12-07",
+        "doc_type": "mpc_minutes",
+        "phase": "tightening",
+        "speaker": "Dr. Shashanka Bhide"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2023-02-08:prof-jayanth-r-varma",
+        "bank": "RBI",
+        "meeting": "mpc-2023-02-08",
+        "decision_date": "2023-02-08",
+        "doc_type": "mpc_minutes",
+        "phase": "tightening",
+        "speaker": "Prof. Jayanth R. Varma"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2023-08-10:shri-shaktikanta-das",
+        "bank": "RBI",
+        "meeting": "mpc-2023-08-10",
+        "decision_date": "2023-08-10",
+        "doc_type": "mpc_minutes",
+        "phase": "holding",
+        "speaker": "Shri Shaktikanta Das"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2024-04-05:dr-michael-debabrata-patra",
+        "bank": "RBI",
+        "meeting": "mpc-2024-04-05",
+        "decision_date": "2024-04-05",
+        "doc_type": "mpc_minutes",
+        "phase": "holding",
+        "speaker": "Dr. Michael Debabrata Patra"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2024-12-06:dr-nagesh-kumar",
+        "bank": "RBI",
+        "meeting": "mpc-2024-12-06",
+        "decision_date": "2024-12-06",
+        "doc_type": "mpc_minutes",
+        "phase": "holding",
+        "speaker": "Dr. Nagesh Kumar"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2025-02-07:prof-ram-singh",
+        "bank": "RBI",
+        "meeting": "mpc-2025-02-07",
+        "decision_date": "2025-02-07",
+        "doc_type": "mpc_minutes",
+        "phase": "easing",
+        "speaker": "Prof Ram Singh"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2025-04-09:shri-saugata-bhattacharya",
+        "bank": "RBI",
+        "meeting": "mpc-2025-04-09",
+        "decision_date": "2025-04-09",
+        "doc_type": "mpc_minutes",
+        "phase": "easing",
+        "speaker": "Shri Saugata Bhattacharya"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2025-12-05:dr-poonam-gupta",
+        "bank": "RBI",
+        "meeting": "mpc-2025-12-05",
+        "decision_date": "2025-12-05",
+        "doc_type": "mpc_minutes",
+        "phase": "easing",
+        "speaker": "Dr. Poonam Gupta"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2026-04-08:shri-sanjay-malhotra",
+        "bank": "RBI",
+        "meeting": "mpc-2026-04-08",
+        "decision_date": "2026-04-08",
+        "doc_type": "mpc_minutes",
+        "phase": "holding",
+        "speaker": "Shri Sanjay Malhotra"
+      },
+      {
+        "id": "policy_member_hawk_dove:mpc-2026-10-07:shri-indranil-bhattacharyya",
+        "bank": "RBI",
+        "meeting": "mpc-2026-10-07",
+        "decision_date": "2026-10-07",
+        "doc_type": "mpc_minutes",
+        "phase": "tightening",
+        "speaker": "Shri Indranil Bhattacharyya"
+      }
+    ]
   },
-  "rbi_stance_drafts": {}
+  "rbi_stance_drafts": {
+    "policy_stance:mpc-2019-04-04": {
+      "label": "neutral",
+      "reason": "the resolution: “The MPC also decided to maintain the neutral monetary policy stance.”"
+    },
+    "policy_stance:mpc-2020-05-22": {
+      "label": "accommodative",
+      "reason": "the resolution: “The MPC also decided to continue with the accommodative stance as long as it is necessary to revive growth”"
+    },
+    "policy_stance:mpc-2020-12-04": {
+      "label": "accommodative",
+      "reason": "the resolution: “The MPC also decided to continue with the accommodative stance as long as necessary”"
+    },
+    "policy_stance:mpc-2022-02-10": {
+      "label": "accommodative",
+      "reason": "the resolution: “The MPC also decided to continue with the accommodative stance as long as necessary”"
+    },
+    "policy_stance:mpc-2022-06-08": {
+      "label": "withdrawal of accommodation",
+      "reason": "the resolution: “The MPC also decided to remain focused on withdrawal of accommodation”"
+    },
+    "policy_stance:mpc-2022-09-30": {
+      "label": "withdrawal of accommodation",
+      "reason": "the resolution: “The MPC also decided to remain focused on withdrawal of accommodation”"
+    },
+    "policy_stance:mpc-2024-02-08": {
+      "label": "withdrawal of accommodation",
+      "reason": "the resolution: “The MPC also decided to remain focused on withdrawal of accommodation”"
+    },
+    "policy_stance:mpc-2025-06-06": {
+      "label": "neutral",
+      "reason": "the resolution: “Hence, the MPC also decided to change the stance from accommodative to neutral.”"
+    },
+    "policy_stance:mpc-2026-02-06": {
+      "label": "neutral",
+      "reason": "the resolution: “The MPC also decided to continue with the neutral stance.”"
+    },
+    "policy_stance:mpc-2026-10-07": {
+      "label": "calibrated tightening",
+      "reason": "the resolution: “The MPC also decided to change the stance to calibrated tightening.”"
+    }
+  }
 }

@@ -216,3 +216,22 @@ def test_load_reads_published_decisions_and_member_statements_as_job_writer():
         assert sorted((s.speaker, s.chars) for s in stmts) == [("Dr. A", 700), ("Dr. B", 300)]
         assert docs[f"{p}-mpc-2024-08-08"] == statement
         assert stance_sentences(lab.document_text(conn, statement)) == ["The stance is neutral."]
+
+
+def test_the_committed_items_follow_the_rule():
+    data = json.loads(lab.ITEMS_FILE.read_text())
+    sets = data["sets"]
+    hd = Counter((i["bank"], i["phase"]) for i in sets["policy_hawk_dove"])
+    assert hd == {(b, p): 5 for b in ("Fed", "RBI") for p in lab.PHASES}
+    assert Counter((i["bank"], i["phase"]) for i in sets["policy_stance"]) == {
+        (b, p): n for b in ("Fed", "RBI") for p, n in lab.STANCE.items()}
+    assert Counter(i["phase"] for i in sets["policy_member_hawk_dove"]) == lab.MEMBER
+    decision_items = sets["policy_hawk_dove"] + sets["policy_stance"]
+    assert not ANCHORS & {i["meeting"] for i in decision_items}
+    ids = [i["id"] for items in sets.values() for i in items]
+    assert len(ids) == len(set(ids)) == 70
+    rbi_stance = {i["id"] for i in sets["policy_stance"] if i["bank"] == "RBI"}
+    assert set(data["rbi_stance_drafts"]) == rbi_stance
+    vocabulary = {"calibrated tightening", "neutral", "accommodative",
+                  "accommodative, focused on withdrawal of accommodation", "withdrawal of accommodation"}
+    assert all(d["label"] in vocabulary and d["reason"] for d in data["rbi_stance_drafts"].values())
