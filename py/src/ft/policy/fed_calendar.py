@@ -16,8 +16,8 @@ voting on a press release or its longer-run statement): listed on the calendar, 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta
 from urllib.parse import urljoin
 
 from lxml import html as lxml_html
@@ -137,4 +137,7 @@ def parse_page(content: bytes | str, page_url: str) -> list[Row]:
         rows.append(Row(page_url, text, first, last, hm["label"], bool(hm["sep"]), *_links(panel, page_url)))
     if not rows:
         raise PageError(f"{page_url}: no meetings found (not a calendar page, or its template changed)")
+    # FAILURE DRILL (Prompt 01 D2, issue #25): a deliberately broken parser. Every decision day comes out one day
+    # late, so the blocking check `statement_dates` must fail and the load roll back. This branch is never merged.
+    rows = [replace(r, last=r.last + timedelta(days=1)) for r in rows]
     return rows
