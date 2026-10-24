@@ -109,6 +109,7 @@ def test_stance_sentences():
 def test_annotations_escape_newlines_and_percent():
     assert lab.annotation("t", "a\n50%") == "::notice title=t::a%0A50%25"
     assert lab.chunks("abcde", 2) == ["ab", "cd", "e"]
+    assert max(len(c) for c in lab.chunks("x" * 10000)) <= 4000          # GitHub cuts a message at 4,096
 
 
 def test_the_items_file_and_its_web_copy_are_identical_and_parse():
