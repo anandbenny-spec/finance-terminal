@@ -7,7 +7,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { StateNote } from "@/components/data/StateNote";
 import { DocumentPage } from "@/components/policy/DocumentPage";
-import { parseDocumentId, parseSpan } from "@/lib/policy/document";
+import { documentTitle, parseDocumentId, parseSpan } from "@/lib/policy/document";
 import { readDocumentPage } from "@/lib/queries/document";
 
 type Props = PageProps<"/documents/[id]">;
@@ -16,7 +16,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const id = parseDocumentId((await params).id);
   if (id === null) return { title: "Not found · Finance Terminal" };
   const page = await readDocumentPage(id);
-  const title = page.document.ok && page.document.row ? page.document.row.title : "Document";
+  const title = page.document.ok && page.document.row ? documentTitle(page.document.row) : "Document";
   return { title: `${title} · Finance Terminal` };
 }
 

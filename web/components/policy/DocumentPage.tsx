@@ -19,7 +19,7 @@ import { StateNote } from "@/components/data/StateNote";
 import { FEEDS } from "@/lib/feeds";
 import { formatDate } from "@/lib/format";
 import { summaryBlock } from "@/lib/policy/ai";
-import { BANK_NAME, bankOf, citedBy, documentDate, documentSource, meetingOf, officialUrl, type CitedBy } from "@/lib/policy/document";
+import { BANK_NAME, bankOf, citedBy, documentDate, documentSource, documentTitle, meetingOf, officialUrl, type CitedBy } from "@/lib/policy/document";
 import { paragraphs, textFromChunks, type Paragraph } from "@/lib/policy/text";
 import type { DocumentRow } from "@/lib/queries/api";
 import { readDocumentPage, readSpanCitations, type DocumentPage as PageData } from "@/lib/queries/document";
@@ -132,7 +132,7 @@ export async function DocumentPage({ id, span }: { id: number; span: [number, nu
     <>
       <PageHeader
         crumbs={crumbs}
-        title={doc.title}
+        title={documentTitle(doc)}
         description={description}
         meta={
           <>
@@ -164,7 +164,7 @@ export async function DocumentPage({ id, span }: { id: number; span: [number, nu
             <div className="flex flex-col gap-5">
               <Summary page={page} bank={bank} />
               <div className="[&_mark]:scroll-mt-24">
-                <DocumentView paragraphs={paras} mark={mark} markNote={mark ? <CitedByNote entries={entries} /> : undefined} label={doc.title} />
+                <DocumentView paragraphs={paras} mark={mark} markNote={mark ? <CitedByNote entries={entries} /> : undefined} label={documentTitle(doc)} />
               </div>
             </div>
           )}

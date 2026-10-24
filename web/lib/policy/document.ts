@@ -9,7 +9,10 @@
 // - "Cited by: AI summary, point 2" names the output's kind by its task, and the point by the citation's claim path
 //   ("/bullets/1" is point 2; "/quote" is the stance's quote).
 // - Source lines (CLAUDE.md §1; Anand, 24 Oct 2026): the Fed's document carries its attribution and keeps its
-//   official link; the RBI's names the document and its date and is never linked.
+//   official link; the RBI's names the document, its date and RBI's press-release number, and is never linked
+//   (Brief §6.2). policy.rbi_documents stores the number at the end of the document's title ("MPC minutes, 7 Oct 2026
+//   · Press Release: 2026-2027/1361": issue #15, B6 part 2), so the title is shown without it and the source line
+//   carries it. The number is RBI's reference, quoted as the page prints it, not a figure for lib/format.ts.
 import { dateInZone, formatDate, type EventZone } from "@/lib/format";
 import { meetingHref } from "@/lib/policy/decisions";
 import type { AiCitationRow, AiOutputRow, DocumentRow } from "@/lib/queries/api";
@@ -58,12 +61,31 @@ export function meetingOf(slug: string | null): { bank: Bank; date: string; labe
   return { bank, date, label: `${bank === "Fed" ? "FOMC" : "MPC"} meeting, ${formatDate(date)}`, href: meetingHref(bank, date) };
 }
 
-/** The document's source line: the Fed's attribution; the RBI's names the document and its date (never a link). */
+const PRESS_RELEASE = / · Press Release: (\d{4}-\d{4}\/\d+)$/;
+
+/** RBI's press-release number stored at the end of a document's title ("2026-2027/1361"), else null. */
+export function pressReleaseNo(doc: Pick<DocumentRow, "title">): string | null {
+  return PRESS_RELEASE.exec(doc.title)?.[1] ?? null;
+}
+
+/** The document's title as the page shows it: without the press-release number (the source line carries that). */
+export function documentTitle(doc: Pick<DocumentRow, "title">): string {
+  return doc.title.replace(PRESS_RELEASE, "");
+}
+
+/** "Press Release: 2026-2027/1264", the way RBI's page prints it, or null where the document has no number. */
+export function pressReleaseLabel(doc: Pick<DocumentRow, "title">): string | null {
+  const no = pressReleaseNo(doc);
+  return no ? `Press Release: ${no}` : null;
+}
+
+/** The document's source line: the Fed's attribution; the RBI's names the document, its date and RBI's press-release
+ * number (never a link). */
 export function documentSource(doc: DocumentRow, bank: Bank): string {
   const attribution = doc.attribution ?? DEFAULT_SOURCE[bank];
   if (bank === "Fed") return attribution;
   const date = documentDate(doc, bank);
-  return [attribution, doc.doc_type_label, date ? formatDate(date) : null].filter(Boolean).join(" · ");
+  return [attribution, doc.doc_type_label, date ? formatDate(date) : null, pressReleaseLabel(doc)].filter(Boolean).join(" · ");
 }
 
 /** "Official source ↗": the Fed's own page only (https), never the RBI's (Anand, 24 Oct 2026). */
