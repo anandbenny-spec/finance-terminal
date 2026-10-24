@@ -25,7 +25,6 @@ policy.reactions:
   workflows: {daily: every 20 hours}
   run_after: [policy.market_series, policy.fed_documents, policy.rbi_documents]
   overdue_after: 4 days
-  enabled: false        # until Pass 1b builds it (Prompt 01 A2, §5 item 4), so the health page doesn't flag it
 policy.ai_batch:
   description: Summaries, diffs, stance, scores and projections for new documents
   workflows: {daily: every 20 hours, watch: after_decision_document}

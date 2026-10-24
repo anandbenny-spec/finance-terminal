@@ -49,7 +49,7 @@ describe("summarise", () => {
     });
   });
 
-  it("ignores tasks that feed nothing live (policy.reactions until Pass 1b)", () => {
+  it("ignores tasks outside the live list it is given", () => {
     const rows = [row("policy.calendar", "ok"), row("policy.market_series", "ok"), row("policy.reactions", "stale", null)];
     expect(summarise(rows, tasks, NOW).state).toBe("current");
   });
@@ -60,18 +60,20 @@ describe("summarise", () => {
 });
 
 describe("feeds", () => {
-  it("has the shell read the tape's and the countdown's tasks, each once, and not policy.reactions", () => {
+  it("has the shell read the tape's and the countdown's tasks, each once", () => {
     expect(FEEDS.tickerTape).toEqual(["policy.market_series"]);
     expect(FEEDS.statusBarCountdown).toEqual(["policy.calendar"]);
-    // /policy's panels (C3) bring in the document and AI tasks; policy.reactions (Pass 1b) still feeds nothing live.
+    // /policy's panels (C3) bring in the document and AI tasks; the decision-day moves (Pass 1b, #70) bring in
+    // policy.reactions, live once enabled in tasks.yaml.
+    expect(FEEDS.policyReactions).toEqual(["policy.reactions"]);
     expect(liveTasks()).toEqual([
       "policy.ai_batch",
       "policy.calendar",
       "policy.fed_documents",
       "policy.market_series",
       "policy.rbi_documents",
+      "policy.reactions",
     ]);
-    expect(liveTasks()).not.toContain("policy.reactions");
     expect(liveTasks({ a: ["policy.ai_batch", "policy.calendar"], b: ["policy.calendar"] })).toEqual(["policy.ai_batch", "policy.calendar"]);
   });
 });
