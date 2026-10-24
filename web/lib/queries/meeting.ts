@@ -75,6 +75,26 @@ export type MeetingPage = {
   ai: Read<{ stance: CitedOutput | null; summaries: Record<number, CitedOutput> }>;
 };
 
+/**
+ * Whether the bank has a meeting with this slug, read before the page streams so a missing meeting answers 404
+ * (#21, item 4). Null when it can't be told (the read failed, or this build has no Data API): the page then renders
+ * and shows its error state, rather than calling a meeting missing that it couldn't look up.
+ */
+export async function readMeetingExists(bank: Bank, slug: string): Promise<boolean | null> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("policy", `meeting-${slug}`);
+  const db = publicClient();
+  if (!db) return null;
+  try {
+    const row = await readMeeting(db, slug);
+    return row !== null && row.bank === bank;
+  } catch (error) {
+    failed(`${slug} existence`, error);
+    return null;
+  }
+}
+
 /** Everything a meeting page shows above its document texts. */
 export async function readMeetingPage(bank: Bank, slug: string, date: string): Promise<MeetingPage> {
   "use cache";
