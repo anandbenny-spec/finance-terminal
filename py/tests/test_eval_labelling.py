@@ -54,6 +54,21 @@ def test_stance_items_are_other_meetings_than_hawk_dove_and_no_item_is_an_anchor
     assert not ANCHORS & {i["meeting"] for items in sets.values() for i in items}
 
 
+def test_a_short_stance_class_is_filled_from_the_hawk_dove_meetings():
+    # RBI's hikes since 2019 are few: 7 here, 2 of them anchors, so all 5 left go to hawk/dove and stance takes 3 of those.
+    hikes = [Decision("RBI", f"mpc-2022-0{m}-0{d}", date(2022, m, d), 25) for m, d in ((5, 4), (6, 8), (8, 5), (9, 3))]
+    hikes += [Decision("RBI", "mpc-2022-12-07", date(2022, 12, 7), 35), Decision("RBI", "mpc-2023-02-08", date(2023, 2, 8), 25),
+              Decision("RBI", "mpc-2026-10-07", date(2026, 10, 7), 25)]
+    rest = [d for d in DECISIONS if not (d.bank == "RBI" and d.change_bps > 0)]
+    sets = choose(rest + hikes, STATEMENTS + [MemberStatement(d.slug, "Member 0", 900) for d in hikes])
+    hd = [i["meeting"] for i in sets["policy_hawk_dove"] if i["bank"] == "RBI" and i["phase"] == "tightening"]
+    st = [i["meeting"] for i in sets["policy_stance"] if i["bank"] == "RBI" and i["phase"] == "tightening"]
+    assert len(hd) == 5 and len(st) == 3 and set(st) <= set(hd)
+    assert not {"mpc-2022-05-04", "mpc-2023-02-08"} & set(hd + st)            # the anchors
+    members = [i["meeting"] for i in sets["policy_member_hawk_dove"] if i["phase"] == "tightening"]
+    assert len(members) == 6 and "mpc-2022-05-04" in members                  # another text: allowed
+
+
 def test_items_spread_over_the_whole_period():
     sets = choose(DECISIONS, STATEMENTS)
     years = {i["decision_date"][:4] for i in sets["policy_hawk_dove"] if i["bank"] == "Fed"}
@@ -87,13 +102,16 @@ def test_the_rule_is_deterministic_and_refuses_an_unbalanced_set():
 def test_stance_sentences():
     text = ("The MPC decided to keep the policy repo rate unchanged. The MPC also decided to remain focused on "
             "withdrawal of accommodation. Its stance is neutral.\nThe stance was retained by 5 to 1.")
-    assert stance_sentences(text) == ["Its stance is neutral.", "The stance was retained by 5 to 1."]
+    assert stance_sentences(text) == ["The MPC also decided to remain focused on withdrawal of accommodation.",
+                                      "Its stance is neutral.", "The stance was retained by 5 to 1."]
+    assert stance_sentences(text, limit=1) == ["The MPC also decided to remain focused on withdrawal of accommodation."]
     assert stance_sentences("No such word.") == []
 
 
 def test_annotations_escape_newlines_and_percent():
     assert lab.annotation("t", "a\n50%") == "::notice title=t::a%0A50%25"
     assert lab.chunks("abcde", 2) == ["ab", "cd", "e"]
+    assert max(len(c) for c in lab.chunks("x" * 10000)) <= 4000          # GitHub cuts a message at 4,096
 
 
 def test_the_items_file_and_its_web_copy_are_identical_and_parse():
@@ -198,3 +216,22 @@ def test_load_reads_published_decisions_and_member_statements_as_job_writer():
         assert sorted((s.speaker, s.chars) for s in stmts) == [("Dr. A", 700), ("Dr. B", 300)]
         assert docs[f"{p}-mpc-2024-08-08"] == statement
         assert stance_sentences(lab.document_text(conn, statement)) == ["The stance is neutral."]
+
+
+def test_the_committed_items_follow_the_rule():
+    data = json.loads(lab.ITEMS_FILE.read_text())
+    sets = data["sets"]
+    hd = Counter((i["bank"], i["phase"]) for i in sets["policy_hawk_dove"])
+    assert hd == {(b, p): 5 for b in ("Fed", "RBI") for p in lab.PHASES}
+    assert Counter((i["bank"], i["phase"]) for i in sets["policy_stance"]) == {
+        (b, p): n for b in ("Fed", "RBI") for p, n in lab.STANCE.items()}
+    assert Counter(i["phase"] for i in sets["policy_member_hawk_dove"]) == lab.MEMBER
+    decision_items = sets["policy_hawk_dove"] + sets["policy_stance"]
+    assert not ANCHORS & {i["meeting"] for i in decision_items}
+    ids = [i["id"] for items in sets.values() for i in items]
+    assert len(ids) == len(set(ids)) == 70
+    rbi_stance = {i["id"] for i in sets["policy_stance"] if i["bank"] == "RBI"}
+    assert set(data["rbi_stance_drafts"]) == rbi_stance
+    vocabulary = {"calibrated tightening", "neutral", "accommodative",
+                  "accommodative, focused on withdrawal of accommodation", "withdrawal of accommodation"}
+    assert all(d["label"] in vocabulary and d["reason"] for d in data["rbi_stance_drafts"].values())
