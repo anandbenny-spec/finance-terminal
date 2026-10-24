@@ -17,6 +17,9 @@ import {
   formatCheckedTime,
   formatCountdown,
   formatDate,
+  formatCount,
+  formatElapsed,
+  formatMinutesUntil,
   formatIndexLevel,
   formatMoney,
   formatMonth,
@@ -304,5 +307,33 @@ describe("C3 additions: unsigned bps and chart axes", () => {
     expect(formatAxisDate("2024-09-18", "month")).toBe("Sep");
     expect(formatAxisDate("2024-09-08", "day")).toBe("8 Sep");
     expect(() => formatAxisDate("2024-13-01", "month")).toThrow(RangeError);
+  });
+});
+
+describe("admin times (C6; Design 01 §4.7)", () => {
+  it("formats a run's elapsed time as m:ss, and h:mm:ss from an hour", () => {
+    expect(formatElapsed(0)).toBe("0:00");
+    expect(formatElapsed(72)).toBe("1:12");
+    expect(formatElapsed(72.9)).toBe("1:12");
+    expect(formatElapsed(3725)).toBe("1:02:05");
+    expect(() => formatElapsed(-1)).toThrow(RangeError);
+    expect(() => formatElapsed(Number.NaN)).toThrow(RangeError);
+  });
+
+  it("formats a cooldown in whole minutes, rounded up, and null once it's over", () => {
+    const now = "2026-10-24T05:00:00Z";
+    expect(formatMinutesUntil("2026-10-24T05:32:00Z", now)).toBe("32 min");
+    expect(formatMinutesUntil("2026-10-24T05:31:01Z", now)).toBe("32 min");
+    expect(formatMinutesUntil("2026-10-24T05:00:20+00:00", now)).toBe("1 min");
+    expect(formatMinutesUntil("2026-10-24T05:00:00Z", now)).toBeNull();
+    expect(formatMinutesUntil("2026-10-24T04:00:00.123456+00:00", now)).toBeNull();
+  });
+});
+
+describe("formatCount", () => {
+  it("groups a whole count and refuses fractions", () => {
+    expect(formatCount(0)).toBe("0");
+    expect(formatCount(1234)).toBe("1,234");
+    expect(() => formatCount(1.5)).toThrow(RangeError);
   });
 });

@@ -149,6 +149,7 @@ export async function DocumentPage({ id, span }: { id: number; span: [number, nu
           subtitle="What does the document say, word for word?"
           market={bank === "Fed" ? "US" : "IN"}
           actions={<OfficialLink doc={doc} bank={bank} />}
+          refresh={tasks}
           variant="prose"
           footer={
             <>
