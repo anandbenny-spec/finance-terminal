@@ -8,7 +8,8 @@ about 1,800 characters that together reproduce it exactly; the database checks t
   change of speaker.
 - A chunk's last piece is folded into the one before when it's shorter than `MIN_TAIL` and the two fit in `MAX_CHARS`.
 - `section` is the heading path at the chunk's start under an optional root ("Minutes > Statement by Dr. Nagesh
-  Kumar"); `speaker` comes from "Statement by …" headings (minutes) or speaker labels (transcripts).
+  Kumar"); `speaker` comes from "Statement by …" headings (minutes) or speaker labels (transcripts: the Fed's
+  "CHAIR POWELL.", the RBI's "Shaktikanta Das:").
 - The whitespace between two blocks belongs to the chunk before it, so every chunk starts on text.
 Starting values, like the differ's: checked on the backfill (Architecture 03 §1.5: about 400 tokens a chunk).
 """
@@ -17,7 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ft.engines.document.text import Block, Extracted, sentence_spans, transcript_speaker
+from ft.engines.document.text import Block, Extracted, rbi_transcript_speaker, sentence_spans, transcript_speaker
 
 TARGET = 1800
 MAX_CHARS = 2400
@@ -104,7 +105,8 @@ def _units(doc: Extracted, root: str | None, speakers: str | None, target: int, 
             after_heading = True
             continue
         changed = False
-        if speakers == "transcript" and (name := transcript_speaker(body)) and name != speaker:
+        label = {"transcript": transcript_speaker, "rbi_transcript": rbi_transcript_speaker}.get(speakers)
+        if label is not None and (name := label(body)) and name != speaker:
             speaker, changed = name, True
         for k, (s, e) in enumerate(_pieces(text, b.start, b.end, target, max_chars)):
             units.append(_Unit(s, e, changed and k == 0 and not after_heading, False, path(), speaker))
@@ -114,9 +116,10 @@ def _units(doc: Extracted, root: str | None, speakers: str | None, target: int, 
 
 def chunk_text(doc: Extracted, *, root: str | None = None, speakers: str | None = None, target: int = TARGET,
                max_chars: int = MAX_CHARS, min_tail: int = MIN_TAIL) -> list[Chunk]:
-    """speakers: None, "minutes" (from "Statement by …" headings) or "transcript" (from speaker labels)."""
-    if speakers not in (None, "minutes", "transcript"):
-        raise ValueError(f"speakers must be None, 'minutes' or 'transcript', not {speakers!r}")
+    """speakers: None, "minutes" (from "Statement by …" headings), "transcript" (the Fed's speaker labels: "CHAIR
+    POWELL.") or "rbi_transcript" (the RBI's: "Shaktikanta Das:")."""
+    if speakers not in (None, "minutes", "transcript", "rbi_transcript"):
+        raise ValueError(f"speakers must be None, 'minutes', 'transcript' or 'rbi_transcript', not {speakers!r}")
     text = doc.text
     if not text:
         return []
