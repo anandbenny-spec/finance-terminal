@@ -3,7 +3,7 @@ import psycopg
 import pytest
 from conftest import dsn
 
-from ft.jobs.runner import Check, Task, run
+from ft.jobs.runner import Alert, Check, Task, run
 
 JOB, ADMIN = dsn("job_writer"), dsn("postgres")
 results = []
@@ -147,3 +147,29 @@ def test_control_connection_dropped_during_fetch():
     status, rows, err, job = last_run("policy.calendar")
     assert not t.loaded and (status, rows, job) == ("failed", 0, "failed") and "another run now holds the task lock" in err
     assert q("select count(*) from ops.alert where dedupe_key = 'task_failed:policy.calendar' and resolved_at is null")[0][0] == 1
+
+
+class Unreachable(Task):
+    """A task whose fetch fails, with alerts for its failure (failure_alerts: B6 part 2's site-unreachable alert)."""
+    key = "policy.calendar"; workflows = ("weekly",)
+    fail = True
+    def fetch(self, ctx):
+        if self.fail:
+            raise ConnectionError("the source is down")
+    def failure_alerts(self, db, status, error):
+        return [Alert("calendar_source_down", "ConnectionError" in (error or ""), "error", f"{status}: down")]
+    def alerts(self, db):
+        return [Alert("calendar_source_down", False)]
+
+
+@pytest.mark.db
+def test_a_failed_run_raises_its_failure_alerts_and_a_good_run_resolves_them():
+    def open_():
+        return q("select severity, message from ops.alert where dedupe_key = 'calendar_source_down' and resolved_at is null")
+    t = Unreachable()
+    assert run(JOB, "weekly", [t], force=True) == 1
+    assert open_() == [("error", "failed: down")]
+    t.fail = False
+    assert run(JOB, "weekly", [t], force=True) == 0
+    assert open_() == []
+    assert Task().failure_alerts(None, "failed", "x") == []              # the default raises nothing

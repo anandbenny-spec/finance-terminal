@@ -408,3 +408,40 @@ def mpc_new(*, no: int, days: str, chair: str, members: list[str], decision: str
             f"<p><b>Global Outlook</b></p>" + "".join(paras)
             + f"<p>{k}. The next meeting of the MPC is scheduled for {nxt}.</p>"
             + '<p align="right"><span class="head">(Ira Sen)</span><br>Chief General Manager</p>')
+
+
+# ---------------------------------------------------------------------------------------------- MPC minutes (B6 part 2)
+# Synthetic minutes in the shape of the 49 saved (Dec 2018 to Oct 2026): the opening, "Resolution" and the resolution's
+# copy, the vote (its heading before the table, or as the table's first row), then each member's statement under a
+# plain "Statement by …" paragraph, the signature and the press-release number. Written for the tests, not copied.
+def mpc_minutes(*, no: int, days: str, members: list[str], resolution: list[str], heading: str | None,
+                rows: list[tuple[str, str] | tuple[str, str, int]], heading_in_table: bool = False,
+                magnitude: str = "reduction", statements: list[str] | None = None,
+                press_release: str | None = "2040-2041/456") -> str:
+    """`resolution`: the copy's paragraphs (the decision, the stance, the vote sentences); `rows`: (member, "Yes" |
+    "No"[, magnitude in bps]); `statements`: who speaks (default: `members`)."""
+    listed = ", ".join(f"{m}, Member" for m in members[:-1]) + f" and {members[-1]}, Governor"
+    paras = [(f"<p>The {no}th meeting of the Monetary Policy Committee (MPC), constituted under section 45ZB of the "
+              f"Reserve Bank of India Act, 1934, was held during {days} at the Reserve Bank of India, Mumbai.</p>"),
+             f"<p>2. The meeting was attended by all the members – {listed}.</p>",
+             ("<p>3. According to Section 45ZL of the Reserve Bank of India Act, 1934, the Reserve Bank shall publish, "
+              "on the fourteenth day after every meeting of the Monetary Policy Committee, the minutes of the "
+              "proceedings of the meeting.</p>"),
+             f"<p>4. {_fill(4, 5)}</p>", "<p>Resolution</p>"]
+    paras += [f"<p>{k}. {r}</p>" for k, r in enumerate(resolution, start=5)]
+    three = any(len(r) == 3 for r in rows)
+    head = "<tr><th>Member</th><th>Vote</th>" + (f"<th>Magnitude of policy repo rate {magnitude} (basis points)</th>"
+                                                 if three else "") + "</tr>"
+    body = "".join(f"<tr><td>{r[0]}</td><td>{r[1]}</td>" + (f"<td>{r[2]}</td>" if len(r) == 3 else "") + "</tr>"
+                   for r in rows)
+    first = f'<tr><td colspan="3">{heading}</td></tr>' if heading and heading_in_table else ""
+    if heading and not heading_in_table:
+        paras.append(f"<p>{heading}</p>")
+    paras.append(f'<table border="1" width="60%">{first}{head}{body}</table>')
+    for k, m in enumerate(statements if statements is not None else members):
+        paras.append(f"<p>Statement by {m}</p>")
+        paras += [f"<p>{40 + 6 * k + j}. {_fill(k + j, 5)}</p>" for j in range(6)]
+    paras.append('<p align="right"><span class="head">(Ira Sen)</span><br>Chief General Manager</p>')
+    if press_release:
+        paras.append(f'<p class="head">Press Release: {press_release}</p>')
+    return "".join(paras)
