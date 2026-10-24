@@ -210,3 +210,29 @@ def test_the_evaluator_follows_githubs_rules():
     assert evaluate("inputs.target == ''", ctx) is True                              # null == '' after coercion
     assert evaluate("'Production' == 'production'", ctx) is True
     assert evaluate("!(github.event_name == 'schedule') && secrets.A", ctx) == "a"
+
+
+# ---------------------------------------------------------------- the freshness drill (Prompt 01 D4)
+
+@pytest.mark.parametrize("inputs", [{"task": "policy.calendar", "action": "push", "target": "dev"}, {"task": "x"},
+                                    {"task": "x", "target": ""}, {"task": "x", "target": "DEV"}])
+@pytest.mark.parametrize("dev_secrets", [True, False])
+def test_the_freshness_drill_reaches_production_only_when_chosen(inputs, dev_secrets):
+    job_env, steps = resolve("freshness-drill", "workflow_dispatch", inputs, secrets(dev_secrets))
+    drill = next(e for e in steps if "JOB_DATABASE_URL" in e)
+    assert job_env["FT_TARGET"] == "dev"
+    assert drill["JOB_DATABASE_URL"] == ("DEV:JOB_DATABASE_URL" if dev_secrets else "")
+    assert not [v for e in [job_env, *steps] for v in e.values() if "PROD:" in v]
+    job_env, steps = resolve("freshness-drill", "workflow_dispatch", {**inputs, "target": "production"}, secrets(dev_secrets))
+    assert next(e for e in steps if "JOB_DATABASE_URL" in e)["JOB_DATABASE_URL"] == "PROD:JOB_DATABASE_URL"
+
+
+def test_the_freshness_drill_is_manual_and_takes_inputs_only_through_env():
+    wf = load("freshness-drill")
+    assert list(wf["on"]) == ["workflow_dispatch"]
+    assert wf["on"]["workflow_dispatch"]["inputs"]["target"]["default"] == "dev"
+    assert wf["on"]["workflow_dispatch"]["inputs"]["action"]["default"] == "status"
+    for s in wf["jobs"]["run"]["steps"]:
+        assert "inputs." not in s.get("run", "") and "github.event.inputs" not in s.get("run", "")
+    assert set(wf["jobs"]["run"]["steps"][-1]["env"]) == {"INPUT_TASK", "INPUT_ACTION", "INPUT_LAST_SUCCESS_AT",
+                                                          "INPUT_LAST_CHECKED_AT", "JOB_DATABASE_URL"}
