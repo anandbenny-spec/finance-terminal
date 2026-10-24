@@ -21,6 +21,7 @@ from urllib.parse import urljoin
 
 from lxml import html as lxml_html
 
+from ft.engines.document.text import decode_html
 from ft.policy import dates
 
 BASE = "https://www.rbi.org.in/Scripts/"
@@ -135,7 +136,12 @@ def _date(text: str) -> date:
 
 
 def parse_page(content: bytes | str) -> Page:
-    doc = lxml_html.fromstring(content)
+    """The page's groups and year selector. Bytes are decoded as the extractor decodes a document (text.decode_html:
+    BOM, meta charset, else UTF-8, else Windows-1252), never by lxml's guess, so "Governor’s Statement" keeps its
+    apostrophe on a page that declares no charset."""
+    if isinstance(content, bytes):
+        content = decode_html(content)
+    doc = lxml_html.fromstring(re.sub(r"^\s*<\?xml[^>]*\?>", "", content, count=1))
     roots = doc.xpath('//div[@id="annualPolicy"]')
     if not roots:
         raise PageError("no div#annualPolicy: not the Annual Policy page, or its template changed")

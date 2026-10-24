@@ -965,24 +965,24 @@ def test_daily_takes_the_statement_from_the_feed_and_the_transcript_days_later_a
     taken (W until the page links it); the transcript comes days later on its own group; one the Governor doesn't
     speak in fails its checks (a daily run rolls back; a backfill lists it with an alert), and the fixed page loads and
     resolves the alert."""
-    base, d = date(2046, 2, 7), date(2046, 4, 4)
+    base, d = date(2015, 2, 3), date(2015, 4, 7)            # fictional, in the reverse repo's era (before the SDF)
     slugs = [meeting(x) for x in (base, d)]
-    years = {"2046-2047": "2047", "2045-2046": "2046"}
-    fy46 = annual((base, 93001), years=years)
+    years = {"2015-2016": "2016", "2014-2015": "2015"}
+    fy15 = annual((base, 93001), years=years)
     stmt = PR + "93105"
     resolutions = {PR + "93001": resolution(base, BASE_BODY), PR + "93101": resolution(d, FEB_BODY)}
     feed = rss((f"Governor’s Statement: {d:%B} {d.day}, {d.year}", stmt.replace("https://www.", "https://"),
                 f"{d:%a, %d %b %Y} 10:05:00"))
     pages = {rbi_calendar.ANNUAL_POLICY: annual((d, 93101), years=years, statements={d: None}), **resolutions,
-             rbi_resolution.RSS: feed, stmt: gov_statement(d, number="2046-2047/12")}
-    sites = Sites(pages, {"2046": fy46})
+             rbi_resolution.RSS: feed, stmt: gov_statement(d, number="2015-2016/12")}
+    sites = Sites(pages, {"2015": fy15})
 
     def t():
-        return task(roster, slugs, date(2046, 3, 1))
-    code, r = go(sites, t(), "daily", datetime(2046, 4, 5, 1, 7, tzinfo=UTC))          # 06:37 IST the next day
+        return task(roster, slugs, date(2015, 3, 1))
+    code, r = go(sites, t(), "daily", datetime(2015, 4, 8, 1, 7, tzinfo=UTC))          # 06:37 IST the next day
     assert (code, r["status"]) == (0, "success"), r["error"]
     assert [x[:2] for x in part3_docs(slugs[1])] == [
-        ("rbi_governor_statement", "Governor's statement, 4 Apr 2046 · Press Release: 2046-2047/12")]
+        ("rbi_governor_statement", "Governor's statement, 7 Apr 2015 · Press Release: 2015-2016/12")]
     link = r["checks"]["annual_policy_link"]
     assert not link["passed"] and "statement taken from the RSS item" in link["detail"]
     assert r["checks"]["statement_link"]["passed"] and r["checks"]["transcripts_stored"]["passed"]
@@ -994,29 +994,29 @@ def test_daily_takes_the_statement_from_the_feed_and_the_transcript_days_later_a
     pages[rbi_calendar.ANNUAL_POLICY] = annual((d, 93101), years=years, statements={d: stmt},
                                                transcripts=((d, tr, 4, True),))
     pages[tr] = bad
-    code, r = go(sites, t(), "daily", datetime(2046, 4, 9, 1, 7, tzinfo=UTC))
+    code, r = go(sites, t(), "daily", datetime(2015, 4, 12, 1, 7, tzinfo=UTC))
     assert code != 0 and r["status"] == "checks_failed"
     assert not r["checks"]["transcript_governor"]["passed"], r["checks"]
     assert "not among them" in r["checks"]["transcript_governor"]["detail"]
     assert [x[0] for x in part3_docs(slugs[1])] == ["rbi_governor_statement"]        # the statement stays
 
     # A backfill lists it and alerts; the fixed page loads, and the next good run resolves the alert.
-    code, r = go(sites, t(), "backfill", datetime(2046, 4, 9, 2, tzinfo=UTC))
+    code, r = go(sites, t(), "backfill", datetime(2015, 4, 12, 2, tzinfo=UTC))
     assert (code, r["status"]) == (0, "success"), r["error"]
     assert not r["checks"]["transcripts_failed"]["passed"] and slugs[1] in r["checks"]["transcripts_failed"]["detail"]
     assert alerts("rbi_transcript_failed:") == [f"rbi_transcript_failed:{slugs[1]}"]
     assert r["checks"]["annual_policy_link"]["passed"]                                 # the page links the stored one
     pages[tr] = speech_transcript(d, later)
-    code, r = go(sites, t(), "daily", datetime(2046, 4, 9, 3, tzinfo=UTC))
+    code, r = go(sites, t(), "daily", datetime(2015, 4, 12, 3, tzinfo=UTC))
     assert (code, r["status"]) == (0, "success"), r["error"]
     assert [x[:4] for x in part3_docs(slugs[1])] == [
-        ("rbi_governor_statement", "Governor's statement, 4 Apr 2046 · Press Release: 2046-2047/12",
-         datetime(2046, 4, 4, 10, tzinfo=IST), stmt),
-        ("rbi_presconf_transcript", "RBI press conference transcript, 4 Apr 2046", datetime(2046, 4, 8, tzinfo=IST), tr)]
+        ("rbi_governor_statement", "Governor's statement, 7 Apr 2015 · Press Release: 2015-2016/12",
+         datetime(2015, 4, 7, 10, tzinfo=IST), stmt),
+        ("rbi_presconf_transcript", "RBI press conference transcript, 7 Apr 2015", datetime(2015, 4, 11, tzinfo=IST), tr)]
     assert alerts("rbi_transcript_failed:") == []
     # Both stored: the daily run no longer looks for them.
     sites.seen.clear()
-    code, r = go(sites, t(), "daily", datetime(2046, 4, 10, 3, tzinfo=UTC))
+    code, r = go(sites, t(), "daily", datetime(2015, 4, 13, 3, tzinfo=UTC))
     assert (code, r["rows"]) == (0, 0) and stmt not in sites.seen and tr not in sites.seen
 
 
