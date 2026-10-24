@@ -20,6 +20,7 @@ import { RatesPanel } from "@/components/policy/RatesPanel";
 import { FEEDS, type TaskKey } from "@/lib/feeds";
 import { NOT_AVAILABLE, formatAxisNumber, formatAxisRange, formatDate, formatReleaseTime, type EventZone } from "@/lib/format";
 import { changeInWords, historyRows, lastMove, stanceText } from "@/lib/policy/decisions";
+import { pressReleaseLabel } from "@/lib/policy/document";
 import type { NextMeetingRow, PolicyMeetingRow, TaskFreshnessRow } from "@/lib/queries/api";
 import { readPolicyOverview, type LatestDecision } from "@/lib/queries/overview";
 import { POLICY_START, type Bank } from "@/lib/queries/policy";
@@ -52,9 +53,9 @@ function Foot({ sources, tasks, dataTo, freshness, now }: { sources: (string | n
   );
 }
 
-function ErrorPanel({ title, id, span, market, footer }: { title: string; id: string; span?: 12 | 6; market?: "US" | "IN"; footer?: ReactNode }) {
+function ErrorPanel({ title, id, span, market, footer, refresh }: { title: string; id: string; span?: 12 | 6; market?: "US" | "IN"; footer?: ReactNode; refresh?: readonly TaskKey[] }) {
   return (
-    <Panel title={title} titleId={id} span={span} market={market} footer={footer}>
+    <Panel title={title} titleId={id} span={span} market={market} footer={footer} refresh={refresh}>
       <StateNote kind="error">Couldn&apos;t load this panel. Try again.</StateNote>
     </Panel>
   );
@@ -163,6 +164,7 @@ export default async function PolicyPage() {
               rbi={o.rates.rbi}
               decisions={decisions ?? []}
               from={POLICY_START}
+              refresh={FEEDS.policyRatesChart}
               footer={foot(
                 [...o.rates.series.map((s) => s.attribution), RBI_SOURCE],
                 FEEDS.policyRatesChart,
@@ -170,7 +172,7 @@ export default async function PolicyPage() {
               )}
             />
           ) : (
-            <ErrorPanel title="Policy rates since 2019" id="panel-rates" />
+            <ErrorPanel title="Policy rates since 2019" id="panel-rates" refresh={FEEDS.policyRatesChart} />
           )}
         </PanelGrid>
       </Section>
@@ -190,8 +192,12 @@ export default async function PolicyPage() {
             policies={policies}
             now={now}
             footer={foot(
-              // RBI documents are named, never linked (Anand, 24 Oct 2026): the source line names the document and its date.
-              [rbiDoc && rbi?.meeting ? `${rbiSource} · ${rbiDoc.doc_type_label} · ${formatDate(rbi.meeting.decision_date)}` : rbiSource],
+              // RBI documents are named, never linked (Anand, 24 Oct 2026): the source line names the document, its date
+              // and RBI's press-release number (Brief §6.2).
+              [rbiDoc && rbi?.meeting
+                ? [rbiSource, rbiDoc.doc_type_label, formatDate(rbi.meeting.decision_date), pressReleaseLabel(rbiDoc)]
+                    .filter(Boolean).join(" · ")
+                : rbiSource],
               FEEDS.policyLatestRbi,
               rbi?.meeting?.decision_date ?? null,
             )}
@@ -206,9 +212,10 @@ export default async function PolicyPage() {
               rows={historyRows(o.history.decisions, o.history.votes)}
               stanceLabel={stanceLabel}
               footer={foot([fedSource, rbiSource], FEEDS.policyHistory, latestOf(...o.history.decisions.map((d) => d.decision_date)))}
+              refresh={FEEDS.policyHistory}
             />
           ) : (
-            <ErrorPanel title="Every decision since 2019" id="panel-history" />
+            <ErrorPanel title="Every decision since 2019" id="panel-history" refresh={FEEDS.policyHistory} />
           )}
         </PanelGrid>
       </Section>

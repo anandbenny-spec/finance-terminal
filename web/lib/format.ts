@@ -366,3 +366,31 @@ export function formatCountdown(event: Instant, zone: EventZone, now: Instant): 
   if (days === 1) return "tomorrow";
   return `in ${days} days`;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Admin (C6; Design 01 §4.7): the refresh button's running time and cooldown
+
+/** A run's elapsed time, for the admin's refresh button: `72` s → `1:12`; from an hour, `1:02:05`. Whole seconds. */
+export function formatElapsed(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) throw new RangeError(`formatElapsed: expected seconds ≥ 0, got ${seconds}`);
+  const s = Math.floor(seconds);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
+}
+
+/**
+ * Whole minutes until an instant, rounded up so a cooldown never reads as over before it is: `32 min`; under a
+ * minute, `1 min`. Null once the instant has passed (it's available now).
+ */
+export function formatMinutesUntil(instant: Instant, now: Instant): string | null {
+  const ms = toDate(instant).getTime() - toDate(now).getTime();
+  if (ms <= 0) return null;
+  return `${Math.ceil(ms / 60_000)} min`;
+}
+
+/** A whole count (rows written, open alerts): `1234` → `1,234`. Never the viewer's locale. */
+export function formatCount(value: number): string {
+  return digits(integer(value, "a count"), { decimals: 0 });
+}

@@ -105,3 +105,19 @@ def test_yahoo_url_and_params():
     assert p["period1"] == str(int(datetime(2026, 9, 22, tzinfo=UTC).timestamp()))
     assert p["period2"] == str(int(datetime(2026, 10, 24, tzinfo=UTC).timestamp()))
     assert p["interval"] == "1d"
+
+
+def test_a_crumb_is_a_short_token_on_a_200_only():
+    assert src.parse_crumb(200, b"b4Crumb.x7Q\n") == "b4Crumb.x7Q"
+    assert src.parse_crumb(429, b"b4Crumb.x7Q") is None
+    assert src.parse_crumb(200, b"Too Many Requests") is None          # yfinance's rate-limit reply
+    assert src.parse_crumb(200, b"<html><body>consent</body></html>") is None
+    assert src.parse_crumb(200, b"") is None
+    assert src.parse_crumb(200, b"x" * 65) is None
+    assert src.parse_crumb(200, "crümb".encode()) is None
+
+
+def test_yahoos_session_hosts_are_in_the_yahoo_site():
+    from ft.jobs.fetch import site_for
+    for url in (src.YAHOO_COOKIE_URL, src.YAHOO_CRUMB_URL, src.yahoo_url("^GSPC")):
+        assert site_for(url).key == "yahoo"

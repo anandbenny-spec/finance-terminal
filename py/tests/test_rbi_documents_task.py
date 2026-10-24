@@ -16,7 +16,7 @@ import psycopg
 import pytest
 from conftest import dsn
 from moto.server import ThreadedMotoServer
-from policy_docs import mpc_new, mpc_old, mpc_title
+from policy_docs import mpc_minutes, mpc_new, mpc_old, mpc_title
 from policy_docs import rbi_page as press_release
 from test_policy_calendar import rbi_group, rbi_item
 from test_policy_calendar import rbi_page as annual_page
@@ -104,18 +104,40 @@ def meeting(d: date, *, kind: str = "scheduled", no: int | None = None) -> str:
 
 
 def resolution(d: date, body: str) -> str:
-    return press_release(body, title=mpc_title(f"{d:%B} {d.day - 2} to {d.day}, {d.year}", f"{d.year}-{d.year % 100 + 1:02d}"),
-                         day=f"{d:%b %d, %Y}")
+    return press_release(body, title=mpc_title(days_of(d), f"{d.year}-{d.year % 100 + 1:02d}"), day=f"{d:%b %d, %Y}")
 
 
-def annual(*items: tuple[date, int], years: dict[str, str]) -> str:
-    """An Annual Policy page whose groups are these decisions (date, prid), newest first, above a report's group."""
-    groups = [rbi_group(f"{d:%b %d, %Y}", "Bi-monthly Monetary Policy Statement",
-                        rbi_item("Governor’s Statement", PR + str(prid + 1)) + rbi_item(RESOLUTION, PR + str(prid), True))
-              for d, prid in sorted(items, reverse=True)]
-    groups.append(rbi_group("Jan 02, 2000", "Monetary Policy Report",
-                            rbi_item("Monetary Policy Report", "https://rbi.org.in/Scripts/PublicationsView.aspx?id=1")))
-    return annual_page(*groups, years=years)
+def annual(*items: tuple[date, int], years: dict[str, str], minutes: tuple[tuple[date, int], ...] = ()) -> str:
+    """An Annual Policy page whose groups are these decisions (date, prid) and minutes (the meeting's decision date,
+    prid; posted 14 days on), newest first, above a report's group."""
+    groups = [(d, rbi_group(f"{d:%b %d, %Y}", "Bi-monthly Monetary Policy Statement",
+                            rbi_item("Governor’s Statement", PR + str(prid + 1)) + rbi_item(RESOLUTION, PR + str(prid), True)))
+              for d, prid in items]
+    groups += [(d + timedelta(days=14), rbi_group(f"{d + timedelta(days=14):%b %d, %Y}",
+                                                  "Minutes of the Monetary Policy Committee",
+                                                  rbi_item(f"Minutes of the Monetary Policy Committee Meeting, {days_of(d)}",
+                                                           PR + str(prid))))
+               for d, prid in minutes]
+    out = [g for _, g in sorted(groups, key=lambda x: x[0], reverse=True)]
+    out.append(rbi_group("Jan 02, 2000", "Monetary Policy Report",
+                         rbi_item("Monetary Policy Report", "https://rbi.org.in/Scripts/PublicationsView.aspx?id=1")))
+    return annual_page(*out, years=years)
+
+
+def days_of(d: date) -> str:
+    """A meeting's days as the titles write them: the two days before the decision and the decision day."""
+    first = d - timedelta(days=2)
+    return (f"{first:%B} {first.day} to {d.day}, {d.year}" if first.month == d.month
+            else f"{first:%B} {first.day} to {d:%B} {d.day}, {d.year}")
+
+
+def minutes(d: date, resolution: list[str], rows, *, heading: str | None = "Voting on the Resolution", no: int = 7,
+            **kw) -> str:
+    """A minutes page for the meeting decided on `d`, posted 14 days on."""
+    posted = d + timedelta(days=14)
+    body = mpc_minutes(no=no, days=days_of(d), members=SIX, resolution=resolution, heading=heading, rows=rows, **kw)
+    return press_release(body, title=f"Minutes of the Monetary Policy Committee Meeting, {days_of(d)}",
+                         day=f"{posted:%b %d, %Y}")
 
 
 def old(decision: str, consequently: str, stance: str, votes: list[str], projections: list[str] = ()) -> str:
@@ -199,6 +221,27 @@ def forecasts(s: str):
                  where e.slug = %s order by 1, f.target_start, f.target_end""", s)
 
 
+def minutes_docs(s: str):
+    """(title, published_at, published, the chunks' speakers) of each minutes version stored for the meeting."""
+    return [(r[0], r[1], r[2], set(r[3]) - {None}) for r in q(
+        """select d.title, d.published_at, d.is_published, array_agg(distinct c.speaker)
+             from core.document d join core.event e on e.id = d.event_id
+             left join core.chunk c on c.document_id = d.id
+            where e.slug = %s and d.doc_type = 'mpc_minutes' group by d.id order by d.version_no""", s)]
+
+
+def vote_docs(s: str):
+    """{member slug: the doc type each vote row cites}."""
+    return {r[0]: r[1] for r in q("""select p.slug, d.doc_type from policy.vote v join core.event e on e.id = v.meeting_event_id
+                                      join policy.member p on p.id = v.member_id join core.document d on d.id = v.document_id
+                                     where e.slug = %s""", s)}
+
+
+def alerts(prefix: str):
+    return sorted(r[0] for r in q("select dedupe_key from ops.alert where dedupe_key like %s and resolved_at is null",
+                                  prefix + "%"))
+
+
 def state(s: str):
     """(event status, event published, resolution stored, resolution published, its diff's base slug)."""
     return q("""select e.status, e.is_published, d.id is not null, coalesce(d.is_published, false),
@@ -241,14 +284,32 @@ APR_BODY = old("keep the policy repo rate under the liquidity adjustment facilit
                 "Real GDP growth for 2012-13 is projected at 7.1 per cent."])
 
 
+# The minutes' copies of FEB's and APR's resolutions (their vote sentences, as the resolutions state them).
+FEB_COPY = [("On the basis of an assessment, the MPC decided to reduce the policy repo rate by 25 basis points from 6.5 "
+             "per cent to 6.25 per cent with immediate effect."),
+            "The MPC also decided to change the monetary policy stance from calibrated tightening to neutral.",
+            (f"The decision to change the monetary policy stance was unanimous. As regards the reduction in the policy "
+             f"repo rate, {named(SIX[:4])} voted in favour of the decision. {named(SIX[4:])} voted to keep the policy "
+             "rate unchanged.")]
+APR_COPY = ["On the basis of an assessment, the MPC decided to keep the policy repo rate unchanged at 6.25 per cent.",
+            "The MPC also decided to maintain the neutral stance of monetary policy.",
+            (f"All members of the MPC – {named(SIX)} – unanimously voted to keep the policy repo rate unchanged at 6.25 "
+             "per cent and to maintain the neutral stance.")]
+FEB_MINUTES = minutes(FEB, FEB_COPY, [(n, "Yes") for n in SIX[:4]] + [(n, "No") for n in SIX[4:]],
+                      heading="Voting on the Resolution to reduce the policy repo rate by 25 bps to 6.25 per cent",
+                      press_release="2011-2012/1501")
+APR_MINUTES = minutes(APR, APR_COPY, [(n, "Yes") for n in SIX], heading_in_table=True,
+                      heading="Voting on the Resolution to keep the policy repo rate unchanged at 6.25 per cent")
+
+
 @pytest.mark.db
 def test_backfill_stores_resolutions_rates_votes_projections_and_diffs_and_reruns_clean(s3, roster):
     slugs = [meeting(d) for d in (BASE, FEB, APR)]
     years = {"2012-2013": "2013", "2011-2012": "2012"}
-    fy12 = annual((BASE, 81001), (FEB, 81101), years=years)
-    pages = {rbi_calendar.ANNUAL_POLICY: annual((APR, 81201), years=years),
+    fy12 = annual((BASE, 81001), (FEB, 81101), years=years, minutes=((FEB, 81102),))
+    pages = {rbi_calendar.ANNUAL_POLICY: annual((APR, 81201), years=years, minutes=((APR, 81202),)),
              PR + "81001": resolution(BASE, BASE_BODY), PR + "81101": resolution(FEB, FEB_BODY),
-             PR + "81201": resolution(APR, APR_BODY)}
+             PR + "81201": resolution(APR, APR_BODY), PR + "81102": FEB_MINUTES, PR + "81202": APR_MINUTES}
     sites = Sites(pages, {"2012": fy12})
     t = task(roster, slugs, date(2012, 1, 1))
     code, r = go(sites, t, "backfill", datetime(2012, 7, 1, tzinfo=UTC))
@@ -256,6 +317,15 @@ def test_backfill_stores_resolutions_rates_votes_projections_and_diffs_and_rerun
     assert r["checks"]["resolutions_stored"]["passed"], r["checks"]["resolutions_stored"]["detail"]
     assert r["checks"]["meetings_failed"]["passed"]
     assert f"POST {rbi_calendar.ANNUAL_POLICY} hdnYear=2012" in sites.seen     # the earlier fiscal year, by form post
+
+    # The minutes (never the baseline's: Spec 01 §2), each member's statement its own speaker; they agree with the
+    # resolutions, so the votes stand as the resolutions stated them, and the roster matches both (D4's check).
+    assert r["checks"]["minutes_stored"]["passed"] and r["checks"]["minutes_failed"]["passed"], r["checks"]["minutes_failed"]
+    assert minutes_docs(slugs[0]) == [] and [x[0] for x in minutes_docs(slugs[1])] == [
+        "MPC minutes, 8 Feb 2012 · Press Release: 2011-2012/1501"]
+    assert minutes_docs(slugs[2])[0][1:] == (datetime(2012, 4, 18, tzinfo=IST), True, {n for n in SIX})
+    assert r["checks"]["minutes_changed_vote"]["passed"] and r["checks"]["minutes_roster"]["passed"]
+    assert r["checks"]["roster_matches_minutes"]["passed"], r["checks"]["roster_matches_minutes"]
 
     # Rates: the baseline's changes from its own sentences, then against the previous meeting.
     assert rates(slugs[0]) == [("bank_rate", "6.750", 0, None), ("msf", "6.750", 0, None), ("repo", "6.500", 0, None),
@@ -290,10 +360,12 @@ def test_backfill_stores_resolutions_rates_votes_projections_and_diffs_and_rerun
     assert [state(s)[4] for s in slugs[1:]] == slugs[:2]
     doc = q("""select d.title, d.published_at, d.source_url, d.extractor_version, d.external_key
                  from core.document d join core.event e on e.id = d.event_id where e.slug = %s""", slugs[2])[0]
-    assert doc == ("MPC resolution, 4 Apr 2012", datetime(2012, 4, 4, 4, 30, tzinfo=UTC), PR + "81201",
+    # The title names RBI's press-release number (Brief §6.2: the site names RBI's documents, never links them).
+    assert doc == ("MPC resolution, 4 Apr 2012 · Press Release: 2040-2041/123", datetime(2012, 4, 4, 4, 30, tzinfo=UTC),
+                   PR + "81201",
                    "html-1/rbi_press_release", "/Scripts/BS_PressReleaseDisplay.aspx?prid=81201")
 
-    # A re-run reads the stored resolutions back: no request, no row, no raw file.
+    # A re-run reads the stored resolutions and minutes back: no request, no row, no raw file.
     sites.seen.clear()
     code, r2 = go(sites, task(roster, slugs, date(2012, 1, 1)), "backfill", datetime(2012, 7, 1, tzinfo=UTC))
     assert (code, r2["status"], r2["rows"], sites.seen) == (0, "success", 0, [])
@@ -517,15 +589,289 @@ def test_watch_waits_then_takes_the_rss_link_before_the_annual_policy_page_lists
     assert (code, r["status"], r["rows"]) == (0, "success", 0) and r["checks"]["annual_policy_link"]["passed"]
 
 
+# ---------------------------------------------------------------------------------------------- the minutes (part 2)
+def hold_body(rate: str, sdf: str, msf: str, votes: list[str], stance: str = "continue with the accommodative stance") -> str:
+    return old(f"keep the policy repo rate under the liquidity adjustment facility (LAF) unchanged at {rate} per cent.",
+               f"Consequently, the standing deposit facility (SDF) rate remains unchanged at {sdf} per cent and the "
+               f"marginal standing facility (MSF) rate and the Bank Rate at {msf} per cent.",
+               f"The MPC also decided to {stance}.", votes)
+
+
+UNANIMOUS = f"All members of the MPC – {named(SIX)} – unanimously voted to keep the policy repo rate unchanged."
+
+
+@pytest.mark.db
+def test_the_minutes_table_replaces_a_vote_it_contradicts_and_fills_one_the_resolution_left(s3, roster):
+    base, aug, oct_ = date(2044, 6, 4), date(2044, 8, 6), date(2044, 10, 8)
+    slugs = [meeting(d) for d in (base, aug, oct_)]
+    cut = old("reduce the policy repo rate under the liquidity adjustment facility (LAF) by 35 basis points from 6.00 per "
+              "cent to 5.65 per cent with immediate effect.",
+              "Consequently, the standing deposit facility (SDF) rate stands adjusted to 5.40 per cent and the marginal "
+              "standing facility (MSF) rate and the Bank Rate to 5.90 per cent.",
+              "The MPC also decided to continue with the accommodative stance.",
+              [(f"{named(SIX[:4])} voted to reduce the policy repo rate by 35 basis points, while Shri Eli Paul voted to "
+               "reduce the policy repo rate by 25 basis points.")])        # Fay Roy's vote isn't stated
+    stance_all = (f"All members of the MPC – {named(SIX)} – unanimously voted to keep the policy repo rate unchanged "
+                  "and to continue with the accommodative stance.")
+    hold = hold_body("5.65", "5.40", "5.90", [stance_all])
+    aug_minutes = minutes(aug, ["The MPC decided to reduce the policy repo rate by 35 basis points to 5.65 per cent.",
+                                "The MPC also decided to continue with the accommodative stance.",
+                                (f"{named(SIX[:4])} voted to reduce the policy repo rate by 35 basis points, while Shri "
+                                 "Eli Paul voted to reduce the policy repo rate by 25 basis points.")],
+                          [(n, "Yes", 35) for n in SIX[:4]] + [(SIX[4], "Yes", 35), (SIX[5], "Yes", 25)],
+                          heading="Voting on the Resolution to reduce the policy repo rate", heading_in_table=True)
+    # October: the table records Ada Rao against the hold the resolution says was unanimous, and the resolution's copy
+    # names Fay Roy as voting against the stance.
+    oct_minutes = minutes(oct_, ["The MPC decided to keep the policy repo rate unchanged at 5.65 per cent.",
+                                 "The MPC also decided to continue with the accommodative stance.",
+                                 (f"All members of the MPC – {named(SIX)} – unanimously voted to keep the policy repo rate "
+                                  f"unchanged. {named(SIX[:5])} voted to continue with the accommodative stance, while "
+                                  "Shri Fay Roy voted against this part of the resolution.")],
+                          [(SIX[0], "No")] + [(n, "Yes") for n in SIX[1:]],
+                          heading="Voting on the Resolution to keep the policy repo rate unchanged at 5.65 per cent")
+    years = {"2044-2045": "2045", "2043-2044": "2044"}
+    pages = {rbi_calendar.ANNUAL_POLICY: annual((base, 88101), (aug, 88201), (oct_, 88301), years=years,
+                                                minutes=((aug, 88202), (oct_, 88302))),
+             PR + "88101": resolution(base, hold_body("6.00", "5.75", "6.25", [UNANIMOUS])),
+             PR + "88201": resolution(aug, cut), PR + "88301": resolution(oct_, hold),
+             PR + "88202": aug_minutes, PR + "88302": oct_minutes}
+    sites = Sites(pages)
+    code, r = go(sites, task(roster, slugs, date(2044, 7, 1)), "backfill", datetime(2044, 11, 1, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert r["checks"]["meetings_failed"]["passed"], r["checks"]["meetings_failed"]["detail"]
+    assert r["checks"]["minutes_failed"]["passed"], r["checks"]["minutes_failed"]["detail"]
+    assert r["checks"]["minutes_stored"]["passed"], r["checks"]["minutes_stored"]["detail"]
+
+    # August: Eli Paul's 25 bps (the resolution) becomes 35 (the table: the statutory record); Fay Roy, whom the
+    # resolution leaves out, gets the table's 25 bps, a dissent on the size of the cut.
+    aug_v, aug_d = votes(slugs[1]), vote_docs(slugs[1])
+    assert aug_v[slug_of(SIX[4])][:3] == (-35, None, False) and aug_d[slug_of(SIX[4])] == "mpc_minutes"
+    assert aug_v[slug_of(SIX[5])] == (-25, None, True, "Shri Fay Roy | Yes | 25") and aug_d[slug_of(SIX[5])] == "mpc_minutes"
+    assert aug_v[slug_of(SIX[0])][:3] == (-35, None, False) and aug_d[slug_of(SIX[0])] == "mpc_resolution"  # agreed
+
+    # October: Ada Rao's "No" replaces the resolution's unanimous hold (no change stated, so none stored); Fay Roy's
+    # stance vote follows the minutes' copy.
+    oct_v, oct_d = votes(slugs[2]), vote_docs(slugs[2])
+    assert oct_v[slug_of(SIX[0])] == (None, "accommodative", True, "Dr. Ada Rao | No")
+    assert oct_v[slug_of(SIX[5])][1:3] == ("against", True) and oct_d[slug_of(SIX[5])] == "mpc_minutes"
+    assert "against this part of the resolution" in oct_v[slug_of(SIX[5])][3]
+    assert oct_v[slug_of(SIX[1])] == (0, "accommodative", False, None) and oct_d[slug_of(SIX[1])] == "mpc_resolution"
+    assert q("select dissent_count from api.policy_meetings where slug = %s", slugs[2]) in ([(2,)], [])
+
+    mc = r["checks"]["minutes_changed_vote"]
+    assert not mc["passed"] and not mc["blocking"]
+    assert f"{slugs[1]}: the minutes changed the stored votes of {slug_of(SIX[4])}" in mc["detail"]
+    assert slug_of(SIX[5]) not in mc["detail"].split(slugs[2])[0]                     # a fill isn't a change
+    assert alerts("votes_changed:mpc-2044") == [f"votes_changed:{slugs[1]}", f"votes_changed:{slugs[2]}"]
+
+    assert json_counts(r)["minutes_differ"] == 3
+
+    # A re-run changes nothing (the resolution never overwrites a row the minutes wrote), and says so; the differences
+    # stand, counted.
+    code, r2 = go(sites, task(roster, slugs, date(2044, 7, 1)), "backfill", datetime(2044, 11, 1, tzinfo=UTC))
+    assert (code, r2["status"], r2["rows"]) == (0, "success", 0) and votes(slugs[2]) == oct_v
+    assert r2["checks"]["minutes_changed_vote"]["passed"] and json_counts(r2)["minutes_differ"] == 3
+
+    # The alert stays open for a week from the minutes' load, then resolves.
+    q("""update core.document set extracted_at = extracted_at - interval '8 days'
+          where doc_type = 'mpc_minutes' and event_id in (select id from core.event where slug = any(%s))""", slugs)
+    code, _ = go(sites, task(roster, slugs, date(2044, 7, 1)), "backfill", datetime(2044, 11, 1, tzinfo=UTC))
+    assert code == 0 and alerts("votes_changed:mpc-2044") == []
+
+
+@pytest.mark.db
+def test_minutes_that_fail_their_checks_roll_back_alone_with_an_alert_that_resolves_once_fixed(s3, roster):
+    base, feb, apr = date(2042, 12, 5), date(2043, 2, 6), date(2043, 4, 8)
+    slugs = [meeting(d) for d in (base, feb, apr)]
+    hold = hold_body("6.25", "6.00", "6.50", [UNANIMOUS])
+    copy = ["The MPC decided to keep the policy repo rate unchanged at 6.25 per cent.", UNANIMOUS]
+    head = "Voting on the Resolution to keep the policy repo rate unchanged at 6.25 per cent"
+    four_no = minutes(feb, copy, [(n, "No") for n in SIX[:4]] + [(n, "Yes") for n in SIX[4:]], heading=head)
+    five_rows = minutes(apr, copy, [(n, "Yes") for n in SIX[:5]], heading=head)
+    years = {"2043-2044": "2044", "2042-2043": "2043"}
+    pages = {rbi_calendar.ANNUAL_POLICY: annual((apr, 89301), years=years, minutes=((apr, 89302),)),
+             PR + "89101": resolution(base, hold), PR + "89201": resolution(feb, hold), PR + "89301": resolution(apr, hold),
+             PR + "89202": four_no, PR + "89302": five_rows}
+    sites = Sites(pages, {"2043": annual((base, 89101), (feb, 89201), years=years, minutes=((feb, 89202),))})
+    code, r = go(sites, task(roster, slugs, date(2043, 1, 1)), "backfill", datetime(2043, 5, 1, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    mf = r["checks"]["minutes_failed"]
+    assert not mf["passed"] and f"{slugs[1]}: minutes_decision" in mf["detail"] and "only 2 of 6" in mf["detail"]
+    assert f"{slugs[2]}: minutes_votes_table" in mf["detail"]
+    assert minutes_docs(slugs[1]) == minutes_docs(slugs[2]) == []                   # neither stored
+    assert state(slugs[1])[:4] == ("held", True, True, True)                         # the resolution stands
+    assert {k: v[:3] for k, v in votes(slugs[1]).items()} == {slug_of(n): (0, "accommodative", False) for n in SIX}
+    assert alerts("rbi_minutes_failed:mpc-2043") == [f"rbi_minutes_failed:{s}" for s in slugs[1:]]
+    assert not r["checks"]["roster_matches_minutes"]["passed"]                      # D4's check can't pass either
+
+    pages[PR + "89202"] = minutes(feb, copy, [(n, "Yes") for n in SIX], heading=head)
+    pages[PR + "89302"] = minutes(apr, copy, [(n, "Yes") for n in SIX], heading=head)
+    code, r = go(sites, task(roster, slugs, date(2043, 1, 1)), "backfill", datetime(2043, 5, 2, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success") and r["checks"]["minutes_failed"]["passed"]
+    assert len(minutes_docs(slugs[1])) == len(minutes_docs(slugs[2])) == 1
+    assert alerts("rbi_minutes_failed:mpc-2043") == []
+
+
+@pytest.mark.db
+def test_daily_takes_the_minutes_from_the_feed_or_the_next_years_page_and_alerts_on_day_15(s3, roster):
+    base, mar = date(2041, 2, 7), date(2041, 3, 27)
+    slugs = [meeting(base), meeting(mar, kind="unscheduled")]
+    hold = hold_body("6.25", "6.00", "6.50", [UNANIMOUS])
+    years = {"2041-2042": "2042", "2040-2041": "2041"}
+    fy41 = annual((base, 90101), (mar, 90201), years=years)
+    pages = {rbi_calendar.ANNUAL_POLICY: annual(years=years), PR + "90101": resolution(base, hold),
+             PR + "90201": resolution(mar, hold),
+             rbi_resolution.RSS: rss(("Auction of State Government Securities", PR + "90200", "Fri, 04 Apr 2041 09:30:00"))}
+    sites = Sites(pages, {"2041": fy41})
+    def t():
+        return task(roster, slugs, date(2041, 3, 1))
+    code, r = go(sites, t(), "backfill", datetime(2041, 3, 28, tzinfo=UTC))
+    assert code == 0 and state(slugs[1])[:2] == ("held", True)
+
+    # Day 14 (10 Apr): due, not out yet: no alert. Day 15: the alert.
+    code, r = go(sites, t(), "daily", datetime(2041, 4, 10, 12, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success") and alerts(f"rbi_minutes_missing:{slugs[1]}") == []
+    assert rbi_resolution.RSS in sites.seen                                         # looked in the feed too
+    code, r = go(sites, t(), "daily", datetime(2041, 4, 11, 12, tzinfo=UTC))
+    assert alerts(f"rbi_minutes_missing:{slugs[1]}") == [f"rbi_minutes_missing:{slugs[1]}"]
+
+    # 13 Apr: the feed lists them before the page does (the next fiscal year's page: they came out after 31 March).
+    pages[PR + "90202"] = minutes(mar, ["The MPC decided to keep the policy repo rate unchanged at 6.25 per cent.",
+                                        UNANIMOUS], [(n, "Yes") for n in SIX],
+                                  heading="Voting on the Resolution to keep the policy repo rate unchanged at 6.25 per cent")
+    pages[rbi_resolution.RSS] = rss((f"Minutes of the Monetary Policy Committee Meeting, {days_of(mar)}",
+                                     PR.replace("Scripts", "scripts") + "90202", "Thu, 10 Apr 2041 17:00:00"))
+    code, r = go(sites, t(), "daily", datetime(2041, 4, 13, 12, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert len(minutes_docs(slugs[1])) == 1 and alerts(f"rbi_minutes_missing:{slugs[1]}") == []
+    assert r["checks"]["minutes_stored"]["passed"] and r["checks"]["annual_policy_link"]["passed"]
+    # The next daily run, once the page links the same minutes, doesn't look again.
+    pages[rbi_calendar.ANNUAL_POLICY] = annual(years=years, minutes=((mar, 90202),))
+    sites.seen.clear()
+    code, r = go(sites, t(), "daily", datetime(2041, 4, 14, 12, tzinfo=UTC))
+    assert (code, r["status"], r["rows"]) == (0, "success", 0) and PR + "90202" not in sites.seen
+    assert r["checks"]["annual_policy_link"]["passed"]
+
+
+@pytest.mark.db
+def test_d4s_inference_switches_on_once_a_backfill_finds_the_roster_in_every_minutes(s3, roster):
+    base, feb, apr, jun = date(2040, 12, 4), date(2041, 2, 5), date(2041, 4, 4), date(2041, 6, 6)
+    nameless = hold_body("6.25", "6.00", "6.50", ["Accordingly, the MPC unanimously voted to keep the policy repo rate unchanged."])
+    copy = ["The MPC decided to keep the policy repo rate unchanged at 6.25 per cent.",
+            "Accordingly, the MPC unanimously voted to keep the policy repo rate unchanged."]
+    head = "Voting on the Resolution to keep the policy repo rate unchanged at 6.25 per cent"
+    slugs = [meeting(d) for d in (base, feb, apr)]
+    years = {"2041-2042": "2042", "2040-2041": "2041"}
+    pages = {rbi_calendar.ANNUAL_POLICY: annual((apr, 91301), years=years, minutes=((apr, 91302),)),
+             PR + "91101": resolution(base, nameless), PR + "91201": resolution(feb, nameless),
+             PR + "91301": resolution(apr, nameless),
+             PR + "91202": minutes(feb, copy, [(n, "Yes") for n in SIX], heading=head),
+             PR + "91302": minutes(apr, copy, [(n, "Yes") for n in SIX], heading=head)}
+    sites = Sites(pages, {"2041": annual((base, 91101), (feb, 91201), years=years, minutes=((feb, 91202),))})
+    # A roster that's wrong from March: it has Fay Roy leave and the newcomer join, which the April minutes contradict.
+    wrong = roster.parent / "members_wrong.yaml"
+    lines = roster.read_text().splitlines()
+    fay = next(i for i, ln in enumerate(lines) if ln.strip() == f"{slug_of(SIX[5])}:")
+    lines[fay + 3] = lines[fay + 3].replace("from: 2011-01-01,", "from: 2011-01-01, to: 2041-03-01,")
+    lines[-1] = lines[-1].replace("from: 2048-01-01", "from: 2041-03-02")
+    wrong.write_text("\n".join(lines) + "\n")
+
+    def t(path=roster):
+        return task(path, slugs, date(2041, 1, 1), d4=None)                     # the minutes' check decides
+    code, r = go(sites, t(wrong), "backfill", datetime(2041, 5, 1, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    gate = r["checks"]["roster_matches_minutes"]
+    assert not gate["passed"] and not gate["blocking"] and slugs[2] in gate["detail"] and slugs[1] not in gate["detail"]
+    assert "gia-menon" in gate["detail"] and not r["checks"]["minutes_roster"]["passed"]
+    # Off: the nameless baseline's votes wait; the minutes give the others theirs.
+    assert votes(slugs[0]) == {} and len(votes(slugs[1])) == len(votes(slugs[2])) == 6
+    assert set(vote_docs(slugs[1]).values()) == {"mpc_minutes"}
+
+    # The roster fixed: a backfill holding every minutes finds it in all of them and switches the inference on, in that
+    # run: the baseline's unanimous vote goes to the roster's six.
+    code, r = go(sites, t(), "backfill", datetime(2041, 5, 2, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success") and r["checks"]["roster_matches_minutes"]["passed"]
+    assert len(votes(slugs[0])) == 6 and set(vote_docs(slugs[0]).values()) == {"mpc_resolution"}
+    assert json_counts(r)["d4"] is True
+
+    # A daily run uses the backfill's result: a new nameless resolution gets its six on decision day.
+    slugs.append(meeting(jun))
+    pages[rbi_calendar.ANNUAL_POLICY] = annual((apr, 91301), (jun, 91401), years=years, minutes=((apr, 91302),))
+    pages[PR + "91401"] = resolution(jun, nameless)
+    pages[rbi_resolution.RSS] = rss()
+    code, r = go(sites, t(), "daily", datetime(2041, 6, 6, 12, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success") and "roster_matches_minutes" not in r["checks"]
+    assert len(votes(slugs[3])) == 6 and json_counts(r)["d4"] is True
+
+
+def json_counts(r) -> dict:
+    return __import__("json").loads(r["checks"]["resolutions_stored"]["detail"])
+
+
+class Down(Sites):
+    """rbi.org.in answering 503 to everything (after the client's retries)."""
+    down = True
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if self.down:
+            self.seen.append(str(request.url))
+            return httpx.Response(503)
+        return super().__call__(request)
+
+
+@pytest.mark.db
+def test_the_old_site_unreachable_for_3_days_raises_an_alert_that_the_next_good_run_resolves(s3, roster):
+    site_key = "test.b6_rbi_site"
+    q("""insert into ops.task (key, module, description, workflows, min_interval, overdue_after, enabled)
+         values (%s, 'test', 'B6 site test', '{daily}', '20 hours', '3 days', false) on conflict (key) do nothing""",
+      site_key)
+    d = date(2041, 8, 6)
+    slugs = [meeting(d)]
+    years = {"2041-2042": "2042"}
+    sites = Down({rbi_calendar.ANNUAL_POLICY: annual((d, 92101), years=years), rbi_resolution.RSS: rss(),
+                  PR + "92101": resolution(d, hold_body("6.25", "6.00", "6.50", [UNANIMOUS]))})
+
+    def t():
+        x = task(roster, slugs, date(2041, 9, 1))                              # the meeting is the baseline
+        x.key = site_key
+        return x
+
+    def last(key=site_key):
+        return q("select status, coalesce(error, '') from ops.task_run where task_key = %s order by id desc limit 1",
+                 key)[0]
+    def http():
+        return HttpClient(transport=httpx.MockTransport(sites), sleep=lambda s: None)
+    code = run(JOB, "daily", [t()], only=site_key, force=True, http=http(), storage=storage,
+               clock=lambda: datetime(2041, 8, 7, tzinfo=UTC))
+    status, error = last()
+    assert (code, status) == (1, "failed") and "SiteUnreachable" in error and "HTTP 503" in error
+    assert alerts("rbi_site_unreachable") == []                                     # a day isn't three
+    # Three days of failures (the first one backdated), then another: the alert opens.
+    q("update ops.task_run set started_at = started_at - interval '4 days' where task_key = %s", site_key)
+    code = run(JOB, "daily", [t()], only=site_key, force=True, http=http(), storage=storage,
+               clock=lambda: datetime(2041, 8, 10, tzinfo=UTC))
+    assert code == 1 and alerts("rbi_site_unreachable") == ["rbi_site_unreachable"]
+    assert q("select severity from ops.alert where dedupe_key = 'rbi_site_unreachable' and resolved_at is null") == [
+        ("error",)]
+    # Back up: the next good run resolves it.
+    sites.down = False
+    code = run(JOB, "daily", [t()], only=site_key, force=True, http=http(), storage=storage,
+               clock=lambda: datetime(2041, 8, 11, tzinfo=UTC))
+    assert (code, last()[0]) == (0, "success") and alerts("rbi_site_unreachable") == []
+    # A parser bug isn't the site being down.
+    assert RbiDocuments().failure_alerts(None, "failed", "ResolutionError: no tableheader cells") == []
+
+
 # ---------------------------------------------------------------------------------------------- the saved pages
 FIXTURES = Path(__file__).resolve().parents[2] / "data" / "fixtures" / "rbi"
 
 
 @pytest.mark.db
 @pytest.mark.skipif(not (FIXTURES / "INDEX.tsv").exists(), reason="the saved pages aren't checked out (data/fixtures)")
-def test_a_backfill_over_the_saved_pages_loads_every_resolution_from_the_2018_baseline(s3):
-    """The B6 done-when counts over the 49 saved resolutions (Dec 2018 to Oct 2026) and the real roster: the meetings
-    come from the saved Annual Policy pages through the calendar's own rules, the resolutions from their saved pages."""
+def test_a_backfill_over_the_saved_pages_loads_every_resolution_and_minutes_from_the_2018_baseline(s3):
+    """The B6 done-when counts over the 49 saved resolutions and 49 minutes (Dec 2018 to Oct 2026) and the real roster:
+    the meetings come from the saved Annual Policy pages through the calendar's own rules, the documents from their
+    saved pages."""
     import csv
 
     from ft.policy import meetings
@@ -541,7 +887,7 @@ def test_a_backfill_over_the_saved_pages_loads_every_resolution_from_the_2018_ba
             label = p.stem.removeprefix("annualpolicy_").replace("_", "-")
             years[label.split("-")[1]] = p.read_text(encoding="utf-8", errors="replace")
     for r in csv.DictReader((FIXTURES / "INDEX.tsv").open(encoding="utf-8"), delimiter="\t"):
-        if r["kind"] == "resolution":
+        if r["kind"] in ("resolution", "minutes"):
             pages[rbi_resolution.page_url(r["url"])] = (FIXTURES / r["file"]).read_text(encoding="utf-8", errors="replace")
     cal = rbi_calendar.calendar(parsed)
     curated = meetings.load_curated()
@@ -572,14 +918,34 @@ def test_a_backfill_over_the_saved_pages_loads_every_resolution_from_the_2018_ba
     # read back instead of posting the form, so forget them here.
     q("delete from ops.http_cache where url like %s", rbi_calendar.ANNUAL_POLICY + "#hdnYear=%")
     sites = Sites(pages, years)
-    t = task(members_mod.CONFIG, slugs, meetings.FIRST_DAY)
+    t = task(members_mod.CONFIG, slugs, meetings.FIRST_DAY, d4=None)       # the minutes' check decides D4
     code, r = go(sites, t, "backfill", datetime(2026, 10, 23, 12, tzinfo=UTC))
     assert (code, r["status"]) == (0, "success"), r["error"]
     assert r["checks"]["meetings_failed"]["passed"], r["checks"]["meetings_failed"]["detail"]
-    counts = __import__("json").loads(r["checks"]["resolutions_stored"]["detail"])
+    assert r["checks"]["minutes_failed"]["passed"], r["checks"]["minutes_failed"]["detail"]
+    assert r["checks"]["minutes_stored"]["passed"], r["checks"]["minutes_stored"]["detail"]
+    # D4 (Spec 01 §5.1): the roster matches every 2019→ minutes, so the inference is on, and the Dec 2018 baseline's
+    # unanimous rate vote goes to the six on the roster that day (its minutes aren't loaded: the decision document only).
+    gate = r["checks"]["roster_matches_minutes"]
+    assert gate["passed"] and "all 48 minutes since 2019-02-07" in gate["detail"], gate["detail"]
+    assert r["checks"]["minutes_roster"]["passed"] and r["checks"]["minutes_resolution_copy"]["passed"]
+    counts = json_counts(r)
+    # Resolution-vs-minutes differences: zero (Spec 01 §5.1), in the table and in the resolutions' copies.
     assert counts | {"roster": 21} == {"targets": 49, "loaded": 49, "waiting": 0, "failed": 0, "rates": 196,
-                                       "votes": 289, "rate_votes": 289, "dissents": 44, "projections": 419,
-                                       "from_rss": 0, "roster": 21}, counts
+                                       "votes": 294, "rate_votes": 294, "dissents": 44, "projections": 419,
+                                       "from_rss": 0, "roster": 21, "minutes": 48, "minutes_failed": 0,
+                                       "minutes_votes": 0, "minutes_differ": 0, "d4": True}, counts
+    assert r["checks"]["minutes_changed_vote"]["passed"]
+    assert sorted(votes("mpc-2018-12-05")) == ["chetan-ghate", "michael-debabrata-patra", "pami-dua",
+                                               "ravindra-h-dholakia", "urjit-r-patel", "viral-v-acharya"]
+    oct26 = minutes_docs("mpc-2026-10-07")
+    assert oct26[0][0] == "MPC minutes, 7 Oct 2026 · Press Release: 2026-2027/1361" and len(oct26[0][3]) == 6
+    assert q("""select d.title from core.document d join core.event e on e.id = d.event_id
+                 where e.slug = 'mpc-2026-10-07' and d.doc_type = 'mpc_resolution'""") == [
+        ("MPC resolution, 7 Oct 2026 · Press Release: 2026-2027/1264",)]
+    assert q("""select count(*), count(*) filter (where d.title like '%% · Press Release: %%')
+                  from core.document d join core.event e on e.id = d.event_id
+                 where e.slug = any(%s) and d.doc_type in ('mpc_resolution', 'mpc_minutes')""", slugs) == [(97, 97)]
     # The spot checks (Prompt 01 B6, done when), from the stored rows.
     def chg(s, i="repo"):
         return next(x[2] for x in rates(s) if x[0] == i)

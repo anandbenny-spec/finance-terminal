@@ -2,6 +2,8 @@
 // block per paragraph with its ¶ anchor (#p-3) and a ¶ link beside it, so every ¶ link lands on its paragraph. A
 // cited span (code-point offsets, as stored) is wrapped in <mark>. Named anchors (#member-…) mark where each
 // member's statement starts in minutes. The text is the chunks' stored bodies; nothing here rewrites it.
+// `markNote` (C5, /documents/[id]) sits just above the paragraph where the cited span starts ("Cited by: AI summary,
+// point 2"), so the note and the span come into view together.
 import type { ReactNode } from "react";
 import { sliceCodePoints, type Paragraph } from "@/lib/policy/text";
 
@@ -32,6 +34,7 @@ export function DocumentView({
   paragraphs,
   mark = null,
   anchors = {},
+  markNote,
   label,
 }: {
   paragraphs: Paragraph[];
@@ -39,12 +42,15 @@ export function DocumentView({
   mark?: [number, number] | null;
   /** Extra anchor ids by ¶ number (minutes: each member's first paragraph). */
   anchors?: Record<number, string>;
+  /** Shown above the paragraph where `mark` starts. */
+  markNote?: ReactNode;
   label: string;
 }) {
   return (
     <article aria-label={label} className="max-w-(--reading-width) text-read text-ink-1">
       {paragraphs.map((p) => (
         <div key={p.n} id={anchors[p.n]} className="group relative scroll-mt-24">
+          {markNote && mark && mark[0] >= p.start && mark[0] < p.end && <div className="mb-1.5">{markNote}</div>}
           <p id={`p-${p.n}`} className="mb-4 scroll-mt-24 break-words">
             {body(p, mark)}{" "}
             <a href={`#p-${p.n}`} className="font-mono text-meta whitespace-nowrap text-ink-3 no-underline hover:text-ink-1" aria-label={`Paragraph ${p.n}`}>

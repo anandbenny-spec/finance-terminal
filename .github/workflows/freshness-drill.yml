@@ -1,0 +1,65 @@
+# The freshness drill (Prompt 01 D4; Review 01 F17): moves one task's last success past its stale_after with no
+# run, so the site's status bar should read "stale" by itself; then puts it back. Manual only, and only when Anand
+# has said yes (Prompt 01 §3, phase D: ask before each drill; production needs his OK too). It changes one
+# core.task_freshness row as job_writer and nothing else; it calls no source and spends no AI credits.
+name: freshness-drill
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Task key, e.g. policy.calendar
+        required: true
+        type: string
+      action:
+        type: choice
+        options: [status, push, restore]
+        default: status
+      last_success_at:
+        description: "restore: the value push printed"
+        required: false
+        type: string
+      last_checked_at:
+        description: "restore: the value push printed"
+        required: false
+        type: string
+      target:
+        description: Project to run against
+        type: choice
+        options: [dev, production]
+        default: dev
+concurrency:
+  group: freshness-drill
+  cancel-in-progress: false
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: py
+jobs:
+  run:
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026; the audit's G1/S1 ran on 24.04
+    timeout-minutes: 10
+    env:
+      # Same rule as the job workflows (GitHub issue #2, item 1): dev unless production is chosen; a missing DEV_
+      # secret leaves the variable empty (the drill then stops), never falling back to production's.
+      FT_TARGET: ${{ inputs.target == 'production' && 'production' || 'dev' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0, pinned by SHA (setup-uv publishes no v8+ major tags)
+        with:
+          enable-cache: true
+          cache-dependency-glob: py/uv.lock
+      - run: uv sync --locked --extra jobs
+      - name: Drill
+        run: |
+          set -- --task "$INPUT_TASK" --action "$INPUT_ACTION" --target "$FT_TARGET"
+          [ -n "$INPUT_LAST_SUCCESS_AT" ] && set -- "$@" --last-success-at "$INPUT_LAST_SUCCESS_AT"
+          [ -n "$INPUT_LAST_CHECKED_AT" ] && set -- "$@" --last-checked-at "$INPUT_LAST_CHECKED_AT"
+          uv run --locked python -m ft.jobs.drill_freshness "$@"
+        env:
+          # inputs go through the environment, never pasted into the script (injection)
+          INPUT_TASK: ${{ inputs.task }}
+          INPUT_ACTION: ${{ inputs.action }}
+          INPUT_LAST_SUCCESS_AT: ${{ inputs.last_success_at }}
+          INPUT_LAST_CHECKED_AT: ${{ inputs.last_checked_at }}
+          JOB_DATABASE_URL: ${{ env.FT_TARGET == 'production' && secrets.JOB_DATABASE_URL || env.FT_TARGET == 'dev' && secrets.DEV_JOB_DATABASE_URL || '' }}
