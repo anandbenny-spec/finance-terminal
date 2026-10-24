@@ -19,7 +19,7 @@ import {
 import { stanceText } from "@/lib/policy/decisions";
 import { paragraphAt, type Paragraph } from "@/lib/policy/text";
 import type { DocumentRow, ForecastRow, PolicyMeetingRow, PolicyRateSettingDetailRow, PolicyVoteRow } from "@/lib/queries/api";
-import type { Bank } from "@/lib/queries/policy";
+import { POLICY_START, type Bank } from "@/lib/queries/policy";
 
 export const ZONE: Record<Bank, EventZone> = { Fed: "America/New_York", RBI: "Asia/Kolkata" };
 
@@ -78,8 +78,46 @@ export function scheduledNote(m: PolicyMeetingRow): string {
 export const SPECIAL_MEETING_NOTE =
   "Special meeting to prepare the report to the Government on missing the inflation target (RBI Act, s.45ZN). No policy decision; no minutes published.";
 
-/** Spec 01 §4.5, "Minutes not out yet"; after the due day, that they're late. */
+/**
+ * A meeting page without tabs: §4.5's special and scheduled copy, otherwise what the stored status says. A held
+ * meeting that wasn't a rate decision (the Fed's unscheduled 4 Oct 2019 meeting) says so; it isn't "cancelled".
+ * (Decided by Claude, standing delegation, 24 Oct 2026, #21: §4.5 has no copy for it.)
+ */
+export function noDecisionNote(m: PolicyMeetingRow): string {
+  if (m.kind === "special") return SPECIAL_MEETING_NOTE;
+  if (m.status === "scheduled") return scheduledNote(m);
+  if (m.status === "cancelled") return "This meeting was cancelled.";
+  if (m.status === "held") return "No rate decision was taken at this meeting.";
+  return "There's no decision to show for this meeting.";
+}
+
+/** Each bank's last 2018 meeting, kept as the "before" of its first 2019 comparison (Spec 01 §2). */
+export function isBaseline(m: PolicyMeetingRow): boolean {
+  return m.decision_date < POLICY_START;
+}
+
+/**
+ * What a baseline's page says where it has no document or votes: the site doesn't store them, which is true,
+ * rather than that the bank hasn't published them or that they're late, which isn't. (Decided by Claude, standing
+ * delegation, 24 Oct 2026, #21: §4.5 has no copy for the baselines.)
+ */
+export function baselineNote(what: string): string {
+  return `This 2018 meeting is here as the baseline for the first 2019 comparison; the site doesn't store its ${what}.`;
+}
+
+/** The RBI's Statement tab when the Governor's statement isn't stored. */
+export function governorNote(m: PolicyMeetingRow): string {
+  return isBaseline(m) ? baselineNote("Governor's statement") : "The Governor's statement isn't on the site yet.";
+}
+
+/** The votes panel when no vote is stored. */
+export function votesAbsentNote(m: PolicyMeetingRow): string {
+  return isBaseline(m) ? baselineNote("votes") : "The votes aren't on the site yet.";
+}
+
+/** Spec 01 §4.5, "Minutes not out yet"; after the due day, that they're late; a baseline's aren't stored. */
 export function minutesNote(m: PolicyMeetingRow, today: string): string {
+  if (isBaseline(m)) return baselineNote("minutes");
   if (!m.minutes_due_on) return "The minutes aren't on the site yet.";
   const due = formatDate(m.minutes_due_on);
   if (today > m.minutes_due_on) return `The minutes were due on ${due} and aren't on the site yet.`;
@@ -97,6 +135,7 @@ function daysBetween(from: string, to: string): number {
 
 /** Why the Press conference tab has no transcript. */
 export function transcriptNote(m: PolicyMeetingRow, today: string): string {
+  if (isBaseline(m)) return baselineNote("press-conference transcript");
   const late = daysBetween(m.decision_date, today) > 30;
   if (m.bank === "Fed") {
     if (m.has_press_conference === false) return "The Fed held no press conference after this meeting.";

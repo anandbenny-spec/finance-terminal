@@ -27,18 +27,19 @@ import { decisionLine, meetingHref, stanceText, tally } from "@/lib/policy/decis
 import { documentSource, documentTitle } from "@/lib/policy/document";
 import {
   DOC_TYPES,
-  SPECIAL_MEETING_NOTE,
   ZONE,
+  governorNote,
   latestByType,
   meetingTitle,
   minutesNote,
+  noDecisionNote,
   projectionRows,
   rateRows,
   releaseLine,
-  scheduledNote,
   speakerAnchors,
   transcriptNote,
   voteRows,
+  votesAbsentNote,
 } from "@/lib/policy/meeting";
 import { buildRedline, parsePairs } from "@/lib/policy/redline";
 import { paragraphAt, paragraphs, textFromChunks, type Paragraph } from "@/lib/policy/text";
@@ -225,7 +226,7 @@ async function Overview({ ctx }: { ctx: Ctx }) {
           ) : t.kind === "pending" ? (
             <div className="p-3"><StateNote kind="unavailable">{t.note}</StateNote></div>
           ) : t.kind === "absent" ? (
-            <div className="p-3"><StateNote kind="unavailable">The votes aren&apos;t on the site yet.</StateNote></div>
+            <div className="p-3"><StateNote kind="unavailable">{votesAbsentNote(m)}</StateNote></div>
           ) : (
             <>
               <p className="px-3 py-2.5 text-data text-ink-1">{t.line}</p>
@@ -579,7 +580,7 @@ export async function MeetingView({ bank, slug, date, tab, doc }: { bank: Bank; 
 
   // A meeting without a decision gets its header and §4.5's note, no tabs.
   if (m.status !== "held" || m.kind === "special" || !m.is_rate_decision) {
-    const note = m.kind === "special" ? SPECIAL_MEETING_NOTE : m.status === "scheduled" ? scheduledNote(m) : "This meeting was cancelled.";
+    const note = noDecisionNote(m);
     return (
       <>
         <Header ctx={ctx} tabs={null} />
@@ -604,7 +605,7 @@ export async function MeetingView({ bank, slug, date, tab, doc }: { bank: Bank; 
         ctx={ctx}
         doc={d}
         title={governor ? "Governor's statement" : bank === "Fed" ? "FOMC statement" : "MPC resolution"}
-        missing={governor ? "The Governor's statement isn't on the site yet." : "The decision document isn't on the site yet."}
+        missing={governor ? governorNote(m) : "The decision document isn't on the site yet."}
         withSummary={governor}
         switcher={bank === "RBI" ? <StatementSwitch ctx={ctx} which={governor ? "governor" : "resolution"} /> : undefined}
       />

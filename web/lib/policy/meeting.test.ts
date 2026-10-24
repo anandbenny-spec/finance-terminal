@@ -5,9 +5,11 @@ import type { DocumentRow, ForecastRow, PolicyMeetingRow, PolicyRateSettingDetai
 import { paragraphs } from "./text";
 import {
   SPECIAL_MEETING_NOTE,
+  governorNote,
   latestByType,
   meetingTitle,
   minutesNote,
+  noDecisionNote,
   projectionRows,
   rateRows,
   releaseLine,
@@ -16,6 +18,7 @@ import {
   speakerAnchors,
   transcriptNote,
   voteRows,
+  votesAbsentNote,
 } from "./meeting";
 
 const FED: PolicyMeetingRow = {
@@ -76,6 +79,33 @@ describe("§4.5 state copy", () => {
     expect(transcriptNote({ ...RBI, decision_date: "2020-05-22" }, "2026-10-24")).toBe(
       "The RBI published no press-conference transcript for this meeting; the Governor gave a video address.");
     expect(transcriptNote(RBI, "2026-10-09")).toBe("The RBI hasn't posted this transcript yet.");
+  });
+
+  it("a meeting without a decision: special, scheduled, cancelled, or held with no rate decision", () => {
+    expect(noDecisionNote({ ...RBI, slug: "mpc-2022-11-03", decision_date: "2022-11-03", kind: "special", is_rate_decision: false })).toBe(SPECIAL_MEETING_NOTE);
+    expect(noDecisionNote({ ...RBI, status: "scheduled", decision_date: "2026-12-04", decision_at: "2026-12-04T04:30:00+00:00" })).toBe(
+      "Decision due 4 Dec 2026, 10:00 IST.",
+    );
+    expect(noDecisionNote({ ...FED, status: "cancelled", decision_date: "2020-03-18", is_rate_decision: false })).toBe("This meeting was cancelled.");
+    // The Fed's unscheduled 4 Oct 2019 meeting: held, no rate decision. Not "cancelled" (#21, the dev check).
+    expect(noDecisionNote({ ...FED, decision_date: "2019-10-04", kind: "unscheduled", is_rate_decision: false })).toBe(
+      "No rate decision was taken at this meeting.",
+    );
+  });
+
+  it("the 2018 baselines: what the site doesn't store, never that the bank didn't publish it or that it's late", () => {
+    const fed = { ...FED, slug: "fomc-2018-12-19", decision_date: "2018-12-19", minutes_due_on: "2019-01-09" };
+    const rbi = { ...RBI, slug: "mpc-2018-12-05", decision_date: "2018-12-05", minutes_due_on: "2018-12-19", meeting_no: 14 };
+    const stored = "This 2018 meeting is here as the baseline for the first 2019 comparison; the site doesn't store its";
+    expect(transcriptNote(fed, "2026-10-24")).toBe(`${stored} press-conference transcript.`);
+    expect(minutesNote(fed, "2026-10-24")).toBe(`${stored} minutes.`);
+    expect(minutesNote(rbi, "2026-10-24")).toBe(`${stored} minutes.`);
+    expect(governorNote(rbi)).toBe(`${stored} Governor's statement.`);
+    expect(votesAbsentNote(fed)).toBe(`${stored} votes.`);
+    // Meetings from 2019 keep their copy.
+    expect(governorNote(RBI)).toBe("The Governor's statement isn't on the site yet.");
+    expect(votesAbsentNote(FED)).toBe("The votes aren't on the site yet.");
+    expect(transcriptNote({ ...FED, decision_date: "2019-01-30" }, "2026-10-24")).toBe("Not published by the Fed.");
   });
 
   it("special meeting no. 39", () => {
