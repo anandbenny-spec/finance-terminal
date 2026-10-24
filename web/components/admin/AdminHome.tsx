@@ -107,6 +107,12 @@ export function AdminHome() {
             </Link>
             <span className="text-ink-2">: the tasks, open alerts and recent runs.</span>
           </li>
+          <li>
+            <Link href="/admin/labelling" className="text-ink-1 underline">
+              Labelling
+            </Link>
+            <span className="text-ink-2">: Pass 2&apos;s evaluation sets, one item at a time.</span>
+          </li>
           <li className="text-ink-2">Refresh: the refresh button in each Fed vs RBI panel&apos;s header.</li>
         </ul>
         <div>
