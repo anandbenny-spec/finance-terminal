@@ -4,15 +4,17 @@ Three sets, balanced by bank and by easing, holding and tightening (a meeting's 
 a hold or a hike of the bank's policy rate):
 
 - `policy_hawk_dove`: 30 statements and resolutions, 15 per bank, 5 per phase;
-- `policy_stance`: 20 statements and resolutions, 10 per bank (3 easing, 4 holding, 3 tightening), none of them
-  in the hawk/dove set, so the two sets cover 50 different meetings;
+- `policy_stance`: 20 statements and resolutions, 10 per bank (3 easing, 4 holding, 3 tightening), from other
+  meetings than the hawk/dove set's where a class has enough (a short class, such as RBI's few hikes since 2019,
+  is filled up from the hawk/dove set's meetings of that phase);
 - `policy_member_hawk_dove`: 20 MPC members' statements from the minutes (7 easing, 7 holding, 6 tightening), one
   per meeting, spread across the members.
 
 Inside each class the items are spread evenly over time (sorted by decision date, the i-th of n is the one at
 (i + ½)/n of the way through), so every era is in the set. The rule is deterministic: the same database gives the
-same items. The scoring guide's anchor meetings (`ANCHORS`, from `config/eval/sets/GUIDE.md`) are never items, so
-Anand never labels an example he was shown.
+same items. The scoring guide's anchor statements and resolutions (`ANCHORS`, from `config/eval/sets/GUIDE.md`)
+are never items, so Anand never labels an example he was shown (a member's statement in an anchor meeting's minutes
+is another text, so it may be).
 
 Only 2019→ meetings that took a rate decision and were held, with a published, unsuppressed decision document
 (the latest version), are candidates: the 2018 baselines and RBI's special meeting no. 39 are out.
@@ -102,19 +104,27 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
-def _by_phase(decisions: list[Decision], bank: str, exclude: set[str]) -> dict[str, list[Decision]]:
+def _by_phase(decisions: list[Decision], bank: str, exclude: set[str], *, anchors: bool = True) -> dict[str, list[Decision]]:
+    """A bank's candidates by phase, date-sorted. The anchors are the guide's statements and resolutions, so they're
+    left out of those sets; a member's statement in the same meeting's minutes is another text (`anchors=False`)."""
     out: dict[str, list[Decision]] = {p: [] for p in PHASES}
     for d in sorted(decisions, key=lambda d: (d.decision_date, d.slug)):
-        if d.bank == bank and d.decision_date >= START and d.slug not in ANCHORS and d.slug not in exclude:
+        if (d.bank == bank and d.decision_date >= START and not (anchors and d.slug in ANCHORS)
+                and d.slug not in exclude):
             out[phase(d.change_bps)].append(d)
     return out
 
 
-def _take(classes: dict[str, list[Decision]], counts: dict[str, int], what: str) -> list[Decision]:
+def _take(classes: dict[str, list[Decision]], counts: dict[str, int], what: str,
+          fallback: dict[str, list[Decision]] | None = None) -> list[Decision]:
+    """`counts[p]` items of each phase, spread over time. With `fallback`, a class that runs short is filled up
+    from the fallback's (also spread), rather than leaving the set unbalanced."""
     picked = []
     for p in PHASES:
+        own = classes[p]
+        short = max(counts[p] - len(own), 0) if fallback else 0
         try:
-            picked += spread(classes[p], counts[p])
+            picked += spread(own, counts[p] - short) + (spread(fallback[p], short) if short else [])
         except NotEnough as e:
             raise NotEnough(f"{what}, {p}: {e}") from None
     return sorted(picked, key=lambda d: d.decision_date)
@@ -126,7 +136,10 @@ def choose(decisions: list[Decision], statements: list[MemberStatement]) -> dict
     for bank in BANKS:
         hd = _take(_by_phase(decisions, bank, set()), HAWK_DOVE, f"policy_hawk_dove {bank}")
         hawk_dove += [_item("policy_hawk_dove", d) for d in hd]
-        st = _take(_by_phase(decisions, bank, {d.slug for d in hd}), STANCE, f"policy_stance {bank}")
+        # Other meetings than the hawk/dove set's where there are enough (RBI has few hikes since 2019); a short
+        # class is filled up from the hawk/dove set's meetings: the same text, a different question.
+        st = _take(_by_phase(decisions, bank, {d.slug for d in hd}), STANCE, f"policy_stance {bank}",
+                   fallback={p: [d for d in hd if phase(d.change_bps) == p] for p in PHASES})
         stance += [_item("policy_stance", d) for d in st]
 
     # Member statements: meetings whose minutes hold at least one statement long enough to judge, spread by phase;
@@ -136,7 +149,7 @@ def choose(decisions: list[Decision], statements: list[MemberStatement]) -> dict
         if s.chars >= MIN_STATEMENT_CHARS:
             eligible.setdefault(s.slug, []).append(s.speaker)
     rbi = [d for d in decisions if d.bank == "RBI" and d.slug in eligible]
-    meetings = _take(_by_phase(rbi, "RBI", set()), MEMBER, "policy_member_hawk_dove")
+    meetings = _take(_by_phase(rbi, "RBI", set(), anchors=False), MEMBER, "policy_member_hawk_dove")
     used: Counter[str] = Counter()
     members = []
     for d in meetings:
@@ -232,6 +245,9 @@ def main(argv: list[str] | None = None, *, env=None, out=print) -> int:
     with connect(dsn, autocommit=True, role="eval-items") as conn:
         conn.execute("set default_transaction_read_only = on")
         decisions, stmts, decision_doc = load(conn)
+        counts = Counter(f"{d.bank} {phase(d.change_bps)}" for d in decisions)
+        out(annotation("labelling candidates", f"target {args.target}; "
+                       + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) + f"; member statements {len(stmts)}"))
         try:
             sets = choose(decisions, stmts)
         except NotEnough as e:
@@ -239,9 +255,6 @@ def main(argv: list[str] | None = None, *, env=None, out=print) -> int:
             return 1
         drafts = {it["id"]: stance_sentences(document_text(conn, decision_doc[it["meeting"]]))
                   for it in sets["policy_stance"] if it["bank"] == "RBI"}
-    counts = Counter(p for d in decisions for p in [f"{d.bank} {phase(d.change_bps)}"])
-    out(annotation("labelling candidates", f"target {args.target}; " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
-                   + f"; member statements {len(stmts)}"))
     body = json.dumps({"rule_version": RULE_VERSION, "sets": sets}, ensure_ascii=False, separators=(",", ":"))
     parts = chunks(body)
     for i, part in enumerate(parts, 1):

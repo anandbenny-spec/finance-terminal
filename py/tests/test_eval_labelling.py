@@ -54,6 +54,21 @@ def test_stance_items_are_other_meetings_than_hawk_dove_and_no_item_is_an_anchor
     assert not ANCHORS & {i["meeting"] for items in sets.values() for i in items}
 
 
+def test_a_short_stance_class_is_filled_from_the_hawk_dove_meetings():
+    # RBI's hikes since 2019 are few: 7 here, 2 of them anchors, so all 5 left go to hawk/dove and stance takes 3 of those.
+    hikes = [Decision("RBI", f"mpc-2022-0{m}-0{d}", date(2022, m, d), 25) for m, d in ((5, 4), (6, 8), (8, 5), (9, 3))]
+    hikes += [Decision("RBI", "mpc-2022-12-07", date(2022, 12, 7), 35), Decision("RBI", "mpc-2023-02-08", date(2023, 2, 8), 25),
+              Decision("RBI", "mpc-2026-10-07", date(2026, 10, 7), 25)]
+    rest = [d for d in DECISIONS if not (d.bank == "RBI" and d.change_bps > 0)]
+    sets = choose(rest + hikes, STATEMENTS + [MemberStatement(d.slug, "Member 0", 900) for d in hikes])
+    hd = [i["meeting"] for i in sets["policy_hawk_dove"] if i["bank"] == "RBI" and i["phase"] == "tightening"]
+    st = [i["meeting"] for i in sets["policy_stance"] if i["bank"] == "RBI" and i["phase"] == "tightening"]
+    assert len(hd) == 5 and len(st) == 3 and set(st) <= set(hd)
+    assert not {"mpc-2022-05-04", "mpc-2023-02-08"} & set(hd + st)            # the anchors
+    members = [i["meeting"] for i in sets["policy_member_hawk_dove"] if i["phase"] == "tightening"]
+    assert len(members) == 6 and "mpc-2022-05-04" in members                  # another text: allowed
+
+
 def test_items_spread_over_the_whole_period():
     sets = choose(DECISIONS, STATEMENTS)
     years = {i["decision_date"][:4] for i in sets["policy_hawk_dove"] if i["bank"] == "Fed"}
