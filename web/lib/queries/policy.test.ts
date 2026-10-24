@@ -301,7 +301,7 @@ describe("every chart and table query returns as many rows as the database holds
 function vote(slug: string, k: number): Row {
   return {
     meeting_slug: slug, member_slug: `m${String(k).padStart(2, "0")}`, member_name: `Member ${k}`,
-    voted_change_bps: -25, stance_vote: null, is_dissent: false, dissent_text: null,
+    voted_change_bps: -25, stance_vote: null, is_dissent: false, dissent_text: null, document_id: 1, char_start: 0, char_end: 10,
   };
 }
 
