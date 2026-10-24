@@ -8,6 +8,11 @@ import {
   NOT_APPLICABLE,
   NOT_AVAILABLE,
   NOT_AVAILABLE_LABEL,
+  formatAxisChange,
+  formatAxisDate,
+  formatAxisNumber,
+  formatAxisRange,
+  formatBps,
   formatBpsChange,
   formatCheckedTime,
   formatCountdown,
@@ -262,5 +267,42 @@ describe("no output depends on the viewer's zone", () => {
   it.each(["Pacific/Kiritimati", "America/Los_Angeles", "Asia/Kolkata", "UTC"])("TZ=%s", (tz) => {
     process.env.TZ = tz;
     for (const [, actual, expected] of ROWS) expect(actual()).toBe(expected);
+  });
+});
+
+describe("C3 additions: unsigned bps and chart axes", () => {
+  it("writes a size in bps without a sign, for prose that names the direction", () => {
+    expect(formatBps(25)).toBe("25 bps");
+    expect(formatBps(100)).toBe("100 bps");
+    expect(formatBps(null)).toBe("—");
+    expect(() => formatBps(-25)).toThrow(RangeError);
+    expect(() => formatBps(12.5)).toThrow(RangeError);
+  });
+
+  it("writes axis values with fixed decimals, a true minus and no grouping", () => {
+    expect(formatAxisNumber(4.25)).toBe("4.25");
+    expect(formatAxisNumber(0)).toBe("0.00");
+    expect(formatAxisNumber(-0.5)).toBe("−0.50");
+    expect(formatAxisNumber(1234.5, 1)).toBe("1234.5");
+  });
+
+  it("writes a signed change for a column whose header carries the unit", () => {
+    expect(formatAxisChange(-25)).toBe("−25");
+    expect(formatAxisChange(25)).toBe("+25");
+    expect(formatAxisChange(0)).toBe("0");
+    expect(formatAxisChange(null)).toBe("—");
+  });
+
+  it("writes a range for a column whose header carries the unit", () => {
+    expect(formatAxisRange(4, 4.25)).toBe("4.00–4.25");
+    expect(formatAxisRange(null, 4.25)).toBe("—");
+    expect(() => formatAxisRange(4.5, 4.25)).toThrow(RangeError);
+  });
+
+  it("writes axis dates from the fixed month table", () => {
+    expect(formatAxisDate("2024-09-18", "year")).toBe("2024");
+    expect(formatAxisDate("2024-09-18", "month")).toBe("Sep");
+    expect(formatAxisDate("2024-09-08", "day")).toBe("8 Sep");
+    expect(() => formatAxisDate("2024-13-01", "month")).toThrow(RangeError);
   });
 });

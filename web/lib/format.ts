@@ -109,6 +109,32 @@ export function formatBpsChange(bps: Num): string {
   return `${digits(integer(bps, "a policy-rate change in bps"), { decimals: 0, signed: true })} bps`;
 }
 
+/** A size in basis points, unsigned, for prose that carries the direction in a word: `25` → `25 bps` ("Cut 25 bps"). */
+export function formatBps(bps: Num): string {
+  if (isMissing(bps)) return NOT_AVAILABLE;
+  const n = integer(bps, "a size in bps");
+  if (n < 0) throw new RangeError(`formatBps: a size can't be negative (${n}); use formatBpsChange for a signed change`);
+  return `${digits(n, { decimals: 0 })} bps`;
+}
+
+/** A value on a chart's price axis or in its table, fixed decimals, no unit (the axis names it): `4.25` → `4.25`. */
+export function formatAxisNumber(value: Num, decimals = 2): string {
+  if (isMissing(value)) return NOT_AVAILABLE;
+  return digits(value, { decimals, grouping: false });
+}
+
+/** A range in a table column whose header carries the unit ("Fed target range (%)"): `4`, `4.25` → `4.00–4.25`. */
+export function formatAxisRange(lower: Num, upper: Num): string {
+  if (isMissing(lower) || isMissing(upper)) return NOT_AVAILABLE;
+  return formatRateRange(lower, upper).slice(0, -1);
+}
+
+/** A signed change in a column whose header carries the unit ("Change (bps)"): `-25` → `−25`, `25` → `+25`, `0` → `0`. */
+export function formatAxisChange(value: Num, decimals = 0): string {
+  if (isMissing(value)) return NOT_AVAILABLE;
+  return digits(value, { decimals, grouping: false, signed: true });
+}
+
 /** A yield change given in percentage points, shown in bps: `0.03` → `+3 bps` (× 100, no decimals, sign always). */
 export function formatYieldChange(pp: Num): string {
   if (isMissing(pp)) return NOT_AVAILABLE;
@@ -210,6 +236,17 @@ export function formatTableDate(date: string | null | undefined): string {
 export function formatShortDate(date: string, now: Instant, zone: EventZone = IST): string {
   const { year, month, day } = parseDate(date);
   return year === inZone(toDate(now), zone).year ? `${day} ${monthName(month)}` : `${day} ${monthName(month)} ${year}`;
+}
+
+/**
+ * A time-axis tick on a chart, from a calendar date: the year (`2024`), the month (`Mar`) or the day (`5 Mar`),
+ * whichever the chart's tick level asks for. Month names come from the fixed table, like every other date.
+ */
+export function formatAxisDate(date: string, unit: "year" | "month" | "day"): string {
+  const { year, month, day } = parseDate(date);
+  if (unit === "year") return String(year);
+  if (unit === "month") return monthName(month);
+  return `${day} ${monthName(month)}`;
 }
 
 /** Month of a monthly series: `2026-09` (or its stored date, `2026-09-01`) → `Sep 2026`. */
