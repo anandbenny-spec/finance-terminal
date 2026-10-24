@@ -61,6 +61,18 @@ describe("the dev project (N2)", () => {
     expect(rows.length).toBe(count);
   });
 
+  it("readDailySeries returns every US 10-year (DGS10) and India 10-year (INDIRLTLT01STM) row since 2019 (#71)", async () => {
+    for (const key of ["fred.DGS10", "fred.INDIRLTLT01STM"]) {
+      const rows = await readDailySeries(db, key, range);
+      const count = await held(
+        db.from("observations").select("obs_date", { count: "exact", head: true })
+          .eq("series_key", key).gte("obs_date", range.from).lte("obs_date", range.to),
+      );
+      expect(rows.length, key).toBe(count);
+      expect(rows.length, `${key}: has B4 loaded the series?`).toBeGreaterThan(0);
+    }
+  });
+
   it("readFedTargetSteps returns every change point of both bounds, plus the step in force on 1 Jan 2019", async () => {
     const steps = await readFedTargetSteps(db, range);
     for (const series of [steps.upper, steps.lower]) {
