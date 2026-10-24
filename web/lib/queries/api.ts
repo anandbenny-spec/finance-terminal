@@ -66,6 +66,8 @@ export type PolicyMeetingRow = {
   kind: string;
   is_rate_decision: boolean;
   meeting_no: number | null;
+  /** Read by the meeting page only (C4); other reads leave it out. */
+  has_press_conference?: boolean | null;
   minutes_due_on: string | null;
   policy_rate_pct: number | null;
   policy_rate_change_bps: number | null;
@@ -75,6 +77,51 @@ export type PolicyMeetingRow = {
   attribution: string | null;
   fed_target_lower_pct: number | null;
   fed_target_upper_pct: number | null;
+};
+
+/** api.policy_rate_settings with its citation and cross-check note, for the meeting page's rates table (C4). */
+export type PolicyRateSettingDetailRow = PolicyRateSettingRow & {
+  crosscheck: string | null;
+  document_id: number;
+  char_start: number | null;
+  char_end: number | null;
+};
+
+/** api.document_chunks (0006): a document's text in order; the chunks reproduce it exactly (code-point offsets). */
+export type DocumentChunkRow = {
+  document_id: number;
+  chunk_no: number;
+  char_start: number;
+  char_end: number;
+  section: string | null;
+  speaker: string | null;
+  body: string;
+};
+
+/** api.document_diffs (0006): the sentence-matched diff against the previous statement (segments: diff version 2). */
+export type DocumentDiffRow = {
+  document_id: number;
+  base_document_id: number;
+  segments: unknown;
+  words_added: number;
+  words_removed: number;
+};
+
+/** api.forecasts (0006): a projection with its vintage and target period; `label` "AI-extracted" when it is. */
+export type ForecastRow = {
+  series_key: string;
+  series_name: string;
+  vintage_date: string;
+  target_label: string;
+  target_start: string | null;
+  target_end: string | null;
+  value: number | null;
+  value_low: number | null;
+  value_high: number | null;
+  label: string | null;
+  document_id: number | null;
+  char_start: number | null;
+  char_end: number | null;
 };
 
 /** api.policy_votes (0006): one row per voter per meeting, each cited to its passage. */
@@ -149,7 +196,7 @@ export type PolicyRateSettingRow = {
 
 type View<Row> = { Row: Row; Relationships: [] };
 
-/** The slice of the `api` schema typed so far, for supabase-js: the shell's views (C2), the policy pages' (A1, C3). */
+/** The slice of the `api` schema typed so far, for supabase-js: the shell's views (C2), the policy pages' (A1, C3, C4). */
 export type ApiDatabase = {
   api: {
     Tables: { [_ in never]: never };
@@ -161,7 +208,10 @@ export type ApiDatabase = {
       observation_steps: View<ObservationStepRow>;
       observations: View<ObservationRow>;
       policy_meetings: View<PolicyMeetingRow>;
-      policy_rate_settings: View<PolicyRateSettingRow>;
+      policy_rate_settings: View<PolicyRateSettingDetailRow>;
+      document_chunks: View<DocumentChunkRow>;
+      document_diffs: View<DocumentDiffRow>;
+      forecasts: View<ForecastRow>;
       policy_votes: View<PolicyVoteRow>;
       documents: View<DocumentRow>;
       ai_outputs: View<AiOutputRow>;
