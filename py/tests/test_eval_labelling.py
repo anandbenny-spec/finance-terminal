@@ -155,6 +155,10 @@ def test_load_reads_published_decisions_and_member_statements_as_job_writer():
             dt = "fomc_statement" if bank == fed else "mpc_resolution"
 
             def doc(doc_type, text, chunks):
+                with c.transaction():       # the chunks check is deferred to the commit: one transaction per document
+                    return _doc(doc_type, text, chunks)
+
+            def _doc(doc_type, text, chunks):
                 d = c.execute("""insert into core.document (doc_type, entity_id, event_id, title, source_id, external_key,
                                    source_url, text_sha256, char_count, is_published, extracted_at, chunked_at)
                                  select %s, b.id, %s, %s, s.id, %s, 'https://example.org', sha256(%s::bytea), %s, %s,
