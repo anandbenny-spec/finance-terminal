@@ -2,8 +2,10 @@
 // a strong rule under it) holds the title and qualifier, with icon actions on the right; an optional subtitle says
 // the question the panel answers; the footer carries SourceLine and Freshness. `market` adds the 3 px top edge in
 // that market's series colour (cyan US/Fed, violet India/RBI). A panel never shows a blank body: callers put a
-// StateNote there when they have nothing else.
+// StateNote there when they have nothing else. `refresh` names the panel's feeding tasks (lib/feeds.ts): the admin
+// gets a RefreshButton for them in the header (C6; Design 01 §4.7); visitors get nothing.
 import { cn } from "cn";
+import { RefreshButton } from "@/components/admin/RefreshButton";
 import type { ReactNode } from "react";
 
 export type PanelSpan = 12 | 8 | 6 | 4;
@@ -23,6 +25,7 @@ export function Panel({
   titleId,
   qualifier,
   actions,
+  refresh,
   subtitle,
   footer,
   market,
@@ -36,6 +39,8 @@ export function Panel({
   titleId?: string;
   qualifier?: ReactNode;
   actions?: ReactNode;
+  /** The tasks that feed this panel: the admin's RefreshButton (Design 01 §4.7). */
+  refresh?: readonly string[];
   subtitle?: ReactNode;
   footer?: ReactNode;
   market?: "US" | "IN";
@@ -63,7 +68,12 @@ export function Panel({
             {title}
           </h3>
           {qualifier}
-          {actions && <div className="ml-auto flex items-center gap-0.5">{actions}</div>}
+          {(actions || refresh) && (
+            <div className="ml-auto flex items-center gap-0.5">
+              {actions}
+              {refresh && <RefreshButton tasks={refresh} />}
+            </div>
+          )}
         </div>
       )}
       {subtitle && <p className="px-3 pt-2 text-meta text-ink-2">{subtitle}</p>}
