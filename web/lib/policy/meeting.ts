@@ -3,7 +3,9 @@
 //
 // The §4.5 state copy is used word for word where Spec 01 gives it. Two cases differ from the spec, by Anand's
 // decision of 23 Oct 2026 (#15): RBI press-conference transcripts exist from Dec 2018, not Feb 2023, except for the
-// four 2020 COVID meetings (a video address only). Their copy is proposed here and awaits his approval (#21).
+// four 2020 COVID meetings (a video address only). Their copy was approved by Anand on 24 Oct 2026, 13:54 IST (#21),
+// with the COVID meetings' line saying only what RBI's pages show: no transcript, a video address. It holds once
+// policy.rbi_documents stores the transcripts (B6 part 3, #15), which is why C4 merges after that.
 import {
   NOT_AVAILABLE,
   formatAxisChange,
@@ -101,8 +103,8 @@ export function transcriptNote(m: PolicyMeetingRow, today: string): string {
     // Spec 01 §4.5, "Fed transcript missing".
     return late ? "Not published by the Fed." : "The Fed hasn't posted this transcript yet.";
   }
-  // Proposed copy (Spec 01 §4.5's "from February 2023" no longer holds: Anand, 23 Oct 2026, #15); awaiting approval.
-  if (RBI_NO_PRESS_CONFERENCE.has(m.decision_date)) return "No press conference was held for this meeting: the Governor gave a video address instead.";
+  // Spec 01 §4.5's "from February 2023" no longer holds (Anand, 23 Oct 2026, #15); this copy approved 24 Oct (#21).
+  if (RBI_NO_PRESS_CONFERENCE.has(m.decision_date)) return "The RBI published no press-conference transcript for this meeting; the Governor gave a video address.";
   return late ? "Not published by the RBI." : "The RBI hasn't posted this transcript yet.";
 }
 
