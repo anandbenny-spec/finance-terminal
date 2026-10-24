@@ -107,7 +107,9 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 
 - **The core is frozen** (20 Oct 2026). Any change is a **new migration**, with its reason recorded in the
   planning doc that adds it. Never edit an applied migration.
-- **Numbers are sequential:** the next is one past the highest in `supabase/migrations/`. **0012 is module 1's
+- **Numbers are sequential:** the next is one past the highest in `supabase/migrations/` on `main` and the highest
+  claimed on tracker #30. Two lanes build at once (Anand, 24 Oct 2026, 23:46 IST), so claim the number there first
+  (the tracker's rule) and push migrations to the projects in number order. **0012 is module 1's
   seeds** (Spec 01 §1.3: rows and comments, no structural change). Each migration ships with tests that
   `run_all.sh` runs.
 - New tables: RLS on, explicit policies, explicit grants (never rely on defaults). New `api` views:
@@ -201,8 +203,8 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   done-when check passes, or the thread grows long, write a short handoff in that job's GitHub issue (done, next,
   open questions, files touched), then tell Anand it's a good point to start a fresh session from this file,
   the sub-prompt and that issue. **The next session's opening prompt is `/next-job`** (Anand, 24 Oct 2026: his
-  skill that takes the next job in tracker #30's order), plus anything he must do first. Write a full prompt only
-  when a job needs instructions its issue doesn't hold.
+  skill that takes the next job in tracker #30's order; one session per lane), plus anything he must do first.
+  Write a full prompt only when a job needs instructions its issue doesn't hold.
 - **CI runs the full suite (Anand, 23 Oct 2026).** In a session, run the tests the change touches; `ci.yml`
   runs ruff, every SQL script and pytest on each push (and on `workflow_dispatch`, which Claude may start).
   Read the result from the run's annotations: each failing test and the counts are annotated, and Claude's
@@ -232,10 +234,17 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   VM) reach GitHub, PyPI, npm and the Anthropic API, but not the data sources or Supabase. So unit and SQL tests
   run in Claude's workspace (on a local Postgres with pgvector) or in CI. Anything that touches a live source or
   the real project runs on GitHub's runners or in Anand's Terminal on the Mac, and Claude reads the results from
-  the run status, the Mac folder or what Anand pastes. Anand starts workflow runs (they cost Actions minutes and
-  API credits), with one standing exception (Anand, 22 Oct 2026): Claude may open, update and close GitHub
-  issues, and start `ci` and manual check workflows against the **dev** project. Claude never pushes to `main`,
-  and never starts production runs, backfills or anything that spends AI credits without asking.
+  the run status, the Mac folder or what Anand pastes.
+- **Runs Claude may start (Anand, 22 Oct 2026; widened 24 Oct 2026, 23:46 IST).** Claude may open, update and
+  close GitHub issues, and start `ci` and the manual check workflows against the **dev** project. It may also
+  start **dev runs that spend no AI credits** (`daily`, `refresh`, `backfill`, `watch`, each with `target=dev`)
+  without asking, and records each one on its issue (the run link, what it ran, the result). `policy.ai_batch` is
+  the one task that spends: a `refresh` or `backfill` of it, a `daily` while any document still lacks its AI
+  outputs (check through the read-only dev connector first) and a decision-day `watch` are AI runs. **Dev AI runs
+  need Anand's OK beyond D1's $2 cap** (#24). **Production:** the backfills for module 1's early link are
+  approved, the data tasks first, then the AI backfill (expected under $1; §7's $5 stop applies), each recorded
+  on its tracker #30 launch issue. Any other production run, and any other AI spend, still needs his OK. Claude
+  never pushes to `main`.
 - The Mac's shell can't run macOS virtual environments, and deleting files there needs Anand's permission.
 - **Campus Wi-Fi (Sophos, from 26 Oct):** `UV_SYSTEM_CERTS=true` for uv, `NODE_EXTRA_CA_CERTS` for npm and the
   Vercel CLI, `http.sslCAInfo` for git. Production (GitHub, Vercel) is unaffected.
