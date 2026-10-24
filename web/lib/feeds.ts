@@ -21,6 +21,8 @@ export const FEEDS = {
   // /policy (C3; Spec 01 §4.2, the S rows). The stance is AI-extracted (policy.ai_batch); summaries too.
   policyRatesStand: ["policy.calendar", "policy.fed_documents", "policy.rbi_documents", "policy.ai_batch"],
   policyRatesChart: ["policy.market_series", "policy.rbi_documents"],
+  // Pass 1b (#71): the US and India 10-year yields, from the stored series.
+  policyLongRates: ["policy.market_series"],
   policyLatestFed: ["policy.fed_documents", "policy.ai_batch"],
   policyLatestRbi: ["policy.rbi_documents", "policy.ai_batch"],
   policyHistory: ["policy.fed_documents", "policy.rbi_documents", "policy.ai_batch"],

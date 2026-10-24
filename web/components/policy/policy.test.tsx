@@ -7,11 +7,12 @@ import { describe, expect, it } from "vitest";
 import { Gated } from "@/components/data/Gated";
 import { HistoryPanel } from "@/components/policy/HistoryPanel";
 import { PolicyCard } from "@/components/policy/PolicyCard";
+import { LongRatesPanel } from "@/components/policy/LongRatesPanel";
 import { ReactionsPanel } from "@/components/policy/ReactionsPanel";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { historyRows } from "@/lib/policy/decisions";
 import { REACTION_SERIES, reactionRows } from "@/lib/policy/reactions";
-import type { AiCitationRow, AiOutputRow, FieldPolicyRow, PolicyMeetingRow, PolicyVoteRow } from "@/lib/queries/api";
+import type { AiCitationRow, AiOutputRow, FieldPolicyRow, ObservationRow, PolicyMeetingRow, PolicyVoteRow } from "@/lib/queries/api";
 import type { LatestDecision } from "@/lib/queries/overview";
 
 const html = (node: ReactNode) => renderToStaticMarkup(<TooltipProvider>{node}</TooltipProvider>);
@@ -148,6 +149,31 @@ describe("ReactionsPanel (Pass 1b, #70)", () => {
 
   it("is never blank when no decision is listed", () => {
     expect(text(html(<ReactionsPanel rows={[]} footer="" />))).toContain("No decisions match this filter.");
+  });
+});
+
+describe("LongRatesPanel (Pass 1b, #71)", () => {
+  const o = (series_key: string, obs_date: string, value: number): ObservationRow => ({ series_key, obs_date, value, label: null });
+  const us = [o("fred.DGS10", "2026-10-21", 4.08), o("fred.DGS10", "2026-10-22", 4.11)];
+  const india = [o("fred.INDIRLTLT01STM", "2026-09-01", 6.41)];
+
+  it("answers its question, labels India's yield monthly and carries the latest values", () => {
+    const out = text(html(<LongRatesPanel us={us} india={india} from="2019-01-01" footer="Source line" />));
+    expect(out).toContain("Long rates: US vs India 10-year");
+    expect(out).toContain("How have long-term yields moved in each market?");
+    expect(out).toContain("4.11%");
+    expect(out).toContain("6.41%");
+    expect(out).toContain("monthly, Sep 2026");
+    expect(out).toContain("Source line");
+  });
+
+  it("offers the table view", () => {
+    expect(html(<LongRatesPanel us={us} india={india} from="2019-01-01" footer="" />)).toContain('aria-label="View as table"');
+  });
+
+  it("says so, never a blank panel, when no yields are published", () => {
+    const out = text(html(<LongRatesPanel us={[]} india={[]} from="2019-01-01" footer="" />));
+    expect(out).toContain("No long-term yields are published yet.");
   });
 });
 
