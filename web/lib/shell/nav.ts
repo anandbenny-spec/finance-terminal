@@ -2,7 +2,7 @@
 // the list when it ships, never as "coming soon". Start here (the landing page, 3–12 Nov), Policy Day (Pass 1b)
 // and How it's built (stage 2) join then. The admin group shows only to the logged-in admin (C6 builds the login).
 
-export type NavIcon = "policy" | "admin" | "health";
+export type NavIcon = "policy" | "admin" | "health" | "labelling";
 
 export type NavItem = { href: string; label: string; icon: NavIcon };
 
@@ -16,6 +16,7 @@ export const NAV: readonly NavGroup[] = [
     items: [
       { href: "/admin", label: "Admin", icon: "admin" },
       { href: "/admin/health", label: "Health", icon: "health" },
+      { href: "/admin/labelling", label: "Labelling", icon: "labelling" },
     ],
   },
 ];

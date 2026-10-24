@@ -11,7 +11,7 @@ describe("sidebar", () => {
 
   it("names no page that isn't built (no 'coming soon')", () => {
     const hrefs = NAV.flatMap((g) => g.items.map((i) => i.href));
-    expect(hrefs).toEqual(["/policy", "/admin", "/admin/health"]);
+    expect(hrefs).toEqual(["/policy", "/admin", "/admin/health", "/admin/labelling"]);
   });
 
   it("marks the item a path belongs to, the most specific one first", () => {
@@ -19,6 +19,7 @@ describe("sidebar", () => {
     expect(activeHref("/policy/fed/2026-10-28")).toBe("/policy");
     expect(activeHref("/admin/health")).toBe("/admin/health");
     expect(activeHref("/admin")).toBe("/admin");
+    expect(activeHref("/admin/labelling")).toBe("/admin/labelling");
     expect(activeHref("/policyx")).toBeNull();
     expect(activeHref("/")).toBeNull();
     expect(activeHref(null)).toBeNull();
