@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ft.engines.document.text import Extracted, sentence_spans, transcript_speaker
+from ft.engines.document.text import Block, Extracted, sentence_spans, transcript_speaker
 
 TARGET = 1800
 MAX_CHARS = 2400
@@ -52,6 +52,14 @@ def minutes_speaker(heading: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _plain_statement_heading(body: str) -> bool:
+    """A paragraph that is only "Statement by <member>": the RBI's minutes set these in plain type, so the extractor
+    reads them as paragraphs (checked on the 49 minutes saved 23 Oct 2026). One short line, no closing stop."""
+    one = " ".join(body.split())
+    return ("\n" not in body.strip() and len(one.split()) <= 12 and not one.endswith((".", ":", ";", ","))
+            and minutes_speaker(one) is not None)
+
+
 def _pieces(text: str, start: int, end: int, target: int, max_chars: int) -> list[tuple[int, int]]:
     """A block as units no longer than max_chars: whole, else its sentences, else words, else hard cuts."""
     if end - start <= max_chars:
@@ -81,6 +89,8 @@ def _units(doc: Extracted, root: str | None, speakers: str | None, target: int, 
 
     for b in doc.blocks:
         body = text[b.start:b.end]
+        if speakers == "minutes" and b.kind != "heading" and _plain_statement_heading(body):
+            b = Block(b.start, b.end, "heading", 7)             # the RBI's minutes: "Statement by …" in plain type
         if b.kind == "heading":
             while stack and stack[-1][0] >= b.level:
                 stack.pop()
