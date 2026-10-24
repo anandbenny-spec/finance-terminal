@@ -242,7 +242,10 @@ def test_a_daily_run_publishes_each_stance_and_the_projections_the_regex_missed_
                    and document_id = %s""", resolution_id(cut))[0][0]
     q("""update core.forecast set method = 'ai_extracted', ai_output_id = %s
           where vintage_date = %s and series_id = (select id from core.series where key = 'rbi.proj_gdp')""", out_id, apr)
-    code, r = rbi_go(Sites({}), rbi_task(roster, [base, cut], date(2013, 3, 1)), "backfill",
+    # The Annual Policy pages again: since B6 part 2 the backfill looks there for minutes it hasn't stored (none here).
+    pages = Sites({rbi_calendar.ANNUAL_POLICY: annual((apr, 89101), years=YEARS)},
+                  {"2013": annual((feb, 89001), years=YEARS)})
+    code, r = rbi_go(pages, rbi_task(roster, [base, cut], date(2013, 3, 1)), "backfill",
                      datetime(2014, 3, 4, tzinfo=UTC))
     assert (code, r["status"]) == (0, "success") and r["checks"]["resolutions_stored"]["passed"], r["error"]
     assert [x[5] for x in forecasts(cut)] == ["parsed", "ai_extracted", "ai_extracted", "parsed"]

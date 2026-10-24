@@ -119,9 +119,24 @@ def test_rbi_calendar_resolutions_minutes_schedule_notices():
     assert by[date(2020, 2, 6)].days is None and by[date(2020, 2, 6)].has_press_conference
     assert by[date(2026, 10, 7)].days == (date(2026, 10, 5), date(2026, 10, 7))
     assert cal.minutes == {date(2020, 2, 6): date(2020, 2, 4), date(2026, 8, 5): date(2026, 8, 3)}
+    assert cal.minutes_links == {date(2020, 2, 6): PR + "49424", date(2026, 8, 5): PR + "63403"}   # B6 part 2
     assert [s.days for s in cal.schedule][-2:] == [(date(2026, 12, 2), date(2026, 12, 4)),
                                                    (date(2027, 2, 3), date(2027, 2, 5))]
     assert [n.url for n in cal.reschedules] == [PR + "60612"]
+
+
+@pytest.mark.parametrize("title,days", [
+    ("Minutes of the Monetary Policy Committee Meeting December 3-5, 2018", (date(2018, 12, 3), date(2018, 12, 5))),
+    ("Minutes of the Monetary Policy Committee Meeting, September 29, 30 and October 1, 2025",
+     (date(2025, 9, 29), date(2025, 10, 1))),
+    ("Minutes of the  Monetary Policy Committee Meeting, May 2 and 4, 2022", (date(2022, 5, 2), date(2022, 5, 4)))])
+def test_rbi_minutes_days(title, days):
+    assert rbi_calendar.minutes_days(title) == days
+
+
+def test_rbi_minutes_days_refuses_another_title():
+    with pytest.raises(dates.DateParseError):
+        rbi_calendar.minutes_days("Resolution of the Monetary Policy Committee (MPC) October 5 to 7, 2026")
 
 
 def test_rbi_page_template_change_fails():

@@ -168,6 +168,10 @@ class Task:
     def load(self, tx, fetched, task_run_id) -> int: return 0
     def checks(self, tx, fetched, task_run_id) -> list[Check]: return []
     def alerts(self, db) -> list[Alert]: return []          # evaluated after the load, in its own transaction
+    def failure_alerts(self, db, status: str, error: str | None) -> list[Alert]:
+        """Alerts a failed run raises or resolves (alerts() runs only after a load that succeeded): e.g. a source
+        unreachable for days. `status` is 'failed' or 'checks_failed'; `error` what ops.task_run records."""
+        return []
 
 
 def _order(tasks):
@@ -297,7 +301,9 @@ class JobRun:
         failed_alert = Alert(f"task_failed:{t.key}", status in BAD, "error", f"{t.key} {status}: {err}")
         warn_alerts = [Alert(f"check:{t.key}:{c.name}", not c.passed, "warn", f"{c.name}: {c.detail}")
                        for c in checks if not c.blocking]
-        for a in [failed_alert, *warn_alerts, *(t.alerts(db.conn) if status == "success" else [])]:
+        more = t.alerts(db.conn) if status == "success" else (
+            t.failure_alerts(db.conn, status, err) if status in BAD else [])
+        for a in [failed_alert, *warn_alerts, *more]:
             if a.active:
                 db.execute("""insert into ops.alert (task_key, severity, message, dedupe_key) values (%s,%s,%s,%s)
                               on conflict (dedupe_key) where resolved_at is null and dedupe_key is not null do nothing""",
