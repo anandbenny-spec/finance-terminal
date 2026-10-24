@@ -12,10 +12,11 @@ import { Cited } from "@/components/ai/CitationChip";
 import { DecisionLine } from "@/components/ai/DecisionLine";
 import { DocumentView } from "@/components/ai/DocumentView";
 import { Redline } from "@/components/ai/Redline";
+import { NumbersChanged } from "@/components/ai/NumbersChanged";
 import { VoteDotPlot } from "@/components/ai/VoteDotPlot";
 import { VoteGrid } from "@/components/ai/VoteGrid";
 import { Freshness } from "@/components/data/Freshness";
-import { Gated, type FieldPolicies } from "@/components/data/Gated";
+import { Gated, fieldPolicy, type FieldPolicies } from "@/components/data/Gated";
 import { PageHeader } from "@/components/data/PageHeader";
 import { Panel } from "@/components/data/Panel";
 import { Qualifier } from "@/components/data/Qualifier";
@@ -43,10 +44,11 @@ import {
   votesAbsentNote,
 } from "@/lib/policy/meeting";
 import { buildRedline, parsePairs } from "@/lib/policy/redline";
+import { numbersChanged } from "@/lib/policy/numbers";
 import { dotPlot } from "@/lib/policy/votedots";
 import { paragraphAt, paragraphs, textFromChunks, type Paragraph } from "@/lib/policy/text";
 import type { DocumentChunkRow, DocumentRow, PolicyMeetingRow } from "@/lib/queries/api";
-import { readDocumentChunks, readMeetingDiff, readMeetingPage, type CitedOutput, type MeetingPage } from "@/lib/queries/meeting";
+import { readDocumentChunks, readMeetingDiff, readMeetingPage, readNumbersBase, type CitedOutput, type MeetingPage } from "@/lib/queries/meeting";
 import type { Bank } from "@/lib/queries/policy";
 import { readFreshness } from "@/lib/queries/shell";
 import { panelFreshness, type PanelFreshness } from "@/lib/shell/freshness";
@@ -423,6 +425,7 @@ async function Changes({ ctx }: { ctx: Ctx }) {
           ) : (
             <StateNote kind="unavailable">No AI summary of the changes yet.</StateNote>
           )}
+          <NumbersPart ctx={ctx} base={read.base} />
           {pairs ? (
             <Redline model={buildRedline(pairs)} added={read.diff.words_added} removed={read.diff.words_removed} />
           ) : (
@@ -432,6 +435,41 @@ async function Changes({ ctx }: { ctx: Ctx }) {
         [docSource(ctx, decisionDoc), ...(read.base ? [docSource(ctx, read.base)] : [])],
       )}
     </div>
+  );
+}
+
+/** NumbersChanged against the meeting the diff's base document belongs to (the same target period across vintages). */
+async function NumbersPart({ ctx, base }: { ctx: Ctx; base: DocumentRow | null }) {
+  const { m, bank, page } = ctx;
+  const heading = <h3 className="text-title text-ink-1">Numbers that changed</h3>;
+  if (!base?.event_slug) return null;
+  if (!page.settings.ok || !page.votes.ok || !page.projections.ok) {
+    return <section className="flex flex-col gap-2">{heading}<StateNote kind="error">{ERROR}</StateNote></section>;
+  }
+  const earlier = await readNumbersBase(bank, base.event_slug);
+  if (!earlier.ok) return <section className="flex flex-col gap-2">{heading}<StateNote kind="error">{ERROR}</StateNote></section>;
+  if (!earlier.meeting) return null;
+  const stancePolicy = ctx.policies ? fieldPolicy(ctx.policies, "ai.stance_extraction") : null;
+  const items = numbersChanged({
+    current: m,
+    previous: earlier.meeting,
+    currentSettings: page.settings.rows,
+    previousSettings: earlier.settings,
+    currentProjections: page.projections.rows,
+    previousProjections: earlier.projections,
+    currentVotes: page.votes.rows,
+    previousVotes: earlier.votes,
+    stance: { show: stancePolicy !== null && stancePolicy.status !== "hidden", label: stancePolicy?.status === "labelled" ? stancePolicy.label : null },
+  });
+  return (
+    <section className="flex flex-col gap-2">
+      {heading}
+      {items.length === 0 ? (
+        <StateNote kind="unavailable">The numbers of the two decisions can&apos;t be compared yet.</StateNote>
+      ) : (
+        <NumbersChanged items={items} previousDate={earlier.meeting.decision_date} newDate={m.decision_date} />
+      )}
+    </section>
   );
 }
 

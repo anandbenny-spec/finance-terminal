@@ -157,3 +157,26 @@ export async function readMeetingDiff(
     return { diff, base: diff ? await readDocument(db, diff.base_document_id) : null, summary };
   });
 }
+
+/** The earlier meeting NumbersChanged compares with (the diff's base document's meeting): its row, rates, votes and
+ * (RBI) projections, each read whole through the guarded reads. */
+export async function readNumbersBase(
+  bank: Bank,
+  slug: string,
+): Promise<Read<{ meeting: PolicyMeetingRow | null; settings: PolicyRateSettingDetailRow[]; votes: PolicyVoteRow[]; projections: ForecastRow[] }>> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("policy", `meeting-${slug}`);
+  const db = publicClient();
+  if (!db) return failed(`numbers base ${slug}`, UNCONFIGURED);
+  return attempt(`numbers base ${slug}`, async () => {
+    const meeting = await readMeeting(db, slug);
+    if (!meeting) return { meeting: null, settings: [], votes: [], projections: [] };
+    const [settings, votes, projections] = await Promise.all([
+      readMeetingSettings(db, slug),
+      bank === "Fed" ? readVotes(db, [slug]) : Promise.resolve([]),
+      bank === "RBI" ? readProjections(db, meeting.decision_date) : Promise.resolve([]),
+    ]);
+    return { meeting, settings, votes, projections };
+  });
+}
