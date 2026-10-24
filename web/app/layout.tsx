@@ -1,11 +1,17 @@
 import type { Metadata } from "next";
 import { AppShell } from "@/components/shell/AppShell";
+import { SITE_DESCRIPTION, SITE_NAME, siteOrigin } from "@/lib/site";
 import { plexMono, plexSans } from "./fonts";
 import "./globals.css";
 
+// The preview card (#86; Brief §10): title, description and image (app/opengraph-image.tsx and twitter-image.tsx, which
+// Next adds to the head). `metadataBase` makes the image URL absolute from Vercel's environment (lib/site.ts).
 export const metadata: Metadata = {
-  title: "Finance Terminal",
-  description: "An AI research terminal for Indian and US markets. Informational only, not investment advice.",
+  metadataBase: siteOrigin(),
+  title: SITE_NAME,
+  description: SITE_DESCRIPTION,
+  openGraph: { type: "website", siteName: SITE_NAME, title: SITE_NAME, description: SITE_DESCRIPTION },
+  twitter: { card: "summary_large_image", title: SITE_NAME, description: SITE_DESCRIPTION },
 };
 
 // Fonts: Design 01 §2.7 (fonts.ts). `dark`: the site is dark only, and globals.css keeps shadcn's class-based

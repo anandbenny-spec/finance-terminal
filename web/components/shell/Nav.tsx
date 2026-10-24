@@ -4,7 +4,7 @@
 // tooltips at lg) and the drawer below lg. Active item: a 2 px amber bar on the left, the amber wash, ink-1.
 // usePathname suspends on a route with an unknown dynamic param under Cache Components, so the sidebar renders
 // `NavLinks` inside Suspense with a fallback that marks nothing active (Next 16 docs, usePathname).
-import { HeartPulse, Landmark, LayoutDashboard, Tags, type LucideIcon } from "lucide-react";
+import { HeartPulse, Info, Landmark, LayoutDashboard, Tags, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "cn";
@@ -12,7 +12,7 @@ import { useAdmin } from "@/components/shell/admin";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { activeHref, visibleGroups, type NavIcon } from "@/lib/shell/nav";
 
-const ICONS: Record<NavIcon, LucideIcon> = { policy: Landmark, admin: LayoutDashboard, health: HeartPulse, labelling: Tags };
+const ICONS: Record<NavIcon, LucideIcon> = { policy: Landmark, about: Info, admin: LayoutDashboard, health: HeartPulse, labelling: Tags };
 
 type Variant = "sidebar" | "drawer";
 
