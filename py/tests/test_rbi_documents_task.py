@@ -456,10 +456,12 @@ def test_backfill_stores_resolutions_rates_votes_projections_and_diffs_and_rerun
                    PR + "81201",
                    "html-1/rbi_press_release", "/Scripts/BS_PressReleaseDisplay.aspx?prid=81201")
 
-    # A re-run reads the stored resolutions, minutes, statements and transcripts back: no request, no row, no raw file.
+    # A re-run reads the stored resolutions, minutes, statements and transcripts back: no row, no raw file. APR has no
+    # transcript (as 2020's COVID meetings), so the run looks again: one conditional request for the current year's page
+    # (unchanged: 304), the closed year from its stored copy (no form post), and no document page.
     sites.seen.clear()
     code, r2 = go(sites, task(roster, slugs, date(2012, 1, 1)), "backfill", datetime(2012, 7, 1, tzinfo=UTC))
-    assert (code, r2["status"], r2["rows"], sites.seen) == (0, "success", 0, [])
+    assert (code, r2["status"], r2["rows"], sites.seen) == (0, "success", 0, [rbi_calendar.ANNUAL_POLICY])
     assert r2["http"].get("new_raw_files", 0) == 0 and r2["checks"]["resolutions_stored"]["passed"]
     assert r2["checks"]["statements_stored"]["passed"] and r2["checks"]["transcripts_stored"]["passed"]
     assert json_counts(r2)["statements"] == 2 and json_counts(r2)["transcripts"] == 2
