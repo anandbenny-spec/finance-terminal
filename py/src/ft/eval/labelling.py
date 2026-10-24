@@ -223,12 +223,13 @@ def stance_sentences(text: str, limit: int = 3, width: int = 400) -> list[str]:
 # ---------------------------------------------------------------------------------------------- the CLI
 
 def annotation(title: str, text: str) -> str:
-    """One GitHub notice annotation (Claude reads results from annotations: its workspace can't download logs)."""
+    """One GitHub notice annotation (Claude reads results from annotations: its workspace can't download logs).
+    GitHub cuts a message at 4,096 characters, so long text goes through `chunks` first."""
     esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
     return f"::notice title={title}::{esc}"
 
 
-def chunks(text: str, size: int = 7000) -> list[str]:
+def chunks(text: str, size: int = 3900) -> list[str]:
     return [text[i:i + size] for i in range(0, len(text), size)] or [""]
 
 
