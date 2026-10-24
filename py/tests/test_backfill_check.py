@@ -45,6 +45,36 @@ def test_a_rerun_that_adds_what_b8_forbids_fails(grew):
         assert any("new raw files: fed: https://example.org/a" in line for line in out)
 
 
+FRED = "https://api.stlouisfed.org/fred/series/observations?series_id=DGS10&observation_start=2019-01-01&file_type=json"
+YAHOO = "https://query2.finance.yahoo.com/v8/finance/chart/%5ENSEI?period1=1&period2=2&interval=1d"
+RBI = "https://www.rbi.org.in/Scripts/Annualpolicy.aspx"
+
+
+def test_only_the_named_changing_sources_are_volatile():
+    assert bc.is_volatile("fred", FRED) and bc.is_volatile("yfinance", YAHOO) and bc.is_volatile("rbi", RBI)
+    assert not bc.is_volatile("rbi", RBI + "#hdnYear=2020")              # a closed fiscal year must not change
+    assert not bc.is_volatile("rbi", "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=1")
+    assert not bc.is_volatile("fed", FRED)                               # the source must match too
+    assert not bc.is_volatile("fred", "https://fred.stlouisfed.org/series/DGS10")
+    assert not bc.is_volatile("fred", None)
+
+
+def test_new_raw_files_from_changing_sources_pass_and_are_reported():
+    out = []
+    r = bc.TaskResult("policy.market_series", 0, {"raw_files": 17, "stored_objects": 17, "documents": 0, "ai_requests": 0},
+                      volatile=17, volatile_listed=[f"fred: {FRED} (10 bytes)"])
+    assert r.ok and bc.report([r], 0, [], out.append)
+    assert "17 from sources whose bytes change on every fetch" in out[0]
+    assert out[1].startswith("::notice") and FRED in out[1]
+
+
+@pytest.mark.parametrize("delta", [{"raw_files": 2, "stored_objects": 2}, {"raw_files": 1, "stored_objects": 2},
+                                   {"raw_files": 1, "stored_objects": 1, "documents": 1}])
+def test_anything_beyond_the_changing_sources_still_fails(delta):
+    r = bc.TaskResult("policy.calendar", 0, {"ai_requests": 0, "documents": 0} | delta, volatile=1)
+    assert not r.ok and not bc.report([r], 0, [], lambda _: None)
+
+
 def test_a_failed_run_or_a_bad_raw_file_fails():
     assert not bc.report([result(code=1)], 0, [], lambda _: None)
     out = []
@@ -150,14 +180,15 @@ def db():
     return {"task_run": tr, "source": source, "floor": floor}
 
 
-def register(db, storage, body: bytes) -> str:
+def register(db, storage, body: bytes, source: str = "fed", url: str | None = None) -> str:
     """Stores `body` and registers it, as the shared fetcher does."""
-    o = storage.put(body, source="fed", media_type="text/html", ext="html")
+    o = storage.put(body, source=source, media_type="text/html", ext="html")
     with psycopg.connect(ADMIN, autocommit=True) as c:
+        source_id = c.execute("select id from core.source where key = %s", (source,)).fetchone()[0]
         c.execute("""insert into core.raw_file (object_key, source_id, source_url, sha256, bytes, media_type, fetched_at,
                                                 task_run_id)
                      values (%s, %s, %s, %s, %s, 'text/html', %s, %s)""",
-                  (o.object_key, db["source"], f"https://example.org/{o.sha256.hex()[:8]}", o.sha256, o.bytes,
+                  (o.object_key, source_id, url or f"https://example.org/{o.sha256.hex()[:8]}", o.sha256, o.bytes,
                    datetime.now(UTC), db["task_run"]))
     return o.object_key
 
@@ -191,6 +222,24 @@ def test_a_rerun_that_stores_a_new_raw_file_fails_and_lists_it(db, storage, caps
     assert "raw_files +1" in out and "stored_objects +1" in out
     assert "policy.calendar new raw files: fed: https://example.org/" in out
     assert out.rstrip().endswith("::error title=backfill check::failed")
+
+
+@pytest.mark.db
+def test_a_rerun_that_stores_only_changing_responses_passes(db, storage, capsys):
+    def rerun(t, a, e):
+        register(db, storage, page("fred json"), "fred", FRED)
+        register(db, storage, page("rbi page"), "rbi", RBI)
+        return 0
+    assert check(db, storage, rerun) == 0
+    out = capsys.readouterr().out
+    assert "raw_files +2" in out and "2 from sources whose bytes change on every fetch" in out
+    assert out.rstrip().endswith("::notice title=backfill check::passed")
+
+
+@pytest.mark.db
+def test_a_closed_rbi_year_that_changes_still_fails(db, storage, capsys):
+    assert check(db, storage, lambda t, a, e: register(db, storage, page("2020"), "rbi", RBI + "#hdnYear=2020") and 0) == 1
+    assert "new raw files: rbi: " + RBI + "#hdnYear=2020" in capsys.readouterr().out
 
 
 @pytest.mark.db

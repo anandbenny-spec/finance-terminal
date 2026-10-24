@@ -11,11 +11,16 @@ reads back hash-verified." Part 1 covers the four data tasks, on a project where
 2. Read back every `core.raw_file` object through the storage function: `Storage.get` checks the bytes against the
    hash in the object's key, and this checks them against the row's `sha256` and `bytes` too.
 
-It fails (exit 1) if a task's run failed, if a run added a raw file, a stored object, a document (every version is a
-row of `core.document`) or an AI request, or if any raw file doesn't read back. Everything else it counts (chunks,
-diffs, observations, revisions) is reported, not judged: a series backfill that runs to today adds the days since the
-last load, and re-chunking is allowed. Nothing here is loosened per task: a source whose bytes differ on every fetch
-(an API response that embeds the request date) shows up as new raw files, and that is reported for Anand to judge.
+It fails (exit 1) if a task's run failed, if a run added a document (every version is a row of `core.document`) or an
+AI request, if it added a raw file or a stored object other than those below, or if any raw file doesn't read back.
+Everything else it counts (chunks, diffs, observations, revisions) is reported, not judged: a series backfill that runs
+to today adds the days since the last load, and re-chunking is allowed.
+
+Sources whose bytes change on every fetch (decided by Anand, 24 Oct 2026, option (a) on #17): the first dev check found
+that a re-run stored new raw files only for responses that differ each time while the data doesn't. FRED's JSON
+carries the request date, Yahoo's chart JSON live market metadata, and RBI's current-year page per-request ASP.NET
+state. Those three (VOLATILE, matched by source and URL) may add raw files and stored objects, one object per raw file;
+each is reported. Anything else new still fails, and so does an object stored without its raw-file row.
 
 It connects as `job_writer` (JOB_DATABASE_URL), reads only, and uses the storage keys the jobs use. The workflow
 (`backfill-check.yml`) prints its results as annotations, since Claude's workspace can't download the run's log.
@@ -46,6 +51,13 @@ COUNTS = {
     "observations": "select count(*) from core.observation",
     "observation_revisions": "select count(*) from core.observation_revision",
 }
+# (source key, URL) whose bytes change on every fetch: a prefix ends in '?' or '/', anything else matches exactly
+# (RBI's earlier fiscal years, recorded as the page's URL plus '#hdnYear=…', are closed and must not change).
+VOLATILE = (
+    ("fred", "https://api.stlouisfed.org/fred/series/observations?"),
+    ("yfinance", "https://query2.finance.yahoo.com/v8/finance/chart/"),
+    ("rbi", "https://www.rbi.org.in/Scripts/Annualpolicy.aspx"),
+)
 LISTED = 10          # new rows listed per kind (the rest are counted)
 WORKERS = 8          # parallel reads in the verification (boto3 clients are thread-safe)
 
@@ -62,12 +74,15 @@ class TaskResult:
     task: str
     exit_code: int
     delta: dict[str, int | None]
-    new_raw_files: list[str] = field(default_factory=list)      # "source: url (n bytes)", the first LISTED
+    new_raw_files: list[str] = field(default_factory=list)      # "source: url (n bytes)", the first LISTED not volatile
     new_documents: list[str] = field(default_factory=list)      # "doc_type external_key v<n>"
+    volatile: int = 0                                           # new raw files from VOLATILE sources
+    volatile_listed: list[str] = field(default_factory=list)
 
     @property
     def grew(self) -> list[str]:
-        return [k for k in BLOCKING if (self.delta.get(k) or 0) > 0]
+        allowed = {"raw_files": self.volatile, "stored_objects": self.volatile}
+        return [k for k in BLOCKING if (self.delta.get(k) or 0) > allowed.get(k, 0)]
 
     @property
     def ok(self) -> bool:
@@ -101,15 +116,29 @@ def delta(before: Snapshot, after: Snapshot) -> dict[str, int | None]:
     return out
 
 
-def new_rows(conn, before: Snapshot) -> tuple[list[str], list[str]]:
-    raws = [f"{s}: {u} ({n} bytes)" for s, u, n in conn.execute(
-        """select s.key, coalesce(f.source_url, f.object_key), f.bytes from core.raw_file f
-             join core.source s on s.id = f.source_id where f.id > %s order by f.id limit %s""",
-        (before.max_raw_file_id, LISTED))]
+def is_volatile(source: str, url: str | None) -> bool:
+    return url is not None and any(source == s and (url.startswith(u) if u[-1] in "?/" else url == u)
+                                   for s, u in VOLATILE)
+
+
+def new_rows(conn, before: Snapshot) -> tuple[list[str], list[str], int, list[str]]:
+    """The new raw files not from a volatile source (the first LISTED), the new documents, and the volatile ones
+    (counted, the first LISTED listed)."""
+    raws, volatile, n_volatile = [], [], 0
+    for s, u, key, n in conn.execute(
+            """select s.key, f.source_url, f.object_key, f.bytes from core.raw_file f
+                 join core.source s on s.id = f.source_id where f.id > %s order by f.id""", (before.max_raw_file_id,)):
+        line = f"{s}: {u or key} ({n} bytes)"
+        if is_volatile(s, u):
+            n_volatile += 1
+            if len(volatile) < LISTED:
+                volatile.append(line)
+        elif len(raws) < LISTED:
+            raws.append(line)
     docs = [f"{t} {k} v{v}" for t, k, v in conn.execute(
         """select doc_type, external_key, version_no from core.document where id > %s order by id limit %s""",
         (before.max_document_id, LISTED))]
-    return raws, docs
+    return raws, docs, n_volatile, volatile
 
 
 def run_backfill(task: str, args: argparse.Namespace, env) -> int:
@@ -199,7 +228,10 @@ def report(results: Iterable[TaskResult], checked: int | None, failures: list[st
     for r in results:
         shown = ", ".join(f"{k} {'+' if (v or 0) >= 0 else ''}{v if v is not None else 'not counted'}"
                           for k, v in r.delta.items())
-        _say("notice" if r.ok else "error", f"{r.task}: exit {r.exit_code}; {shown}", out)
+        _say("notice" if r.ok else "error", f"{r.task}: exit {r.exit_code}; {shown}"
+             + (f"; of the raw files, {r.volatile} from sources whose bytes change on every fetch" if r.volatile else ""), out)
+        if r.volatile:
+            _say("notice", f"{r.task} new raw files from changing sources: " + "; ".join(r.volatile_listed), out)
         if r.grew:
             ok = False
             if r.new_raw_files:
@@ -243,8 +275,8 @@ def main(argv: list[str] | None = None, *, env=None, storage: Storage | None = N
                 before = snapshot(conn, storage)
                 code = backfill(task, args, env)
                 after = snapshot(conn, storage)
-                raws, docs = new_rows(conn, before)
-                results.append(TaskResult(task, code, delta(before, after), raws, docs))
+                raws, docs, n_volatile, volatile = new_rows(conn, before)
+                results.append(TaskResult(task, code, delta(before, after), raws, docs, n_volatile, volatile))
         checked, failures = verify(conn, storage, after_id=verify_after_id)
     return 0 if report(results, checked, failures) else 1
 
