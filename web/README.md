@@ -127,3 +127,25 @@ A new package with a script shows in `npm install-scripts ls`; approve or deny i
 - **Links C4 and C5 build:** meeting pages at `/policy/fed/YYYY-MM-DD` and `/policy/rbi/YYYY-MM-DD` (decision date);
   "Open in document" at `/documents/{id}?span={start}-{end}#cited` (code-point offsets, as stored).
 - New primitives: `components/ui/popover.tsx` (by hand, like C2's), and the sheet's `bottom` side (a citation on touch).
+
+## Meeting pages (C4, 24 Oct 2026)
+
+- `/policy/fed/[date]` and `/policy/rbi/[date]` (the decision date) render `components/policy/MeetingView.tsx` inside
+  Suspense (the tab is a search param, known only on request), from cached reads in `lib/queries/meeting.ts`. Tabs
+  are links (`?tab=changes|statement|minutes|press`), so every tab can be linked; the RBI's Statement tab switches
+  between the resolution and the Governor's statement with `&doc=governor`.
+- **Text:** a document's text is its stored chunks joined (`lib/policy/text.ts` refuses chunks that don't join), with
+  ¶ numbers counted as the differ counts them (blocks separated by a blank line). Offsets are code points throughout.
+  `components/ai/DocumentView.tsx` gives every paragraph `#p-N` and can mark a cited span; C5 can reuse it.
+- **Redline** (`components/ai/Redline.tsx`, model in `lib/policy/redline.ts`) renders from `api.document_diffs`'
+  stored pairs alone, with "Changes only" folding unchanged paragraphs.
+- **§4.5 copy** lives in `lib/policy/meeting.ts`, with Anand's RBI press-conference copy (#21, 24 Oct) and the cases
+  §4.5 doesn't cover (decided by Claude, #21): a held meeting with no rate decision (the Fed's 4 Oct 2019), and the
+  2018 baselines, which say what the site doesn't store rather than that the bank didn't publish it.
+- **A missing meeting answers 404** (#21): the page looks the meeting up (`readMeetingExists`, cached) before its
+  Suspense boundary, since a streamed response's status is fixed at 200. That needs the date known at prerender, so
+  `generateStaticParams` names the 2018 baseline as the one sample. Checked on a local build: link unfurlers
+  (LinkedIn, Slack, X) get 404 on every request; browsers and Googlebot get 404 from a URL's second request on. The
+  first request for a URL that wasn't prerendered gets the route's fallback shell (Partial Prefetching), so 200 with
+  Next's `noindex`. A meeting added later (a new schedule) answers 200 once its cached 404 revalidates (minutes).
+
