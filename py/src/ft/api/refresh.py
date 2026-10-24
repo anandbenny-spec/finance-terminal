@@ -12,6 +12,10 @@ are `api.admin_open_refresh`, one call under a per-task advisory lock (so two cl
 with `api.admin_finish_refresh` and `api.admin_refresh_status`. They're `security definer` functions only
 `service_role` can execute, called as RPC through the Data API with the secret key, which keeps the Data API
 `api`-only. `SqlRefreshStore` calls the same functions over a Postgres connection (the tests, as `service_role`).
+
+`GET /api/admin/health` (Prompt 01 C6; Design 01 §4.7) is on the same router, so the same gate guards it: it returns
+`api.admin_health()` (migration 0017, the same pattern), the tasks' health, the open alerts oldest first and the recent
+runs, for the admin's health page. It is never cached.
 """
 from __future__ import annotations
 
@@ -44,6 +48,7 @@ class RefreshStore(Protocol):
     def open_request(self, task_key: str) -> Opened: ...
     def finish_request(self, request_id: int, status: str, github_run_id: int | None) -> None: ...
     def request_status(self, request_id: int) -> dict | None: ...
+    def health(self) -> dict: ...
 
 
 def _opened(value) -> Opened:
@@ -69,6 +74,13 @@ def _status(value) -> dict | None:
             "run_url": RUN_URL.format(run_id) if run_id else None, "job_run": value.get("job_run")}
 
 
+def _health(value) -> dict:
+    """The health page's body, exactly as `api.admin_health()` returns it, once its shape is checked."""
+    if not isinstance(value, dict) or not all(isinstance(value.get(k), list) for k in ("tasks", "alerts", "runs")):
+        raise StoreError("admin_health returned an unexpected value")
+    return value
+
+
 class SqlRefreshStore:
     """The 0016 functions over one psycopg connection that holds `service_role` (the tests)."""
 
@@ -88,6 +100,9 @@ class SqlRefreshStore:
 
     def request_status(self, request_id: int) -> dict | None:
         return _status(self._call("select api.admin_refresh_status(%s)", (request_id,)))
+
+    def health(self) -> dict:
+        return _health(self._call("select api.admin_health()", ()))
 
 
 class RpcRefreshStore:
@@ -122,6 +137,9 @@ class RpcRefreshStore:
 
     def request_status(self, request_id: int) -> dict | None:
         return _status(self._rpc("admin_refresh_status", {"p_request_id": request_id}))
+
+    def health(self) -> dict:
+        return _health(self._rpc("admin_health", {}))
 
 
 def refresh_store(settings: Annotated[AuthSettings | None, Depends(auth_settings)],
@@ -186,3 +204,12 @@ def refresh_status(request_id: Annotated[int, Path(ge=1, le=2**63 - 1)], store: 
     if status is None:
         raise HTTPException(status_code=404)
     return status
+
+
+@router.get("/health")
+def health(store: Annotated[RefreshStore, Depends(refresh_store)]):
+    try:
+        body = store.health()
+    except StoreError as e:
+        raise _unavailable(e) from None
+    return JSONResponse(body, headers={"Cache-Control": "no-store"})
