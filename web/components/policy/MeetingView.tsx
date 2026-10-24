@@ -24,6 +24,7 @@ import { FEEDS } from "@/lib/feeds";
 import { dateInZone, formatDate, formatReleaseTime } from "@/lib/format";
 import { stanceCitations, summaryBlock } from "@/lib/policy/ai";
 import { decisionLine, meetingHref, stanceText, tally } from "@/lib/policy/decisions";
+import { documentSource, documentTitle } from "@/lib/policy/document";
 import {
   DOC_TYPES,
   SPECIAL_MEETING_NOTE,
@@ -77,11 +78,12 @@ function docDate(ctx: Ctx, d: DocumentRow | null | undefined): string {
   return d?.published_at ? dateInZone(d.published_at, ZONE[ctx.bank]) : ctx.m.decision_date;
 }
 
-/** A document's source line: the Fed's attribution; the RBI's names the document and its date (never a link). */
+/** A document's source line: the Fed's attribution; the RBI's names the document, its date and RBI's press-release
+ * number (never a link: Brief §6.2). The /documents page's rule (lib/policy/document.ts), so the two always agree. */
 function docSource(ctx: Ctx, d: DocumentRow | null | undefined): string {
   const attribution = d?.attribution ?? ctx.m.attribution ?? (ctx.bank === "Fed" ? "Source: Federal Reserve Board" : "Source: Reserve Bank of India");
-  if (ctx.bank === "Fed" || !d) return attribution;
-  return `${attribution} · ${d.doc_type_label} · ${formatDate(docDate(ctx, d))}`;
+  if (!d) return attribution;
+  return documentSource({ ...d, attribution }, ctx.bank);
 }
 
 function officialLink(ctx: Ctx, d: DocumentRow | null | undefined, text = "Official source ↗"): ReactNode {
@@ -448,7 +450,7 @@ async function DocumentTab({
     <div className="mt-5 flex flex-col gap-4">
       {switcher}
       <Panel
-        title={doc ? doc.title : title}
+        title={doc ? documentTitle(doc) : title}
         titleId="panel-document"
         actions={officialLink(ctx, doc)}
         variant="prose"
@@ -478,7 +480,7 @@ async function DocumentTab({
             <DocumentView
               paragraphs={body.paras}
               anchors={Object.fromEntries(anchors.map((a, i) => [a.para, `member-${i + 1}`]))}
-              label={doc.title}
+              label={documentTitle(doc)}
             />
           </div>
         )}

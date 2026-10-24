@@ -73,7 +73,8 @@ describe("§4.5 state copy", () => {
   });
 
   it("RBI: no press conference at the four 2020 COVID meetings (Anand, 23 Oct 2026)", () => {
-    expect(transcriptNote({ ...RBI, decision_date: "2020-05-22" }, "2026-10-24")).toMatch(/video address/);
+    expect(transcriptNote({ ...RBI, decision_date: "2020-05-22" }, "2026-10-24")).toBe(
+      "The RBI published no press-conference transcript for this meeting; the Governor gave a video address.");
     expect(transcriptNote(RBI, "2026-10-09")).toBe("The RBI hasn't posted this transcript yet.");
   });
 
