@@ -18,11 +18,25 @@ from run to run; neither response is data, so neither is stored. Without a crumb
 (yfinance does the same), and the `yahoo_session` warning says why.
 
 Loads every point as a core.observation; a stored value that differs is updated (the trigger logs the revision).
+The writes go in batches, one pipelined `executemany` per series for its inserts and one for its updates (Anand,
+24 Oct 2026, issue #13): the first dev backfill spent 2 h 11 min on 33,518 single-row statements, each a round trip
+from GitHub's US runner to the Mumbai project. The updates stay real UPDATEs, so the trigger still logs each one.
+
+A Yahoo S&P 500 close that disagrees with FRED's is held back (Anand, 24 Oct 2026, option (a) on #13): where
+`yf.^GSPC` and `fred.SP500` both have a date (FRED's value fetched in this run, else stored) and differ by more than
+0.05%, `yf.^GSPC`'s observation for that date is neither stored nor updated. Its raw file is stored like every
+response, so nothing fetched is lost, and FRED's value is never shown in its place (Spec 01 D3). The first was
+2021-08-11: Yahoo 4,442.41, FRED 4,447.70, and FRED is right.
+
 Checks (Architecture 02 §2; Spec 01 §2), B blocking, W warning:
 - (B) `responses`: each Yahoo chart is the symbol asked for, in the series' currency;
 - (B) `bounds`: yields and rates −1% to 25%; USD/INR 50–150; index levels above 0 with a daily move under 20%;
 - (B) `revisions`: no more than 5% of the run's look-back values revised;
-- (B) `gspc_vs_sp500`: `yf.^GSPC` within 0.05% of `fred.SP500` on every date both have, over the full stored overlap;
+- (B) `gspc_vs_sp500`: `yf.^GSPC` within 0.05% of `fred.SP500` on every date both have stored, over the full stored
+  overlap, and no more than 1% of the overlap held back (more is a systematic break, not a stray bad print). A stored
+  value is never deleted (jobs can't delete source data), so a stored date that comes to disagree (FRED revises, or
+  arrives a day late) still blocks: that case is Anand's;
+- (W) `gspc_held_back`: each held-back date, with both values;
 - (W) `lag`: each series' latest value within its lag (daily 5 days, weekly-published 12, monthly 75);
 - (W) `yahoo_session`: whether Yahoo's crumb was received.
 Then a series is published once a load has passed its bounds and lag checks (Spec 01 §2); `fred.SP500` never is
@@ -53,6 +67,8 @@ RATE_BOUNDS = {"percent": (Decimal(-1), Decimal(25)), "inr_per_usd": (Decimal(50
 MAX_DAILY_MOVE = Decimal("0.20")
 MAX_REVISED = Decimal("0.05")
 CROSS_TOLERANCE = Decimal("0.0005")               # 0.05%
+MAX_HELD_BACK = Decimal("0.01")                   # 1% of the overlap (Anand, 24 Oct 2026, #13)
+HELD_BACK_LISTED = 50                             # the warning lists each held-back date up to this many
 # Lags (W): daily 5 days, weekly-published 12, monthly 75. DTWEXBGS and DEXINUS (H.10) are daily values published
 # weekly (Data Audit 01 #21, #24).
 WEEKLY_PUBLISHED = frozenset({"DTWEXBGS", "DEXINUS"})
@@ -94,6 +110,11 @@ class Fetched:
     full: bool
     got: list[Got] = field(default_factory=list)
     yahoo_session: str | None = None       # None: no Yahoo series fetched; else "crumb received" or why not
+
+
+def disagree(x: Decimal, y: Decimal) -> bool:
+    """`x` more than 0.05% from `y` (or `y` zero)."""
+    return y == 0 or abs(x / y - 1) > CROSS_TOLERANCE
 
 
 def yahoo_crumb(fetcher) -> tuple[str | None, str]:
@@ -170,27 +191,55 @@ class MarketSeries(Task):
         return out
 
     # ------------------------------------------------------------------ load (one transaction)
+    def _held_back(self, tx, f: Fetched) -> dict[date, tuple[Decimal, Decimal]]:
+        """The fetched `yf.^GSPC` closes more than 0.05% from `fred.SP500` on the same date: {date: (Yahoo, FRED)}.
+        FRED's value is this run's where it fetched one (it's what the load will store), else the stored one."""
+        a, b = self.cross_check
+        ga = next((g for g in f.got if g.series.key == a), None)
+        if ga is None or not ga.points:
+            return {}
+        start, end = ga.points[0][0], ga.points[-1][0]
+        fred = dict(tx.execute("""select o.obs_date, o.value from core.observation o
+                                     join core.series s on s.id = o.series_id
+                                    where s.key = %s and o.obs_date between %s and %s""", (b, start, end)).fetchall())
+        for g in f.got:
+            if g.series.key == b:
+                fred.update((d, v) for d, v in g.points if start <= d <= end)
+        return {d: (v, fred[d]) for d, v in ga.points if d in fred and disagree(v, fred[d])}
+
+    def _write(self, tx, new: list[tuple], changed: list[tuple]) -> None:
+        """One series' inserts and updates, each as one pipelined executemany. The updates are real UPDATEs, so the
+        revision trigger logs every change."""
+        with tx.cursor() as cur:
+            if new:
+                cur.executemany("insert into core.observation (series_id, obs_date, value, task_run_id) "
+                                "values (%s, %s, %s, %s)", new)
+            if changed:
+                cur.executemany("update core.observation set value = %s, task_run_id = %s "
+                                "where series_id = %s and obs_date = %s", changed)
+
     def load(self, tx, f: Fetched, task_run_id) -> int:
         written, revised, values = 0, {}, 0
+        held = self._held_back(tx, f)
         for g in f.got:
             stored = dict(tx.execute("select obs_date, value from core.observation where series_id = %s "
                                      "and obs_date between %s and %s", (g.series.id, g.start, g.end)).fetchall())
-            n_rev = 0
+            skip = held if g.series.key == self.cross_check[0] else {}
+            new, changed = [], []
             for d, v in g.points:
                 values += 1
+                if d in skip:
+                    continue                    # held back: neither stored nor updated; its raw file is kept
                 old = stored.get(d)
                 if old is None:
-                    tx.execute("insert into core.observation (series_id, obs_date, value, task_run_id) "
-                               "values (%s, %s, %s, %s)", (g.series.id, d, v, task_run_id))
-                    written += 1
+                    new.append((g.series.id, d, v, task_run_id))
                 elif old != v:
-                    tx.execute("update core.observation set value = %s, task_run_id = %s "
-                               "where series_id = %s and obs_date = %s", (v, task_run_id, g.series.id, d))
-                    written += 1
-                    n_rev += 1
-            if n_rev:
-                revised[g.series.key] = n_rev
-        self.result = {"revised": revised, "values": values, "published": []}
+                    changed.append((v, task_run_id, g.series.id, d))
+            self._write(tx, new, changed)
+            written += len(new) + len(changed)
+            if changed:
+                revised[g.series.key] = len(changed)
+        self.result = {"revised": revised, "values": values, "published": [], "held_back": held}
         return written
 
     # ------------------------------------------------------------------ checks (same transaction)
@@ -237,20 +286,39 @@ class MarketSeries(Task):
                          f"{n_rev} of {r['values']} values revised ({share * 100:.1f}%)"
                          + (": " + ", ".join(f"{k} {n}" for k, n in sorted(r["revised"].items())) if n_rev else "")))
 
-        # (B) yf.^GSPC within 0.05% of fred.SP500 on every date both have, over the whole stored overlap.
+        # (B) yf.^GSPC within 0.05% of fred.SP500 on every date both have stored, over the whole stored overlap, and
+        # no more than 1% of the overlap (the stored overlap plus the dates held back) held back. Runs whenever
+        # yf.^GSPC was fetched (the held-back dates were compared with FRED's fetched or stored values).
         keys = {g.series.key for g in f.got}
         a, b = self.cross_check
-        if a in keys and b in keys:
+        if a in keys:
             rows = tx.execute(
                 """select ya.obs_date, ya.value, fb.value from core.observation ya
                      join core.observation fb on fb.obs_date = ya.obs_date
                     where ya.series_id = (select id from core.series where key = %s)
                       and fb.series_id = (select id from core.series where key = %s)
                     order by ya.obs_date""", (a, b)).fetchall()
-            off = [f"{d} {x} vs {y}" for d, x, y in rows if y == 0 or abs(x / y - 1) > CROSS_TOLERANCE]
-            out.append(Check("gspc_vs_sp500", not off,
-                             f"{len(off)} of {len(rows)} dates off by more than 0.05%: " + ", ".join(off[:5]) if off
-                             else f"{len(rows)} dates within 0.05%"))
+            off = [f"{d} {x} vs {y}" for d, x, y in rows if disagree(x, y)]
+            held = r["held_back"]
+            overlap = len({d for d, _, _ in rows} | held.keys())
+            share = Decimal(len(held)) / overlap if overlap else Decimal(0)
+            too_many = share > MAX_HELD_BACK
+            parts = []
+            if off:
+                parts.append(f"{len(off)} of {len(rows)} stored dates off by more than 0.05%: " + ", ".join(off[:5]))
+            else:
+                parts.append(f"{len(rows)} dates within 0.05%")
+            if held:
+                parts.append(f"{len(held)} of {overlap} dates held back ({share * 100:.2f}%"
+                             + (", more than 1%)" if too_many else ")"))
+            out.append(Check("gspc_vs_sp500", not off and not too_many, "; ".join(parts)))
+            # (W) Each held-back date, with both values.
+            listed = [f"{d} Yahoo {yahoo} vs FRED {fred}"
+                      for d, (yahoo, fred) in sorted(held.items())[:HELD_BACK_LISTED]]
+            more = f", and {len(held) - HELD_BACK_LISTED} more" if len(held) > HELD_BACK_LISTED else ""
+            out.append(Check("gspc_held_back", not held,
+                             f"{len(held)} held back: " + ", ".join(listed) + more if held else "none held back",
+                             blocking=False))
 
         # (W) Latest value within its lag.
         latest = dict(tx.execute("select series_id, max(obs_date) from core.observation where series_id = any(%s) "
