@@ -21,6 +21,10 @@ from zoneinfo import ZoneInfo
 
 FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
 YAHOO_URL = "https://query2.finance.yahoo.com/v8/finance/chart/"
+# Yahoo's session, as yfinance 1.7 gets it: a request to fc.yahoo.com sets the A3 cookie, then getcrumb returns the
+# crumb that goes on each chart request.
+YAHOO_COOKIE_URL = "https://fc.yahoo.com/"
+YAHOO_CRUMB_URL = "https://query1.finance.yahoo.com/v1/test/getcrumb"
 DECIMALS = {"index_points": 2, "inr_per_usd": 4}
 
 
@@ -58,6 +62,19 @@ def parse_fred(body: bytes, code: str) -> list[Point]:
             raise SourceError(f"FRED {code}: non-finite value on {d}")
         out[d] = v
     return sorted(out.items())
+
+
+def parse_crumb(status: int, body: bytes) -> str | None:
+    """getcrumb's answer: a short token on a 200, else None (an HTML page or "Too Many Requests" is no crumb)."""
+    if status != 200:
+        return None
+    try:
+        crumb = body.decode("ascii").strip()
+    except UnicodeDecodeError:
+        return None
+    if not crumb or len(crumb) > 64 or not crumb.isprintable() or any(c in crumb for c in " <>"):
+        return None
+    return crumb
 
 
 def yahoo_url(symbol: str) -> str:
