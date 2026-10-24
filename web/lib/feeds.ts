@@ -24,6 +24,9 @@ export const FEEDS = {
   policyLatestFed: ["policy.fed_documents", "policy.ai_batch"],
   policyLatestRbi: ["policy.rbi_documents", "policy.ai_batch"],
   policyHistory: ["policy.fed_documents", "policy.rbi_documents", "policy.ai_batch"],
+  // The meeting pages (C4; Spec 01 §4.3): each bank's documents and their AI outputs.
+  meetingFed: ["policy.fed_documents", "policy.ai_batch"],
+  meetingRbi: ["policy.rbi_documents", "policy.ai_batch"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 
 export type Surface = keyof typeof FEEDS;

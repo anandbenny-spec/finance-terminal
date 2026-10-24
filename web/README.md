@@ -127,3 +127,18 @@ A new package with a script shows in `npm install-scripts ls`; approve or deny i
 - **Links C4 and C5 build:** meeting pages at `/policy/fed/YYYY-MM-DD` and `/policy/rbi/YYYY-MM-DD` (decision date);
   "Open in document" at `/documents/{id}?span={start}-{end}#cited` (code-point offsets, as stored).
 - New primitives: `components/ui/popover.tsx` (by hand, like C2's), and the sheet's `bottom` side (a citation on touch).
+
+## Meeting pages (C4, 24 Oct 2026)
+
+- `/policy/fed/[date]` and `/policy/rbi/[date]` (the decision date) render `components/policy/MeetingView.tsx` inside
+  Suspense (the params are known only on request), from cached reads in `lib/queries/meeting.ts`. Tabs are links
+  (`?tab=changes|statement|minutes|press`), so every tab can be linked; the RBI's Statement tab switches between the
+  resolution and the Governor's statement with `&doc=governor`.
+- **Text:** a document's text is its stored chunks joined (`lib/policy/text.ts` refuses chunks that don't join), with
+  ¶ numbers counted as the differ counts them (blocks separated by a blank line). Offsets are code points throughout.
+  `components/ai/DocumentView.tsx` gives every paragraph `#p-N` and can mark a cited span; C5 can reuse it.
+- **Redline** (`components/ai/Redline.tsx`, model in `lib/policy/redline.ts`) renders from `api.document_diffs`'
+  stored pairs alone, with "Changes only" folding unchanged paragraphs.
+- **§4.5 copy** lives in `lib/policy/meeting.ts`. The RBI press-conference copy is proposed (Spec 01's "from February
+  2023" no longer holds: #15) and awaits Anand's approval in #21.
+- A missing meeting renders the not-found page with HTTP 200, because the page streams before it knows (Suspense).
