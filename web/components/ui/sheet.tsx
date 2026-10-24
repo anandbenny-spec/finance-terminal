@@ -1,9 +1,9 @@
 "use client"
 
 // Sheet (a dialog that slides in from an edge), on Radix's Dialog (radix-ui), with shadcn's component API (Sheet,
-// SheetTrigger, SheetClose, SheetContent, SheetTitle). Written by hand in C2: Claude's shells can't reach
-// ui.shadcn.com, so `shadcn add sheet` can't run there (web/README.md). Restyled by the tokens only. Layer 50
-// (Design 01 §2.5); the page behind is dimmed with the canvas colour. Radix traps focus inside, closes on Esc and
+// SheetTrigger, SheetClose, SheetContent, SheetTitle); C3 added the bottom side (a citation's passage on touch).
+// Written by hand in C2: Claude's shells can't reach ui.shadcn.com, so `shadcn add sheet` can't run there
+// (web/README.md). Restyled by the tokens only. Layer 50 (Design 01 §2.5); the page behind is dimmed with the canvas colour. Radix traps focus inside, closes on Esc and
 // returns focus to the trigger.
 import * as React from "react"
 import { cn } from "cn"
@@ -32,7 +32,7 @@ function SheetContent({
   side = "left",
   closeLabel = "Close",
   ...props
-}: React.ComponentProps<typeof SheetPrimitive.Content> & { side?: "left" | "right"; closeLabel?: string }) {
+}: React.ComponentProps<typeof SheetPrimitive.Content> & { side?: "left" | "right" | "bottom"; closeLabel?: string }) {
   return (
     <SheetPrimitive.Portal>
       <SheetPrimitive.Overlay data-slot="sheet-overlay" className="fixed inset-0 z-50 bg-canvas/80" />
@@ -40,8 +40,10 @@ function SheetContent({
         data-slot="sheet-content"
         aria-describedby={undefined}
         className={cn(
-          "fixed inset-y-0 z-50 flex w-(--sidebar-w) max-w-full flex-col overflow-y-auto border-line-strong bg-panel outline-none",
-          side === "left" ? "left-0 border-r" : "right-0 border-l",
+          "fixed z-50 flex max-w-full flex-col overflow-y-auto border-line-strong bg-panel outline-none",
+          side === "bottom"
+            ? "inset-x-0 bottom-0 max-h-dvh w-full border-t"
+            : cn("inset-y-0 w-(--sidebar-w)", side === "left" ? "left-0 border-r" : "right-0 border-l"),
           className
         )}
         {...props}

@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { TaskFreshnessRow } from "@/lib/queries/api";
 import { FEEDS, liveTasks } from "@/lib/feeds";
-import { summarise, taskState } from "./freshness";
+import { panelFreshness, summarise, taskState } from "./freshness";
 
 const NOW = "2026-10-24T03:00Z";
 
@@ -63,7 +63,40 @@ describe("feeds", () => {
   it("has the shell read the tape's and the countdown's tasks, each once, and not policy.reactions", () => {
     expect(FEEDS.tickerTape).toEqual(["policy.market_series"]);
     expect(FEEDS.statusBarCountdown).toEqual(["policy.calendar"]);
-    expect(liveTasks()).toEqual(["policy.calendar", "policy.market_series"]);
+    // /policy's panels (C3) bring in the document and AI tasks; policy.reactions (Pass 1b) still feeds nothing live.
+    expect(liveTasks()).toEqual([
+      "policy.ai_batch",
+      "policy.calendar",
+      "policy.fed_documents",
+      "policy.market_series",
+      "policy.rbi_documents",
+    ]);
+    expect(liveTasks()).not.toContain("policy.reactions");
     expect(liveTasks({ a: ["policy.ai_batch", "policy.calendar"], b: ["policy.calendar"] })).toEqual(["policy.ai_batch", "policy.calendar"]);
+  });
+});
+
+describe("panelFreshness (C3: each panel's footer)", () => {
+  const tasks = ["policy.fed_documents", "policy.ai_batch"];
+
+  it("gives the data's date and the oldest of the panel's last successes", () => {
+    const rows = [row("policy.fed_documents", "ok", "2026-10-23T01:11Z"), row("policy.ai_batch", "ok", "2026-10-22T20:00Z")];
+    expect(panelFreshness(rows, tasks, "2026-09-17", NOW)).toEqual({
+      text: "Data to 17 Sep 2026 · checked 23 Oct, 01:30 IST",
+      delayed: false,
+    });
+  });
+
+  it("is delayed when a feeding task failed or went stale, and keeps the data's date", () => {
+    expect(panelFreshness([row("policy.fed_documents", "failed"), row("policy.ai_batch", "ok")], tasks, "2026-09-17", NOW).delayed).toBe(true);
+    expect(panelFreshness([row("policy.fed_documents", "ok")], tasks, "2026-09-17", NOW)).toEqual({
+      text: "Data to 17 Sep 2026",
+      delayed: true,
+    });
+  });
+
+  it("claims only the data's date when freshness couldn't be read", () => {
+    expect(panelFreshness(null, tasks, "2026-09-17", NOW)).toEqual({ text: "Data to 17 Sep 2026", delayed: false });
+    expect(panelFreshness(null, tasks, null, NOW)).toEqual({ text: "", delayed: false });
   });
 });

@@ -202,8 +202,8 @@ describe("components/ui: shadcn's primitives take their colours from the tokens"
   });
 });
 
-describe("our components (shell, data, ai): tokens only, no arbitrary values (CLAUDE.md §5)", () => {
-  const files = ["components/shell", "components/data", "components/ai"].flatMap(componentFiles);
+describe("our components (shell, data, ai, policy): tokens only, no arbitrary values (CLAUDE.md §5)", () => {
+  const files = ["components/shell", "components/data", "components/ai", "components/policy"].flatMap(componentFiles);
 
   it("has components to check", () => {
     expect(files.length).toBeGreaterThan(0);

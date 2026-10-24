@@ -108,3 +108,22 @@ A new package with a script shows in `npm install-scripts ls`; approve or deny i
     build normally. To check the rest of a build locally, build once with the font imports removed and put them back.
 - This workspace's npm 10.9 fails on this tree (`Cannot read properties of null (reading 'edgesOut')`, an arborist
   bug with the WebAssembly fallbacks' peers); npm 11 doesn't, and is what Node 24 ships.
+
+## /policy (C3, 24 Oct 2026)
+
+- `app/policy/page.tsx`: Spec 01 §4.2's S rows. Where rates stand (`StatRow`: the Fed range from both bounds in
+  `api.policy_meetings` (F22), the RBI repo rate with its stance gated by field policy, the next FOMC and MPC with
+  browser-side countdowns), "Policy rates since 2019" (`RatesPanel`), the latest decisions (`PolicyCard` per bank,
+  D13) and "Every decision since 2019" (`HistoryPanel`, filters by bank, year and cut / hold / hike).
+- **Data:** `lib/queries/overview.ts` reads it all, cached like the shell, each panel on its own (a failed read leaves
+  only its panel in the error state). The new reads (`readVotes` in batches of 40 meetings, the decision document, AI
+  outputs and citations, field policy, series' source lines) live in `lib/queries/policy.ts` under A1's guard.
+- **Logic is pure and tested** in `lib/policy/`: `decisions.ts` (DecisionLine, the tally lines with F23's separate
+  rate and stance counts, §4.5's "votes in the minutes" copy, history rows), `rates.ts` (step series expanded to one
+  point per day, since Lightweight Charts spaces points by index), `ai.ts` (only cited bullets; quotes cut at a
+  sentence; no official link for the RBI).
+- **The bands** (Fed range, RBI corridor) are one custom series each (`components/data/band-series.ts`), so Design 01
+  §10.2's fallback wasn't needed: checked by eye at 1440 and 375 px against a local stand-in Data API.
+- **Links C4 and C5 build:** meeting pages at `/policy/fed/YYYY-MM-DD` and `/policy/rbi/YYYY-MM-DD` (decision date);
+  "Open in document" at `/documents/{id}?span={start}-{end}#cited` (code-point offsets, as stored).
+- New primitives: `components/ui/popover.tsx` (by hand, like C2's), and the sheet's `bottom` side (a citation on touch).
