@@ -149,6 +149,10 @@ export type PolicyVoteRow = {
   stance_vote: string | null;
   is_dissent: boolean;
   dissent_text: string | null;
+  /** The passage the vote was parsed from (VoteDotPlot's "Open the cited passage"); read with every vote row. */
+  document_id?: number | null;
+  char_start?: number | null;
+  char_end?: number | null;
 };
 
 /** api.documents (0006): every published document version. */
