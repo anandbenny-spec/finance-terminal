@@ -77,7 +77,7 @@ def evaluate(expr, ctx):
         root, *path = val.split(".")
         v = ctx[root]
         for p in path:
-            v = v.get(p, "" if root == "secrets" else None) if isinstance(v, dict) else None
+            v = v.get(p, "" if root in ("secrets", "vars") else None) if isinstance(v, dict) else None
         return v
 
     def unary():
@@ -210,6 +210,68 @@ def test_the_evaluator_follows_githubs_rules():
     assert evaluate("inputs.target == ''", ctx) is True                              # null == '' after coercion
     assert evaluate("'Production' == 'production'", ctx) is True
     assert evaluate("!(github.event_name == 'schedule') && secrets.A", ctx) == "a"
+
+
+# ---------------------------------------------------------------- the production-schedule guard (issue #69)
+
+GUARD = "github.event_name != 'schedule' || vars.PRODUCTION_SCHEDULES == 'on'"
+
+
+def scheduled_workflows():
+    """Every workflow file with a `schedule:` trigger, found on disk, so one added later is covered too."""
+    out = []
+    for path in sorted(WORKFLOWS.glob("*.y*ml")):
+        on = load(path.stem)["on"]
+        if isinstance(on, dict) and "schedule" in on or on == "schedule" or isinstance(on, list) and "schedule" in on:
+            out.append(path.stem)
+    return out
+
+
+def job_runs(name, event, variables):
+    """Which of the workflow's jobs GitHub would start, for this event and these repository variables."""
+    ctx = {"github": {"event_name": event}, "vars": variables, "inputs": {}, "secrets": {}, "env": {}}
+    out = {}
+    for job_id, job in load(name)["jobs"].items():
+        cond = str(job.get("if", "true")).strip()
+        cond = cond[3:-2] if cond.startswith("${{") and cond.endswith("}}") else cond
+        out[job_id] = _truthy(evaluate(cond, ctx))
+    return out
+
+
+def test_the_scheduled_workflows_are_the_known_ones():
+    assert scheduled_workflows() == sorted(SCHEDULED)
+
+
+@pytest.mark.parametrize("name", scheduled_workflows())
+def test_every_job_of_a_scheduled_workflow_carries_the_guard(name):
+    for job_id, job in load(name)["jobs"].items():
+        assert str(job.get("if", "")).strip() == GUARD, f"{name}.yml job {job_id!r} lacks the schedule guard"
+
+
+@pytest.mark.parametrize("name", scheduled_workflows())
+@pytest.mark.parametrize("variables", [{}, {"PRODUCTION_SCHEDULES": ""}, {"PRODUCTION_SCHEDULES": "off"},
+                                       {"PRODUCTION_SCHEDULES": "true"}, {"PRODUCTION_SCHEDULES": "1"},
+                                       {"OTHER": "on"}])
+def test_a_scheduled_run_does_nothing_unless_production_schedules_is_on(name, variables):
+    assert not any(job_runs(name, "schedule", variables).values())
+
+
+@pytest.mark.parametrize("name", scheduled_workflows())
+def test_a_scheduled_run_starts_when_production_schedules_is_on(name):
+    assert all(job_runs(name, "schedule", {"PRODUCTION_SCHEDULES": "on"}).values())
+
+
+@pytest.mark.parametrize("name", scheduled_workflows())
+@pytest.mark.parametrize("variables", [{}, {"PRODUCTION_SCHEDULES": "off"}, {"PRODUCTION_SCHEDULES": "on"}])
+def test_a_manual_run_is_unaffected_by_the_guard(name, variables):
+    assert all(job_runs(name, "workflow_dispatch", variables).values())
+
+
+def test_the_guard_check_catches_an_unguarded_job():
+    ctx = {"github": {"event_name": "schedule"}, "vars": {}, "inputs": {}, "secrets": {}, "env": {}}
+    assert evaluate("vars.PRODUCTION_SCHEDULES", ctx) == ""                    # a missing variable is ''
+    assert _truthy(evaluate("true", ctx))                                       # no `if:` means the job runs
+    assert not _truthy(evaluate(GUARD, ctx))
 
 
 # ---------------------------------------------------------------- the freshness drill (Prompt 01 D4)
