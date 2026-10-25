@@ -12,6 +12,9 @@ import type {
   DocumentRow,
   FieldPolicyRow,
   ForecastRow,
+  MarketReactionRow,
+  ObservationRow,
+  SeriesRow,
   PolicyMeetingRow,
   PolicyRateSettingDetailRow,
   PolicyVoteRow,
@@ -29,9 +32,14 @@ import {
   readMeetingSettings,
   readProjections,
   readVotes,
+  readDailySeries,
+  readMeetingReactions,
+  readSeriesInfo,
   type Bank,
   type PolicyDb,
 } from "@/lib/queries/policy";
+import { REACTION_SERIES } from "@/lib/policy/reactions";
+import { readRange } from "@/lib/policy/reaction";
 import type { Read } from "@/lib/queries/shell";
 import { publicClient } from "@/lib/supabase/public";
 import { latestByType } from "@/lib/policy/meeting";
@@ -178,5 +186,26 @@ export async function readNumbersBase(
       bank === "RBI" ? readProjections(db, meeting.decision_date) : Promise.resolve([]),
     ]);
     return { meeting, settings, votes, projections };
+  });
+}
+
+/**
+ * The Market reaction tab: this meeting's stored reactions, the reaction series api.series publishes, and each
+ * reacting series' observations around its two dates (api.observations, paged against an exact count).
+ */
+export async function readMeetingReaction(
+  bank: Bank,
+  slug: string,
+): Promise<Read<{ reactions: MarketReactionRow[]; series: SeriesRow[]; observations: Record<string, ObservationRow[]> }>> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("policy", `meeting-${slug}`, "reactions");
+  const db = publicClient();
+  if (!db) return failed(`reactions of ${slug}`, UNCONFIGURED);
+  return attempt(`reactions of ${slug}`, async () => {
+    const keys = REACTION_SERIES.filter((s) => (s.banks as readonly Bank[]).includes(bank)).map((s) => s.key);
+    const [reactions, series] = await Promise.all([readMeetingReactions(db, slug), readSeriesInfo(db, keys)]);
+    const pairs = await Promise.all(reactions.map(async (r) => [r.series_key, await readDailySeries(db, r.series_key, readRange(r))] as const));
+    return { reactions, series, observations: Object.fromEntries(pairs) };
   });
 }

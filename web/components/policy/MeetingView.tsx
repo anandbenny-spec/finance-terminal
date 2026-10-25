@@ -2,7 +2,7 @@
 // Header: breadcrumb, "FOMC meeting · {date}" or "MPC meeting no. {n} · {date}", DecisionLine · tally · release time
 // (the Fed's adds IST) · the official document (the Fed's only: the RBI's are named, never linked: Anand, 24 Oct
 // 2026) · previous and next meeting. Tabs in the URL (?tab=…): Overview, What changed, Statement, Minutes, Press
-// conference (the Market reaction tab is Pass 1b). Every figure is a row an `api` view returned; every empty case
+// conference Market reaction (Pass 1b, #75). Every figure is a row an `api` view returned; every empty case
 // is §4.5's copy; no hawk/dove UI (D9). The 2018 baselines get pages too.
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -16,6 +16,7 @@ import { Redline } from "@/components/ai/Redline";
 import { NumbersChanged } from "@/components/ai/NumbersChanged";
 import { VoteDotPlot } from "@/components/ai/VoteDotPlot";
 import { VoteGrid } from "@/components/ai/VoteGrid";
+import { MeetingReactionView } from "@/components/policy/MeetingReaction";
 import { Freshness } from "@/components/data/Freshness";
 import { Gated, fieldPolicy, type FieldPolicies } from "@/components/data/Gated";
 import { PageHeader } from "@/components/data/PageHeader";
@@ -23,7 +24,7 @@ import { Panel } from "@/components/data/Panel";
 import { Qualifier } from "@/components/data/Qualifier";
 import { SourceLine } from "@/components/data/SourceLine";
 import { StateNote } from "@/components/data/StateNote";
-import { FEEDS } from "@/lib/feeds";
+import { FEEDS, type TaskKey } from "@/lib/feeds";
 import { dateInZone, formatDate, formatReleaseTime } from "@/lib/format";
 import { stanceCitations, summaryBlock } from "@/lib/policy/ai";
 import { decisionLine, meetingHref, stanceText, tally } from "@/lib/policy/decisions";
@@ -48,9 +49,10 @@ import { buildKeyChanges } from "@/lib/policy/keychanges";
 import { buildRedline, parsePairs } from "@/lib/policy/redline";
 import { numbersChanged } from "@/lib/policy/numbers";
 import { dotPlot } from "@/lib/policy/votedots";
+import { meetingReaction } from "@/lib/policy/reaction";
 import { paragraphAt, paragraphs, textFromChunks, type Paragraph } from "@/lib/policy/text";
 import type { DocumentChunkRow, DocumentRow, PolicyMeetingRow } from "@/lib/queries/api";
-import { readDocumentChunks, readMeetingDiff, readMeetingPage, readNumbersBase, type CitedOutput, type MeetingPage } from "@/lib/queries/meeting";
+import { readDocumentChunks, readMeetingDiff, readMeetingPage, readMeetingReaction, readNumbersBase, type CitedOutput, type MeetingPage } from "@/lib/queries/meeting";
 import type { Bank } from "@/lib/queries/policy";
 import { readFreshness } from "@/lib/queries/shell";
 import { panelFreshness, type PanelFreshness } from "@/lib/shell/freshness";
@@ -61,6 +63,7 @@ export const TABS = [
   { id: "statement", label: "Statement" },
   { id: "minutes", label: "Minutes" },
   { id: "press", label: "Press conference" },
+  { id: "reaction", label: "Market reaction" },
 ] as const;
 export type TabId = (typeof TABS)[number]["id"];
 
@@ -78,6 +81,8 @@ type Ctx = {
   docs: Map<string, DocumentRow>;
   policies: FieldPolicies | null;
   fresh: (dataTo: string | null) => PanelFreshness;
+  /** Freshness from other tasks than the bank's documents (the Market reaction tab's policy.reactions). */
+  freshOf: (tasks: readonly TaskKey[], dataTo: string | null) => PanelFreshness;
 };
 
 /** The day a document was published, in the bank's zone (its "Data to"), else the meeting's date. */
@@ -481,6 +486,42 @@ async function NumbersPart({ ctx, base }: { ctx: Ctx; base: DocumentRow | null }
   );
 }
 
+// ------------------------------------------------------------------ Market reaction (Pass 1b, #75)
+
+/** Reactions are computed for decisions since 2019 (Spec 01 §2); the 2018 baselines have none. */
+const FIRST_REACTION_DATE = "2019-01-01";
+
+async function MarketReaction({ ctx }: { ctx: Ctx }) {
+  const { bank, m } = ctx;
+  const panel = (body: ReactNode) => (
+    <div className="mt-5">
+      <Panel title="Market reaction" titleId="panel-reaction" subtitle="How did markets move when the decision came out?" market={bank === "Fed" ? "US" : "IN"} footer={<Foot ctx={ctx} sources={[docSource(ctx, null)]} dataTo={m.decision_date} />}>
+        {body}
+      </Panel>
+    </div>
+  );
+  if (m.decision_date < FIRST_REACTION_DATE) {
+    return panel(<StateNote kind="unavailable">Market reactions are shown for decisions since 2019.</StateNote>);
+  }
+  const read = await readMeetingReaction(bank, m.slug);
+  if (!read.ok) return panel(<StateNote kind="error">{ERROR}</StateNote>);
+  const model = meetingReaction({
+    bank,
+    decisionDate: m.decision_date,
+    today: ctx.page.today,
+    reactions: read.reactions,
+    series: read.series,
+    observations: read.observations,
+  });
+  const footer = (
+    <>
+      <SourceLine lines={model.sources} />
+      <Freshness freshness={ctx.freshOf(FEEDS.policyReactions, model.dataTo)} />
+    </>
+  );
+  return <MeetingReactionView model={model} footer={footer} refresh={FEEDS.policyReactions} />;
+}
+
 // ------------------------------------------------------------------ Statement, Minutes, Press conference
 
 async function DocumentTab({
@@ -631,6 +672,7 @@ export async function MeetingView({ bank, slug, date, tab, doc }: { bank: Bank; 
     docs: latestByType(page.documents.ok ? page.documents.rows : []),
     policies: page.fieldPolicy.ok ? page.fieldPolicy.rows : null,
     fresh: (dataTo) => panelFreshness(freshRead.ok ? freshRead.tasks : null, tasks, dataTo, page.readAt),
+    freshOf: (of, dataTo) => panelFreshness(freshRead.ok ? freshRead.tasks : null, of, dataTo, page.readAt),
   };
 
   // A meeting without a decision gets its header and §4.5's note, no tabs.
@@ -669,6 +711,8 @@ export async function MeetingView({ bank, slug, date, tab, doc }: { bank: Bank; 
     body = (
       <DocumentTab ctx={ctx} doc={ctx.docs.get(types.minutes) ?? null} title={bank === "Fed" ? "FOMC minutes" : "MPC minutes"} missing={minutesNote(m, page.today)} withSummary speakers={bank === "RBI"} />
     );
+  } else if (tab === "reaction") {
+    body = <MarketReaction ctx={ctx} />;
   } else {
     body = (
       <DocumentTab ctx={ctx} doc={ctx.docs.get(types.transcript) ?? null} title="Press conference transcript" missing={transcriptNote(m, page.today)} withSummary />

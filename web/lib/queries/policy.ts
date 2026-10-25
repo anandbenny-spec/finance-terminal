@@ -238,6 +238,13 @@ export async function readReactions(db: PolicyDb): Promise<MarketReactionRow[]> 
   );
 }
 
+/** One meeting's market reactions (api.market_reactions: at most six rows), read whole against an exact count. */
+export async function readMeetingReactions(db: PolicyDb, slug: string): Promise<MarketReactionRow[]> {
+  return readAll<MarketReactionRow>(`api.market_reactions ${slug}`, (from, to) =>
+    db.from("market_reactions").select(REACTION_COLUMNS, { count: "exact" }).eq("meeting_slug", slug).order("series_key").range(from, to),
+  );
+}
+
 // ------------------------------------------------------------------ Votes, documents and AI outputs (C3)
 
 const VOTE_COLUMNS =
