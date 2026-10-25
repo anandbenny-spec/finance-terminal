@@ -57,7 +57,7 @@ from ft.engines.document.diff import DIFF_VERSION, diff_texts
 from ft.engines.document.store import DocumentRef, save_chunks, save_diff, save_version
 from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
-from ft.policy import fed_calendar, fed_minutes, fed_statement, fed_transcript, members
+from ft.policy import fed_calendar, fed_minutes, fed_statement, fed_transcript, members, topics
 from ft.policy.fed_minutes import Minutes, MinutesError
 from ft.policy.fed_statement import Range, Statement, StatementError, bps
 from ft.policy.fed_transcript import TranscriptError
@@ -473,10 +473,13 @@ class FedDocuments(Task):
                                             (doc_id,)).fetchone():
             n += save_chunks(tx, doc_id, st.text.text, chunk_text(st.text))
         if base_id is not None:
-            have = tx.execute("select base_document_id, diff_version from core.document_diff where document_id = %s",
-                              (doc_id,)).fetchone()
-            if saved.new_text or have != (base_id, DIFF_VERSION):
-                save_diff(tx, doc_id, base_id, diff_texts(self._text(tx, base_id), st.text.text))
+            have = tx.execute("select base_document_id, diff_version, segments->'params'->>'topics' "
+                              "from core.document_diff where document_id = %s", (doc_id,)).fetchone()
+            if saved.new_text or have != (base_id, DIFF_VERSION, str(topics.version())):
+                old_text = self._text(tx, base_id)
+                d = diff_texts(old_text, st.text.text)
+                topics.assign_topics("Fed", d.segments, old_text, st.text.text)
+                save_diff(tx, doc_id, base_id, d)
                 n += 1
 
         # The target range: one row per bound, the decision sentence as its span.
