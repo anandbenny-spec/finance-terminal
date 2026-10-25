@@ -11,6 +11,7 @@ import { AIBlock } from "@/components/ai/AIBlock";
 import { Cited } from "@/components/ai/CitationChip";
 import { DecisionLine } from "@/components/ai/DecisionLine";
 import { DocumentView } from "@/components/ai/DocumentView";
+import { KeyChanges } from "@/components/ai/KeyChanges";
 import { Redline } from "@/components/ai/Redline";
 import { NumbersChanged } from "@/components/ai/NumbersChanged";
 import { VoteDotPlot } from "@/components/ai/VoteDotPlot";
@@ -43,6 +44,7 @@ import {
   voteRows,
   votesAbsentNote,
 } from "@/lib/policy/meeting";
+import { buildKeyChanges } from "@/lib/policy/keychanges";
 import { buildRedline, parsePairs } from "@/lib/policy/redline";
 import { numbersChanged } from "@/lib/policy/numbers";
 import { dotPlot } from "@/lib/policy/votedots";
@@ -427,7 +429,13 @@ async function Changes({ ctx }: { ctx: Ctx }) {
           )}
           <NumbersPart ctx={ctx} base={read.base} />
           {pairs ? (
-            <Redline model={buildRedline(pairs)} added={read.diff.words_added} removed={read.diff.words_removed} />
+            <KeyChanges
+              model={buildKeyChanges(pairs)}
+              before={{ href: `/documents/${read.diff.base_document_id}`, date: read.base ? formatDate(docDate(ctx, read.base)) : "before" }}
+              now={{ href: `/documents/${decisionDoc.id}`, date: formatDate(docDate(ctx, decisionDoc)) }}
+              unchangedParagraphs={buildRedline(pairs).unchangedParagraphs}
+              redline={<Redline model={buildRedline(pairs)} added={read.diff.words_added} removed={read.diff.words_removed} />}
+            />
           ) : (
             <StateNote kind="unavailable">The redline isn&apos;t available for this document.</StateNote>
           )}
