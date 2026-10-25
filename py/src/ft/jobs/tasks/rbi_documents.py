@@ -95,7 +95,7 @@ from ft.engines.document.text import ExtractError
 from ft.jobs.fetch import FetchError
 from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
-from ft.policy import dates, members, rbi_calendar, rbi_minutes, rbi_resolution, rbi_statements
+from ft.policy import dates, members, rbi_calendar, rbi_minutes, rbi_resolution, rbi_statements, topics
 from ft.policy.meetings import FIRST_DAY
 from ft.policy.rbi_minutes import Minutes, MinutesError
 from ft.policy.rbi_resolution import Resolution, ResolutionError, Vote
@@ -620,10 +620,13 @@ class RbiDocuments(Task):
                                             (doc_id,)).fetchone():
             n += save_chunks(tx, doc_id, res.text.text, chunk_text(res.text))
         if base_id is not None:
-            have = tx.execute("select base_document_id, diff_version from core.document_diff where document_id = %s",
-                              (doc_id,)).fetchone()
-            if saved.new_text or have != (base_id, DIFF_VERSION):
-                save_diff(tx, doc_id, base_id, diff_texts(self._text(tx, base_id), res.text.text))
+            have = tx.execute("select base_document_id, diff_version, segments->'params'->>'topics' "
+                              "from core.document_diff where document_id = %s", (doc_id,)).fetchone()
+            if saved.new_text or have != (base_id, DIFF_VERSION, str(topics.version())):
+                old_text = self._text(tx, base_id)
+                d = diff_texts(old_text, res.text.text)
+                topics.assign_topics("RBI", d.segments, old_text, res.text.text)
+                save_diff(tx, doc_id, base_id, d)
                 n += 1
 
         # One rate row per instrument the resolution states, the sentence as its span.
