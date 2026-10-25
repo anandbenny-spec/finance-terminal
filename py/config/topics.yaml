@@ -2,7 +2,7 @@
 # topic comes from the documents' own structure. Read by ft/policy/topics.py; the differ stores each pair's topic in
 # core.document_diff.segments. Changing anything here changes `version`, and the document tasks then re-compute the
 # stored diffs (a text is never re-fetched for it). Matching is case-insensitive; "Other" is the fallback.
-version: 1
+version: 2
 
 fomc:
   # By anchor phrase, not position. A sentence takes the FIRST topic below whose phrases it contains. A sentence with
@@ -37,7 +37,7 @@ rbi:
     - {match: ["monetary policy decisions"], topic: Decision and stance}
     - {match: ["rationale for monetary policy decisions"], topic: Rationale}
     - {match: ["global economy", "global outlook"], topic: Global}
-    - {match: ["domestic economy", "domestic outlook"], topic: Domestic}
+    - {match: ["domestic economy", "domestic outlook"], topic: Domestic, split: true}
     - {match: ["assessment", "outlook", "assessment and outlook", "growth and inflation outlook", "inflation outlook",
                "growth outlook"], topic: Growth and inflation, split: true}
   opening: Decision and stance
