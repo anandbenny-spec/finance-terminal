@@ -41,18 +41,18 @@ export type ReactionRow = {
   cells: Record<ReactionKey, ReactionCell>;
 };
 
-function level(spec: (typeof REACTION_SERIES)[number], value: number): string {
+export function reactionLevel(spec: (typeof REACTION_SERIES)[number], value: number): string {
   if (spec.kind === "yield") return formatYield(value);
   if (spec.kind === "fx") return formatUsdInr(value);
   return formatIndexLevel(value, spec.market);
 }
 
-function cell(spec: (typeof REACTION_SERIES)[number], bank: Bank, shown: boolean, r: MarketReactionRow | undefined): ReactionCell {
+export function reactionCell(spec: (typeof REACTION_SERIES)[number], bank: Bank, shown: boolean, r: MarketReactionRow | undefined): ReactionCell {
   if (!(spec.banks as readonly Bank[]).includes(bank)) return { state: "none" };
   if (!shown) return { state: "unavailable", text: NOT_AVAILABLE, detail: `${NOT_AVAILABLE_LABEL}.` };
   if (!r) return { state: "waiting", text: NOT_AVAILABLE, detail: WAITING };
   const text = formatAxisChange(r.change, r.change_unit === "bps" ? 0 : 2);
-  const detail = `${formatTableDate(r.pre_obs_date)} ${level(spec, r.pre_value)} → ${formatTableDate(r.post_obs_date)} ${level(spec, r.post_value)}`;
+  const detail = `${formatTableDate(r.pre_obs_date)} ${reactionLevel(spec, r.pre_value)} → ${formatTableDate(r.post_obs_date)} ${reactionLevel(spec, r.post_value)}`;
   return { state: "move", text, change: r.change, detail, surprise: r.is_surprise_measure };
 }
 
@@ -74,7 +74,7 @@ export function reactionRows(
   }
   return decisions.map((d) => {
     const got = bySlug.get(d.slug);
-    const cells = Object.fromEntries(REACTION_SERIES.map((s) => [s.key, cell(s, d.bank, shown.has(s.key), got?.get(s.key))])) as Record<ReactionKey, ReactionCell>;
+    const cells = Object.fromEntries(REACTION_SERIES.map((s) => [s.key, reactionCell(s, d.bank, shown.has(s.key), got?.get(s.key))])) as Record<ReactionKey, ReactionCell>;
     return { slug: d.slug, href: d.href, date: d.date, bank: d.bank, decision: d.decision, cells };
   });
 }
