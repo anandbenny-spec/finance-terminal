@@ -4,10 +4,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DocumentView } from "@/components/ai/DocumentView";
+import { KeyChanges } from "@/components/ai/KeyChanges";
 import { Redline } from "@/components/ai/Redline";
 import { NumbersChanged } from "@/components/ai/NumbersChanged";
 import { VoteDotPlot } from "@/components/ai/VoteDotPlot";
 import { VoteGrid } from "@/components/ai/VoteGrid";
+import { buildKeyChanges } from "@/lib/policy/keychanges";
 import { buildRedline, parsePairs } from "@/lib/policy/redline";
 import { paragraphs } from "@/lib/policy/text";
 import { dotPlot } from "@/lib/policy/votedots";
@@ -52,6 +54,39 @@ describe("Redline", () => {
     expect(text(out)).toContain("+1 / −1 words");
     expect(text(out)).toContain("2 unchanged paragraphs");
     expect(out).not.toContain("Unchanged one.");
+  });
+});
+
+describe("KeyChanges", () => {
+  const pairs = parsePairs({
+    version: 2,
+    pairs: [
+      { kind: "same", text: "Unchanged.", topic: "Inflation", new_para: [1], old_para: [1] },
+      { kind: "changed", topic: "Decision and guidance", new_para: [3], old_para: [2], ops: [{ op: "eq", text: "Decided to " }, { op: "del", text: "hold" }, { op: "ins", text: "cut" }, { op: "eq", text: "." }] },
+      { kind: "added", topic: "Monitoring", text: "New sentence.", new_para: [4], old_para: [] },
+    ],
+  })!;
+  const render = () =>
+    renderToStaticMarkup(
+      <KeyChanges
+        model={buildKeyChanges(pairs)}
+        before={{ href: "/documents/1", date: "17 Sep 2025" }}
+        now={{ href: "/documents/2", date: "29 Oct 2025" }}
+        unchangedParagraphs={1}
+        redline={<p>the full redline</p>}
+      />,
+    );
+
+  it("shows Before and Now by topic, with ¶ links into each document, and counts what stayed", () => {
+    const out = render();
+    expect(out).toContain("<del>hold</del>");
+    expect(out).toContain("<ins>cut</ins>");
+    expect(out).toContain('href="/documents/1#p-2"');
+    expect(out).toContain('href="/documents/2#p-3"');
+    expect(text(out)).toContain("Decision and guidance");
+    expect(text(out)).toContain("added");
+    expect(text(out)).toContain("2 sentences changed · 1 paragraph unchanged");
+    expect(out).not.toContain("the full redline");
   });
 });
 

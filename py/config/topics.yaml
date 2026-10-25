@@ -1,0 +1,45 @@
+# The topic map for Key changes (Spec 01 §2, "Topics (1b)"; Design 01 §1.16 layer 2). Deterministic, no AI: a pair's
+# topic comes from the documents' own structure. Read by ft/policy/topics.py; the differ stores each pair's topic in
+# core.document_diff.segments. Changing anything here changes `version`, and the document tasks then re-compute the
+# stored diffs (a text is never re-fetched for it). Matching is case-insensitive; "Other" is the fallback.
+version: 1
+
+fomc:
+  # By anchor phrase, not position. A sentence takes the FIRST topic below whose phrases it contains. A sentence with
+  # no anchor takes the economy or inflation topic from its own words; if the paragraph already had an anchored
+  # sentence, it keeps that sentence's topic (a closing "committed to returning inflation to 2 percent" stays with the
+  # decision it ends).
+  anchored:
+    - topic: Votes
+      any: ["voting for the monetary policy action", "voting against", "voted as an alternate", "voting for this action"]
+    - topic: Monitoring
+      any: ["monitor the implications", "monitor market conditions", "will assess realized", "will take into account a wide range",
+            "assessments will take into account", "prepared to adjust", "closely monitor"]
+    - topic: Decision and guidance
+      any: ["target range for the federal funds rate", "interest rate on reserve balances", "primary credit rate"]
+    - topic: Balance sheet
+      any: ["securities holdings", "balance sheet", "holdings of treasury", "holdings of agency", "reinvest",
+            "repurchase agreement", "open market desk", "principal payments", "aggregate securities"]
+    - topic: Goals and risks
+      any: ["seeks to achieve", "seeks to foster", "statutory mandate", "attentive to the risks", "attentive to inflation risks",
+            "risks to both sides", "balance of risks", "uncertainty about the economic outlook", "dual mandate",
+            "strongly committed", "risks to the economic outlook"]
+  economy: ["economic activity", "economic data", "economy", "labor market", "job gains", "employment", "unemployment",
+            "spending", "investment", "growth", "coronavirus", "outbreak", "exports", "energy sector", "payroll",
+            "tariff", "financial conditions"]
+  inflation: ["inflation", "prices", "price pressures"]
+
+rbi:
+  # By heading, both eras. The headings are stand-alone short paragraphs in the stored text (the extractor does not mark
+  # them), matched whole. Text before the first heading is the decision and stance. Under a heading that mixes growth
+  # and inflation (`split`), each sentence takes inflation or growth from its own words, else the heading's default.
+  headings:
+    - {match: ["monetary policy decisions"], topic: Decision and stance}
+    - {match: ["rationale for monetary policy decisions"], topic: Rationale}
+    - {match: ["global economy", "global outlook"], topic: Global}
+    - {match: ["domestic economy", "domestic outlook"], topic: Domestic}
+    - {match: ["assessment", "outlook", "assessment and outlook", "growth and inflation outlook", "inflation outlook",
+               "growth outlook"], topic: Growth and inflation, split: true}
+  opening: Decision and stance
+  inflation: ["inflation", "cpi", "prices", "price"]
+  growth: ["gdp", "growth", "output", "demand", "activity", "investment", "consumption", "agricultur", "monsoon"]
