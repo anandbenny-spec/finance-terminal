@@ -25,7 +25,7 @@ RBI_OLD = (
     "On the basis of an assessment of the current macroeconomic situation, the MPC decided to keep the policy repo rate "
     "unchanged at 5.50 per cent.\n\n"
     "Assessment\n\nGlobal Economy\n\nGlobal growth is moderating amid trade tensions.\n\n"
-    "Domestic Economy\n\nDomestic activity has been resilient.\n\n"
+    "Domestic Economy\n\nDomestic conditions have been resilient. CPI inflation rose in April.\n\n"
     "Outlook\n\nCPI inflation is projected at 3.1 per cent. Real GDP growth is projected at 6.5 per cent."
 )
 RBI_NEW = RBI_OLD.replace("5.50", "5.25").replace("Global growth is moderating", "Global growth is firming").replace(
@@ -75,7 +75,8 @@ def test_rbi_topics_follow_the_headings_and_split_the_outlook():
     got = _starts("RBI", RBI_OLD)
     assert got["On the basis of an a"] == "Decision and stance"
     assert got["Global growth is mod"] == "Global"
-    assert got["Domestic activity ha"] == "Domestic"
+    assert got["Domestic conditions"] == "Domestic"
+    assert got["CPI inflation rose"] == "Inflation"
     assert got["CPI inflation is pro"] == "Inflation"
     assert got["Real GDP growth is p"] == "Growth"
     _seg, kinds = _by_topic("RBI", RBI_OLD, RBI_NEW)
