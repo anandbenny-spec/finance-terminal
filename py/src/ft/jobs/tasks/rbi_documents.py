@@ -624,9 +624,9 @@ class RbiDocuments(Task):
                               "from core.document_diff where document_id = %s", (doc_id,)).fetchone()
             if saved.new_text or have != (base_id, DIFF_VERSION, str(topics.version())):
                 old_text = self._text(tx, base_id)
-                d = diff_texts(old_text, res.text.text)
-                topics.assign_topics("RBI", d.segments, old_text, res.text.text)
-                save_diff(tx, doc_id, base_id, d)
+                new_diff = diff_texts(old_text, res.text.text)
+                topics.assign_topics("RBI", new_diff.segments, old_text, res.text.text)
+                save_diff(tx, doc_id, base_id, new_diff)
                 n += 1
 
         # One rate row per instrument the resolution states, the sentence as its span.
