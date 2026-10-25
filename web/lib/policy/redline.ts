@@ -8,8 +8,8 @@
 export type Op = { op: "eq" | "del" | "ins"; text: string };
 
 export type RedlinePair =
-  | { kind: "same" | "added" | "removed"; text: string; newPara: number | null; oldPara: number | null }
-  | { kind: "changed"; ops: Op[]; newPara: number | null; oldPara: number | null };
+  | { kind: "same" | "added" | "removed"; text: string; topic: string | null; newPara: number | null; oldPara: number | null }
+  | { kind: "changed"; ops: Op[]; topic: string | null; newPara: number | null; oldPara: number | null };
 
 export type RedlineParagraph = { key: string; para: number | null; pairs: RedlinePair[]; changed: boolean };
 
@@ -31,15 +31,16 @@ export function parsePairs(segments: unknown): RedlinePair[] | null {
   const out: RedlinePair[] = [];
   for (const raw of s.pairs) {
     if (typeof raw !== "object" || raw === null) return null;
-    const p = raw as { kind?: unknown; text?: unknown; ops?: unknown; new_para?: unknown; old_para?: unknown };
+    const p = raw as { kind?: unknown; text?: unknown; topic?: unknown; ops?: unknown; new_para?: unknown; old_para?: unknown };
+    const topic = typeof p.topic === "string" && p.topic !== "" ? p.topic : null;
     const newPara = first(p.new_para);
     const oldPara = first(p.old_para);
     if (p.kind === "changed") {
       if (!Array.isArray(p.ops) || !p.ops.every(isOp)) return null;
-      out.push({ kind: "changed", ops: p.ops, newPara, oldPara });
+      out.push({ kind: "changed", ops: p.ops, topic, newPara, oldPara });
     } else if (p.kind === "same" || p.kind === "added" || p.kind === "removed") {
       if (typeof p.text !== "string") return null;
-      out.push({ kind: p.kind, text: p.text, newPara, oldPara });
+      out.push({ kind: p.kind, text: p.text, topic, newPara, oldPara });
     } else return null;
   }
   return out;
