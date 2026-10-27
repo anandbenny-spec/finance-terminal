@@ -139,7 +139,7 @@ def resolve(name, event, inputs, secrets):
 
 
 def secrets(dev=True):
-    s = {n: f"PROD:{n}" for n in PER_TARGET} | {n: f"SHARED:{n}" for n in SHARED}
+    s = {n: f"PROD:{n}" for n in PER_TARGET} | {n: f"SHARED:{n}" for n in (*SHARED, "COINGECKO_DEMO_KEY")}
     return s | ({f"DEV_{n}": f"DEV:{n}" for n in PER_TARGET} if dev else {})
 
 
@@ -298,3 +298,11 @@ def test_the_freshness_drill_is_manual_and_takes_inputs_only_through_env():
         assert "inputs." not in s.get("run", "") and "github.event.inputs" not in s.get("run", "")
     assert set(wf["jobs"]["run"]["steps"][-1]["env"]) == {"INPUT_TASK", "INPUT_ACTION", "INPUT_LAST_SUCCESS_AT",
                                                           "INPUT_LAST_CHECKED_AT", "JOB_DATABASE_URL"}
+
+
+@pytest.mark.parametrize("name", ("daily", "refresh"))
+@pytest.mark.parametrize("target", ["dev", "production"])
+def test_the_coingecko_demo_key_reaches_the_daily_and_refresh_runs_for_both_targets(name, target):
+    """crypto.coingecko_markets (#106) uses one key for dev and production, passed as an environment variable."""
+    _target, run, _values = run_env(name, "workflow_dispatch", {**manual_inputs(name), "target": target})
+    assert run["COINGECKO_DEMO_KEY"] == "SHARED:COINGECKO_DEMO_KEY"

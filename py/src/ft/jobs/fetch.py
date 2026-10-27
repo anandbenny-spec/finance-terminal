@@ -63,6 +63,7 @@ SITES: tuple[Site, ...] = (
     Site("rbi", ("rbi.org.in",), 1.0, 1.0),              # rbi.org.in, website.rbi.org.in, rbidocs.rbi.org.in
     # query1/query2.finance.yahoo.com (the chart API and the crumb) and fc.yahoo.com (the cookie): one source.
     Site("yahoo", ("finance.yahoo.com", "fc.yahoo.com"), 1.5, impersonate="chrome"),
+    Site("coingecko", ("api.coingecko.com",), 2.5),       # the Demo plan's 30 calls a minute; the daily snapshot makes 2
 )
 
 RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
