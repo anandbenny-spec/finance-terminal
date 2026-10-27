@@ -84,6 +84,7 @@ finance-terminal/            on the Mac: ~/Projects/finance-terminal/app
 git clone --depth 1 https://github.com/anandbenny-spec/finance-terminal-fixtures data/fixtures  # cloud: add_repo read
 cd py && uv sync --locked --all-extras                     # always --locked; the lock changes only on purpose
 uv run --locked ruff check src tests
+ft-pg          # cloud sessions, if the environment's setup script installed it: starts that Postgres (Setup 02)
 PGHOST=localhost PGPORT=5432 ../supabase/tests/run_all.sh  # throwaway Postgres 15+ with pgvector 0.7+, trust auth
 TEST_PG_CONNINFO="host=localhost port=5432 dbname=ft" uv run --locked pytest -q
 uv run --locked python -m ft.jobs.run --workflow daily     # what the workflows call (watch, weekly, refresh, backfill)
@@ -199,6 +200,24 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   sub-prompt and the Brief, not from a long thread. **Read only what the job needs (Anand, 23 Oct 2026):** where
   a job's issue names the doc sections to read, read those instead of whole docs (this replaces a sub-prompt's
   "read … in full"); where it names none, follow the sub-prompt's reading list.
+- **Reuse first (Anand, 27 Oct 2026; Plan 02 §7).** New features are built from the data and parts that exist:
+  1. every spec and job card opens with a reuse table: the parts it uses and what's new;
+  2. a part is generalised when its second use arrives, not before, in its own small job that keeps the first
+     user's tests unchanged;
+  3. one company master (`core.entity` + `core.entity_identifier`, keyed by ISIN with its history), one shape for
+     dated events (`core.event` plus a detail table per type), and `core.forecast` for projections and guidance;
+  4. a new AI task is a prompt plus a schema (`py/config/prompts/<task>/`) through `ft/ai/client.py`, which brings
+     the citation checks, batching and cost tracking;
+  5. new pages are assembled from Design 01's components (a new visual pattern is still a question for Anand, §5);
+  6. the `semantic` views feed the command bar, and the `ops` records feed the health and accuracy pages.
+- **Which model (Anand, 27 Oct 2026; Plan 02 §8).** **Opus:** planning (specs, plans, data audits, job cards,
+  plan reviews); jobs labelled `model:opus`; jobs a Sonnet session handed back (CI still red after three rounds,
+  or a design choice no rule settles); accuracy-critical logic its issue marks for Opus (such as the DCF and WACC
+  engine). **Sonnet:** everything else (build jobs with a written done-when check, runs and checks, bookkeeping,
+  status questions); no label means Sonnet. At the start, a session whose task suits the other model tells Anand
+  and names the command (`/model opus` or `/model sonnet`). A Sonnet session that hits an Opus case adds
+  `model:opus` to the job; a build chain also adds `needs-anand` and stops (step 6 of its prompt). Build chains
+  skip `model:opus` jobs.
 - **Fresh sessions at break points (Anand, 23 Oct 2026; it saves his plan's usage).** When a sub-prompt job's
   done-when check passes, or the thread grows long, write a short handoff in that job's GitHub issue (done, next,
   open questions, files touched), then tell Anand it's a good point to start a fresh session from this file,
@@ -277,7 +296,9 @@ never rebuild a rule from memory.
 | Arch 04 / 04a | Architecture - 04 Storage, repo layout, Python and lock file · 04a Repo skeleton | storage, CI, one-time setup, secrets |
 | Design 01 | Design - 01 Design system | tokens, formatting, components, layouts |
 | Spec NN | Spec - 01 Fed vs RBI policy tracker (one per module) | inputs, rules, outputs, UI, done when |
-| Prompt NN | Prompt - 01 Fed vs RBI sub-prompt (one per module) | the module's build order and stop conditions |
+| Prompt NN | Prompt - 01 Fed vs RBI sub-prompt (one per module; from module 2 on, the build prompt is part of the spec: Spec 02A, 02B) | the module's build order and stop conditions |
+| Plan NN | Plan - 01 Pass 2 ECB and BoE · Plan - 02 Module 2 scope, releases and reuse | later work's scope, order and reuse |
+| Setup NN | Setup - 01 Supabase projects · Setup - 02 Cloud environment | one-time setup steps |
 | Review 01 | Review - 01 Argon external review triage | the 22 Oct fixes and why |
 | Data Audit NN | Data Audit - 00 Process and status · 01 … 07 | source evidence; closed audit docs are frozen records |
 
