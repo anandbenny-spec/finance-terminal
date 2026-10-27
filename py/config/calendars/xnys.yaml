@@ -1,0 +1,277 @@
+# NYSE trading calendar, read by ft/calendars.py (Spec 02A §4; 2A-03). Full-day closures and 1:00 pm ET early closes,
+# from NYSE Group's holiday calendar releases (ir.theice.com, Business Wire) and nyse.com/trade/hours-calendars
+# (2026-2028), read 27 Oct 2026. Saturday holidays are observed on Friday, Sunday ones on Monday; New Year's Day on a
+# Saturday is not observed. 9 Jan 2025 (National Day of Mourning for President Carter) is the one ad-hoc closure found
+# for 2019-2027. The 2019-2020 entries rest on the 2018 release only. Anand reviews each December.
+# Source keys used in each year's `source`:
+#   S1 https://ir.theice.com/press/news-details/2018/NYSE-Group-Announces-2019-2020-and-2021-Holiday-and-Early-Closings-Calendar/default.aspx
+#   S2 https://www.businesswire.com/news/home/20201228005203/en/NYSE-Group-Announces-2021-2022-and-2023-Holiday-and-Early-Closings-Calendar
+#   S3 https://www.businesswire.com/news/home/20211227005062/en/NYSE-Group-Announces-2022-2023-and-2024-Holiday-and-Early-Closings-Calendar
+#   S4 https://ir.theice.com/press/news-details/2024/NYSE-Group-Announces-2025-2026-and-2027-Holiday-and-Early-Closings-Calendar/default.aspx
+#   S5 NYSE Group release of 23 Dec 2025 (2026-2027-2028), ir.theice.com
+#   S5b https://www.nyse.com/trade/hours-calendars (2026-2028)
+#   S6 ICE notice of 30 Dec 2024 closing the markets on 9 Jan 2025 (ir.theice.com)
+2019:
+  source: S1 (NYSE Group release, 2018) read 2026-10-27
+  holidays:
+  - date: 2019-01-01
+    name: New Year's Day
+  - date: 2019-01-21
+    name: Martin Luther King Jr. Day
+  - date: 2019-02-18
+    name: Washington's Birthday
+  - date: 2019-04-19
+    name: Good Friday
+  - date: 2019-05-27
+    name: Memorial Day
+  - date: 2019-07-04
+    name: Independence Day
+  - date: 2019-09-02
+    name: Labor Day
+  - date: 2019-11-28
+    name: Thanksgiving Day
+  - date: 2019-12-25
+    name: Christmas Day
+  early_closes:
+  - date: 2019-07-03
+    close: '13:00'
+    name: Day before Independence Day
+  - date: 2019-11-29
+    close: '13:00'
+    name: Day after Thanksgiving
+  - date: 2019-12-24
+    close: '13:00'
+    name: Christmas Eve
+2020:
+  source: S1 read 2026-10-27
+  holidays:
+  - date: 2020-01-01
+    name: New Year's Day
+  - date: 2020-01-20
+    name: Martin Luther King Jr. Day
+  - date: 2020-02-17
+    name: Washington's Birthday
+  - date: 2020-04-10
+    name: Good Friday
+  - date: 2020-05-25
+    name: Memorial Day
+  - date: 2020-07-03
+    name: Independence Day (observed)
+  - date: 2020-09-07
+    name: Labor Day
+  - date: 2020-11-26
+    name: Thanksgiving Day
+  - date: 2020-12-25
+    name: Christmas Day
+  early_closes:
+  - date: 2020-11-27
+    close: '13:00'
+    name: Day after Thanksgiving
+  - date: 2020-12-24
+    close: '13:00'
+    name: Christmas Eve
+2021:
+  source: S1 and S2 (S2 read 2026-10-27; both agree)
+  holidays:
+  - date: 2021-01-01
+    name: New Year's Day
+  - date: 2021-01-18
+    name: Martin Luther King Jr. Day
+  - date: 2021-02-15
+    name: Washington's Birthday
+  - date: 2021-04-02
+    name: Good Friday
+  - date: 2021-05-31
+    name: Memorial Day
+  - date: 2021-07-05
+    name: Independence Day (observed)
+  - date: 2021-09-06
+    name: Labor Day
+  - date: 2021-11-25
+    name: Thanksgiving Day
+  - date: 2021-12-24
+    name: Christmas Day (observed)
+  early_closes:
+  - date: 2021-11-26
+    close: '13:00'
+    name: Day after Thanksgiving
+2022:
+  source: S2 and S3 (S3 read 2026-10-27)
+  holidays:
+  - date: 2022-01-17
+    name: Martin Luther King Jr. Day
+  - date: 2022-02-21
+    name: Washington's Birthday
+  - date: 2022-04-15
+    name: Good Friday
+  - date: 2022-05-30
+    name: Memorial Day
+  - date: 2022-06-20
+    name: Juneteenth (observed)
+  - date: 2022-07-04
+    name: Independence Day
+  - date: 2022-09-05
+    name: Labor Day
+  - date: 2022-11-24
+    name: Thanksgiving Day
+  - date: 2022-12-26
+    name: Christmas Day (observed)
+  early_closes:
+  - date: 2022-11-25
+    close: '13:00'
+    name: Day after Thanksgiving
+2023:
+  source: S2 and S3
+  holidays:
+  - date: 2023-01-02
+    name: New Year's Day (observed)
+  - date: 2023-01-16
+    name: Martin Luther King Jr. Day
+  - date: 2023-02-20
+    name: Washington's Birthday
+  - date: 2023-04-07
+    name: Good Friday
+  - date: 2023-05-29
+    name: Memorial Day
+  - date: 2023-06-19
+    name: Juneteenth
+  - date: 2023-07-04
+    name: Independence Day
+  - date: 2023-09-04
+    name: Labor Day
+  - date: 2023-11-23
+    name: Thanksgiving Day
+  - date: 2023-12-25
+    name: Christmas Day
+  early_closes:
+  - date: 2023-07-03
+    close: '13:00'
+    name: Day before Independence Day
+  - date: 2023-11-24
+    close: '13:00'
+    name: Day after Thanksgiving
+2024:
+  source: S3
+  holidays:
+  - date: 2024-01-01
+    name: New Year's Day
+  - date: 2024-01-15
+    name: Martin Luther King Jr. Day
+  - date: 2024-02-19
+    name: Washington's Birthday
+  - date: 2024-03-29
+    name: Good Friday
+  - date: 2024-05-27
+    name: Memorial Day
+  - date: 2024-06-19
+    name: Juneteenth
+  - date: 2024-07-04
+    name: Independence Day
+  - date: 2024-09-02
+    name: Labor Day
+  - date: 2024-11-28
+    name: Thanksgiving Day
+  - date: 2024-12-25
+    name: Christmas Day
+  early_closes:
+  - date: 2024-07-03
+    close: '13:00'
+    name: Day before Independence Day
+  - date: 2024-11-29
+    close: '13:00'
+    name: Day after Thanksgiving
+  - date: 2024-12-24
+    close: '13:00'
+    name: Christmas Eve
+2025:
+  source: S4 (2024 release) and S6 (Carter closure), read 2026-10-27
+  holidays:
+  - date: 2025-01-01
+    name: New Year's Day
+  - date: 2025-01-09
+    name: National Day of Mourning for President Jimmy Carter (special closure; notice S6 issued 2024-12-30)
+  - date: 2025-01-20
+    name: Martin Luther King Jr. Day
+  - date: 2025-02-17
+    name: Washington's Birthday
+  - date: 2025-04-18
+    name: Good Friday
+  - date: 2025-05-26
+    name: Memorial Day
+  - date: 2025-06-19
+    name: Juneteenth
+  - date: 2025-07-04
+    name: Independence Day
+  - date: 2025-09-01
+    name: Labor Day
+  - date: 2025-11-27
+    name: Thanksgiving Day
+  - date: 2025-12-25
+    name: Christmas Day
+  early_closes:
+  - date: 2025-07-03
+    close: '13:00'
+    name: Day before Independence Day
+  - date: 2025-11-28
+    close: '13:00'
+    name: Day after Thanksgiving
+  - date: 2025-12-24
+    close: '13:00'
+    name: Christmas Eve
+2026:
+  source: S4, S5 (issued 2025-12-23) and S5b (nyse.com), all agree; read 2026-10-27
+  holidays:
+  - date: 2026-01-01
+    name: New Year's Day
+  - date: 2026-01-19
+    name: Martin Luther King Jr. Day
+  - date: 2026-02-16
+    name: Washington's Birthday
+  - date: 2026-04-03
+    name: Good Friday
+  - date: 2026-05-25
+    name: Memorial Day
+  - date: 2026-06-19
+    name: Juneteenth
+  - date: 2026-07-03
+    name: Independence Day (observed)
+  - date: 2026-09-07
+    name: Labor Day
+  - date: 2026-11-26
+    name: Thanksgiving Day
+  - date: 2026-12-25
+    name: Christmas Day
+  early_closes:
+  - date: 2026-11-27
+    close: '13:00'
+    name: Day after Thanksgiving
+  - date: 2026-12-24
+    close: '13:00'
+    name: Christmas Eve
+2027:
+  source: S4, S5 and S5b, all agree; read 2026-10-27
+  holidays:
+  - date: 2027-01-01
+    name: New Year's Day
+  - date: 2027-01-18
+    name: Martin Luther King Jr. Day
+  - date: 2027-02-15
+    name: Washington's Birthday
+  - date: 2027-03-26
+    name: Good Friday
+  - date: 2027-05-31
+    name: Memorial Day
+  - date: 2027-06-18
+    name: Juneteenth (observed)
+  - date: 2027-07-05
+    name: Independence Day (observed)
+  - date: 2027-09-06
+    name: Labor Day
+  - date: 2027-11-25
+    name: Thanksgiving Day
+  - date: 2027-12-24
+    name: Christmas Day (observed)
+  early_closes:
+  - date: 2027-11-26
+    close: '13:00'
+    name: Day after Thanksgiving
