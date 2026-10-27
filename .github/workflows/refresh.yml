@@ -59,6 +59,7 @@ jobs:
           STORAGE_BUCKET: ${{ secrets.STORAGE_BUCKET }}
           STORAGE_REGION: ${{ secrets.STORAGE_REGION }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          COINGECKO_DEMO_KEY: ${{ secrets.COINGECKO_DEMO_KEY }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
