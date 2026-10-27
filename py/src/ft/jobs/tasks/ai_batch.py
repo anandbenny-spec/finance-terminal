@@ -125,7 +125,9 @@ from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.policy import rbi_resolution
 
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v1", "stance_extraction": "v1",
+# stance_extraction v2 (Anand, 27 Oct 2026, issue #16): the quote is the stance sentence with the sentence before it,
+# since resolutions repeat the stance sentence word for word and a quote must be found exactly once (Arch 03 §1.2).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v1", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 REALTIME_DOC_TYPES = ("fomc_statement", "mpc_resolution", "rbi_governor_statement")
 EXTRACTION_DOC_TYPE = "mpc_resolution"   # the stance and projection fallback run on MPC resolutions only (Spec 01 D2)
@@ -155,8 +157,8 @@ class _Skip(Exception):
 
 
 @cache
-def _schema(task: str) -> dict:
-    return load_schema(task)
+def _schema(task: str, version: str) -> dict:
+    return load_schema(task, version)
 
 
 @dataclass
@@ -182,8 +184,9 @@ class Work:
         if self.task == "statement_diff_summary":
             return summaries.diff_summary_request(self.doc, self.base, self.segments, prompt, note=note)
         if self.task == "stance_extraction":
-            return extraction.stance_request(self.doc, prompt, _schema(self.task), note=note)
-        return extraction.projection_request(self.doc, self.sentences, prompt, _schema(self.task), note=note)
+            return extraction.stance_request(self.doc, prompt, _schema(self.task, prompt.version), note=note)
+        return extraction.projection_request(self.doc, self.sentences, prompt, _schema(self.task, prompt.version),
+                                             note=note)
 
     def parsed(self) -> extraction.Parsed:
         """B6's reading for the cross-check (read once; storage errors propagate, so nothing is held for them)."""

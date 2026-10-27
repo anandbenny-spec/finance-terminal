@@ -338,3 +338,49 @@ def test_on_a_decision_day_a_bad_quote_is_retried_other_is_held_and_a_wrong_figu
     assert alert(f"ai_rejected:projection_extraction:{resolution_id(slug)}")[0]
     assert alert(f"ai_held:stance_extraction:{resolution_id(slug)}")[0]
     assert [x[5] for x in forecasts(slug)] == ["parsed"]
+
+
+@pytest.mark.db
+def test_a_repeated_stance_sentence_is_published_once_quoted_with_the_sentence_before_it(s3, roster):  # noqa: F811
+    # Production, 27 Oct 2026 (issue #16): resolutions repeat the stance sentence word for word in their closing
+    # paragraph, so the sentence alone is found twice and isn't evidence. Prompt v2 asks for the sentence before it too.
+    jun = date(2013, 6, 5)
+    closing = ("The MPC will continue to keep a strong vigil on the evolving inflation and growth outlook. "
+               f"{HOLD_STANCE}")
+    slug, = load((jun, 89401, keep(votes=(DISSENT, closing))), first_day=date(2013, 7, 1), roster_path=roster,
+                 current=((jun, 89401),))
+    pair = ("Consequently, the reverse repo rate under the LAF remains at 6.25 per cent, and the marginal standing "
+            f"facility (MSF) rate and the Bank Rate at 6.75 per cent. {HOLD_STANCE}")
+    calls = []
+
+    def stance(docs):
+        calls.append(1)
+        _, text = docs[0]
+        assert text.count(HOLD_STANCE) == 2
+        quote = HOLD_STANCE if len(calls) == 1 else pair                     # first as v1 quoted it, then v2's pair
+        return {"stance": "calibrated tightening", "quote": quote}
+
+    fake = FakeClaude(["ok"], answer=answers(stance=stance))
+    assert decision_day(ai_task([slug], fake), jun, datetime(2013, 6, 5, 10, 5, tzinfo=UTC)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    stance_reqs = [b for b in fake.requests if b.get("output_config", {}).get("format")
+                   and "stance" in b["output_config"]["format"]["schema"]["properties"]]
+    assert len(stance_reqs) == 2
+    _, instruction = documents_of(stance_reqs[0])
+    assert "together with the sentence just before it" in instruction                       # v2's user turn
+    assert "just before it" in schema_of(stance_reqs[0])["properties"]["quote"]["description"]   # and its schema
+    assert "quote it together with the sentence just before it" in stance_reqs[1]["messages"][0]["content"][-1]["text"]
+    out = stance_outputs(slug)
+    assert [(o[0], o[1]) for o in out] == [("rejected", "calibrated tightening"), ("published", "calibrated tightening")]
+    assert out[0][4].startswith("retried: the quote") and " ".join(out[1][2].split()) == pair
+    assert q("""select prompt_version, status from ops.ai_request where ai_task = 'stance_extraction'
+                 and document_id = %s order by created_at""", resolution_id(slug)) == [("v2", "rejected"),
+                                                                                    ("v2", "succeeded")]
+    # Visitors see the stance, its quote rebuilt from the decision paragraph's text (not the closing one's).
+    vis = as_anon("select stance, stance_display_label from api.policy_meetings where slug = %s", slug)
+    assert vis == [("calibrated tightening", "AI-extracted")]
+    cites = as_anon("""select c.quote from api.ai_citations c join api.ai_outputs o on o.id = c.ai_output_id
+                        where o.task = 'stance_extraction' and o.event_slug = %s""", slug)
+    assert [" ".join(c.split()) for c, in cites] == [pair]
+    assert r["checks"]["outputs_stored"]["passed"] and r["checks"]["extractions_held"]["passed"]
