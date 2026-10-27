@@ -24,7 +24,7 @@ check "G06 job_writer can't insert into core.source" \
 check "G07 job_writer can't update core.source" \
   "$(as_role job_writer "update core.source set is_suppressed = true where key = 'coingecko'")" 'permission denied|row-level security'
 check "G08 the row is still unsuppressed after those attempts" \
-  "$(as_pg "select is_suppressed from core.source where key = 'coingecko'")" '^false$'
+  "$(as_pg "select is_suppressed::text from core.source where key = 'coingecko'")" '^false$'
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
