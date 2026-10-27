@@ -1,0 +1,390 @@
+# NSE (and BSE's equity segment, which shares its holidays) trading calendar, read by ft/calendars.py (Spec 02A §4; 2A-03).
+# Per year: `source` (the year-start Capital Market holiday circular), `holidays` (weekday holidays only: Saturdays and
+# Sundays are closed by rule; amendments and ad-hoc closures are included, with their own circular in `source`),
+# `special_sessions` (kind muhurat | budget | special | dr, with the open and close times in IST). A special session on a
+# date makes it a trading session even on a weekend or on a day the holiday list also names (Diwali Laxmi Pujan).
+# A year absent here is not covered, and asking about it raises: 2027 is absent because NSE had not published its 2027
+# circular by 27 Oct 2026 (add it with the circular, in December). Anand reviews each December.
+# Notes: 13 Feb 2019 (Wednesday) is a normal session in every NSE circular read; nothing explains why Yahoo's ^NSEI lacks
+# it (a Yahoo gap is likely). Muhurat 2020 and 2022, the Budget-day 2020 session and the 2024 Saturday sessions are cited
+# from F&O, commodity, clearing or Member Service Department circulars because no Capital Market circular was found; the
+# 2026 list is cited from NSE/FAOP/71777 (the F&O copy of the same list; NSE/CMTR/71775 was unreadable). 2024-01-20,
+# 2024-03-02 and 2024-05-18 ran 09:15-10:00 on the primary site and 11:30-12:30 on the DR site: `close` is the DR end.
+# 2019-12-02/03 and 2024-09-30/10-01 (live trading from the DR site, normal hours) are ordinary sessions, not listed.
+2019:
+  source: NSE/CMTR/39612 (No. 115/2018), 2018-12-07, https://nsearchives.nseindia.com/content/circulars/CMTR39612.pdf
+  holidays:
+  - date: 2019-03-04
+    name: Mahashivratri
+  - date: 2019-03-21
+    name: Holi
+  - date: 2019-04-17
+    name: Mahavir Jayanti
+  - date: 2019-04-19
+    name: Good Friday
+  - date: 2019-04-29
+    name: Parliamentary elections, Mumbai (ad-hoc)
+    source: NSE/CD/40538 (No. 11/2019), 2019-03-26, https://nsearchives.nseindia.com/content/circulars/CD40538.pdf (a Currency Derivatives circular; the Capital Market one was not found)
+  - date: 2019-05-01
+    name: Maharashtra Day
+  - date: 2019-06-05
+    name: Id-Ul-Fitr (Ramzan ID)
+  - date: 2019-08-12
+    name: Bakri Id
+  - date: 2019-08-15
+    name: Independence Day
+  - date: 2019-09-02
+    name: Ganesh Chaturthi
+  - date: 2019-09-10
+    name: Moharram
+  - date: 2019-10-02
+    name: Mahatma Gandhi Jayanti
+  - date: 2019-10-08
+    name: Dussehra
+  - date: 2019-10-21
+    name: Maharashtra Assembly elections (ad-hoc)
+    source: NSE/MSD/42319 (No. 53/2019), 2019-10-07, https://nsearchives.nseindia.com/content/circulars/MSD42319.pdf (CM, F&O and CD closed)
+  - date: 2019-10-28
+    name: Diwali-Balipratipada
+  - date: 2019-11-12
+    name: Gurunanak Jayanti
+  - date: 2019-12-25
+    name: Christmas
+  special_sessions:
+  - date: 2019-10-27
+    kind: muhurat
+    open: '18:15'
+    close: '19:15'
+    source: NSE/CMTR/42483 (No. 131/2019), 2019-10-23, https://nsearchives.nseindia.com/content/circulars/CMTR42483.pdf; Sunday;
+      pre-open 18:00-18:08; trade mod to 19:45. Date announced in CMTR39612.
+  - date: 2019-12-02
+    kind: dr
+    open: 09:15
+    close: '15:30'
+    source: NSE/CMTR/42749 (No. 138/2019), 2019-11-27, https://nsearchives.nseindia.com/content/circulars/CMTR42749.pdf; live
+      trading from DR site at 'normal market timings' (times not printed; 09:15-15:30 is the standard in CMTR41180)
+  - date: 2019-12-03
+    kind: dr
+    open: 09:15
+    close: '15:30'
+    source: NSE/CMTR/42749, same as above
+2020:
+  source: NSE/CMTR/42877 (No. 146/2019), 2019-12-11, https://nsearchives.nseindia.com/content/circulars/CMTR42877.pdf
+  holidays:
+  - date: 2020-02-21
+    name: Mahashivratri
+  - date: 2020-03-10
+    name: Holi
+  - date: 2020-04-02
+    name: Ram Navami
+  - date: 2020-04-06
+    name: Mahavir Jayanti
+  - date: 2020-04-10
+    name: Good Friday
+  - date: 2020-04-14
+    name: Dr. Baba Saheb Ambedkar Jayanti
+  - date: 2020-05-01
+    name: Maharashtra Day
+  - date: 2020-05-25
+    name: Id-Ul-Fitr (Ramzan ID)
+  - date: 2020-10-02
+    name: Mahatma Gandhi Jayanti
+  - date: 2020-11-16
+    name: Diwali-Balipratipada
+  - date: 2020-11-30
+    name: Gurunanak Jayanti
+  - date: 2020-12-25
+    name: Christmas
+  special_sessions:
+  - date: 2020-02-01
+    kind: budget
+    open: 09:15
+    close: '15:30'
+    source: NSE/FAOP/43291 (No. 01/2020), 2020-01-22, https://nsearchives.nseindia.com/content/circulars/FAOP43291.pdf (F&O
+      circular; a CM-specific circular was not located; normal market 09:15-15:30, trade mod to 16:15). Saturday.
+  - date: 2020-11-14
+    kind: muhurat
+    open: '18:15'
+    close: '19:15'
+    source: NSE/COM/46233 (No. 39/2020), 2020-11-02, https://nsearchives.nseindia.com/content/circulars/COM46233.pdf (commodity
+      circular) corroborated by NCL/CMPT/46255 (2020-11-04, https://archives.nseindia.com/content/circulars/CMPT46255.pdf,
+      SLBS session 18:15-19:15). Saturday. Date announced in CMTR42877.
+2021:
+  source: NSE/CMTR/46623 (No. 113/2020), 2020-12-11, https://archives.nseindia.com/content/circulars/CMTR46623.pdf
+  holidays:
+  - date: 2021-01-26
+    name: Republic Day
+  - date: 2021-03-11
+    name: Mahashivratri
+  - date: 2021-03-29
+    name: Holi
+  - date: 2021-04-02
+    name: Good Friday
+  - date: 2021-04-14
+    name: Dr. Ambedkar Jayanti
+  - date: 2021-04-21
+    name: Ram Navami
+  - date: 2021-05-13
+    name: Id-Ul-Fitr (Ramzan Id)
+  - date: 2021-07-21
+    name: Bakri Id
+  - date: 2021-08-19
+    name: Muharram
+  - date: 2021-09-10
+    name: Ganesh Chaturthi
+  - date: 2021-10-15
+    name: Dussehra
+  - date: 2021-11-04
+    name: Diwali-Laxmi Pujan (Muhurat session held in evening)
+  - date: 2021-11-05
+    name: Diwali-Balipratipada
+  - date: 2021-11-19
+    name: Gurunanak Jayanti
+  special_sessions:
+  - date: 2021-11-04
+    kind: muhurat
+    open: '18:15'
+    close: '19:15'
+    source: NSE/CMTR/50050 (No. 109/2021), 2021-10-21, https://archives.nseindia.com/content/circulars/CMTR50050.pdf?f=6WEL;
+      Thursday; block deal 17:45-18:00, pre-open 18:00-18:08, closing 19:25-19:35, trade mod to 19:45
+2022:
+  source: NSE/CMTR/50560 (No. 117/2021), 2021-12-10, https://archives.nseindia.com/content/circulars/CMTR50560.pdf
+  holidays:
+  - date: 2022-01-26
+    name: Republic Day
+  - date: 2022-03-01
+    name: Mahashivratri
+  - date: 2022-03-18
+    name: Holi
+  - date: 2022-04-14
+    name: Dr. Baba Saheb Ambedkar Jayanti / Mahavir Jayanti
+  - date: 2022-04-15
+    name: Good Friday
+  - date: 2022-05-03
+    name: Id-Ul-Fitr (Ramzan ID)
+  - date: 2022-08-09
+    name: Moharram
+  - date: 2022-08-15
+    name: Independence Day
+  - date: 2022-08-31
+    name: Ganesh Chaturthi
+  - date: 2022-10-05
+    name: Dussehra
+  - date: 2022-10-24
+    name: Diwali-Laxmi Pujan (Muhurat session held in evening)
+  - date: 2022-10-26
+    name: Diwali-Balipratipada
+  - date: 2022-11-08
+    name: Gurunanak Jayanti
+  special_sessions:
+  - date: 2022-10-24
+    kind: muhurat
+    open: '18:15'
+    close: '19:15'
+    source: NSE/FAOP/54024 (No. 121/2022), 2022-10-11, https://archives.nseindia.com/content/circulars/FAOP54024.pdf; NSE/COM/54026
+      (No. 39/2022, 2022-10-11); NCL/CMPT/54044 (No. 093/2022, 2022-10-13). CM-specific NSE/CMTR circular not located. Monday.
+2023:
+  source: NSE/CMTR/54757 (150/2022), 2022-12-08, https://archives.nseindia.com/content/circulars/CMTR54757.pdf
+  holidays:
+  - date: 2023-01-26
+    name: Republic Day
+  - date: 2023-03-07
+    name: Holi
+  - date: 2023-03-30
+    name: Ram Navami
+  - date: 2023-04-04
+    name: Mahavir Jayanti
+  - date: 2023-04-07
+    name: Good Friday
+  - date: 2023-04-14
+    name: Dr. Baba Saheb Ambedkar Jayanti
+  - date: 2023-05-01
+    name: Maharashtra Day
+  - date: 2023-06-29
+    name: Bakri Id
+    note: moved from 2023-06-28 listed in NSE/CMTR/54757; see amendments
+  - date: 2023-08-15
+    name: Independence Day
+  - date: 2023-09-19
+    name: Ganesh Chaturthi
+  - date: 2023-10-02
+    name: Mahatma Gandhi Jayanti
+  - date: 2023-10-24
+    name: Dussehra
+  - date: 2023-11-14
+    name: Diwali-Balipratipada
+  - date: 2023-11-27
+    name: Gurunanak Jayanti
+  - date: 2023-12-25
+    name: Christmas
+  special_sessions:
+  - date: 2023-11-12
+    kind: muhurat
+    open: '18:15'
+    close: '19:15'
+    source: NSE/CMTR/59124 (139/2023), 2023-10-27, https://archives.nseindia.com/content/circulars/CMTR59124.pdf
+    note: block deal 17:45-18:00; pre-open 18:00-18:08; closing session 19:25-19:35; trade mod cut-off 19:45
+2024:
+  source: NSE/CMTR/59722 (154/2023), 2023-12-12, https://nsearchives.nseindia.com/content/circulars/CMTR59722.pdf
+  holidays:
+  - date: 2024-01-22
+    name: Special closure (public holiday under Sec 25 NI Act - Ram Mandir consecration)
+    source: NSE/CMTR/60338 dated 2024-01-19 (number taken from NSE/SURV/60342; PDF itself not read)
+  - date: 2024-01-26
+    name: Republic Day
+  - date: 2024-03-08
+    name: Mahashivratri
+  - date: 2024-03-25
+    name: Holi
+  - date: 2024-03-29
+    name: Good Friday
+  - date: 2024-04-11
+    name: Id-Ul-Fitr (Ramadan Eid)
+  - date: 2024-04-17
+    name: Shri Ram Navmi
+  - date: 2024-05-01
+    name: Maharashtra Day
+  - date: 2024-05-20
+    name: Parliamentary Elections (Mumbai)
+    source: NSE/CMTR/61518 (52/2024), 2024-04-08, https://nsearchives.nseindia.com/content/circulars/CMTR61518.pdf
+  - date: 2024-06-17
+    name: Bakri Id
+  - date: 2024-07-17
+    name: Moharram
+  - date: 2024-08-15
+    name: Independence Day/Parsi New Year
+  - date: 2024-10-02
+    name: Mahatma Gandhi Jayanti
+  - date: 2024-11-01
+    name: Diwali Laxmi Pujan
+    note: regular session closed; Muhurat evening session held (below)
+  - date: 2024-11-15
+    name: Gurunanak Jayanti
+  - date: 2024-11-20
+    name: Assembly Elections in Maharashtra
+    source: NSE/CMTR/64960 (154/2024), 2024-11-08, https://nsearchives.nseindia.com/content/circulars/CMTR64960.pdf
+  - date: 2024-12-25
+    name: Christmas
+  special_sessions:
+  - date: 2024-01-20
+    kind: dr
+    open: 09:15
+    close: '12:30'
+    source: NSE/MSD/59999 (80/2023), 2023-12-28, https://nsearchives.nseindia.com/content/circulars/MSD59999.pdf
+    note: 'two segments: primary site normal market 09:15-10:00; switch to DR site normal market 11:30-12:30; closing 12:40-12:50;
+      trade mod end 13:00. (Further NSE/MSD/60300 2024-01-18 and NSE/MSD/60318 2024-01-19 only revise ENIT/member portal timings.)'
+  - date: 2024-03-02
+    kind: dr
+    open: 09:15
+    close: '12:30'
+    source: NSE/MSD/60677 (08/2024), 2024-02-14, https://nsearchives.nseindia.com/content/circulars/MSD60677.pdf
+    note: 'same structure: primary 09:15-10:00, DR 11:30-12:30, closing 12:40-12:50. Reminder NSE/MSD/60942 2024-03-01 (no
+      times).'
+  - date: 2024-05-18
+    kind: dr
+    open: 09:15
+    close: '12:30'
+    source: NSE/MSD/61893 (40/2024), 2024-05-07, https://nsearchives.nseindia.com/content/circulars/MSD61893.pdf
+    note: 'same structure: primary 09:15-10:00, DR 11:30-12:30, closing 12:40-12:50'
+  - date: 2024-11-01
+    kind: muhurat
+    open: '18:00'
+    close: '19:00'
+    source: NSE/CMTR/64628 (147/2024), 2024-10-19, https://nsearchives.nseindia.com/content/circulars/CMTR64628.pdf
+    note: pre-open 17:45-18:00; closing session 19:10-19:20
+2025:
+  source: NSE/CMTR/65587 (170/2024), 2024-12-13, https://nsearchives.nseindia.com/content/circulars/CMTR65587.pdf
+  holidays:
+  - date: 2025-02-26
+    name: Mahashivratri
+  - date: 2025-03-14
+    name: Holi
+  - date: 2025-03-31
+    name: Id-Ul-Fitr (Ramadan Eid)
+  - date: 2025-04-10
+    name: Shri Mahavir Jayanti
+  - date: 2025-04-14
+    name: Dr. Baba Saheb Ambedkar Jayanti
+  - date: 2025-04-18
+    name: Good Friday
+  - date: 2025-05-01
+    name: Maharashtra Day
+  - date: 2025-08-15
+    name: Independence Day
+  - date: 2025-08-27
+    name: Ganesh Chaturthi
+  - date: 2025-10-02
+    name: Mahatma Gandhi Jayanti/Dussehra
+  - date: 2025-10-21
+    name: Diwali Laxmi Pujan
+    note: regular session closed; Muhurat session held (below)
+  - date: 2025-10-22
+    name: Diwali-Balipratipada
+  - date: 2025-11-05
+    name: Prakash Gurpurb Sri Guru Nanak Dev
+  - date: 2025-12-25
+    name: Christmas
+  special_sessions:
+  - date: 2025-02-01
+    kind: budget
+    open: 09:15
+    close: '15:30'
+    source: NSE/CMTR/65729 (172/2024), 2024-12-23, https://nsearchives.nseindia.com/content/circulars/CMTR65729.pdf
+    note: pre-open 09:00-09:08; post-close 15:40-16:00; T0 not scheduled
+  - date: 2025-10-21
+    kind: muhurat
+    open: '13:45'
+    close: '14:45'
+    source: NSE/CMTR/70319 (124/2025), 2025-09-22, https://nsearchives.nseindia.com/content/circulars/CMTR70319.pdf
+    note: pre-open 13:30-13:45; closing session 14:55-15:05
+2026:
+  source: NSE/FAOP/71777 (212/2025) - NSE Futures & Options dept. version of the 2026 holiday list, same exchange; the CM
+    version NSE/CMTR/71775 is cited by NSE/CMTR/72260 but its PDF was blocked, 2025-12-12, https://nsearchives.nseindia.com/content/circulars/FAOP71777.pdf
+  holidays:
+  - date: 2026-01-15
+    name: Municipal Corporation Election in Maharashtra
+    source: NSE/CMTR/72260 (07/2026), 2026-01-12, https://nsearchives.nseindia.com/content/circulars/CMTR72260.pdf
+  - date: 2026-01-26
+    name: Republic Day
+  - date: 2026-03-03
+    name: Holi
+  - date: 2026-03-26
+    name: Shri Ram Navami
+  - date: 2026-03-31
+    name: Shri Mahavir Jayanti
+  - date: 2026-04-03
+    name: Good Friday
+  - date: 2026-04-14
+    name: Dr. Baba Saheb Ambedkar Jayanti
+  - date: 2026-05-01
+    name: Maharashtra Day
+  - date: 2026-05-28
+    name: Bakri Id
+  - date: 2026-06-26
+    name: Muharram
+  - date: 2026-09-14
+    name: Ganesh Chaturthi
+  - date: 2026-10-02
+    name: Mahatma Gandhi Jayanti
+  - date: 2026-10-20
+    name: Dussehra
+  - date: 2026-11-10
+    name: Diwali-Balipratipada
+  - date: 2026-11-24
+    name: Prakash Gurpurb Sri Guru Nanak Dev
+  - date: 2026-12-25
+    name: Christmas
+  special_sessions:
+  - date: 2026-02-01
+    kind: budget
+    open: 09:15
+    close: '15:30'
+    source: NSE/CMTR/72349 (11/2026), 2026-01-16, https://nsearchives.nseindia.com/content/circulars/CMTR72349.pdf
+    note: pre-open 09:00-09:08; post-close 15:40-16:00; T0 not scheduled
+  - date: 2026-11-08
+    kind: muhurat
+    open: '14:20'
+    close: '15:30'
+    source: NSE/CMTR/76941 (149/2026), 2026-10-19, https://nsearchives.nseindia.com/content/circulars/CMTR76941.pdf
+    note: afternoon session. pre-open 14:05-14:20; normal market open 14:20; close 15:30 for non-CAS securities (CAS securities
+      15:15, then CAS auction to 15:50); post-close 15:50-16:00; trade mod cut-off 16:15
