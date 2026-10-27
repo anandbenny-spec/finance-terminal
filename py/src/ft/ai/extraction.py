@@ -8,7 +8,9 @@ the text before anything is stored (Architecture 03 §1.2: found exactly once, s
 - the label is one of §3.3's vocabulary, or `other`, which is held: the output stays a draft and an alert asks for
   the list to be extended;
 - the quote is found exactly once, and our own vocabulary reader (`rbi_resolution.stance_label`, the one B6's parser
-  uses) reads the same label in it, so the cited passage states the stance;
+  uses) reads the same label in it, so the cited passage states the stance. From prompt v2 (Anand, 27 Oct 2026, issue
+  #16) the quote is the stance sentence with the sentence just before it: resolutions repeat the stance sentence word
+  for word in their closing paragraph, so the sentence alone was found twice and held back 5 of production's 48;
 - **cross-check (Anand, 24 Oct 2026, issue #16):** where B6's parser read the resolution's stance, the label must
   equal it. A disagreement is held (a draft with an alert), so the published stance never contradicts the stance the
   vote tally counts dissents against. Where the parser read none, the rules above decide alone.
@@ -72,9 +74,16 @@ def _source(doc: Doc) -> Source:
 
 
 # ---------------------------------------------------------------------------------------------- requests
+# What the user turn asks the stance quote to be, by prompt version. v1's wording is kept as it ran, so its requests'
+# input hashes don't change; from v2 the quote is the stance sentence with the sentence before it (issue #16).
+STANCE_QUOTE_ASK = {"v1": "quote the sentence that states it"}
+STANCE_QUOTE_ASK_DEFAULT = "quote the sentence that states it together with the sentence just before it"
+
+
 def stance_request(doc: Doc, prompt: Prompt, schema: dict, *, note: str | None = None) -> Request:
-    instruction = (f"Give the monetary policy stance the MPC decided in the resolution above ({doc.title}), and quote "
-                   "the sentence that states it, following the rules.")
+    ask = STANCE_QUOTE_ASK.get(prompt.version, STANCE_QUOTE_ASK_DEFAULT)
+    instruction = (f"Give the monetary policy stance the MPC decided in the resolution above ({doc.title}), and {ask}, "
+                   "following the rules.")
     return Request("stance_extraction", prompt, (_source(doc),), instruction, schema=schema, note=_note(note))
 
 
@@ -148,7 +157,8 @@ def check_stance(answer, text: str, document_id: int, parsed: Parsed) -> Checked
                   "the list")
         return c
     if span is None or not span.verified:
-        c.problems.append(f"the quote \"{_short(quote)}\" isn't in the resolution exactly once")
+        c.problems.append(f"the quote \"{_short(quote)}\" isn't in the resolution exactly once (a resolution may repeat "
+                          "its stance sentence word for word: quote it together with the sentence just before it)")
         return c
     reads = rbi_resolution.stance_label(text[span.start:span.end])
     if reads != stance:

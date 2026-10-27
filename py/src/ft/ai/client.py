@@ -212,10 +212,14 @@ def load_prompt(task: str, version: str = "v1", *, root: Path = PROMPTS) -> Prom
     return Prompt(task, version, text)
 
 
-def load_schema(task: str, *, root: Path = PROMPTS) -> dict:
+def load_schema(task: str, version: str | None = None, *, root: Path = PROMPTS) -> dict:
     """config/prompts/<task>/schema.json: the json route's JSON schema (structured outputs: no length or number
-    limits, so the task's checks hold those). It's part of every request's input hash."""
-    return json.loads((root / task / "schema.json").read_text(encoding="utf-8"))
+    limits, so the task's checks hold those). It's part of every request's input hash, so a prompt version that
+    changes it has its own `<version>.schema.json` and an earlier version's requests stay as they ran (B7, 27 Oct
+    2026: `stance_extraction` v2)."""
+    own = root / task / f"{version}.schema.json" if version else None
+    path = own if own is not None and own.exists() else root / task / "schema.json"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @dataclass(frozen=True)
