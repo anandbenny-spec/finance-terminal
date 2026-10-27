@@ -3,6 +3,7 @@
 The responses are synthetic, written from the documented fields: no CoinGecko data is kept in the repo (its terms,
 and CLAUDE.md §4). The checks are tested as a pure function; the task runs through the runner against the test
 database as job_writer, with a mock transport and a local S3 server (moto), like the other tasks' tests."""
+import itertools
 from datetime import UTC, datetime, timedelta
 
 import boto3
@@ -24,6 +25,7 @@ ENDPOINT = f"http://127.0.0.1:{PORT}"
 KEY = "test.coingecko_markets"
 NOW = datetime(2026, 10, 28, 6, 0, tzinfo=UTC)
 DEMO_KEY = "CG-demo-secret-key-106"
+_runs = itertools.count(1)
 
 
 def coin(i: int, now: datetime = NOW) -> dict:
@@ -141,6 +143,10 @@ class Api:
     def __init__(self):
         self.seen: list[httpx.Request] = []
         self.pages = {"1": [coin(i) for i in range(250)], "2": [coin(i) for i in range(250, 500)]}
+        n = next(_runs)                                         # each instance's bytes are its own: no dedupe by hash
+        for rows in self.pages.values():
+            for r in rows:
+                r["total_volume"] += n
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.seen.append(request)
@@ -208,7 +214,7 @@ def test_two_pages_are_stored_as_two_raw_files_with_todays_content_date(s3):
     files = q("""select f.content_date, f.media_type, f.source_url from core.raw_file f
                    join core.source s on s.id = f.source_id where s.key = 'coingecko' order by f.id desc limit 2""")
     assert {r[0] for r in files} == {NOW.date()} and {r[1] for r in files} == {"application/json"}
-    assert sorted(r[2].split("page=")[1][:1] for r in files) == ["1", "2"]
+    assert sorted(httpx.URL(r[2]).params["page"] for r in files) == ["1", "2"]
     asked = [dict(r.url.params) for r in api.seen]
     assert asked[0] == {"vs_currency": "usd", "order": "market_cap_desc", "per_page": "250", "sparkline": "false",
                         "precision": "full", "page": "1"} and asked[1]["page"] == "2"
