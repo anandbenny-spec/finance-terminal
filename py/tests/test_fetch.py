@@ -373,11 +373,12 @@ def test_a_304_to_a_request_without_validators_is_an_error(s3, task_run):
     f.close()
 
 
+# The key must stay unseeded in core.source: it was "nse" until migration 0019 seeded that row (module 2).
 @pytest.mark.db
 def test_an_unknown_source_key_is_refused(s3, task_run):
     f = fetcher(replies(), task_run)
     with pytest.raises(ValueError, match="no core.source row"):
-        f.get(FED, source="nse")
+        f.get(FED, source="no_such_source")
     f.close()
 
 

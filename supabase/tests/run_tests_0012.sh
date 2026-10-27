@@ -33,8 +33,9 @@ check "S02 source and copyright lines: S&P Dow Jones Indices LLC on ^GSPC and ^D
 check "S03 the new series and fred.SP500 start unpublished, and visitors see none of them" \
   "$(as_pg "select count(*) from core.series where is_published and key in ($NEW, 'fred.SP500')"),$(as_role anon "select count(*) from api.series where key in ($NEW, 'fred.SP500')")" \
   '^0,0$'
+# Module 1's catalogue only: module 2's valuation-input series (damodaran.*, imf.*; migration 0019) are counted in run_tests_0019.sh.
 check "S04 the catalogue: 17 observed series (the 16 to publish plus fred.SP500) and RBI's 2 projection series" \
-  "$(as_pg "select count(*) filter (where kind = 'observed') || '+' || count(*) filter (where kind = 'forecast') from core.series")" \
+  "$(as_pg "select count(*) filter (where kind = 'observed') || '+' || count(*) filter (where kind = 'forecast') from core.series where key not like 'damodaran.%' and key not like 'imf.%'")" \
   '^17\+2$'
 check "S05 once published, yf.^GSPC carries its copyright line to visitors (api.series) and to text-to-SQL (semantic.market_daily)" \
   "$(as_pg "begin;
