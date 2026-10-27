@@ -12,6 +12,8 @@ from ft.ai import extraction
 from ft.ai.client import PROMPTS, load_prompt, load_schema
 from ft.ai.extraction import Parsed
 from ft.ai.summaries import Doc
+from ft.jobs.tasks import ai_batch
+from ft.jobs.tasks.ai_batch import PROMPT_VERSION
 from ft.policy import rbi_resolution as rr
 
 URL = "https://rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=91234"
@@ -70,10 +72,39 @@ def test_the_schemas_use_only_what_structured_outputs_accept_and_the_stance_enum
                 walk(v)
 
     for task in extraction.TASKS:
-        walk(load_schema(task))
-        assert load_prompt(task).version == "v1" and not load_prompt(task).text.startswith("<!--")
-    assert load_schema("stance_extraction")["properties"]["stance"]["enum"] == [*rr.VOCABULARY, "other"]
+        for version in ("v1", PROMPT_VERSION[task]):
+            walk(load_schema(task, version))
+            p = load_prompt(task, version)
+            assert p.version == version and "<!--" not in p.text
+    for version in ("v1", "v2"):
+        assert load_schema("stance_extraction", version)["properties"]["stance"]["enum"] == [*rr.VOCABULARY, "other"]
     assert (PROMPTS / "stance_extraction" / "schema.json").exists()
+
+
+def test_stance_v2_asks_for_the_sentence_before_and_leaves_v1_as_it_ran():
+    # Anand, 27 Oct 2026 (issue #16): resolutions repeat the stance sentence, so v2's quote adds the sentence before it.
+    assert PROMPT_VERSION["stance_extraction"] == "v2"
+    v1, v2 = load_prompt("stance_extraction", "v1"), load_prompt("stance_extraction", "v2")
+    assert "the sentence just before it" in v2.text and "the sentence just before it" not in v1.text
+    # A version without its own schema file keeps schema.json, so v1's requests hash as they ran.
+    assert load_schema("stance_extraction", "v1") == load_schema("stance_extraction") \
+        == json.loads((PROMPTS / "stance_extraction" / "schema.json").read_text(encoding="utf-8"))
+    assert load_schema("projection_extraction", "v1") == load_schema("projection_extraction")
+    s2 = load_schema("stance_extraction", "v2")
+    assert "just before it" in s2["properties"]["quote"]["description"]
+    assert {k: v for k, v in s2.items() if k != "properties"} == \
+        {k: v for k, v in load_schema("stance_extraction").items() if k != "properties"}
+    r1 = extraction.stance_request(DOC, v1, load_schema("stance_extraction", "v1"))
+    r2 = extraction.stance_request(DOC, v2, load_schema("stance_extraction", "v2"))
+    i1 = r1.params()["messages"][0]["content"][1]["text"]
+    i2 = r2.params()["messages"][0]["content"][1]["text"]
+    assert i1 == ("Give the monetary policy stance the MPC decided in the resolution above (MPC resolution, 4 May "
+                  "2040), and quote the sentence that states it, following the rules.")
+    assert "together with the sentence just before it" in i2
+    assert r1.input_sha256 != r2.input_sha256 and r2.params()["output_config"]["format"]["schema"] == s2
+    # The task builds each request with its version's schema.
+    assert ai_batch._schema("stance_extraction", "v2") == s2 and ai_batch._schema("stance_extraction", "v1") == \
+        load_schema("stance_extraction")
 
 
 def test_the_requests_take_the_json_route_without_citations_and_name_the_unread_sentences():
@@ -128,6 +159,43 @@ def test_a_quote_that_isnt_found_once_or_doesnt_state_the_label_is_retried():
     assert "Copy every quote exactly" in extraction._note(c.note())
     for bad in (None, [], {"stance": "neutral"}, {"stance": "hawkish", "quote": STANCE}):
         assert stance(bad).problems and not stance(bad).ok
+
+
+CONSEQUENTLY = ("Consequently, the reverse repo rate under the LAF stands adjusted to 6.0 per cent, and the marginal "
+                "standing facility (MSF) rate and the Bank Rate to 6.5 per cent.")
+CLOSING = "Accordingly, the MPC decided to reduce the policy repo rate by 25 basis points to 6.25 per cent."
+
+
+def test_a_repeated_stance_sentence_is_quoted_with_the_sentence_before_it():
+    # Production, 27 Oct 2026 (issue #16): 5 resolutions print their stance sentence twice, in the decision and the
+    # closing paragraph. The sentence alone isn't evidence (found twice); with the sentence before it, it's found once.
+    text = resolution(votes=(f"{CLOSING} {STANCE}", DISSENT)).text.text
+    assert text.count(STANCE) == 2
+
+    def check(quote):
+        return extraction.check_stance({"stance": "neutral", "quote": quote}, text, DOC.document_id, NEUTRAL)
+
+    c = check(STANCE)
+    assert not c.ok and "isn't in the resolution exactly once" in c.problems[0] and c.citations == []
+    assert "quote it together with the sentence just before it" in c.problems[0]
+    # The decision's pair crosses a paragraph break in the text; spacing doesn't matter.
+    c = check(f"{CONSEQUENTLY} {STANCE}")
+    assert c.ok and c.problems == [] and c.hold is None
+    (path, cited), = c.citations
+    assert path == "/quote" and text[cited.start:cited.end].startswith("Consequently,")
+    assert text[cited.start:cited.end].endswith(STANCE) and cited.end <= text.index(CLOSING)
+    assert " ".join(c.items[0]["quote"].split()) == f"{CONSEQUENTLY} {STANCE}"
+    assert rr.stance_label(c.items[0]["quote"]) == "neutral"
+    # The closing paragraph's pair is found once too; a pair that isn't consecutive in the text isn't found at all.
+    assert check(f"{CLOSING} {STANCE}").ok
+    assert not check(f"{CLOSING} {CONSEQUENTLY}").ok
+    # The two sentences must still state the label given, and agree with B6's parse.
+    c = extraction.check_stance({"stance": "accommodative", "quote": f"{CONSEQUENTLY} {STANCE}"}, text,
+                                DOC.document_id, NEUTRAL)
+    assert not c.ok and "doesn't state the stance 'accommodative'" in c.problems[0]
+    c = extraction.check_stance({"stance": "neutral", "quote": f"{CONSEQUENTLY} {STANCE}"}, text, DOC.document_id,
+                                Parsed(stance="calibrated tightening"))
+    assert not c.ok and c.problems == [] and c.hold is not None
 
 
 def test_the_cross_check_holds_a_disagreement_with_the_parsed_stance():
