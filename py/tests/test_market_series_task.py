@@ -146,6 +146,7 @@ class Data:
         # Saved FRED responses, by (series_id, observation_start, observation_end): served as they are.
         self.fred_saved: dict[tuple[str, str, str], bytes] = {}
         self.saved_served = 0
+        self.yahoo_extra: dict[str, list[tuple[date, float]]] = {}   # a second bar for a date, an hour after the first
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.seen.append(request)
@@ -182,6 +183,11 @@ class Data:
             stamps, closes = [], []
             for d, v in sorted(bars.items()):
                 t = int(datetime(d.year, d.month, d.day, *open_at, tzinfo=ZoneInfo(tz)).timestamp())
+                if p1 <= t < p2:
+                    stamps.append(t)
+                    closes.append(v)
+            for d, v in self.yahoo_extra.get(sym, []):
+                t = int(datetime(d.year, d.month, d.day, open_at[0] + 1, open_at[1], tzinfo=ZoneInfo(tz)).timestamp())
                 if p1 <= t < p2:
                     stamps.append(t)
                     closes.append(v)
@@ -549,6 +555,7 @@ def test_a_monthly_value_fred_sends_from_before_the_look_back_is_compared_not_in
     assert str(obs(prefix, "IN10Y")[date(2026, 7, 1)]) == "6.78"
     assert revisions(prefix) == []
     assert check(tr, "revisions")["passed"] and check(tr, "revisions")["detail"].startswith("0 of")
+    assert check(tr, "repeated_dates")["passed"] and check(tr, "repeated_dates")["detail"] == "none"
 
 
 @pytest.mark.db
@@ -562,6 +569,25 @@ def test_a_changed_value_from_before_the_look_back_is_kept_as_a_logged_revision(
     assert revisions(prefix) == [("IN10Y", date(2026, 7, 1), "6.80", "6.78")]
     detail = check(tr, "revisions")["detail"]
     assert detail.startswith("1 of") and detail.endswith(f"{prefix}.IN10Y 1")
+
+
+@pytest.mark.db
+def test_a_date_yahoo_sends_twice_with_different_closes_is_held_back_and_listed(s3):
+    """#149: which close is right can't be known from the response, so neither is stored or updated (the other dates
+    load), and the warning lists both."""
+    prefix, data = make_series(), Data()
+    d = date(2026, 10, 21)
+    series_run(prefix, data)
+    before = obs(prefix, "INR=X")[d]
+    data.yahoo_extra["INR=X"] = [(d, 88.9)]
+    data.yahoo["INR=X"][date(2026, 10, 20)] = 88.4                 # a revision elsewhere still loads
+    code, tr = series_run(prefix, data)
+    assert code == 0 and tr[1] == "success", tr
+    assert obs(prefix, "INR=X")[d] == before and str(obs(prefix, "INR=X")[date(2026, 10, 20)]) == "88.4000"
+    c = check(tr, "repeated_dates")
+    assert not c["passed"] and not c["blocking"]
+    assert c["detail"] == f"1 held back: {prefix}.INR=X {d}: 88.3000 vs 88.9000"
+    assert revisions(prefix) == [("INR=X", date(2026, 10, 20), "88.3000", "88.4000")]
 
 
 @pytest.mark.db
