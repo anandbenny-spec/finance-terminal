@@ -55,8 +55,8 @@ class Site:
         return any(host == d or host.endswith("." + d) for d in self.domains)
 
 
-# Architecture 02 §1.5. Module 2 adds NSE (about 1 s, browser impersonation through curl_cffi) and SEC (under 10
-# requests a second with a declared User-Agent, SEC_USER_AGENT) when its tasks are built.
+# Architecture 02 §1.5. Module 2 adds NSE (about 1 s, browser impersonation through curl_cffi), BSE and SEC (under
+# 10 requests a second with a declared User-Agent, SEC_USER_AGENT) as its tasks are built (2A-04: NSE and BSE).
 SITES: tuple[Site, ...] = (
     Site("fred", ("stlouisfed.org",), 0.5),              # api.stlouisfed.org, fred.stlouisfed.org
     Site("fed", ("federalreserve.gov",), 1.0, 1.0),
@@ -64,6 +64,13 @@ SITES: tuple[Site, ...] = (
     # query1/query2.finance.yahoo.com (the chart API and the crumb) and fc.yahoo.com (the cookie): one source.
     Site("yahoo", ("finance.yahoo.com", "fc.yahoo.com"), 1.5, impersonate="chrome"),
     Site("coingecko", ("api.coingecko.com",), 2.5),       # the Demo plan's 30 calls a minute; the daily snapshot makes 2
+    # One site key for www.nseindia.com and nsearchives.nseindia.com, so the NSE pacing (about 1 s) covers both;
+    # impersonation is needed for www and harmless for the archive host (2A-04, Spec 02A §2).
+    Site("nse", ("nseindia.com",), 1.0, 1.0, impersonate="chrome"),
+    # api.bseindia.com and www.bseindia.com. Chrome's fingerprint too (decided by Claude, standing delegation, 28 Oct
+    # 2026): the audit kit that produced the evidence for BSE's API used it (kit/http.py BseApi), and the card's plain
+    # client was untested from GitHub's runners; the alternative is a plain client plus the Origin and Referer headers.
+    Site("bse", ("bseindia.com",), 0.2, impersonate="chrome"),
 )
 
 RETRY_STATUS = frozenset({429, 500, 502, 503, 504})

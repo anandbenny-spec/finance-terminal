@@ -1,0 +1,15 @@
+# The universe of module 2 (Spec 02A §4; job 2A-04). `index` names the list whose companies join the company master:
+# a company joins when first seen in it and is never removed (history is kept; Brief §6.3). Stage 2 of module 2 switches
+# this to nifty-200 and nothing else changes. `snapshot_indices` are the five NSE lists whose membership is stored as
+# dated snapshots (equity.index_membership); `rows` is the count each file must have (a blocking check). The lists
+# are fetched weekly, never from the browser (CLAUDE.md §1, NSE posture).
+index: nifty-50
+snapshot_indices:
+  nifty-50:         {file: ind_nifty50list.csv,         rows: 50}
+  nifty-100:        {file: ind_nifty100list.csv,        rows: 100}
+  nifty-200:        {file: ind_nifty200list.csv,        rows: 200}
+  nifty-next-50:    {file: ind_niftynext50list.csv,     rows: 50}
+  nifty-midcap-100: {file: ind_niftymidcap100list.csv,  rows: 100}
+# NSE symbols that BSE's scrip list is expected not to hold: BSE Ltd lists only on NSE (Spec 02A §4), so it has no
+# BSE code and the `bse_codes` warning does not name it.
+bse_not_listed: [BSE]
