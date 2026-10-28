@@ -59,7 +59,9 @@
   --tape-h: 32px;
   --statusbar-h: 28px;
   --sidebar-w: 232px;
-  --rail-w: 56px;
+  /* The sticky sidebar's contents: the window less the top bar and the status bar (28 Oct 2026, #147; the 56 px rail
+     was dropped). */
+  --nav-max-h: calc(100dvh - var(--topbar-h) - var(--statusbar-h));
   --row-h: 32px;
   --row-h-dense: 28px;
   --panel-pad: 12px;

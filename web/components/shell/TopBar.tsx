@@ -1,4 +1,4 @@
-// TopBar (Design 01 §4.1): 48 px, sticky, layer 20. The menu button (below lg) · the wordmark ("Finance Terminal"
+// TopBar (Design 01 §4.1): 48 px, sticky, layer 20. The labelled Menu button (below lg) · the wordmark ("Finance Terminal"
 // in Plex Mono 500 after an 8 px amber square) · the command bar's slot, centred, at most 640 px · the admin badge.
 // The command bar itself is built 3–12 Nov (Spec 01 §6); until then its slot stays empty rather than showing a
 // search box that does nothing, and the mobile search button and ⌘K arrive with it.

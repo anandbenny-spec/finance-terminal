@@ -1,8 +1,11 @@
-// The shell's tape and status bar rendered to HTML as the server sends them (C2): what a visitor (and a screen
-// reader) gets before any script runs, in every state, so no part of the shell is ever blank.
+// The shell's tape, status bar and menu rendered to HTML as the server sends them (C2, #147): what a visitor (and a
+// screen reader) gets before any script runs, in every state, so no part of the shell is ever blank.
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { MobileNav } from "@/components/shell/MobileNav";
+import { NavList } from "@/components/shell/Nav";
+import { Sidebar } from "@/components/shell/Sidebar";
 import { StatusBarView } from "@/components/shell/StatusBar";
 import { TapeView } from "@/components/shell/TickerTape";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -82,5 +85,84 @@ describe("StatusBarView", () => {
     expect(text(html(<StatusBarView summary={null} meetings={null} />))).toBe(
       "Freshness unavailable Meeting dates unavailable Not investment advice",
     );
+  });
+});
+
+describe("Sidebar (#147)", () => {
+  const out = html(<Sidebar />);
+  const navTag = /<nav [^>]*>/.exec(out)![0];
+
+  it("keeps the column's panel colour and rule for the page's full height; only its contents stick", () => {
+    expect(navTag).toContain('aria-label="Main"');
+    expect(navTag).toContain("w-(--sidebar-w)");
+    expect(navTag).toContain("bg-panel");
+    expect(navTag).toContain("border-r");
+    expect(navTag).toContain("lg:block");
+    expect(navTag).not.toContain("sticky");
+    // the contents: below the top bar, no taller than the window less the top and status bars, scrolling inside
+    expect(out).toContain("sticky top-(--topbar-h) max-h-(--nav-max-h) overflow-y-auto");
+  });
+
+  it("is one expanded sidebar from lg: no rail classes, no tooltips", () => {
+    expect(out).not.toContain("max-xl");
+    expect(out).not.toContain("rail");
+    expect(out).not.toContain("xl:w-");
+    expect(out).not.toContain('data-slot="tooltip');
+    expect(text(out)).toContain("Fed vs RBI");
+    expect(text(out)).toContain("About and privacy");
+  });
+
+  it("nests Fed vs RBI's five section links in a list inside its item, 28 px rows with no icon", () => {
+    const nested = /Fed vs RBI<\/span><\/a><ul[^>]*>([\s\S]*?)<\/ul><\/li>/.exec(out);
+    expect(nested).not.toBeNull();
+    const links = [...nested![1].matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[1], m[2]]);
+    expect(links).toEqual([
+      ["/policy#where-rates-stand", "Where rates stand"],
+      ["/policy#latest-decisions", "Latest decisions"],
+      ["/policy#history", "History"],
+      ["/policy/fed/latest?tab=changes", "FOMC: what changed"],
+      ["/policy/rbi/latest?tab=changes", "MPC: what changed"],
+    ]);
+    expect(nested![1]).not.toContain("<svg");
+    expect(nested![1].match(/ h-7 /g)).toHaveLength(5);
+    expect(nested![1].match(/ pl-9\.5 /g)).toHaveLength(5); // the item's border, padding, icon and gap: labels line up
+    expect(nested![1]).not.toContain("aria-current");
+  });
+
+  it("marks only the top-level item current, never a section link", () => {
+    const current = html(<NavList active="/policy" />);
+    expect(current.match(/aria-current="page"/g)).toHaveLength(1);
+    expect(/aria-current="page"[^>]*>(?:<svg[\s\S]*?<\/svg>)?<span>Fed vs RBI/.test(current)).toBe(true);
+  });
+
+  it("shows a visitor no admin group (the admin context decides; nav.test.ts covers the admin's list)", () => {
+    expect(text(html(<NavList active={null} />))).not.toContain("Labelling");
+  });
+});
+
+describe("MobileNav (#147)", () => {
+  const out = html(<MobileNav />);
+
+  it("is a labelled Menu button: the icon and the word, and the word is its accessible name", () => {
+    expect(text(out)).toBe("Menu");
+    expect(out).not.toContain("Open menu");
+    expect(out).not.toContain("sr-only");
+    expect(out).toMatch(/<svg[^>]*aria-hidden="true"/);
+    expect(out).toContain('aria-haspopup="dialog"');
+    expect(out).toContain('aria-expanded="false"');
+  });
+
+  it("is the outline Button, 32 px high with a line-input border, and only below lg", () => {
+    expect(out).toContain('data-variant="outline"');
+    expect(out).toContain("h-8");
+    expect(out).toContain("border-line-input");
+    expect(out).not.toContain("border-border");
+    expect(out).toContain("lg:hidden");
+  });
+
+  it("lists the same links in the drawer, section links included (the drawer renders NavList)", () => {
+    const drawer = html(<NavList active={null} onNavigate={() => {}} />);
+    expect(drawer).toContain('href="/policy#history"');
+    expect(drawer).toContain('href="/policy/rbi/latest?tab=changes"');
   });
 });
