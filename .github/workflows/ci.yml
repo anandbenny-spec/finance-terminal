@@ -22,7 +22,7 @@ jobs:
     env:
       GITLEAKS_VERSION: 8.24.2
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
         with:
           fetch-depth: 0
       - name: Install gitleaks (release archive, checksum checked)
@@ -52,11 +52,11 @@ jobs:
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
       - name: Saved pages (the private finance-terminal-fixtures, so the saved-page tests run; CLAUDE.md §2)
         # FIXTURES_READ_TOKEN: Anand's fine-grained token, contents read-only on that one repo (24 Oct 2026). If it's
         # missing or expired, this step fails the job rather than letting those tests skip.
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
         with:
           repository: anandbenny-spec/finance-terminal-fixtures
           token: ${{ secrets.FIXTURES_READ_TOKEN }}
@@ -119,8 +119,8 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0, pinned by SHA
         with:
           node-version-file: web/package.json
           cache: npm

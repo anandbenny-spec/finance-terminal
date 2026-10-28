@@ -16,7 +16,7 @@ jobs:
     env:
       SUPABASE_CLI_VERSION: 2.121.0   # the Mac's CLI (Setup 01 §2)
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
       - name: Install the Supabase CLI (release package, checksum checked)
         run: |
           base="https://github.com/supabase/cli/releases/download/v${SUPABASE_CLI_VERSION}"
