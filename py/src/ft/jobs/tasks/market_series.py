@@ -18,6 +18,15 @@ from run to run; neither response is data, so neither is stored. Without a crumb
 (yfinance does the same), and the `yahoo_session` warning says why.
 
 Loads every point as a core.observation; a stored value that differs is updated (the trigger logs the revision).
+The load reads back the stored value of every date the response holds, not only the window asked for: FRED answers a
+monthly series from the first of the month holding `observation_start`, so the 28 Oct 2026 production daily, asking
+for India's 10-year from 20 Jul, got 1 Jul too, and inserted it a second time (UniqueViolation; issue #149). A date
+outside the window is compared like any other: the same value writes nothing, a different one is a logged revision
+(the source's latest is kept, the old value is in core.observation_revision, and the blocking `revisions` check
+counts it), and a date not stored is inserted. A date a response sends twice with different values is held back,
+neither stored nor updated, and listed in the `repeated_dates` warning (series_sources: one value per date).
+If an insert still hits a stored date, the error names the series and its new dates: row-level security keeps
+Postgres's DETAIL line (the duplicate's key) from job_writer, so #149's error and log named only the constraint.
 The writes go in batches, one pipelined `executemany` per series for its inserts and one for its updates (Anand,
 24 Oct 2026, issue #13): the first dev backfill spent 2 h 11 min on 33,518 single-row statements, each a round trip
 from GitHub's US runner to the Mumbai project. The updates stay real UPDATEs, so the trigger still logs each one.
@@ -37,6 +46,7 @@ Checks (Architecture 02 §2; Spec 01 §2), B blocking, W warning:
   value is never deleted (jobs can't delete source data), so a stored date that comes to disagree (FRED revises, or
   arrives a day late) still blocks: that case is Anand's;
 - (W) `gspc_held_back`: each held-back date, with both values;
+- (W) `repeated_dates`: each date a response sent twice with different values, with the values (held back);
 - (W) `lag`: each series' latest value within its lag (daily 5 days, weekly-published 12, monthly 75);
 - (W) `yahoo_session`: whether Yahoo's crumb was received.
 Then a series is published once a load has passed its bounds and lag checks (Spec 01 §2); `fred.SP500` never is
@@ -45,10 +55,13 @@ Then a series is published once a load has passed its bounds and lag checks (Spe
 from __future__ import annotations
 
 import os
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from itertools import pairwise
+
+import psycopg
 
 from ft.jobs.fetch import FetchError
 from ft.jobs.runner import Check, Context, Task
@@ -102,6 +115,7 @@ class Got:
     end: date
     points: list[src.Point]
     meta_problem: str | None = None
+    repeated: src.Repeated = field(default_factory=dict)   # sent twice with different values: held back
 
 
 @dataclass
@@ -170,7 +184,9 @@ class MarketSeries(Task):
                 got = f.get(src.FRED_URL, source="fred", params=src.fred_params(s.code, start, end),
                             secret_params={"api_key": key}, media_type="application/json")
                 body = got.body if got.body is not None else f.read(got.raw_file_id)
-                out.got.append(Got(s, start, end, src.parse_fred(body, s.code)))
+                # Every point FRED sends, the month before `start` included (issue #149): load compares them all.
+                obs = src.parse_fred(body, s.code)
+                out.got.append(Got(s, start, end, obs.points, repeated=obs.repeated))
             else:
                 if out.yahoo_session is None:
                     crumb, out.yahoo_session = yahoo_crumb(f)
@@ -187,7 +203,8 @@ class MarketSeries(Task):
                 if s.unit == "inr_per_usd" and chart.currency != "INR":
                     problems.append(f"quoted in {chart.currency!r}, not INR")
                 out.got.append(Got(s, start, end, [p for p in chart.points if start <= p[0] <= end],
-                                   "; ".join(problems) or None))
+                                   "; ".join(problems) or None,
+                                   {d: vs for d, vs in chart.repeated.items() if start <= d <= end}))
         return out
 
     # ------------------------------------------------------------------ load (one transaction)
@@ -207,6 +224,14 @@ class MarketSeries(Task):
                 fred.update((d, v) for d, v in g.points if start <= d <= end)
         return {d: (v, fred[d]) for d, v in ga.points if d in fred and disagree(v, fred[d])}
 
+    def _stored(self, tx, series_id: int, dates: list[date]) -> dict[date, Decimal]:
+        """The stored value of each of `dates`: every date the response holds, inside the window asked for or not
+        (issue #149: FRED's month before a monthly series' window)."""
+        if not dates:
+            return {}
+        return dict(tx.execute("select obs_date, value from core.observation where series_id = %s "
+                               "and obs_date = any(%s)", (series_id, dates)).fetchall())
+
     def _write(self, tx, new: list[tuple], changed: list[tuple]) -> None:
         """One series' inserts and updates, each as one pipelined executemany. The updates are real UPDATEs, so the
         revision trigger logs every change."""
@@ -222,8 +247,11 @@ class MarketSeries(Task):
         written, revised, values = 0, {}, 0
         held = self._held_back(tx, f)
         for g in f.got:
-            stored = dict(tx.execute("select obs_date, value from core.observation where series_id = %s "
-                                     "and obs_date between %s and %s", (g.series.id, g.start, g.end)).fetchall())
+            dates = [d for d, _ in g.points]
+            twice = sorted(d for d, n in Counter(dates).items() if n > 1)
+            if twice:      # the parsers keep one value per date, so this never happens; if it did, say where
+                raise RuntimeError(f"{g.series.key}: {', '.join(map(str, twice[:5]))} more than once in the points")
+            stored = self._stored(tx, g.series.id, dates)
             skip = held if g.series.key == self.cross_check[0] else {}
             new, changed = [], []
             for d, v in g.points:
@@ -235,11 +263,18 @@ class MarketSeries(Task):
                     new.append((g.series.id, d, v, task_run_id))
                 elif old != v:
                     changed.append((v, task_run_id, g.series.id, d))
-            self._write(tx, new, changed)
+            try:
+                self._write(tx, new, changed)
+            except psycopg.errors.UniqueViolation as e:
+                # Row-level security hides Postgres's DETAIL line (the key) from job_writer: name the series here.
+                ds = [row[1] for row in new]
+                raise RuntimeError(f"{g.series.key}: an insert hit a date already stored (inserting {len(ds)} new "
+                                   f"dates, {ds[0]} to {ds[-1]}): {e}") from e
             written += len(new) + len(changed)
             if changed:
                 revised[g.series.key] = len(changed)
-        self.result = {"revised": revised, "values": values, "published": [], "held_back": held}
+        self.result = {"revised": revised, "values": values, "published": [], "held_back": held,
+                       "repeated": {g.series.key: g.repeated for g in f.got if g.repeated}}
         return written
 
     # ------------------------------------------------------------------ checks (same transaction)
@@ -319,6 +354,14 @@ class MarketSeries(Task):
             out.append(Check("gspc_held_back", not held,
                              f"{len(held)} held back: " + ", ".join(listed) + more if held else "none held back",
                              blocking=False))
+
+        # (W) Dates a response sent twice with different values: held back, each listed with its values.
+        rep = [f"{k} {d}: {' vs '.join(map(str, vs))}" for k, by_date in sorted(r["repeated"].items())
+               for d, vs in sorted(by_date.items())]
+        out.append(Check("repeated_dates", not rep,
+                         f"{len(rep)} held back: " + ", ".join(rep[:HELD_BACK_LISTED])
+                         + (f", and {len(rep) - HELD_BACK_LISTED} more" if len(rep) > HELD_BACK_LISTED else "")
+                         if rep else "none", blocking=False))
 
         # (W) Latest value within its lag.
         latest = dict(tx.execute("select series_id, max(obs_date) from core.observation where series_id = any(%s) "
