@@ -112,6 +112,7 @@ export function LongRatesPanel({
           caption="US 10-year yield (daily) and India 10-year yield (monthly) on each date either has a value, newest first"
           initialSort={{ id: "date", desc: true }}
           dense
+          scroll
           empty={<StateNote kind="empty">No yields in this range.</StateNote>}
         />
       ) : (

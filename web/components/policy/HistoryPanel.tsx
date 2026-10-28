@@ -106,6 +106,7 @@ export function HistoryPanel({ rows, stanceLabel, footer, refresh }: { rows: His
         rowKey={(r) => r.slug}
         caption="Every FOMC and MPC rate decision since 2019"
         initialSort={{ id: "date", desc: true }}
+        scroll
         empty={<StateNote kind="empty">No decisions match these filters.</StateNote>}
       />
     </Panel>
