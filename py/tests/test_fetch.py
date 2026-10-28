@@ -459,7 +459,7 @@ def test_yahoo_nse_and_bse_impersonate_chrome_by_default_and_no_other_site_does(
     finally:
         c.close()
     # NSE and BSE impersonate too (2A-04: www.nseindia.com is behind Akamai; BSE's API as the audit kit used it)
-    assert [s.key for s in fetch.SITES if s.impersonate] == ["yahoo", "nse", "bse"]
+    assert [s.key for s in fetch.SITES if s.impersonate] == ["yahoo", "nse", "bse", "imf"]
 
 
 def test_an_impersonating_site_keeps_pacing_retries_and_counts():
