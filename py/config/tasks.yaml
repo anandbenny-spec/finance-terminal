@@ -49,3 +49,9 @@ equity.prices:
   run_after: [equity.universe]
   overdue_after: 10 days
   uses_nse: true
+equity.filings:
+  description: Quarterly results XBRL filings of the universe companies (consolidated and standalone), registered as documents with their results announcement events
+  workflows: {weekly: every 6 days}
+  run_after: [equity.universe]
+  overdue_after: 10 days
+  uses_nse: true
