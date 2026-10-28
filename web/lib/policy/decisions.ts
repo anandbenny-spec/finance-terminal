@@ -83,6 +83,37 @@ export function meetingHref(bank: Bank, decisionDate: string): string {
   return `/policy/${bank === "Fed" ? "fed" : "rbi"}/${decisionDate}`;
 }
 
+// ------------------------------------------------------------------ Meeting page tabs (the tab is in the URL)
+
+/** The meeting page's tabs, in order (Design 01 §5.3). Moved here from MeetingView in #147: the /latest routes and
+ * PolicyCard are its second and third users, and neither should import MeetingView's whole page to read a tab. */
+export const TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "changes", label: "What changed" },
+  { id: "statement", label: "Statement" },
+  { id: "minutes", label: "Minutes" },
+  { id: "press", label: "Press conference" },
+  { id: "reaction", label: "Market reaction" },
+] as const;
+export type TabId = (typeof TABS)[number]["id"];
+
+/** The tab a `?tab=` value names; anything else (or nothing) is the Overview. */
+export function tabOf(value: string | string[] | undefined): TabId {
+  const v = Array.isArray(value) ? value[0] : value;
+  return TABS.some((t) => t.id === v) ? (v as TabId) : "overview";
+}
+
+/**
+ * A meeting page's link on a given tab: /policy/fed/2026-09-17 for the Overview, ?tab=changes for the rest. `extra` is
+ * one more query parameter ("doc=governor"). Previous / Next and the Latest decisions cards use it so a reader
+ * stays on the tab they were reading (#147).
+ */
+export function meetingTabHref(bank: Bank, decisionDate: string, tab: TabId, extra = ""): string {
+  const base = meetingHref(bank, decisionDate);
+  if (tab === "overview") return extra ? `${base}?${extra}` : base;
+  return `${base}?tab=${tab}${extra ? `&${extra}` : ""}`;
+}
+
 // ------------------------------------------------------------------ Tallies
 
 export type Tally =
