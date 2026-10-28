@@ -25,6 +25,7 @@ jobs = [
     "pypdf",
     "feedparser",
     "openpyxl",
+    "xlrd",
     "truststore",
 ]
 # Second model for evaluation comparison (never publishes).

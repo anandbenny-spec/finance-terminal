@@ -71,6 +71,10 @@ SITES: tuple[Site, ...] = (
     # 2026): the audit kit that produced the evidence for BSE's API used it (kit/http.py BseApi), and the card's plain
     # client was untested from GitHub's runners; the alternative is a plain client plus the Origin and Referer headers.
     Site("bse", ("bseindia.com",), 0.2, impersonate="chrome"),
+    # Damodaran's data sets (a university web server: 2 s between requests) and the IMF DataMapper (imf.org sits behind
+    # Akamai: plain requests get 403, so Chrome's fingerprint; Data Audit 02a finding 13). Both named in Spec 02A §2.
+    Site("damodaran", ("pages.stern.nyu.edu",), 2.0),
+    Site("imf", ("imf.org",), 1.5, impersonate="chrome"),
 )
 
 RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
