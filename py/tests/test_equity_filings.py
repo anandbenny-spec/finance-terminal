@@ -360,7 +360,8 @@ def test_a_backfill_registers_every_served_filing_with_its_event_and_format(s3):
     assert ev[0] == ev[1] == 31 + 32 + 6 + 29
     t = q("""select ev.occurs_at, min(f.filed_at) from core.event ev join equity.filing f on f.event_id = ev.id
               where ev.slug = 'zf-reliance-results-2024-12-31' group by 1""")[0]
-    assert t[0] == t[1] == datetime(2025, 1, 16, 14, 50, 54, tzinfo=UTC)
+    first = min(f.filed_at for f in listing("RELIANCE").filings if f.period_end == D(2024, 12, 31))
+    assert t[0] == t[1] == first.astimezone(UTC) == datetime(2025, 1, 16, 14, 45, 46, tzinfo=UTC)   # the consolidated one
     # every document points at the raw file whose bytes it is
     assert q("""select count(*) from core.document d join core.raw_file r on r.id = d.raw_file_id
                  where d.entity_id in (select id from core.entity where slug like 'zf-%') and r.media_type like '%xml%'
@@ -483,14 +484,14 @@ def test_a_listing_refused_by_nse_fails_the_run_and_names_the_company(s3):
 @pytest.mark.db
 @needs_fixtures
 def test_a_quarter_without_a_filing_is_named_after_its_deadline(s3):
-    """Bajaj Finance's listing has the empty link for Jun, Sep and Dec 2019 (NSE lists the filings without a file);
+    """Bajaj Finance's listing has the empty link for Mar, Jun and Sep 2019 (NSE lists the filings without a file);
     Reliance has every quarter, and the Sep 2026 quarter isn't due until 60 days after 30 Sep."""
     make_companies(("RELIANCE", "BAJFINANCE"))
     code, tr = go(Nse(), **WINDOW)
     assert code == 0, tr
     c = checks(tr)["quarters_filed"]
     assert not c["passed"] and not c["blocking"]
-    assert "zf-bajfinance (3: 2019-06-30, 2019-09-30, 2019-12-31)" in c["detail"] and "zf-reliance" not in c["detail"]
+    assert "zf-bajfinance (3: 2019-03-31, 2019-06-30, 2019-09-30)" in c["detail"] and "zf-reliance" not in c["detail"]
 
 
 @pytest.mark.db
