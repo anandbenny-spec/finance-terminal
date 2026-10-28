@@ -1,0 +1,78 @@
+# Curated peer groups for the Nifty 50 (Data Audit 02 decision 4; Spec 02A §4). Labelled curated on every page.
+# `damodaran_industry` is the industry name exactly as in Damodaran's betaIndia.xls ("Industry Name" column), used for
+# the bottom-up beta (2A-12); one group has one industry, so where Damodaran splits a group's businesses the
+# choice is noted. Groups of fewer than three Nifty 50 members show "Too few peers in the Nifty 50 for a median"
+# (Spec 02A §5.11); they are listed in 2A-04's handoff for Anand's spot check. Drafted 28 Oct 2026 by a build session
+# from the Nifty list's Industry column (19 Oct 2026) and the audit kit's seed; not yet checked by Anand.
+banks:
+  label: Banks
+  damodaran_industry: Banks (Regional)
+  source_note: Nifty "Financial Services" members that are deposit-taking banks (State Bank of India, private banks); curated.
+nbfc:
+  label: Lenders other than banks, and financial holding companies
+  damodaran_industry: Financial Svcs. (Non-bank & Insurance)
+  source_note: Nifty "Financial Services" members that lend without taking deposits (NBFCs, a core investment company) and Bajaj Finserv, whose subsidiaries lend and insure; curated.
+life-insurance:
+  label: Life insurers
+  damodaran_industry: Insurance (Life)
+  source_note: The two listed private life insurers in the Nifty 50; curated.
+capital-markets:
+  label: Exchanges and capital-market infrastructure
+  damodaran_industry: Brokerage & Investment Banking
+  source_note: BSE Ltd, a stock exchange; Damodaran has no exchange industry, and this is the nearest; curated.
+it-services:
+  label: IT services
+  damodaran_industry: Computer Services
+  source_note: Nifty "Information Technology" members, all IT-services companies; curated.
+autos:
+  label: Automobiles
+  damodaran_industry: Auto & Truck
+  source_note: Nifty "Automobile and Auto Components" members; curated.
+pharma:
+  label: Pharmaceuticals
+  damodaran_industry: Drugs (Pharmaceutical)
+  source_note: Nifty "Healthcare" members that make and sell drugs; curated.
+hospitals:
+  label: Hospitals
+  damodaran_industry: Hospitals/Healthcare Facilities
+  source_note: Nifty "Healthcare" members that run hospitals; curated.
+steel:
+  label: Steel
+  damodaran_industry: Steel
+  source_note: Nifty "Metals & Mining" members whose main business is steel; curated.
+metals-mining:
+  label: Other metals and mining
+  damodaran_industry: Metals & Mining
+  source_note: Nifty "Metals & Mining" members that are not steel (Hindalco; Adani Enterprises, whose mining and trading business the Nifty list files here); curated.
+energy-fuels:
+  label: Oil, gas and coal
+  damodaran_industry: Oil/Gas (Integrated)
+  source_note: Nifty "Oil Gas & Consumable Fuels" members; Damodaran splits integrated oil, exploration and coal, and the integrated industry is used for the group (Reliance and ONGC both own refining; Coal India is the odd one out); curated.
+power:
+  label: Power
+  damodaran_industry: Power
+  source_note: Nifty "Power" members (generation and transmission); curated.
+fmcg:
+  label: Fast-moving consumer goods
+  damodaran_industry: Household Products
+  source_note: Nifty "Fast Moving Consumer Goods" members; Damodaran splits household products, food processing and tobacco, and the household-products industry is used for the group (the largest member, Hindustan Unilever); curated.
+consumer-retail:
+  label: Consumer brands, retail and platforms
+  damodaran_industry: Retail (General)
+  source_note: Nifty "Consumer Services" and "Consumer Durables" members (Trent, Titan, Eternal, Asian Paints); a loose group, since Damodaran files them in four industries; curated.
+building-materials:
+  label: Cement and building materials
+  damodaran_industry: Building Materials
+  source_note: Nifty "Construction Materials" members; curated.
+engineering-defence:
+  label: Engineering, construction and defence electronics
+  damodaran_industry: Engineering/Construction
+  source_note: Larsen & Toubro (Nifty "Construction") and Bharat Electronics (Nifty "Capital Goods"); curated.
+transport:
+  label: Ports and airlines
+  damodaran_industry: Transportation
+  source_note: Nifty "Services" members (Adani Ports, InterGlobe Aviation); curated.
+telecom:
+  label: Telecom
+  damodaran_industry: Telecom. Services
+  source_note: Bharti Airtel, the Nifty 50's one telecom member; curated.

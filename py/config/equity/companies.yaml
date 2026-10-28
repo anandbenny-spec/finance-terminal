@@ -1,0 +1,258 @@
+# Curated classification of the Nifty 50 companies (Spec 02A §4; job 2A-04), keyed by company slug (the lower-cased
+# NSE symbol at creation, `&` as `-and-`; the slug never changes when the symbol does). Per company: its peer group
+# (peer_groups.yaml), `valuation_family` (operating, lender, insurer or mixed) with a `family_note` giving the evidence,
+# `fy_end_month` (all Nifty 50 companies report to 31 March) and, only if ever needed, `price_exchange` (NSE by default).
+# Labelled curated. Drafted 28 Oct 2026 by a build session from the Nifty list's Industry column and public knowledge;
+# the annual reports' subsidiary lists were not read, so every `mixed` and each judgement call is listed in 2A-04's
+# handoff for Anand's spot check (Spec 02A §9.5 item 1).
+
+adanient:  # Adani Enterprises Ltd.
+  peer_group: metals-mining
+  valuation_family: operating
+  family_note: "Incubator for airports, roads, data centres and mining services; no material lending or insurance subsidiary known to the build session. Not verified against the annual report."
+  fy_end_month: 3
+adaniports:  # Adani Ports and Special Economic Zone Ltd.
+  peer_group: transport
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+apollohosp:  # Apollo Hospitals Enterprise Ltd.
+  peer_group: hospitals
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+asianpaint:  # Asian Paints Ltd.
+  peer_group: consumer-retail
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+axisbank:  # Axis Bank Ltd.
+  peer_group: banks
+  valuation_family: lender
+  family_note: "Bank: deposit-taking lender regulated by the RBI; valued on book value and return on equity, not free cash flow."
+  fy_end_month: 3
+bse:  # BSE Ltd.
+  peer_group: capital-markets
+  valuation_family: operating
+  family_note: "Stock exchange and clearing business; its settlement-guarantee and clearing-corporation balances sit in the balance sheet, which the later EBIT checks may flag. Operating on public knowledge; not verified against the annual report."
+  fy_end_month: 3
+bajaj-auto:  # Bajaj Auto Ltd.
+  peer_group: autos
+  valuation_family: operating
+  family_note: "Holds stakes in Bajaj Finserv and Bajaj Holdings as investments, not subsidiaries; large investment income sits in other income. Not verified against the annual report."
+  fy_end_month: 3
+bajfinance:  # Bajaj Finance Ltd.
+  peer_group: nbfc
+  valuation_family: lender
+  family_note: "RBI-regulated non-bank finance company (NBFC); lending is its business."
+  fy_end_month: 3
+bajajfinsv:  # Bajaj Finserv Ltd.
+  peer_group: nbfc
+  valuation_family: mixed
+  family_note: "Holding company whose consolidated figures are dominated by Bajaj Finance (lending) and Bajaj Allianz Life and General (insurance); subsidiary list not read in the annual report by the build session, judged from public knowledge."
+  fy_end_month: 3
+bel:  # Bharat Electronics Ltd.
+  peer_group: engineering-defence
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+bhartiartl:  # Bharti Airtel Ltd.
+  peer_group: telecom
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+cipla:  # Cipla Ltd.
+  peer_group: pharma
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+coalindia:  # Coal India Ltd.
+  peer_group: energy-fuels
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+drreddy:  # Dr. Reddy's Laboratories Ltd.
+  peer_group: pharma
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+eichermot:  # Eicher Motors Ltd.
+  peer_group: autos
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+eternal:  # Eternal Ltd.
+  peer_group: consumer-retail
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+grasim:  # Grasim Industries Ltd.
+  peer_group: building-materials
+  valuation_family: mixed
+  family_note: "Consolidated figures include Aditya Birla Capital (lending, asset management and insurance) alongside cement, chemicals and textiles; judged from public knowledge, annual report subsidiary list not read by the build session."
+  fy_end_month: 3
+hcltech:  # HCL Technologies Ltd.
+  peer_group: it-services
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+hdfcbank:  # HDFC Bank Ltd.
+  peer_group: banks
+  valuation_family: lender
+  family_note: "Bank: deposit-taking lender regulated by the RBI; valued on book value and return on equity, not free cash flow."
+  fy_end_month: 3
+hdfclife:  # HDFC Life Insurance Company Ltd.
+  peer_group: life-insurance
+  valuation_family: insurer
+  family_note: "Life insurer regulated by IRDAI; book value does not capture its value, so no valuation in 2A (embedded value is v2)."
+  fy_end_month: 3
+hindalco:  # Hindalco Industries Ltd.
+  peer_group: metals-mining
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+hindunilvr:  # Hindustan Unilever Ltd.
+  peer_group: fmcg
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+icicibank:  # ICICI Bank Ltd.
+  peer_group: banks
+  valuation_family: lender
+  family_note: "Bank: deposit-taking lender regulated by the RBI; valued on book value and return on equity, not free cash flow."
+  fy_end_month: 3
+itc:  # ITC Ltd.
+  peer_group: fmcg
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+infy:  # Infosys Ltd.
+  peer_group: it-services
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+indigo:  # InterGlobe Aviation Ltd.
+  peer_group: transport
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+jswsteel:  # JSW Steel Ltd.
+  peer_group: steel
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+jiofin:  # Jio Financial Services Ltd.
+  peer_group: nbfc
+  valuation_family: lender
+  family_note: "Registered with the RBI as a core investment company and NBFC (Spec 02A §4 counts core investment companies as lenders); its lending and payments businesses are still small, which Anand may want to look at."
+  fy_end_month: 3
+kotakbank:  # Kotak Mahindra Bank Ltd.
+  peer_group: banks
+  valuation_family: lender
+  family_note: "Bank: deposit-taking lender regulated by the RBI; valued on book value and return on equity, not free cash flow."
+  fy_end_month: 3
+lt:  # Larsen & Toubro Ltd.
+  peer_group: engineering-defence
+  valuation_family: mixed
+  family_note: "Consolidated figures include L&T Finance, a listed NBFC subsidiary, alongside engineering and IT services; judged from public knowledge, annual report subsidiary list not read by the build session."
+  fy_end_month: 3
+m-and-m:  # Mahindra & Mahindra Ltd.
+  peer_group: autos
+  valuation_family: mixed
+  family_note: "Consolidated figures include Mahindra & Mahindra Financial Services, a listed NBFC subsidiary, alongside the auto and farm businesses; judged from public knowledge, annual report subsidiary list not read by the build session."
+  fy_end_month: 3
+maruti:  # Maruti Suzuki India Ltd.
+  peer_group: autos
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+maxhealth:  # Max Healthcare Institute Ltd.
+  peer_group: hospitals
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+ntpc:  # NTPC Ltd.
+  peer_group: power
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+nestleind:  # Nestle India Ltd.
+  peer_group: fmcg
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+ongc:  # Oil & Natural Gas Corporation Ltd.
+  peer_group: energy-fuels
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+powergrid:  # Power Grid Corporation of India Ltd.
+  peer_group: power
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+reliance:  # Reliance Industries Ltd.
+  peer_group: energy-fuels
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+sbilife:  # SBI Life Insurance Company Ltd.
+  peer_group: life-insurance
+  valuation_family: insurer
+  family_note: "Life insurer regulated by IRDAI; book value does not capture its value, so no valuation in 2A (embedded value is v2)."
+  fy_end_month: 3
+shriramfin:  # Shriram Finance Ltd.
+  peer_group: nbfc
+  valuation_family: lender
+  family_note: "RBI-regulated non-bank finance company (NBFC); lending is its business."
+  fy_end_month: 3
+sbin:  # State Bank of India
+  peer_group: banks
+  valuation_family: lender
+  family_note: "Bank: deposit-taking lender regulated by the RBI; valued on book value and return on equity, not free cash flow."
+  fy_end_month: 3
+sunpharma:  # Sun Pharmaceutical Industries Ltd.
+  peer_group: pharma
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+tcs:  # Tata Consultancy Services Ltd.
+  peer_group: it-services
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+tataconsum:  # Tata Consumer Products Ltd.
+  peer_group: fmcg
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+tmpv:  # Tata Motors Passenger Vehicles Ltd.
+  peer_group: autos
+  valuation_family: operating
+  family_note: "Consolidated with Jaguar Land Rover; Tata Motors Finance is a subsidiary but a small part of the consolidated balance sheet by public figures, not verified against the annual report: for Anand to confirm."
+  fy_end_month: 3
+tatasteel:  # Tata Steel Ltd.
+  peer_group: steel
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+techm:  # Tech Mahindra Ltd.
+  peer_group: it-services
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+titan:  # Titan Company Ltd.
+  peer_group: consumer-retail
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+trent:  # Trent Ltd.
+  peer_group: consumer-retail
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3
+ultracemco:  # UltraTech Cement Ltd.
+  peer_group: building-materials
+  valuation_family: operating
+  family_note: "No material lending or insurance subsidiary known to the build session; judged from public knowledge, not verified against the annual report subsidiary list."
+  fy_end_month: 3

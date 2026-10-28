@@ -448,7 +448,7 @@ def test_runner_sessions_are_utc_whatever_the_server_default():
 YAHOO = "https://query2.finance.yahoo.com/v8/finance/chart/%5EGSPC"
 
 
-def test_yahoo_impersonates_chrome_by_default_and_no_other_site_does():
+def test_yahoo_nse_and_bse_impersonate_chrome_by_default_and_no_other_site_does():
     c = HttpClient()
     try:
         for url in (YAHOO, "https://query1.finance.yahoo.com/v1/test/getcrumb", "https://fc.yahoo.com/"):
@@ -458,7 +458,8 @@ def test_yahoo_impersonates_chrome_by_default_and_no_other_site_does():
             assert not isinstance(c._http._transport_for_url(httpx.URL(url)), fetch.CurlTransport), url
     finally:
         c.close()
-    assert [s.key for s in fetch.SITES if s.impersonate] == ["yahoo"]
+    # NSE and BSE impersonate too (2A-04: www.nseindia.com is behind Akamai; BSE's API as the audit kit used it)
+    assert [s.key for s in fetch.SITES if s.impersonate] == ["yahoo", "nse", "bse"]
 
 
 def test_an_impersonating_site_keeps_pacing_retries_and_counts():
