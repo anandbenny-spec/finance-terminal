@@ -39,6 +39,10 @@ equity.universe:
   workflows: {weekly: every 6 days}
   overdue_after: 10 days
   uses_nse: true
+equity.valuation_inputs:
+  description: Damodaran's implied ERP, India's default spread and country risk premium and industry betas; the IMF's India growth and inflation (valuation engine inputs)
+  workflows: {weekly: every 6 days}
+  overdue_after: 40 days
 equity.prices:
   description: Daily prices of the universe companies from the exchanges' bhavcopies, NSE first
   workflows: {weekly: every 6 days}
