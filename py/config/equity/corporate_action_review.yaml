@@ -1,0 +1,24 @@
+# Reviewed corporate actions for equity.corporate_actions (Spec 02A §5.2; job 2A-08), read by ft/equity/actions.py.
+#
+# releases: a factor the task held (its plausibility check failed, its ratio wouldn't parse, or no method covers it)
+#   and a review released. The task applies it with method `reviewed`, this factor and the review as evidence.
+#   - event: the action's event slug (<company-slug>-<kind>-<ex-date>[-n]), as the task's not_applied check names it
+#     factor: adjusted ÷ raw for trade dates before the ex-date (stored to 12 places)
+#     evidence: what the review rests on (the exchange's record, the bhavcopies' closes and pre-open price, a circular)
+#     reviewer: who reviewed it (an Opus session with the evidence on the issue, under the standing delegation, or Anand)
+#     reviewed_on: yyyy-mm-dd
+#
+# jumps: a session whose close moved more than 15% with no applied factor that day, reviewed as a real move (a crash, a
+#   results day, a special dividend), so the unexplained_jumps check stops naming it. A jump that turns out to be a
+#   missing action isn't recorded here: that is a stop for Anand (the exchange's record lacks an action).
+#   - company: the company's slug
+#     date: the session (yyyy-mm-dd)
+#     verdict: real move
+#     note: why (with the source)
+#     reviewer: who reviewed it
+#     reviewed_on: yyyy-mm-dd
+#
+# Reviews are done with the evidence on the job's issue (#113 for the first ones); Anand reviews them when he chooses
+# and removes what he doesn't accept. An entry that doesn't parse fails the task's run.
+releases: []
+jumps: []

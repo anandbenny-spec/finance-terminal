@@ -55,3 +55,9 @@ equity.filings:
   run_after: [equity.universe]
   overdue_after: 10 days
   uses_nse: true
+equity.corporate_actions:
+  description: Corporate actions of the universe companies from the exchange's record, with each split, bonus, demerger and rights issue's price adjustment factor, checked against the prices before it is applied
+  workflows: {weekly: every 6 days}
+  run_after: [equity.prices]
+  overdue_after: 10 days
+  uses_nse: true
