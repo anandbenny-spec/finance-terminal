@@ -9,7 +9,10 @@
 // `scroll` (Anand, 28 Oct 2026: the page shouldn't run on for screens): a long table stops at --table-max-h and the
 // rest of its rows scroll inside the panel, under the sticky header (Design 01 §5.4 already scrolls panels inside
 // themselves). The scroller is a named, focusable region, so a keyboard can scroll it too (WCAG 2.1.1); its focus
-// ring sits inside the edge, since the panel clips anything outside.
+// ring sits inside the edge, since the panel clips anything outside. The scroller is also `relative`: a cell's
+// screen-reader text (sr-only) is absolutely positioned, and without a positioned ancestor it escapes the scroller's
+// clip and sits at its row's offset in the page, so every row scrolled out of view stretched the page with black
+// space below the footer (Anand's report, 28 Oct 2026; the same reason TapeScroller is `relative`).
 import {
   flexRender,
   getCoreRowModel,
@@ -80,7 +83,7 @@ export function DataTable<Row>({
 
   return (
     <div
-      className={cn(scroll ? "max-h-(--table-max-h) overflow-auto focus-visible:-outline-offset-2" : "overflow-x-auto")}
+      className={cn(scroll ? "relative max-h-(--table-max-h) overflow-auto focus-visible:-outline-offset-2" : "overflow-x-auto")}
       {...(scroll && { role: "region", "aria-label": caption, tabIndex: 0 })}
     >
       <table className="w-full border-collapse text-data">
