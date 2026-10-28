@@ -15,7 +15,8 @@ JOB, ADMIN = dsn("job_writer"), dsn("postgres")
 def test_repo_config_loads():
     tasks = config.load()
     assert set(tasks) == {"policy.calendar", "policy.fed_documents", "policy.rbi_documents", "policy.market_series",
-                          "policy.reactions", "policy.ai_batch", "crypto.coingecko_markets", "equity.universe", "equity.valuation_inputs"}
+                          "policy.reactions", "policy.ai_batch", "crypto.coingecko_markets", "equity.universe",
+                          "equity.valuation_inputs", "equity.prices"}
     # the due-rule names are kept as tasks.yaml writes them (Prompt 01 A2)
     assert tasks["policy.fed_documents"].rules == {"daily": "every 20 hours", "watch": "fomc_decision_day"}
     assert tasks["policy.rbi_documents"].rules["watch"] == "mpc_decision_day"
@@ -92,7 +93,8 @@ def test_build_tasks_configures_registered_classes_and_names_the_rest(tmp_path):
     fed = tasks[0]
     assert fed.workflows == ("daily", "watch") and fed.rules["watch"] == "fomc_decision_day"
     assert fed.run_after == ("policy.calendar",) and fed.min_interval == timedelta(hours=20)
-    assert sorted(missing) == ["crypto.coingecko_markets", "equity.universe", "equity.valuation_inputs", "policy.ai_batch", "policy.calendar", "policy.market_series",
+    assert sorted(missing) == ["crypto.coingecko_markets", "equity.prices", "equity.universe", "equity.valuation_inputs",
+                               "policy.ai_batch", "policy.calendar", "policy.market_series",
                                "policy.rbi_documents"]
 
 
