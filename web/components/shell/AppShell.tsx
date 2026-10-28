@@ -1,6 +1,7 @@
 // AppShell (Design 01 §4.1, §5.1, §5.5): top bar, tape, sidebar beside main, status bar. "Skip to content" is
-// first in the tab order; the landmarks are header, nav, main and footer. The sidebar is 232 px from xl, a 56 px
-// rail at lg and a drawer below; main keeps a 1280 px column with 24 px gutters (16 below lg).
+// first in the tab order; the landmarks are header, nav, main and footer. The sidebar is 232 px from lg, its contents
+// staying in view while the page scrolls (#147), and a drawer opened from the top bar's Menu button below;
+// main keeps a 1280 px column with 24 px gutters (16 below lg).
 import type { ReactNode } from "react";
 import { AdminProvider } from "@/components/shell/admin";
 import { Footer } from "@/components/shell/Footer";

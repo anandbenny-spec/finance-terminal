@@ -24,6 +24,7 @@ import { NOT_AVAILABLE, formatAxisNumber, formatAxisRange, formatDate, formatRel
 import { changeInWords, historyRows, lastMove, stanceText } from "@/lib/policy/decisions";
 import { pressReleaseLabel } from "@/lib/policy/document";
 import { reactionRows, reactionSources } from "@/lib/policy/reactions";
+import { POLICY_SECTIONS } from "@/lib/policy/sections";
 import type { NextMeetingRow, PolicyMeetingRow, TaskFreshnessRow } from "@/lib/queries/api";
 import { readPolicyOverview, type LatestDecision } from "@/lib/queries/overview";
 import { POLICY_START, type Bank } from "@/lib/queries/policy";
@@ -147,7 +148,7 @@ export default async function PolicyPage() {
         }
       />
 
-      <Section id="where-rates-stand" title="Where rates stand">
+      <Section {...POLICY_SECTIONS.whereRatesStand}>
         <PanelGrid>
           <Panel
             label="Where the two policy rates stand now, and the next meetings"
@@ -195,7 +196,7 @@ export default async function PolicyPage() {
         </PanelGrid>
       </Section>
 
-      <Section id="latest-decisions" title="Latest decisions">
+      <Section {...POLICY_SECTIONS.latestDecisions}>
         <PanelGrid>
           <PolicyCard
             bank="Fed"
@@ -223,7 +224,7 @@ export default async function PolicyPage() {
         </PanelGrid>
       </Section>
 
-      <Section id="history" title="History">
+      <Section {...POLICY_SECTIONS.history}>
         <PanelGrid>
           {o.history.ok ? (
             <HistoryPanel
