@@ -386,6 +386,19 @@ def test_a_listed_workbook_that_cannot_be_read_fails_the_edition_check(s3):
 
 @pytest.mark.db
 @needs_fixtures
+def test_an_unreadable_archived_edition_older_than_the_newest_does_not_fail(s3):
+    """Regression (28 Oct dev run): datacurrent.html links ctrypremJune13.xls, a 2013 file that isn't an .xlsx."""
+    src = Sources()
+    src.files["/~adamodar/New_Home_Page/datacurrent.html"] += \
+        b'<a href="https://pages.stern.nyu.edu/~adamodar/pc/ctrypremJune13.xls">June 2013</a>'
+    src.files["/~adamodar/pc/ctrypremJune13.xls"] = b"\xd0\xcf\x11\xe0 not an xlsx"
+    code, tr = go(src)
+    c = checks(tr)["ctryprem_edition"]
+    assert code == 0 and c["passed"] and "ctrypremJune13.xls" in c["detail"], tr
+
+
+@pytest.mark.db
+@needs_fixtures
 def test_a_dated_file_name_newer_than_every_edition_read_fails(s3):
     src = Sources()
     src.files["/~adamodar/New_Home_Page/datacurrent.html"] += \
