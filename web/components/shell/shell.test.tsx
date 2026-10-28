@@ -3,11 +3,13 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { AdminBadgeView } from "@/components/shell/admin";
 import { MobileNav } from "@/components/shell/MobileNav";
 import { NavList } from "@/components/shell/Nav";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { StatusBarView } from "@/components/shell/StatusBar";
 import { TapeView } from "@/components/shell/TickerTape";
+import { TopBar } from "@/components/shell/TopBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { SeriesLatestRow, SeriesRow } from "@/lib/queries/api";
 import { summarise } from "@/lib/shell/freshness";
@@ -164,5 +166,27 @@ describe("MobileNav (#147)", () => {
     const drawer = html(<NavList active={null} onNavigate={() => {}} />);
     expect(drawer).toContain('href="/policy#history"');
     expect(drawer).toContain('href="/policy/rbi/latest?tab=changes"');
+  });
+});
+
+// The top bar at 320 px (#147): the labelled Menu button is 47 px wider than the old icon, so the admin's row (Menu,
+// wordmark, badge) overflowed by 27 px with the real fonts. A visitor's row fits; the badge drops its word below sm.
+describe("TopBar and the admin badge (#147)", () => {
+  it("the badge is the shield icon and the word 'Admin'; the word is hidden below sm but stays for screen readers", () => {
+    const out = html(<AdminBadgeView />);
+    expect(text(out)).toBe("Admin");
+    expect(out).toMatch(/<svg[^>]*aria-hidden="true"/);
+    expect(out).toContain('<span class="max-sm:sr-only">Admin</span>');
+    expect(out).not.toContain("hidden "); // never display:none: that would drop the word for screen readers
+  });
+
+  it("is sticky, 12 px between its parts below sm and 16 px from sm; a visitor sees the Menu button and the wordmark only", () => {
+    const out = html(<TopBar />);
+    const tag = /<header [^>]*>/.exec(out)![0];
+    expect(tag).toContain("sticky top-0");
+    expect(tag).toContain(" gap-3 ");
+    expect(tag).toContain("sm:gap-4");
+    expect(tag).toContain("px-4");
+    expect(text(out)).toBe("Menu Finance Terminal");
   });
 });

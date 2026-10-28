@@ -27,7 +27,10 @@ export async function readLatestDecisionDate(bank: Bank): Promise<string | null>
  * The Location is a path, valid for any host (a preview, the production domain); `no-store` keeps any cache from
  * freezing the answer. */
 export async function latestRedirect(bank: Bank, request: NextRequest): Promise<Response> {
+  // The request is read first: that is what ends the build's prerender attempt at once, before any network call
+  // (otherwise a build with the Data API settings logs a "read failed" line for a read nobody needed).
+  const tab = request.nextUrl.searchParams.get("tab");
   const date = await readLatestDecisionDate(bank);
-  const location = latestTarget(bank, date, request.nextUrl.searchParams.get("tab"));
+  const location = latestTarget(bank, date, tab);
   return new Response(null, { status: 307, headers: { Location: location, "Cache-Control": "no-store" } });
 }
