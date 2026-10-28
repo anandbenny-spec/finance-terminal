@@ -5,8 +5,12 @@ null and false are falsy; a missing secret is ''; `==` ignores case and coerces 
 every event and input, so the property is tested, not just the text: a manual run with no target, or with dev,
 can't receive any production credential, even when a DEV_ secret is missing; a scheduled run always gets
 production's."""
+import json
 import math
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,6 +19,7 @@ import yaml
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 JOBS = ("daily", "watch", "weekly", "refresh", "backfill")
 SCHEDULED = ("daily", "watch", "weekly")
+KEEP_ALIVE = ("keep-alive",)      # scheduled too, but not a job workflow: it runs no task (#142)
 PER_TARGET = ("JOB_DATABASE_URL", "STORAGE_ENDPOINT", "STORAGE_ACCESS_KEY_ID", "STORAGE_SECRET_ACCESS_KEY")
 SHARED = ("STORAGE_BUCKET", "STORAGE_REGION", "FRED_API_KEY", "SEC_USER_AGENT", "ANTHROPIC_API_KEY", "VOYAGE_API_KEY")
 
@@ -239,7 +244,8 @@ def job_runs(name, event, variables):
 
 
 def test_the_scheduled_workflows_are_the_known_ones():
-    assert scheduled_workflows() == sorted(SCHEDULED)
+    # The keep-alive joined the list with #142; it carries the same guard, so every guard test below covers it too.
+    assert scheduled_workflows() == sorted((*SCHEDULED, *KEEP_ALIVE))
 
 
 @pytest.mark.parametrize("name", scheduled_workflows())
@@ -306,3 +312,78 @@ def test_the_coingecko_demo_key_reaches_the_daily_and_refresh_runs_for_both_targ
     """crypto.coingecko_markets (#106) uses one key for dev and production, passed as an environment variable."""
     _target, run, _values = run_env(name, "workflow_dispatch", {**manual_inputs(name), "target": target})
     assert run["COINGECKO_DEMO_KEY"] == "SHARED:COINGECKO_DEMO_KEY"
+
+
+# ---------------------------------------------------------------- the keep-alive (#142)
+
+KEPT_ALIVE = ["keep-alive.yml", "daily.yml", "weekly.yml", "watch.yml"]      # the order the script visits them
+
+
+def _run_keep_alive(tmp_path, states, put_fails=()):
+    """Run the keep-alive's script with a stand-in `gh` that reports `states` ({file: state, None = unreadable}) and
+    refuses the enable call for `put_fails`; returns (exit code, output, the workflows it asked GitHub to enable)."""
+    log, cfg, gh = tmp_path / "calls.log", tmp_path / "gh.json", tmp_path / "gh"
+    cfg.write_text(json.dumps({"states": states, "put_fails": list(put_fails), "log": str(log)}))
+    gh.write_text(f"""#!{sys.executable}
+import json, os, sys
+cfg = json.load(open(os.environ["STUB_GH"]))
+argv = sys.argv[1:]
+open(cfg["log"], "a").write(" ".join(argv) + "\\n")
+wf = next(a for a in argv if a.startswith("repos/")).split("/workflows/")[1].split("/")[0]
+if "-X" in argv:
+    sys.exit(1 if wf in cfg["put_fails"] else 0)
+state = cfg["states"][wf]
+if state is None:
+    sys.exit(1)
+print(state)
+""")
+    gh.chmod(0o755)
+    script = load("keep-alive")["jobs"]["enable"]["steps"][0]["run"]
+    env = {"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}", "GH_REPO": "owner/repo", "GH_TOKEN": "x",
+           "STUB_GH": str(cfg)}
+    done = subprocess.run(["bash", "-c", script], check=False, env=env, capture_output=True, text=True, timeout=30)
+    calls = log.read_text().splitlines() if log.exists() else []
+    return done.returncode, done.stdout, [c.split("/workflows/")[1].split("/")[0] for c in calls if "-X PUT" in c]
+
+
+def test_the_keep_alive_holds_only_the_permission_it_needs_and_pushes_nothing():
+    wf = load("keep-alive")
+    assert wf["permissions"] == {} and list(wf["jobs"]) == ["enable"]
+    job = wf["jobs"]["enable"]
+    assert job["permissions"] == {"actions": "write"}
+    assert job["env"]["GH_TOKEN"] == "${{ github.token }}"
+    text = (WORKFLOWS / "keep-alive.yml").read_text()
+    for forbidden in ("secrets.", "actions/checkout", "git push", "git commit", "contents: write"):
+        assert forbidden not in text, forbidden
+
+
+def test_the_keep_alive_names_every_scheduled_workflow():
+    script = load("keep-alive")["jobs"]["enable"]["steps"][0]["run"]
+    named = re.search(r"for wf in ([^;]+); do", script)[1].split()
+    assert named == KEPT_ALIVE
+    assert {n.removesuffix(".yml") for n in named} == set(scheduled_workflows())
+
+
+@pytest.mark.parametrize("state", ["active", "disabled_inactivity"])
+def test_the_keep_alive_enables_a_workflow_that_is_active_or_was_switched_off_for_inactivity(tmp_path, state):
+    code, _out, enabled = _run_keep_alive(tmp_path, dict.fromkeys(KEPT_ALIVE, state))
+    assert code == 0 and enabled == KEPT_ALIVE
+
+
+def test_the_keep_alive_leaves_a_workflow_disabled_by_hand_alone(tmp_path):
+    states = dict.fromkeys(KEPT_ALIVE, "active") | {"watch.yml": "disabled_manually", "daily.yml": "disabled_manually"}
+    code, out, enabled = _run_keep_alive(tmp_path, states)
+    assert code == 0 and enabled == ["keep-alive.yml", "weekly.yml"]
+    assert "daily.yml: disabled_manually, left alone" in out
+
+
+def test_the_keep_alive_fails_when_it_cannot_read_a_workflow_and_still_handles_the_others(tmp_path):
+    code, out, enabled = _run_keep_alive(tmp_path, dict.fromkeys(KEPT_ALIVE, "active") | {"weekly.yml": None})
+    assert code == 1 and "::error title=keep-alive::could not read weekly.yml" in out
+    assert enabled == ["keep-alive.yml", "daily.yml", "watch.yml"]
+
+
+def test_the_keep_alive_fails_when_github_refuses_to_enable_a_workflow(tmp_path):
+    code, out, enabled = _run_keep_alive(tmp_path, dict.fromkeys(KEPT_ALIVE, "active"), put_fails=["daily.yml"])
+    assert code == 1 and "could not enable daily.yml" in out
+    assert enabled == KEPT_ALIVE

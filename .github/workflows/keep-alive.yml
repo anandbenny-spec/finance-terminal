@@ -1,0 +1,58 @@
+# Keeps the scheduled workflows running in a public repo (Architecture 04 §1.7; Architecture 02 §1.1; Brief §13; #142).
+# GitHub switches a public repo's scheduled workflows off after 60 days without repository activity. Twice a month this
+# job asks GitHub to enable the scheduled workflows again, using the run's own token (`actions: write`, so no secret is
+# needed) and without pushing anything to main.
+#
+# It only touches a workflow that is `active` (a no-op) or `disabled_inactivity` (GitHub switched it off). A workflow
+# someone disabled by hand (`disabled_manually`, for example to pause AI spend) is left alone.
+# The workflow's own name is in the list: if the repo went quiet, this job would otherwise be switched off with the rest.
+#
+# GitHub doesn't document what counts as "activity", so this follows the route #142 prescribes; check once, after the
+# first quiet 60 days, that the three scheduled workflows are still enabled (Actions tab).
+name: keep-alive
+on:
+  schedule:
+    - cron: '41 4 1,15 * *'   # 04:41 UTC on the 1st and 15th: twice inside every 60 days, so one missed run is harmless
+  workflow_dispatch: {}
+concurrency:
+  group: keep-alive
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  enable:
+    # Issue #69: like every scheduled workflow, a scheduled run does nothing unless the repository variable
+    # PRODUCTION_SCHEDULES is 'on' (py/tests/test_workflows.py fails CI for a scheduled workflow without this guard).
+    # While the schedules are off there is nothing to keep alive; a manual run is never blocked.
+    if: github.event_name != 'schedule' || vars.PRODUCTION_SCHEDULES == 'on'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Enable the scheduled workflows again
+        run: |
+          failed=0
+          for wf in keep-alive.yml daily.yml weekly.yml watch.yml; do
+            if ! state=$(gh api "repos/${GH_REPO}/actions/workflows/${wf}" --jq .state); then
+              echo "::error title=keep-alive::could not read ${wf}"
+              failed=1
+              continue
+            fi
+            case "$state" in
+              active|disabled_inactivity)
+                if gh api -X PUT "repos/${GH_REPO}/actions/workflows/${wf}/enable"; then
+                  echo "${wf}: was ${state}, enabled"
+                else
+                  echo "::error title=keep-alive::could not enable ${wf} (was ${state})"
+                  failed=1
+                fi
+                ;;
+              *)
+                echo "${wf}: ${state}, left alone"
+                ;;
+            esac
+          done
+          exit "$failed"
