@@ -23,6 +23,27 @@ describe("DataTable's scroll option", () => {
     expect(out.match(/<tr[ >]/g)?.length).toBe(41); // every row is still rendered: nothing is cut, only scrolled
   });
 
+  it("positions the scroller, so cells' sr-only text stays inside it instead of stretching the page", () => {
+    // The 28 Oct 2026 bug: `.sr-only` is absolutely positioned. With no positioned ancestor it escapes the scroller's
+    // clip and sits at its row's offset in the page, so rows scrolled out of view left black space below the footer
+    // (974 such spans on /policy: the page was 5,385 px tall against 2,618 px of content). Found in a browser; a
+    // unit test can't measure layout, so this holds the cause: the scroller is `relative` (class order aside).
+    const withSrOnly = renderToStaticMarkup(
+      <DataTable
+        columns={[{ id: "value", header: "Value", cell: (r: Row) => <span className="sr-only">{r.value}</span> }]}
+        rows={ROWS}
+        rowKey={(r) => r.id}
+        caption="Test rows"
+        scroll
+        empty="None"
+      />,
+    );
+    const scroller = withSrOnly.match(/^<div class="([^"]*)"/)?.[1].split(" ") ?? [];
+    expect(withSrOnly).toContain('class="sr-only"');
+    expect(scroller).toContain("relative");
+    expect(scroller).toContain("overflow-auto");
+  });
+
   it("keeps a table without it at full height, scrolling only sideways, and out of the tab order", () => {
     const out = table();
     expect(out).toMatch(/^<div class="overflow-x-auto">/);
