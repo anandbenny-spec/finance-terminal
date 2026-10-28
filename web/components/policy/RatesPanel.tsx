@@ -154,6 +154,7 @@ export function RatesPanel({
           caption="Policy rates on each day any of them changed, newest first"
           initialSort={{ id: "date", desc: true }}
           dense
+          scroll
           empty={<StateNote kind="empty">No rates in this range.</StateNote>}
         />
       ) : (

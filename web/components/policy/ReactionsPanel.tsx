@@ -112,6 +112,7 @@ export function ReactionsPanel({ rows, footer, refresh }: { rows: ReactionRow[];
         rowKey={(r) => r.slug}
         caption="Market moves around each FOMC and MPC rate decision since 2019"
         initialSort={{ id: "date", desc: true }}
+        scroll
         empty={<StateNote kind="empty">No decisions match this filter.</StateNote>}
       />
     </Panel>
