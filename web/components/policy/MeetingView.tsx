@@ -27,7 +27,7 @@ import { StateNote } from "@/components/data/StateNote";
 import { FEEDS, type TaskKey } from "@/lib/feeds";
 import { dateInZone, formatDate, formatReleaseTime } from "@/lib/format";
 import { stanceCitations, summaryBlock } from "@/lib/policy/ai";
-import { decisionLine, meetingHref, stanceText, tally } from "@/lib/policy/decisions";
+import { TABS, decisionLine, meetingHref, meetingTabHref, stanceText, tabOf, tally, type TabId } from "@/lib/policy/decisions";
 import { documentSource, documentTitle } from "@/lib/policy/document";
 import {
   DOC_TYPES,
@@ -57,20 +57,10 @@ import type { Bank } from "@/lib/queries/policy";
 import { readFreshness } from "@/lib/queries/shell";
 import { panelFreshness, type PanelFreshness } from "@/lib/shell/freshness";
 
-export const TABS = [
-  { id: "overview", label: "Overview" },
-  { id: "changes", label: "What changed" },
-  { id: "statement", label: "Statement" },
-  { id: "minutes", label: "Minutes" },
-  { id: "press", label: "Press conference" },
-  { id: "reaction", label: "Market reaction" },
-] as const;
-export type TabId = (typeof TABS)[number]["id"];
-
-export function tabOf(value: string | string[] | undefined): TabId {
-  const v = Array.isArray(value) ? value[0] : value;
-  return TABS.some((t) => t.id === v) ? (v as TabId) : "overview";
-}
+// The tabs and `tabOf` live in lib/policy/decisions.ts since #147 (the /latest routes and PolicyCard use them too);
+// re-exported so the meeting pages and their tests import them from here, as before.
+export { TABS, tabOf };
+export type { TabId };
 
 const ERROR = "Couldn't load this panel. Try again.";
 
@@ -145,10 +135,6 @@ async function documentText(id: number): Promise<{ text: string; paras: Paragrap
   }
 }
 
-function tabHref(bank: Bank, date: string, tab: TabId, extra = ""): string {
-  return `${meetingHref(bank, date)}${tab === "overview" ? (extra ? `?${extra}` : "") : `?tab=${tab}${extra ? `&${extra}` : ""}`}`;
-}
-
 function Tabs({ bank, date, tab }: { bank: Bank; date: string; tab: TabId }) {
   return (
     <nav aria-label="Meeting sections" className="mt-4 overflow-x-auto border-b border-line-strong">
@@ -156,7 +142,7 @@ function Tabs({ bank, date, tab }: { bank: Bank; date: string; tab: TabId }) {
         {TABS.map((t) => (
           <li key={t.id}>
             <Link
-              href={tabHref(bank, date, t.id)}
+              href={meetingTabHref(bank, date, t.id)}
               aria-current={t.id === tab ? "page" : undefined}
               className="-mb-px inline-block border-b-2 border-transparent py-2 text-ui text-ink-2 no-underline hover:text-ink-1 aria-[current=page]:border-amber aria-[current=page]:text-ink-1"
             >
@@ -178,7 +164,7 @@ async function Overview({ ctx }: { ctx: Ctx }) {
   const decisionText = decisionDoc ? await documentText(decisionDoc.id) : null;
   const paras = decisionText?.paras ?? [];
   const settings = page.settings.ok ? page.settings.rows : null;
-  const statementHref = (n: number) => `${tabHref(bank, m.decision_date, "statement")}#p-${n}`;
+  const statementHref = (n: number) => `${meetingTabHref(bank, m.decision_date, "statement")}#p-${n}`;
   const decisionSource = docSource(ctx, decisionDoc);
   const decisionFoot = <Foot ctx={ctx} sources={[decisionSource]} dataTo={docDate(ctx, decisionDoc)} />;
 
@@ -596,7 +582,7 @@ function StatementSwitch({ ctx, which }: { ctx: Ctx; which: "resolution" | "gove
       {items.map((x) => (
         <Link
           key={x.id}
-          href={tabHref(ctx.bank, ctx.m.decision_date, "statement", x.id === "governor" ? "doc=governor" : "")}
+          href={meetingTabHref(ctx.bank, ctx.m.decision_date, "statement", x.id === "governor" ? "doc=governor" : "")}
           aria-current={which === x.id ? "page" : undefined}
           className="border-r border-line px-2.5 py-1 text-meta text-ink-2 no-underline last:border-r-0 hover:text-ink-1 aria-[current=page]:bg-active aria-[current=page]:text-ink-1"
         >
@@ -609,7 +595,28 @@ function StatementSwitch({ ctx, which }: { ctx: Ctx; which: "resolution" | "gove
 
 // ------------------------------------------------------------------ The page
 
-function Header({ ctx, tabs }: { ctx: Ctx; tabs: ReactNode }) {
+type Neighbour = Pick<PolicyMeetingRow, "decision_date">;
+
+/** The header's Previous / Next links. Both keep the tab being read, so ← Previous on What changed lands on the
+ * previous meeting's What changed (#147); other query parameters (`doc=`) are dropped. */
+export function OtherMeetings({ bank, tab, previous, next }: { bank: Bank; tab: TabId; previous: Neighbour | null; next: Neighbour | null }) {
+  return (
+    <nav aria-label="Other meetings" className="flex flex-wrap gap-x-4 gap-y-1">
+      {previous && (
+        <Link href={meetingTabHref(bank, previous.decision_date, tab)} className="text-ink-3 underline hover:text-ink-1">
+          ← Previous: {formatDate(previous.decision_date)}
+        </Link>
+      )}
+      {next && (
+        <Link href={meetingTabHref(bank, next.decision_date, tab)} className="text-ink-3 underline hover:text-ink-1">
+          Next: {formatDate(next.decision_date)} →
+        </Link>
+      )}
+    </nav>
+  );
+}
+
+function Header({ ctx, tab, tabs }: { ctx: Ctx; tab: TabId; tabs: ReactNode }) {
   const { bank, m, page } = ctx;
   const line = m.status === "held" && m.is_rate_decision ? decisionLine(m) : null;
   const t = m.status === "held" && page.votes.ok ? tally(m, page.votes.rows) : null;
@@ -633,20 +640,7 @@ function Header({ ctx, tabs }: { ctx: Ctx; tabs: ReactNode }) {
             </p>
           </div>
         }
-        meta={
-          <nav aria-label="Other meetings" className="flex flex-wrap gap-x-4 gap-y-1">
-            {prev && (
-              <Link href={meetingHref(bank, prev.decision_date)} className="text-ink-3 underline hover:text-ink-1">
-                ← Previous: {formatDate(prev.decision_date)}
-              </Link>
-            )}
-            {next && (
-              <Link href={meetingHref(bank, next.decision_date)} className="text-ink-3 underline hover:text-ink-1">
-                Next: {formatDate(next.decision_date)} →
-              </Link>
-            )}
-          </nav>
-        }
+        meta={<OtherMeetings bank={bank} tab={tab} previous={prev} next={next} />}
       />
       {tabs}
     </>
@@ -680,7 +674,7 @@ export async function MeetingView({ bank, slug, date, tab, doc }: { bank: Bank; 
     const note = noDecisionNote(m);
     return (
       <>
-        <Header ctx={ctx} tabs={null} />
+        <Header ctx={ctx} tab={tab} tabs={null} />
         <div className="mt-5">
           <Panel title="This meeting" titleId="panel-meeting" market={bank === "Fed" ? "US" : "IN"} footer={<Foot ctx={ctx} sources={[docSource(ctx, null)]} dataTo={null} />}>
             <StateNote kind={m.status === "scheduled" ? "unavailable" : "empty"}>{note}</StateNote>
@@ -721,7 +715,7 @@ export async function MeetingView({ bank, slug, date, tab, doc }: { bank: Bank; 
 
   return (
     <>
-      <Header ctx={ctx} tabs={<Tabs bank={bank} date={m.decision_date} tab={tab} />} />
+      <Header ctx={ctx} tab={tab} tabs={<Tabs bank={bank} date={m.decision_date} tab={tab} />} />
       {body}
     </>
   );

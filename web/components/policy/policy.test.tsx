@@ -91,6 +91,26 @@ describe("PolicyCard", () => {
     expect(out).toContain("border-t-series-2");
   });
 
+  it("links the meeting, then its What changed tab, then (Fed only) the official statement (#147)", () => {
+    const row = (out: string) => {
+      const p = /<p class="mt-3 flex[^"]*">([\s\S]*?)<\/p>/.exec(out);
+      expect(p).not.toBeNull();
+      // next/link writes `class` before `href`, so the attributes are read in any order
+      return [...p![1].matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].map((m) => [/href="([^"]*)"/.exec(m[1])![1], text(m[2])]);
+    };
+    const fed = html(<PolicyCard bank="Fed" latest={fedLatest} policies={POLICIES} now={NOW} footer="" />);
+    expect(row(fed)).toEqual([
+      ["/policy/fed/2026-09-17", "FOMC meeting, 17 Sep 2026"],
+      ["/policy/fed/2026-09-17?tab=changes", "What changed"],
+      ["https://www.federalreserve.gov/newsevents/pressreleases/monetary20260917a.htm", "Official statement ↗"],
+    ]);
+    const rbi = html(<PolicyCard bank="RBI" latest={rbiLatest} policies={POLICIES} now={NOW} footer="" />);
+    expect(row(rbi)).toEqual([
+      ["/policy/rbi/2026-10-07", "MPC meeting no. 61, 7 Oct 2026"],
+      ["/policy/rbi/2026-10-07?tab=changes", "What changed"],
+    ]);
+  });
+
   it("hides the stance and the summary when their field policy is hidden or missing (fail closed)", () => {
     const t = text(html(<PolicyCard bank="RBI" latest={rbiLatest} policies={[]} now={NOW} footer="" />));
     expect(t).not.toContain("Calibrated tightening");

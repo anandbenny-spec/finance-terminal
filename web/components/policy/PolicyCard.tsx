@@ -1,7 +1,8 @@
 // PolicyCard (Spec 01 D13, §4.2 "Latest decisions"): a bank's latest decision. DecisionLine; the date and release
 // time; the tally line; the RBI's stance with its quote chip (AI-extracted, gated by field policy); the AI summary of
-// the decision document; links to the meeting page and, for the Fed only, the official statement. The RBI's
-// documents are named, never linked (Anand, 24 Oct 2026; Brief §6.2). Reused on the landing page later (D13).
+// the decision document; links to the meeting page, its What changed tab (#147) and, for the Fed only, the official
+// statement. The RBI's documents are named, never linked (Anand, 24 Oct 2026; Brief §6.2). Reused on the landing
+// page later (D13).
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { AIBlock } from "@/components/ai/AIBlock";
@@ -13,7 +14,7 @@ import { StateNote } from "@/components/data/StateNote";
 import { FEEDS } from "@/lib/feeds";
 import { formatDate, formatReleaseTime } from "@/lib/format";
 import { stanceCitations, summaryBlock } from "@/lib/policy/ai";
-import { decisionLine, meetingHref, stanceText, tally } from "@/lib/policy/decisions";
+import { decisionLine, meetingHref, meetingTabHref, stanceText, tally } from "@/lib/policy/decisions";
 import type { LatestDecision } from "@/lib/queries/overview";
 import type { Bank } from "@/lib/queries/policy";
 
@@ -99,6 +100,9 @@ export function PolicyCard({
       <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-data">
         <Link href={meetingHref(bank, m.decision_date)} className="text-ink-1 underline">
           {fed ? "FOMC meeting" : `MPC meeting${m.meeting_no ? ` no. ${m.meeting_no}` : ""}`}, {formatDate(m.decision_date)}
+        </Link>
+        <Link href={meetingTabHref(bank, m.decision_date, "changes")} className="text-ink-1 underline">
+          What changed
         </Link>
         {officialUrl && (
           <a href={officialUrl} className="text-ink-1 underline" rel="noreferrer" target="_blank">
