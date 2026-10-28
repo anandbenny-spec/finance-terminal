@@ -1,7 +1,9 @@
 """The two parsers behind policy.market_series (Prompt 01 B4): FRED's observations JSON and Yahoo's chart JSON."""
+import hashlib
 import json
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -9,6 +11,9 @@ import pytest
 from ft.policy import series_sources as src
 
 NY = ZoneInfo("America/New_York")
+# FRED's answer for INDIRLTLT01STM from 20 Jul to 28 Oct 2026 (issue #149), in the private fixtures repo.
+SAVED_IN10Y = (Path(__file__).resolve().parents[2] / "data" / "fixtures" / "series" / "fred"
+               / "INDIRLTLT01STM_2026-07-20_2026-10-28.json")
 
 
 def fred_body(*obs):
@@ -26,8 +31,31 @@ def chart(symbol, tz, bars, currency="USD", error=None):
 
 
 def test_fred_values_are_exact_decimals_and_holidays_are_skipped():
-    pts = src.parse_fred(fred_body(("2026-10-20", "4.01"), ("2026-10-13", "."), ("2026-10-21", "3.98")), "DGS10")
-    assert pts == [(date(2026, 10, 20), Decimal("4.01")), (date(2026, 10, 21), Decimal("3.98"))]
+    obs = src.parse_fred(fred_body(("2026-10-20", "4.01"), ("2026-10-13", "."), ("2026-10-21", "3.98")), "DGS10")
+    assert obs.points == [(date(2026, 10, 20), Decimal("4.01")), (date(2026, 10, 21), Decimal("3.98"))]
+    assert obs.repeated == {}
+
+
+@pytest.mark.skipif(not SAVED_IN10Y.exists(), reason="the saved responses aren't checked out (data/fixtures)")
+def test_fred_also_sends_the_month_holding_the_start_asked_for():
+    """The 28 Oct 2026 response behind issue #149, byte-for-byte dev's raw file 530: asked from 20 Jul, FRED's
+    answer for India's 10-year starts with 1 Jul. The parser returns it as sent; the task's load compares it."""
+    body = SAVED_IN10Y.read_bytes()
+    assert hashlib.sha256(body).hexdigest() == "daeb0ab74dd07627befab24790ec0b3e1381ac0ba9b6c539085d6f365ffb8a4a"
+    assert json.loads(body)["observation_start"] == "2026-07-20"
+    obs = src.parse_fred(body, "INDIRLTLT01STM")
+    assert obs.points == [(date(2026, 7, 1), Decimal("6.78")), (date(2026, 8, 1), Decimal("6.84")),
+                          (date(2026, 9, 1), Decimal("7.06"))]
+    assert obs.repeated == {}
+
+
+def test_a_date_fred_sends_twice_is_one_point_if_the_values_agree_and_held_back_if_not():
+    same = src.parse_fred(fred_body(("2026-10-20", "4.01"), ("2026-10-21", "3.98"), ("2026-10-20", "4.010")), "DGS10")
+    assert same.points == [(date(2026, 10, 20), Decimal("4.01")), (date(2026, 10, 21), Decimal("3.98"))]
+    assert same.repeated == {}
+    differ = src.parse_fred(fred_body(("2026-10-20", "4.01"), ("2026-10-21", "3.98"), ("2026-10-20", "4.03")), "DGS10")
+    assert differ.points == [(date(2026, 10, 21), Decimal("3.98"))]
+    assert differ.repeated == {date(2026, 10, 20): (Decimal("4.01"), Decimal("4.03"))}
 
 
 def test_fred_error_and_unreadable_values_raise():
@@ -58,6 +86,20 @@ def test_yahoo_dates_are_exchange_local_closes_rounded_to_the_quote():
     assert c.points == [(date(2026, 10, 21), Decimal("6687.32"))]
     assert c.dropped_live == [date(2026, 10, 23)]
     assert (c.symbol, c.currency, c.timezone) == ("^GSPC", "USD", "America/New_York")
+
+
+def test_a_date_yahoo_sends_twice_is_one_point_if_the_closes_agree_and_held_back_if_not():
+    """Until issue #149 the later bar won silently. Closes are compared as quoted (rounded), so a float's noise isn't
+    a conflict."""
+    bars = [(datetime(2026, 10, 20, 9, 30, tzinfo=NY), 6687.31982421875),
+            (datetime(2026, 10, 20, 16, 0, tzinfo=NY), 6687.32),            # the same close again: one point
+            (datetime(2026, 10, 21, 9, 30, tzinfo=NY), 6700.0),
+            (datetime(2026, 10, 21, 15, 59, tzinfo=NY), 6705.5)]            # a different close for the same date
+    c = src.parse_yahoo(chart("^GSPC", "America/New_York", bars), "^GSPC", "index_points",
+                        fetched_at=datetime(2026, 10, 23, 18, 0, tzinfo=UTC), fixing_time=time(16),
+                        fixing_tz="America/New_York")
+    assert c.points == [(date(2026, 10, 20), Decimal("6687.32"))]
+    assert c.repeated == {date(2026, 10, 21): (Decimal("6700.00"), Decimal("6705.50"))}
 
 
 def test_yahoo_session_counts_once_its_fixing_time_has_passed():
