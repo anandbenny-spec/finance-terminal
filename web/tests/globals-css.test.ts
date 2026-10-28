@@ -8,12 +8,12 @@ import { WEB, loadDesignSystem, normalise, readWeb, rootVariables } from "./css"
 
 const DESIGN_TOKENS: Record<string, string> = {
   // §2.1 surfaces, lines and ink
-  "--canvas": "#08090b",
-  "--panel": "#12161b",
-  "--raised": "#1a1f26",
-  "--active": "#232931",
+  "--canvas": "#000000",
+  "--panel": "#000000",
+  "--raised": "#15191f",
+  "--active": "#20262e",
   "--line": "#252a31",
-  "--line-strong": "#343b45",
+  "--line-strong": "#3b434e",
   "--line-input": "#646c78",
   "--ink-1": "#e6e8eb",
   "--ink-2": "#afb5be",
