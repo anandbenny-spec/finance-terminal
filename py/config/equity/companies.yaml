@@ -38,8 +38,8 @@ bse:  # BSE Ltd.
   fy_end_month: 3
 bajaj-auto:  # Bajaj Auto Ltd.
   peer_group: autos
-  valuation_family: operating
-  family_note: "Holds stakes in Bajaj Finserv and Bajaj Holdings as investments, not subsidiaries; large investment income sits in other income. Not verified against the annual report."
+  valuation_family: mixed
+  family_note: "Consolidated figures include Bajaj Auto Credit Ltd, a wholly owned NBFC financing the group's two- and three-wheelers: loan book Rs 16,947 crore and net worth Rs 3,127 crore at 31 Dec 2025, up from Rs 726 crore in March 2024 (ICRA rating rationale, 6 Mar 2026). Its lending and borrowings would distort a free-cash-flow valuation, so mixed (Spec 02A §4). Changed from operating in Anand's spot check, applied by Claude on 28 Oct 2026."
   fy_end_month: 3
 bajfinance:  # Bajaj Finance Ltd.
   peer_group: nbfc
@@ -229,7 +229,7 @@ tataconsum:  # Tata Consumer Products Ltd.
 tmpv:  # Tata Motors Passenger Vehicles Ltd.
   peer_group: autos
   valuation_family: operating
-  family_note: "Consolidated with Jaguar Land Rover; Tata Motors Finance is a subsidiary but a small part of the consolidated balance sheet by public figures, not verified against the annual report: for Anand to confirm."
+  family_note: "Consolidated with Jaguar Land Rover. Tata Motors Finance is no longer a subsidiary: it merged into Tata Capital, effective 8 May 2025 (Tata Capital's intimation under Reg 51 and 60, 8 May 2025). No material lending or insurance subsidiary remains, so operating; checked in Anand's spot check, applied by Claude on 28 Oct 2026."
   fy_end_month: 3
 tatasteel:  # Tata Steel Ltd.
   peer_group: steel

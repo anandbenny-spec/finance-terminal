@@ -204,7 +204,8 @@ def test_every_nifty_50_company_is_curated_and_the_family_counts_are_as_drafted(
     for c in companies.values():
         by.setdefault(c.valuation_family, []).append(c.slug)
     assert len(by["lender"]) == 8 and len(by["insurer"]) == 2
-    assert sorted(by["mixed"]) == ["bajajfinsv", "grasim", "lt", "m-and-m"]
+    # Bajaj Auto moved to mixed in Anand's spot check (#109, 28 Oct 2026): Bajaj Auto Credit, its wholly owned NBFC.
+    assert sorted(by["mixed"]) == ["bajaj-auto", "bajajfinsv", "grasim", "lt", "m-and-m"]
     assert companies["sbin"].valuation_family == "lender" and companies["hdfclife"].valuation_family == "insurer"
 
 
