@@ -49,14 +49,19 @@ export function useAdmin(): AdminState {
   return useContext(AdminContext);
 }
 
-/** The top bar's badge, for the admin only. */
-export function AdminBadge() {
-  const { isAdmin } = useAdmin();
-  if (!isAdmin) return null;
+/** The badge itself. Below `sm` it shows the icon alone and keeps the word for screen readers: with the labelled Menu
+ *  button (#147) the top bar has no room for the word at 320 px (checked with Plex: 347 px of content in 320). */
+export function AdminBadgeView() {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-sm border border-line-strong px-1.5 text-meta text-ink-2">
       <ShieldCheck aria-hidden className="size-3.5 text-ink-3" />
-      Admin
+      <span className="max-sm:sr-only">Admin</span>
     </span>
   );
+}
+
+/** The top bar's badge, for the admin only. */
+export function AdminBadge() {
+  const { isAdmin } = useAdmin();
+  return isAdmin ? <AdminBadgeView /> : null;
 }
