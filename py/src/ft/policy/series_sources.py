@@ -3,12 +3,18 @@ API, the endpoint the yfinance library reads. Both return (date, Decimal) points
 or the database.
 
 - **FRED** (`series/observations`, JSON): each observation's `value` is a decimal string, or "." where FRED has no
-  value for that day (a market holiday); "." is skipped, never stored as a number.
+  value for that day (a market holiday); "." is skipped, never stored as a number. For a monthly series FRED also
+  sends the month holding `observation_start`, dated at its first day, so a response can hold a date before the start
+  asked for: from 20 Jul 2026, INDIRLTLT01STM's answer began with 1 Jul (issue #149). The points are returned as sent.
 - **Yahoo** (`/v8/finance/chart/<symbol>`, interval 1d): one bar per session, its `timestamp` the session's start in
   UTC. A bar's date is that instant in the exchange's own zone (`meta.exchangeTimezoneName`). Closes come as binary
   floats (6687.31982421875 for 6687.32), so each is rounded back to the precision Yahoo quotes: 2 decimals for index
   points, 4 for an exchange rate. A bar whose session hasn't closed by the fetch time (the series' fixing time on its
   date, or for a series without one, a bar dated the exchange's today) is left out: it's a live price, not a close.
+- **One value per date** (both sources; issue #149): a date sent twice with the same value is one point. A date sent
+  twice with different values is held back: neither value is a point, and `repeated` lists each such date with every
+  value sent, so the task can say so. Which one is right can't be known from the response, and keeping either (until
+  #149, the later one) would hide the conflict.
 """
 from __future__ import annotations
 
@@ -33,6 +39,30 @@ class SourceError(Exception):
 
 
 Point = tuple[date, Decimal]
+Repeated = dict[date, tuple[Decimal, ...]]       # a date sent more than once with different values: every value sent
+
+
+def one_per_date(pairs) -> tuple[list[Point], Repeated]:
+    """(date, value) pairs as sent, to sorted points with one value per date, and the dates held back because they
+    were sent with different values (with each value, in the order sent). Equal values (6.8 and 6.80) are one point."""
+    seen: dict[date, list[Decimal]] = {}
+    for d, v in pairs:
+        seen.setdefault(d, []).append(v)
+    points: list[Point] = []
+    repeated: Repeated = {}
+    for d in sorted(seen):
+        vs = seen[d]
+        if all(v == vs[0] for v in vs):
+            points.append((d, vs[0]))
+        else:
+            repeated[d] = tuple(vs)
+    return points, repeated
+
+
+@dataclass(frozen=True)
+class FredObservations:
+    points: list[Point]
+    repeated: Repeated                # dates held back: sent with different values
 
 
 def fred_params(code: str, start: date, end: date) -> dict[str, str]:
@@ -41,7 +71,7 @@ def fred_params(code: str, start: date, end: date) -> dict[str, str]:
             "file_type": "json"}
 
 
-def parse_fred(body: bytes, code: str) -> list[Point]:
+def parse_fred(body: bytes, code: str) -> FredObservations:
     try:
         doc = json.loads(body)
     except ValueError:
@@ -49,7 +79,7 @@ def parse_fred(body: bytes, code: str) -> list[Point]:
     if not isinstance(doc, dict) or "observations" not in doc:
         raise SourceError(f"FRED {code}: no observations in the response ({str(doc.get('error_message', ''))[:200]})"
                           if isinstance(doc, dict) else f"FRED {code}: unexpected response")
-    out: dict[date, Decimal] = {}
+    pairs: list[Point] = []
     for o in doc["observations"]:
         raw = str(o.get("value", "")).strip()
         if raw == ".":
@@ -60,8 +90,8 @@ def parse_fred(body: bytes, code: str) -> list[Point]:
             raise SourceError(f"FRED {code}: unreadable observation {o!r}"[:300]) from None
         if not v.is_finite():
             raise SourceError(f"FRED {code}: non-finite value on {d}")
-        out[d] = v
-    return sorted(out.items())
+        pairs.append((d, v))
+    return FredObservations(*one_per_date(pairs))
 
 
 def parse_crumb(status: int, body: bytes) -> str | None:
@@ -95,6 +125,7 @@ class YahooChart:
     timezone: str
     points: list[Point]
     dropped_live: list[date]          # bars left out because their session hadn't closed at the fetch time
+    repeated: Repeated                # dates held back: two bars with different closes
 
 
 def parse_yahoo(body: bytes, symbol: str, unit: str, *, fetched_at: datetime, fixing_time: time | None,
@@ -121,7 +152,7 @@ def parse_yahoo(body: bytes, symbol: str, unit: str, *, fetched_at: datetime, fi
         raise SourceError(f"Yahoo {symbol}: no quoting precision for unit {unit}")
     q = Decimal(1).scaleb(-places)
     today = fetched_at.astimezone(tz).date()
-    out: dict[date, Decimal] = {}
+    pairs: list[Point] = []
     live: list[date] = []
     for ts, c in zip(stamps, closes, strict=True):
         if c is None:
@@ -137,6 +168,7 @@ def parse_yahoo(body: bytes, symbol: str, unit: str, *, fetched_at: datetime, fi
         v = Decimal(repr(float(c))).quantize(q)
         if not v.is_finite():
             raise SourceError(f"Yahoo {symbol}: non-finite close on {d}")
-        out[d] = v                    # a repeated date keeps the later bar
+        pairs.append((d, v))
+    points, repeated = one_per_date(pairs)
     return YahooChart(str(meta.get("symbol", "")), meta.get("currency"), meta["exchangeTimezoneName"],
-                      sorted(out.items()), live)
+                      points, live, repeated)
