@@ -25,6 +25,8 @@ outside the window is compared like any other: the same value writes nothing, a 
 (the source's latest is kept, the old value is in core.observation_revision, and the blocking `revisions` check
 counts it), and a date not stored is inserted. A date a response sends twice with different values is held back,
 neither stored nor updated, and listed in the `repeated_dates` warning (series_sources: one value per date).
+If an insert still hits a stored date, the error names the series and its new dates: row-level security keeps
+Postgres's DETAIL line (the duplicate's key) from job_writer, so #149's error and log named only the constraint.
 The writes go in batches, one pipelined `executemany` per series for its inserts and one for its updates (Anand,
 24 Oct 2026, issue #13): the first dev backfill spent 2 h 11 min on 33,518 single-row statements, each a round trip
 from GitHub's US runner to the Mumbai project. The updates stay real UPDATEs, so the trigger still logs each one.
@@ -58,6 +60,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from itertools import pairwise
+
+import psycopg
 
 from ft.jobs.fetch import FetchError
 from ft.jobs.runner import Check, Context, Task
@@ -220,6 +224,14 @@ class MarketSeries(Task):
                 fred.update((d, v) for d, v in g.points if start <= d <= end)
         return {d: (v, fred[d]) for d, v in ga.points if d in fred and disagree(v, fred[d])}
 
+    def _stored(self, tx, series_id: int, dates: list[date]) -> dict[date, Decimal]:
+        """The stored value of each of `dates`: every date the response holds, inside the window asked for or not
+        (issue #149: FRED's month before a monthly series' window)."""
+        if not dates:
+            return {}
+        return dict(tx.execute("select obs_date, value from core.observation where series_id = %s "
+                               "and obs_date = any(%s)", (series_id, dates)).fetchall())
+
     def _write(self, tx, new: list[tuple], changed: list[tuple]) -> None:
         """One series' inserts and updates, each as one pipelined executemany. The updates are real UPDATEs, so the
         revision trigger logs every change."""
@@ -239,9 +251,7 @@ class MarketSeries(Task):
             twice = sorted(d for d, n in Counter(dates).items() if n > 1)
             if twice:      # the parsers keep one value per date, so this never happens; if it did, say where
                 raise RuntimeError(f"{g.series.key}: {', '.join(map(str, twice[:5]))} more than once in the points")
-            # The stored value of every date the response holds, inside the window asked for or not (issue #149).
-            stored = dict(tx.execute("select obs_date, value from core.observation where series_id = %s "
-                                     "and obs_date = any(%s)", (g.series.id, dates)).fetchall()) if dates else {}
+            stored = self._stored(tx, g.series.id, dates)
             skip = held if g.series.key == self.cross_check[0] else {}
             new, changed = [], []
             for d, v in g.points:
@@ -253,7 +263,13 @@ class MarketSeries(Task):
                     new.append((g.series.id, d, v, task_run_id))
                 elif old != v:
                     changed.append((v, task_run_id, g.series.id, d))
-            self._write(tx, new, changed)
+            try:
+                self._write(tx, new, changed)
+            except psycopg.errors.UniqueViolation as e:
+                # Row-level security hides Postgres's DETAIL line (the key) from job_writer: name the series here.
+                ds = [row[1] for row in new]
+                raise RuntimeError(f"{g.series.key}: an insert hit a date already stored (inserting {len(ds)} new "
+                                   f"dates, {ds[0]} to {ds[-1]}): {e}") from e
             written += len(new) + len(changed)
             if changed:
                 revised[g.series.key] = len(changed)
