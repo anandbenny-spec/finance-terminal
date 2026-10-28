@@ -241,12 +241,20 @@ class EquityValuationInputs(Task):
         named = [(edition_name, url) for url, _ in f.ctry if (edition_name := inp.edition_from_name(url))]
         ahead = [url.rsplit("/", 1)[-1] for en, url in named if en > newest.replace(day=1)]
         why = []
-        if f.ctry_failed:
-            why.append("not read: " + "; ".join(f.ctry_failed))
+        # A workbook that can't be read blocks the run unless its name dates it before the newest edition read: Damodaran's
+        # page also links archived editions (ctrypremJune13.xls, a 2013 file the reader can't open), and the engine only
+        # ever uses his newest dated edition. An undated or later name still blocks (a newer edition not read must fail).
+        old_failed = [x for x in f.ctry_failed
+                      if (en := inp.edition_from_name(x.split(":", 1)[0])) and en < newest.replace(day=1)]
+        blocking_failed = [x for x in f.ctry_failed if x not in old_failed]
+        if blocking_failed:
+            why.append("not read: " + "; ".join(blocking_failed))
         if ahead:
             why.append(f"named for a month after the newest edition read ({newest:%d %b %Y}): " + ", ".join(ahead))
         out.append(Check("ctryprem_edition", not why, " | ".join(why) or
-                         f"{len(f.ctry)} workbooks read, newest edition {newest:%d %b %Y}; {f.discovery}"))
+                         f"{len(f.ctry)} workbooks read, newest edition {newest:%d %b %Y}; {f.discovery}"
+                         + (f"; archived editions not read (older than the newest): {'; '.join(old_failed)}"
+                            if old_failed else "")))
 
         industries = [x for x in f.beta_rows if not x.industry.lower().startswith("total market")]
         out.append(Check("beta_industries", len(industries) > MIN_INDUSTRIES,
