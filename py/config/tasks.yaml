@@ -34,3 +34,8 @@ crypto.coingecko_markets:
   description: CoinGecko daily market snapshot, top 500 (stored, unpublished)
   workflows: {daily: every 20 hours}
   overdue_after: 3 days
+equity.universe:
+  description: Company master, Nifty index membership and curated peer groups (Nifty 50 universe)
+  workflows: {weekly: every 6 days}
+  overdue_after: 10 days
+  uses_nse: true
