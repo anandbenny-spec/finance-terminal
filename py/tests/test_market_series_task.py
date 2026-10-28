@@ -103,6 +103,13 @@ class RowByRow(MarketSeries):
                        "where series_id = %s and obs_date = %s", row)
 
 
+class ForgetsStored(MarketSeries):
+    """A load that reads nothing back, the shape of #149's failure: each insert hits a stored date."""
+
+    def _stored(self, tx, series_id, dates):
+        return {}
+
+
 def task_for(prefix: str, base: type[MarketSeries] = MarketSeries) -> MarketSeries:
     class T(base):
         key = KEY
@@ -588,6 +595,19 @@ def test_a_date_yahoo_sends_twice_with_different_closes_is_held_back_and_listed(
     assert not c["passed"] and not c["blocking"]
     assert c["detail"] == f"1 held back: {prefix}.INR=X {d}: 88.3000 vs 88.9000"
     assert revisions(prefix) == [("INR=X", date(2026, 10, 20), "88.3000", "88.4000")]
+
+
+@pytest.mark.db
+def test_an_insert_that_hits_a_stored_date_names_the_series_and_rolls_back(s3):
+    """Row-level security keeps Postgres's DETAIL line (the duplicate's key) from job_writer, which is why #149's
+    ops.task_run.error and dev's Postgres log named only observation_pkey. The task names the series instead."""
+    prefix, data = make_series(), Data()
+    series_run(prefix, data)
+    before = obs(prefix, "DEXINUS")
+    code, tr = series_run(prefix, data, base=ForgetsStored)
+    assert code == 1 and tr[1] == "failed" and tr[2] == 0, tr
+    assert "UniqueViolation" in tr[4] and f"{prefix}.DEXINUS: an insert hit a date already stored" in tr[4]
+    assert obs(prefix, "DEXINUS") == before
 
 
 @pytest.mark.db

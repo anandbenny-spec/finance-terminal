@@ -42,19 +42,6 @@ class LockLost(Exception):
     pass
 
 
-def db_detail(e: BaseException) -> str:
-    """Postgres's DETAIL line for a database error in `e` or its chain (a duplicate's key, the row a constraint
-    refused), for ops.task_run.error: the traceback holds only the message, so the 28 Oct 2026 duplicate key (issue
-    #149) had to be traced through the stored responses. Internal only: visitors never see a task's error."""
-    seen: set[int] = set()
-    while e is not None and id(e) not in seen:
-        seen.add(id(e))
-        if isinstance(e, psycopg.Error) and e.diag.message_detail:
-            return f"DETAIL: {e.diag.message_detail}\n"
-        e = e.__cause__ or e.__context__
-    return ""
-
-
 # Every connection sends TCP keepalives, so a path that drops idle connections doesn't silently kill the
 # control connection while a task fetches for many minutes (libpq otherwise uses the OS default, ~2 hours).
 KEEPALIVES = {"keepalives": 1, "keepalives_idle": 60, "keepalives_interval": 15, "keepalives_count": 4}
@@ -292,8 +279,8 @@ class JobRun:
                 status, err = "failed", str(e)
             except ChecksFailed:
                 status, err = "checks_failed", "; ".join(c.name for c in checks if c.blocking and not c.passed)
-            except Exception as e:  # noqa: BLE001 - one task's failure must never stop the run
-                status, err = "failed", traceback.format_exc(limit=3) + db_detail(e)
+            except Exception:  # noqa: BLE001 - one task's failure must never stop the run
+                status, err = "failed", traceback.format_exc(limit=3)
             finally:
                 self.db.unlock()
             self.db.ensure()                                       # a long load can idle the control connection too

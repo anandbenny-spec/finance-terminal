@@ -173,30 +173,3 @@ def test_a_failed_run_raises_its_failure_alerts_and_a_good_run_resolves_them():
     assert run(JOB, "weekly", [t], force=True) == 0
     assert open_() == []
     assert Task().failure_alerts(None, "failed", "x") == []              # the default raises nothing
-
-
-@pytest.mark.db
-def test_a_database_error_is_recorded_with_postgres_detail_line():
-    """Issue #149: ops.task_run.error held only "duplicate key value violates unique constraint", so the series and
-    date had to be worked out from the stored responses. The DETAIL line names the key."""
-    key = "test.db_detail"
-    with psycopg.connect(ADMIN, autocommit=True) as c:
-        c.execute("""insert into ops.task (key, module, description, workflows, min_interval, overdue_after, enabled)
-                     values (%s, 'test', 'runner DETAIL line test', '{daily}', '20 hours', '4 days', false)
-                     on conflict (key) do nothing""", (key,))
-
-    class Twice(Task):
-        workflows = ("daily",)
-        def load(self, tx, fetched, tr):
-            sid = tx.execute("select id from core.series where key='fred.DGS10'").fetchone()[0]
-            for _ in range(2):
-                tx.execute("insert into core.observation values (%s, '1999-01-04', 1, %s)", (sid, tr))
-            return 2
-    Twice.key = key
-
-    code = run(JOB, "daily", [Twice()], only=key, force=True)
-    status, err = q("select status, error from ops.task_run where task_key=%s order by id desc limit 1", key)[0]
-    assert code == 1 and status == "failed"
-    assert "UniqueViolation" in err and "DETAIL: Key (series_id, obs_date)=(" in err
-    assert err.rstrip().endswith(", 1999-01-04) already exists.")
-    assert q("select count(*) from core.observation where obs_date = '1999-01-04'") == [(0,)]   # rolled back
