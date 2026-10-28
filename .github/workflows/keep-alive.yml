@@ -20,6 +20,10 @@ concurrency:
 permissions: {}
 jobs:
   enable:
+    # Issue #69: like every scheduled workflow, a scheduled run does nothing unless the repository variable
+    # PRODUCTION_SCHEDULES is 'on' (py/tests/test_workflows.py fails CI for a scheduled workflow without this guard).
+    # While the schedules are off there is nothing to keep alive; a manual run is never blocked.
+    if: github.event_name != 'schedule' || vars.PRODUCTION_SCHEDULES == 'on'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
