@@ -180,9 +180,10 @@ def test_a_database_error_is_recorded_with_postgres_detail_line():
     """Issue #149: ops.task_run.error held only "duplicate key value violates unique constraint", so the series and
     date had to be worked out from the stored responses. The DETAIL line names the key."""
     key = "test.db_detail"
-    q("""insert into ops.task (key, module, description, workflows, min_interval, overdue_after, enabled)
-         values (%s, 'test', 'runner DETAIL line test', '{daily}', '20 hours', '4 days', false)
-         on conflict (key) do nothing""", key)
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        c.execute("""insert into ops.task (key, module, description, workflows, min_interval, overdue_after, enabled)
+                     values (%s, 'test', 'runner DETAIL line test', '{daily}', '20 hours', '4 days', false)
+                     on conflict (key) do nothing""", (key,))
 
     class Twice(Task):
         workflows = ("daily",)
