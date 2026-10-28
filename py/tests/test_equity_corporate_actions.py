@@ -55,8 +55,8 @@ def nse_row(symbol: str, ex: str, subject: str, face_value: str = "10", rec: str
 # ---------------------------------------------------------------------------------------------- the parser
 @needs_fixtures
 def test_the_parser_reads_every_subject_in_the_saved_replies():
-    """Every subject of the 21 saved NSE replies (284 rows) is read in full: a kind with every number it needs. The ones it
-    can't read would be listed here; there are none."""
+    """Every subject of the 22 saved NSE replies (284 rows; MEESHO's is empty) is read in full: a kind with every
+    number it needs. The ones it can't read would be listed here; there are none."""
     seen, unread = {}, []
     for p in sorted(REPLIES.glob("nse_*.json")):
         for r in json.loads(p.read_text()):
