@@ -60,6 +60,7 @@ export function LongRatesPanel({
   const data = useMemo(() => buildLongRates(us, india, from), [us, india, from]);
   const [asTable, setAsTable] = useState(false);
   const [preset, setPreset] = useState<(typeof PRESETS)[number]["id"]>("all");
+  const [rangeKey, setRangeKey] = useState(0); // bumped by every preset click: a click always re-applies its range
   const [hovered, setHovered] = useState<string | null>(null);
   const onHover = useCallback((d: string | null) => setHovered(d), []);
 
@@ -137,7 +138,10 @@ export function LongRatesPanel({
                   key={x.id}
                   type="button"
                   aria-pressed={preset === x.id}
-                  onClick={() => setPreset(x.id)}
+                  onClick={() => {
+                    setPreset(x.id);
+                    setRangeKey((k) => k + 1);
+                  }}
                   className="border-r border-line px-2.5 py-1 text-meta text-ink-2 last:border-r-0 hover:text-ink-1 aria-pressed:bg-active aria-pressed:text-ink-1"
                 >
                   {x.label}
@@ -149,6 +153,7 @@ export function LongRatesPanel({
             <TimeSeriesChart
               series={series}
               visibleFrom={visibleFrom}
+              rangeKey={rangeKey}
               onHover={onHover}
               label="Long rates since 2019: the US 10-year Treasury yield, daily, and India's 10-year government bond yield, monthly. View as table for the values."
             />
