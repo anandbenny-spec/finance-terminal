@@ -6,6 +6,10 @@
 // left. Sorting shown by an icon and aria-sort. A row that links has a real anchor in its first cell. Below md the
 // table scrolls sideways inside its panel, with the first column sticky. Cells arrive formatted (lib/format.ts):
 // this component never formats a number.
+// `scroll` (Anand, 28 Oct 2026: the page shouldn't run on for screens): a long table stops at --table-max-h and the
+// rest of its rows scroll inside the panel, under the sticky header (Design 01 §5.4 already scrolls panels inside
+// themselves). The scroller is a named, focusable region, so a keyboard can scroll it too (WCAG 2.1.1); its focus
+// ring sits inside the edge, since the panel clips anything outside.
 import {
   flexRender,
   getCoreRowModel,
@@ -35,6 +39,7 @@ export function DataTable<Row>({
   caption,
   initialSort,
   dense = false,
+  scroll = false,
   empty,
 }: {
   columns: Column<Row>[];
@@ -44,6 +49,8 @@ export function DataTable<Row>({
   caption: string;
   initialSort?: { id: string; desc: boolean };
   dense?: boolean;
+  /** Cap the height at --table-max-h; the other rows scroll inside the panel under the sticky header. */
+  scroll?: boolean;
   /** What to show when no row matches (a StateNote). */
   empty: ReactNode;
 }) {
@@ -72,7 +79,10 @@ export function DataTable<Row>({
   const align = new Map(columns.map((c) => [c.id, c.align ?? "left"]));
 
   return (
-    <div className="overflow-x-auto">
+    <div
+      className={cn(scroll ? "max-h-(--table-max-h) overflow-auto focus-visible:-outline-offset-2" : "overflow-x-auto")}
+      {...(scroll && { role: "region", "aria-label": caption, tabIndex: 0 })}
+    >
       <table className="w-full border-collapse text-data">
         <caption className="sr-only">{caption}</caption>
         <thead className="sticky top-0 z-10 bg-raised">
