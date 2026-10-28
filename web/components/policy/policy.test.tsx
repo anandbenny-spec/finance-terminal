@@ -116,6 +116,9 @@ describe("HistoryPanel", () => {
     expect(t).toMatch(/17 Sep 2026 Fed Scheduled Cut 3\.25–3\.50 −25 11–1 1/);
     expect(out).toContain('href="/policy/rbi/2026-10-07"');
     expect(out).toContain('aria-sort="descending"');
+    // the filters stay above a capped table; its other rows scroll inside the panel (Anand, 28 Oct 2026)
+    expect(out).toMatch(/role="region" aria-label="Every FOMC and MPC rate decision since 2019" tabindex="0"/);
+    expect(out.indexOf("2 decisions")).toBeLessThan(out.indexOf('role="region"'));
   });
 
   it("says so when nothing matches", () => {
@@ -145,6 +148,7 @@ describe("ReactionsPanel (Pass 1b, #70)", () => {
     expect(t).toContain("Waiting for the first close after the decision.");
     expect(t).toContain("2 decisions");
     expect(out).toContain('href="/policy/fed/2026-09-17"');
+    expect(out).toMatch(/role="region" aria-label="Market moves around each FOMC and MPC rate decision since 2019" tabindex="0"/);
   });
 
   it("is never blank when no decision is listed", () => {

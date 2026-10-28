@@ -67,6 +67,9 @@
   --section-gap: 32px;        /* between page sections */
   --market-edge: 3px;         /* top edge in the market's series colour (Design 01 §1.15) */
   --reading-width: 68ch;
+  /* A long table's height cap (Anand, 28 Oct 2026): the header plus 12½ rows, so the cut row shows there's more,
+     and never more than 70% of a short screen (a phone held sideways). The rest scrolls inside the panel. */
+  --table-max-h: min(432px, 70dvh);
 
   /* ---- shadcn/ui roles, mapped onto the tokens above ---- */
   --background: var(--canvas);
