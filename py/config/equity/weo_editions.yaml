@@ -1,0 +1,8 @@
+# IMF World Economic Outlook release dates (Spec 02A §5.7; job 2A-05). The IMF DataMapper reply doesn't name the edition
+# it serves, so `equity.valuation_inputs` stores a changed reply under the newest edition listed here that is later than
+# the stored one, and fails the run if there is none: a new edition needs a line here, with the page it was read from.
+# Decided by Claude (standing delegation, 28 Oct 2026); the alternative was inferring the date from the API's change.
+editions:
+  - released: 2026-10-13
+    label: World Economic Outlook, October 2026
+    source: https://www.imf.org/en/publications/weo/issues/2026/10/13/world-economic-outlook-october-2026
