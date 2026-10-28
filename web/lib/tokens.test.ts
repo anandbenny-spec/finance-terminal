@@ -25,9 +25,9 @@ describe("readChartTokens", () => {
 
   it("reads the chart chrome: surface, grid, baseline, axis and legend text", () => {
     expect(t).toMatchObject({
-      surface: "#12161b",
+      surface: "#000000",
       grid: "#252a31",
-      baseline: "#343b45",
+      baseline: "#3b434e",
       axisText: "#8c939e",
       legendText: "#afb5be",
       valueText: "#e6e8eb",

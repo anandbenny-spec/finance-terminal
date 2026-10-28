@@ -1,5 +1,5 @@
 /* web/app/globals.css — Finance Terminal design tokens (Design 01, 20 Oct 2026).
-   Dark only. Every colour below was contrast-checked (Design 01 §8); change one only by re-running that check.
+   Dark, all black (29 Oct 2026). Every colour below was contrast-checked (Design 01 §8); change one only by re-running that check.
    shadcn/ui reads the role variables (--background, --primary, …); our components read the finance
    variables (--canvas, --up, --series-1, …). Note the name clash: in shadcn, "accent" is the HOVER SURFACE,
    not a brand colour. The amber is "primary". */
@@ -12,14 +12,14 @@
   color-scheme: dark;
 
   /* ---- surfaces ---- */
-  --canvas: #08090b;          /* page background */
-  --panel: #12161b;           /* panels, top bar, sidebar */
-  --raised: #1a1f26;          /* panel header bars, table headers, popovers, inputs, row hover */
-  --active: #232931;          /* selected row, pressed, active nav item */
+  --canvas: #000000;          /* page background */
+  --panel: #000000;           /* panels, top bar, sidebar */
+  --raised: #15191f;          /* panel header bars, table headers, popovers, inputs, row hover */
+  --active: #20262e;          /* selected row, pressed, active nav item */
 
   /* ---- lines ---- */
   --line: #252a31;            /* hairline: panel borders, row dividers, chart grid (decorative) */
-  --line-strong: #343b45;     /* panel outlines, header rules, section rules, axis baselines, qualifier borders */
+  --line-strong: #3b434e;     /* panel outlines, header rules, section rules, axis baselines, qualifier borders */
   --line-input: #646c78;      /* input and control boundaries (>= 3:1 on panel and raised) */
 
   /* ---- ink (text) ---- */
