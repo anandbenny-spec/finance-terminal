@@ -19,6 +19,7 @@ import {
   readDecisionDocument,
   readFieldPolicy,
   readSeriesInfo,
+  readStatementChanges,
   readVotes,
   readDecisions,
   readFedTargetSteps,
@@ -424,5 +425,39 @@ describe("C4's reads keep the row-limit guard (N2)", () => {
     expect((await readProjections(db, "2026-10-07")).map((f) => f.series_key)).toEqual(["rbi.proj_cpi", "rbi.proj_gdp"]);
     expect((await readDiff(db, 9))?.base_document_id).toBe(7);
     expect(await readDiff(db, 10)).toBeNull();
+  });
+});
+
+describe("readStatementChanges (ChangeStrip, #89)", () => {
+  const doc = (id: number, doc_type: string, event_slug: string | null, version_no = 1): Row => ({ id, doc_type, event_slug, version_no });
+  const diff = (document_id: number): Row => ({
+    document_id, base_document_id: document_id - 1, segments: { version: 2, words: { old: 400, new: 420 }, pairs: [{ kind: "same", text: "never sent" }] },
+    words_added: 12, words_removed: 8,
+  });
+
+  it("reads the decision documents and the diffs' stored counts and lengths, not their sentences", async () => {
+    const { db, seen } = fakeClient({
+      documents: [doc(1, "fomc_statement", "fomc-2026-09-16"), doc(2, "mpc_resolution", "mpc-2026-10-07"), doc(3, "mpc_minutes", "mpc-2026-10-07"), doc(4, "fomc_statement", "fomc-2026-09-16", 2)],
+      document_diffs: [diff(2), diff(3), diff(4)],
+    });
+    const { documents, diffs } = await readStatementChanges(db);
+    expect(documents.map((d) => d.id)).toEqual([1, 2, 4]);
+    expect(diffs.map((d) => d.document_id)).toEqual([2, 4]);
+    expect(diffs[0]).toEqual({ document_id: 2, words_added: 12, words_removed: 8, words: { old: 400, new: 420 } });
+    expect(seen.find((r) => r.view === "document_diffs")!.params.get("select")).not.toMatch(/(^|,)\s*segments\s*(,|$)/);
+  });
+
+  it("reads the diffs of a long list of documents in slices, and every one of them", async () => {
+    const docs = Array.from({ length: 450 }, (_, k) => doc(k + 1, "mpc_resolution", `mpc-${k}`));
+    const { db, seen } = fakeClient({ documents: docs, document_diffs: docs.map((d) => diff(Number(d.id))) });
+    const { documents, diffs } = await readStatementChanges(db);
+    expect(documents).toHaveLength(450);
+    expect(diffs).toHaveLength(450);
+    expect(seen.filter((r) => r.view === "document_diffs").length).toBe(3);
+  });
+
+  it("is empty, not an error, when nothing is stored yet", async () => {
+    const { db } = fakeClient({ documents: [], document_diffs: [] });
+    await expect(readStatementChanges(db)).resolves.toEqual({ documents: [], diffs: [] });
   });
 });

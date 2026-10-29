@@ -42,8 +42,12 @@ function read(style: StyleSource, name: string): string {
   return value;
 }
 
+// The stylesheet's minifier writes `#000000` as `#000` (and `#ffffff` as `#fff`), so the browser hands back the short
+// form: it is read as the same colour and returned as #rrggbb. (#154's all-black canvas and panel made every chart throw
+// on the shortened --panel until this was added; found while building ChangeStrip, #89.)
 function hex(style: StyleSource, name: string): string {
-  const value = read(style, name).toLowerCase();
+  let value = read(style, name).toLowerCase();
+  if (/^#[0-9a-f]{3}$/.test(value)) value = `#${[...value.slice(1)].map((c) => c + c).join("")}`;
   if (!/^#[0-9a-f]{6}$/.test(value)) throw new Error(`Design token ${name} should be #rrggbb, got "${value}"`);
   return value;
 }

@@ -45,6 +45,19 @@ describe("readChartTokens", () => {
   });
 });
 
+describe("a minified stylesheet's short colours", () => {
+  it("reads #000 and #fff as #000000 and #ffffff (the minifier shortens them; all-black made --panel #000)", () => {
+    const t = readChartTokens(style({ "--panel": "#000", "--series-1": "#FFF" }));
+    expect(t.surface).toBe("#000000");
+    expect(t.series[1]).toBe("#ffffff");
+  });
+
+  it("still refuses a colour that isn't a hex value", () => {
+    expect(() => readChartTokens(style({ "--panel": "#0000" }))).toThrow(/#rrggbb/);
+    expect(() => readChartTokens(style({ "--panel": "black" }))).toThrow(/#rrggbb/);
+  });
+});
+
 describe("colour follows the entity, never its order on a chart", () => {
   const t = readChartTokens(style());
 
