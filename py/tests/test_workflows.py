@@ -387,3 +387,36 @@ def test_the_keep_alive_fails_when_github_refuses_to_enable_a_workflow(tmp_path)
     code, out, enabled = _run_keep_alive(tmp_path, dict.fromkeys(KEPT_ALIVE, "active"), put_fails=["daily.yml"])
     assert code == 1 and "could not enable daily.yml" in out
     assert enabled == KEPT_ALIVE
+
+
+# ---------------------------------------------------------------- the watch schedules (issue #158)
+
+def test_the_watch_runs_a_primary_inside_the_windows_lead_and_two_weekday_catch_ups_per_bank():
+    """GitHub starts scheduled runs late and sometimes never (33 minutes late on 27 Oct; the 28 Oct FOMC run was not
+    created). The primary starts inside the window's lead, so a start up to about 45 minutes late still polls; two
+    catch-up runs follow on weekdays, after the window has closed (one pass each: due.py's catch-up)."""
+    from datetime import date, datetime, time, timedelta
+
+    from ft.jobs.due import BANKS, LEAD
+
+    wf = load("watch")
+    got = [(e["cron"], e["timezone"]) for e in wf["on"]["schedule"]]
+    assert got == [("52 13 * * *", "America/New_York"), ("12 15 * * 1-5", "America/New_York"),
+                   ("42 17 * * 1-5", "America/New_York"), ("52 9 * * *", "Asia/Kolkata"),
+                   ("12 11 * * 1-5", "Asia/Kolkata"), ("42 13 * * 1-5", "Asia/Kolkata")]
+    timeout = timedelta(minutes=wf["jobs"]["run"]["timeout-minutes"])
+
+    def start(cron):
+        minute, hour, *_ = cron.split()
+        return datetime.combine(date(2030, 1, 1), time(int(hour), int(minute)))
+
+    for bank in BANKS.values():
+        primary, *catch_ups = [c for c, tz in got if tz == bank.tz.key]
+        release = datetime.combine(date(2030, 1, 1), bank.release)
+        assert primary.split()[2:] == ["*", "*", "*"]                       # every day, as before
+        assert release - LEAD <= start(primary) < release                   # inside the lead: a late start still polls
+        assert release + bank.window - start(primary) < timeout             # polling to the window's close fits
+        assert len(catch_ups) == 2
+        for cron in catch_ups:
+            assert cron.split()[2:] == ["*", "*", "1-5"]                    # weekdays
+            assert start(cron) >= release + bank.window                     # the window has closed: one pass

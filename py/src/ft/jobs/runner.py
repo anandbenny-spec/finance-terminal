@@ -237,8 +237,10 @@ class JobRun:
         out.append((key, status))
 
     def run_pass(self, tasks: list[Task], *, only: str | None = None, force: bool = False,
-                 record_skips: bool = True) -> list[tuple[str, str]]:
-        """Run each due task once. With record_skips=False (watch's later polls), tasks that aren't due leave no row."""
+                 record_skips: bool = True, catch_up: bool = True) -> list[tuple[str, str]]:
+        """Run each due task once. With record_skips=False (watch's later polls), tasks that aren't due leave no row.
+        With catch_up=False (those polls too) a task that is due only as a catch-up (a closed decision-day window) is
+        left alone: a catch-up gets the run's first pass and no more."""
         self.db.ensure()                                           # idle between watch polls: reconnect if dropped
         out: list[tuple[str, str]] = []
         for t in _order(tasks):
@@ -255,6 +257,10 @@ class JobRun:
                 if record_skips:
                     self._skip(t.key, "skipped_not_due", d.reason, out)
                 continue
+            if d.catch_up and not catch_up:
+                continue
+            if d.catch_up:
+                print(f"  {t.key}: {d.reason}")                    # the run log says why it ran
             tr = self.db.execute("insert into ops.task_run (job_run_id, task_key) values (%s,%s) returning id",
                                  (self.id, t.key)).fetchone()[0]
             if not self.db.lock(t.key):
