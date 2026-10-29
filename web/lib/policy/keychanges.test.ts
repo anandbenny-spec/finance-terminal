@@ -1,7 +1,7 @@
 // Key changes' model (Design 01 §1.16 layer 2) from a stored diff: grouped by topic in the document's order with
 // "Other" last, Before = eq + del words, Now = eq + ins words, whole added/removed sentences with the other side empty.
 import { describe, expect, it } from "vitest";
-import { buildKeyChanges } from "./keychanges";
+import { buildKeyChanges, previewKeyChanges } from "./keychanges";
 import { parsePairs } from "./redline";
 
 const SEGMENTS = {
@@ -36,5 +36,40 @@ describe("buildKeyChanges", () => {
     expect([removed.kind, removed.now, removed.before!.para]).toEqual(["removed", null, 4]);
     const added = k.groups[3].rows[0];
     expect([added.kind, added.before, added.now!.para]).toEqual(["added", null, 4]);
+  });
+});
+
+describe("previewKeyChanges (the front page's first rows, #152)", () => {
+  const k = buildKeyChanges(parsePairs(SEGMENTS)!);
+
+  it("takes the first n rows in Key changes' own order and counts the others", () => {
+    const p = previewKeyChanges(k, 3);
+    expect(p.groups.map((g) => g.topic)).toEqual(["Decision and guidance", "Monitoring", "Votes"]);
+    expect([p.shown, p.others]).toEqual([3, 1]);
+  });
+
+  it("cuts inside a topic when ties across topics fill the limit", () => {
+    const two = buildKeyChanges(
+      parsePairs({
+        version: 2,
+        pairs: [
+          { kind: "added", topic: "Inflation", text: "One.", old_para: [], new_para: [1] },
+          { kind: "added", topic: "Inflation", text: "Two.", old_para: [], new_para: [2] },
+          { kind: "added", topic: "Growth", text: "Three.", old_para: [], new_para: [3] },
+        ],
+      })!,
+    );
+    const p = previewKeyChanges(two, 1);
+    expect(p.groups.map((g) => [g.topic, g.rows.length])).toEqual([["Inflation", 1]]);
+    expect(p.others).toBe(2);
+    const q = previewKeyChanges(two, 2);
+    expect(q.groups.map((g) => [g.topic, g.rows.length])).toEqual([["Inflation", 2]]);
+    expect(q.others).toBe(1);
+  });
+
+  it("shows everything, with no others, when there are fewer rows than n", () => {
+    const p = previewKeyChanges(k, 10);
+    expect([p.shown, p.others]).toEqual([4, 0]);
+    expect(previewKeyChanges(buildKeyChanges([]), 3)).toEqual({ groups: [], shown: 0, others: 0 });
   });
 });

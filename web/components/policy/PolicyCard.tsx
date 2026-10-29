@@ -18,7 +18,7 @@ import { decisionLine, meetingHref, meetingTabHref, stanceText, tally } from "@/
 import type { LatestDecision } from "@/lib/queries/overview";
 import type { Bank } from "@/lib/queries/policy";
 
-function Row({ term, children }: { term: string; children: ReactNode }) {
+export function Row({ term, children }: { term: string; children: ReactNode }) {
   return (
     <div className="flex gap-4">
       <dt className="w-20 shrink-0 text-ink-2">{term}</dt>

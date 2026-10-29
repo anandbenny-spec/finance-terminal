@@ -8,7 +8,7 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { formatAxisNumber } from "@/lib/format";
-import type { KeyChanges as Model, KeySide } from "@/lib/policy/keychanges";
+import { previewKeyChanges, type KeyChanges as Model, type KeySide } from "@/lib/policy/keychanges";
 
 const TAB_ON = "bg-raised text-ink-1";
 const TAB_OFF = "text-ink-2 hover:text-ink-1";
@@ -28,7 +28,7 @@ function Side({ side, label, doc, absent }: { side: KeySide; label: string; doc:
     <div className="min-w-0 md:col-span-2">
       <span className="mb-1 block text-meta text-ink-3 md:hidden">{label}</span>
       {side ? (
-        <p className="break-words text-data text-ink-1">
+        <p className="break-words text-ui text-ink-1">
           <Words side={side} />
           {side.para !== null && (
             <>
@@ -40,7 +40,7 @@ function Side({ side, label, doc, absent }: { side: KeySide; label: string; doc:
           )}
         </p>
       ) : (
-        <p className="text-data italic text-ink-3">{absent}</p>
+        <p className="text-ui italic text-ink-3">{absent}</p>
       )}
     </div>
   );
@@ -52,13 +52,22 @@ export function KeyChanges({
   now,
   unchangedParagraphs,
   redline,
+  limit,
+  seeAllHref,
 }: {
   model: Model;
   before: KeyDoc;
   now: KeyDoc;
-  unchangedParagraphs: number;
-  /** The full redline, shown behind the switch. */
-  redline: ReactNode;
+  /** Not needed in the preview (`limit`). */
+  unchangedParagraphs?: number;
+  /** The full redline, shown behind the switch. Not needed in the preview. */
+  redline?: ReactNode;
+  /**
+   * The preview (the front page, #152): only the first `limit` rows in Key changes' own order, no Key changes / Full
+   * redline switch, ending with how many other sentences changed and a link to all of them (`seeAllHref`).
+   */
+  limit?: number;
+  seeAllHref?: string;
 }) {
   const [view, setView] = useState<"key" | "full">("key");
   const tab = (id: "key" | "full", text: string) => (
@@ -71,15 +80,17 @@ export function KeyChanges({
       {text}
     </button>
   );
+  const preview = limit !== undefined ? previewKeyChanges(model, limit) : null;
+  const groups = preview ? preview.groups : model.groups;
   return (
     <div>
-      <div className="mb-3 inline-flex gap-1 rounded-md border border-line p-0.5" role="group" aria-label="Show the changes as">
+      {!preview && <div className="mb-3 inline-flex gap-1 rounded-md border border-line p-0.5" role="group" aria-label="Show the changes as">
         {tab("key", "Key changes")}
         {tab("full", "Full redline")}
-      </div>
-      {view === "full" ? (
+      </div>}
+      {!preview && view === "full" ? (
         redline
-      ) : model.groups.length === 0 ? (
+      ) : groups.length === 0 ? (
         <p className="text-data text-ink-2">No sentence changed against the previous one.</p>
       ) : (
         <>
@@ -88,10 +99,10 @@ export function KeyChanges({
             <span className="md:col-span-2">Before ({before.date})</span>
             <span className="md:col-span-2">Now ({now.date})</span>
           </div>
-          {model.groups.map((g) => (
+          {groups.map((g) => (
             <section key={g.topic} aria-label={g.topic} className="border-b border-line py-3">
               {g.rows.map((r, i) => (
-                <div key={r.key} className="grid gap-x-4 gap-y-2 py-2 md:grid-cols-5">
+                <div key={r.key} className="grid gap-x-4 gap-y-2 py-2.5 md:grid-cols-5">
                   <span className="text-meta font-medium text-ink-2">{i === 0 ? g.topic : <span className="sr-only">{g.topic}</span>}</span>
                   <Side side={r.before} label={`Before (${before.date})`} doc={before} absent="added" />
                   <Side side={r.now} label={`Now (${now.date})`} doc={now} absent="removed" />
@@ -99,10 +110,27 @@ export function KeyChanges({
               ))}
             </section>
           ))}
-          <p className="mt-3 text-meta text-ink-3">
-            {formatAxisNumber(model.changedSentences, 0)} {model.changedSentences === 1 ? "sentence" : "sentences"} changed · {formatAxisNumber(unchangedParagraphs, 0)}{" "}
-            {unchangedParagraphs === 1 ? "paragraph" : "paragraphs"} unchanged
-          </p>
+          {preview ? (
+            <p className="mt-3 text-meta text-ink-3">
+              {preview.others > 0 && (
+                <>
+                  {formatAxisNumber(preview.others, 0)} other {preview.others === 1 ? "sentence" : "sentences"} changed ·{" "}
+                </>
+              )}
+              {seeAllHref && (
+                <Link href={seeAllHref} className="text-ink-1 underline">
+                  See all changes →
+                </Link>
+              )}
+            </p>
+          ) : (
+            unchangedParagraphs !== undefined && (
+              <p className="mt-3 text-meta text-ink-3">
+                {formatAxisNumber(model.changedSentences, 0)} {model.changedSentences === 1 ? "sentence" : "sentences"} changed · {formatAxisNumber(unchangedParagraphs, 0)}{" "}
+                {unchangedParagraphs === 1 ? "paragraph" : "paragraphs"} unchanged
+              </p>
+            )
+          )}
         </>
       )}
     </div>

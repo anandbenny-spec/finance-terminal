@@ -1,5 +1,5 @@
 // web/lib/shell/nav.ts: the sidebar's groups (Design 01 §1.11, §4.1; Spec 01 §4.1). Live pages only: a page joins
-// the list when it ships, never as "coming soon". Start here (the landing page, 3–12 Nov), Policy Day (Pass 1b)
+// the list when it ships, never as "coming soon". Start here (the front page, #152; the guided tour joins it later), Policy Day (Pass 1b)
 // and How it's built (stage 2) join then. About (#86) is live: the data ownership statement and privacy note. The admin group shows only to the logged-in admin (C6 builds the login).
 //
 // An item may carry section links (`sections`, #147): indented rows under it, no icon, never marked current. A
@@ -9,7 +9,7 @@
 // merging main, and update nav.test.ts's lists.
 import { POLICY_SECTION_LIST, policySectionHref } from "@/lib/policy/sections";
 
-export type NavIcon = "policy" | "about" | "admin" | "health" | "labelling";
+export type NavIcon = "home" | "policy" | "about" | "admin" | "health" | "labelling";
 
 /** A link under an item: a label and a live target, no icon. */
 export type NavSubLink = { href: string; label: string };
@@ -19,6 +19,7 @@ export type NavItem = { href: string; label: string; icon: NavIcon; sections?: r
 export type NavGroup = { heading: string; items: NavItem[]; adminOnly?: boolean };
 
 export const NAV: readonly NavGroup[] = [
+  { heading: "Overview", items: [{ href: "/", label: "Start here", icon: "home" }] },
   {
     heading: "Macro and policy",
     items: [
@@ -60,7 +61,8 @@ export function activeHref(pathname: string | null, nav: readonly NavGroup[] = N
   if (!pathname) return null;
   let best: string | null = null;
   for (const { href } of nav.flatMap((g) => g.items)) {
-    const matches = pathname === href || pathname.startsWith(`${href}/`);
+    // "/" is every path's parent, so it marks only the front page itself.
+    const matches = href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
     if (matches && (!best || href.length > best.length)) best = href;
   }
   return best;
