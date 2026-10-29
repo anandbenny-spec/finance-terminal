@@ -91,6 +91,14 @@ class Fetched:
     note: str = ""
 
 
+def _previous_session(d: date) -> date | None:
+    """The session before ``d``; None where the calendar starts (the first 2019 session has no earlier day to compare)."""
+    try:
+        return calendars.previous_session(CALENDAR, d)
+    except calendars.CalendarYearError:
+        return None
+
+
 @register
 class EquityPrices(Task):
     key = "equity.prices"
@@ -282,16 +290,16 @@ class EquityPrices(Task):
             first = min(x.day for x in f.days)
             closes = {(eid, ex, d): c for eid, ex, d, c in tx.execute(
                 "select entity_id, exchange, trade_date, close from equity.price_daily where trade_date between %s and %s",
-                (calendars.previous_session(CALENDAR, first), max(x.day for x in f.days))).fetchall()}
+                (_previous_session(first) or first, max(x.day for x in f.days))).fetchall()}
         else:
             closes = {}
         blocked, single, compared = [], [], 0
         for x in sorted(f.days, key=lambda y: (y.exchange, y.day)):
-            prev = calendars.previous_session(CALENDAR, x.day)
+            prev = _previous_session(x.day)
             seen = bad = 0
             names = []
             for eid, row in x.rows.items():
-                before = closes.get((eid, x.exchange, prev))
+                before = closes.get((eid, x.exchange, prev)) if prev else None
                 if before is None or row.prev_close is None:
                     continue
                 seen += 1
