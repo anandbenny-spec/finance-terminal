@@ -61,3 +61,9 @@ equity.corporate_actions:
   run_after: [equity.prices]
   overdue_after: 10 days
   uses_nse: true
+equity.statements:
+  description: Statements parsed from the stored results XBRL filings (quarter, year to date and balance sheet), each filing checked before its figures are stored
+  workflows: {weekly: every 6 days}
+  run_after: [equity.filings]
+  overdue_after: 10 days
+  uses_nse: false
