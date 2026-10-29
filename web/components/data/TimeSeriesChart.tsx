@@ -2,7 +2,8 @@
 
 // TimeSeriesChart (Design 01 §1.5, §2.3, §4.4): the one wrapper around Lightweight Charts 5, so an upgrade touches
 // this file (and band-series.ts). Series kinds: `step` (policy rates), `line`, `band` (a range between two values,
-// a custom series). At most three series, one y-axis on the right, horizontal gridlines in --line, axis text in
+// a custom series) and `histogram` (bars from a zero line: ChangeStrip's added and removed words, #89, which also uses
+// `axisFormat`, `valueRange`, `onSelect` and `compact`). At most three series, one y-axis on the right, horizontal gridlines in --line, axis text in
 // Plex Mono 12 px --ink-3, the crosshair a vertical hairline that snaps to the nearest day, no floating tooltip:
 // the parent's legend row turns into the readout through `onHover`. Colours follow the entity, read once from the
 // tokens at mount (lib/tokens.ts). The TradingView logo stays off; the footer carries the licence's link.
@@ -21,6 +22,7 @@
 import {
   ColorType,
   CrosshairMode,
+  HistogramSeries,
   LineSeries,
   LineStyle,
   LineType,
@@ -37,7 +39,9 @@ import { CHART, bandFill, chartTokens, entityColour, type ChartEntity } from "@/
 
 export type ChartSeries =
   | { id: string; kind: "band"; entity: ChartEntity; data: { time: string; low: number; high: number }[]; lowerEdge?: boolean }
-  | { id: string; kind: "step" | "line"; entity: ChartEntity; data: { time: string; value: number }[] };
+  | { id: string; kind: "step" | "line"; entity: ChartEntity; data: { time: string; value: number }[] }
+  // Bars from a zero line (ChangeStrip, Design 01 §1.16): `tone` picks the added-words or removed-words ink.
+  | { id: string; kind: "histogram"; tone: "ins" | "del"; data: { time: string; value: number }[] };
 
 export type ChartMarker = { time: string; seriesId: string; price: number };
 
@@ -75,6 +79,10 @@ export default function TimeSeriesChart({
   rangeKey = 0,
   label,
   onHover,
+  onSelect,
+  axisFormat = formatAxisNumber,
+  valueRange,
+  compact = false,
 }: {
   /** Keep its identity between renders (useMemo): a new array rebuilds the chart. */
   series: ChartSeries[];
@@ -87,15 +95,25 @@ export default function TimeSeriesChart({
   /** The chart's accessible name; "View as table" carries the values. */
   label: string;
   onHover?: (date: string | null) => void;
+  /** A click on the chart: the day under the pointer (null when it isn't on a data point). */
+  onSelect?: (date: string | null) => void;
+  /** The price axis' labels; keep its identity between renders (a module-level function). Default: fixed decimals. */
+  axisFormat?: (value: number) => string;
+  /** Fixes the price axis to this range instead of fitting the data (ChangeStrip's shared ±scale); keep its identity. */
+  valueRange?: { min: number; max: number };
+  /** A strip, not a lead chart: 160 px tall instead of 320. */
+  compact?: boolean;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const hover = useRef(onHover);
+  const select = useRef(onSelect);
   const from = useRef(visibleFrom);
   useEffect(() => {
     hover.current = onHover;
+    select.current = onSelect;
     from.current = visibleFrom;
-  }, [onHover, visibleFrom]);
+  }, [onHover, onSelect, visibleFrom]);
 
   useEffect(() => {
     const el = box.current;
@@ -119,7 +137,7 @@ export default function TimeSeriesChart({
         vertLine: { color: t.baseline, width: 1, style: LineStyle.Solid, labelVisible: false },
         horzLine: { visible: false, labelVisible: false },
       },
-      localization: { priceFormatter: (p: number) => formatAxisNumber(p), timeFormatter: (time: Time) => formatDate(timeToDate(time)) },
+      localization: { priceFormatter: (p: number) => axisFormat(p), timeFormatter: (time: Time) => formatDate(timeToDate(time)) },
       handleScroll: { vertTouchDrag: false },
       // Up/down wheel and trackpad scrolls go to the page; double-clicking the date axis doesn't reset the zoom.
       handleScale: { mouseWheel: false, axisDoubleClickReset: { time: false, price: true } },
@@ -128,6 +146,18 @@ export default function TimeSeriesChart({
 
     const byId = new Map<string, ReturnType<IChartApi["addSeries"]> | ReturnType<IChartApi["addCustomSeries"]>>();
     for (const s of series) {
+      if (s.kind === "histogram") {
+        const bars = c.addSeries(HistogramSeries, {
+          color: s.tone === "ins" ? t.ins : t.del,
+          base: 0,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          ...(valueRange ? { autoscaleInfoProvider: () => ({ priceRange: { minValue: valueRange.min, maxValue: valueRange.max } }) } : {}),
+        });
+        bars.setData(s.data);
+        byId.set(s.id, bars);
+        continue;
+      }
       const colour = entityColour(t, s.entity);
       if (s.kind === "band") {
         const band = c.addCustomSeries<BandData, BandOptions>(new BandSeries(), {
@@ -157,24 +187,27 @@ export default function TimeSeriesChart({
       const own = markers.filter((m) => m.seriesId === id);
       if (own.length === 0) continue;
       const s = series.find((x) => x.id === id)!;
+      if (s.kind === "histogram") continue; // bars carry no decision-day markers
+      const markerColour = entityColour(t, s.entity);
       createSeriesMarkers(
         target,
-        own.map((m) => ({ time: m.time, position: "atPriceMiddle" as const, price: m.price, shape: "circle" as const, color: entityColour(t, s.entity), size: 0.5 })),
+        own.map((m) => ({ time: m.time, position: "atPriceMiddle" as const, price: m.price, shape: "circle" as const, color: markerColour, size: 0.5 })),
       );
     }
 
     showRange(c, series, from.current);
     c.subscribeCrosshairMove((param) => hover.current?.(param.time ? timeToDate(param.time) : null));
+    c.subscribeClick((param) => select.current?.(param.time ? timeToDate(param.time) : null));
     return () => {
       chart.current = null;
       c.remove();
     };
-  }, [series, markers]);
+  }, [series, markers, axisFormat, valueRange]);
 
   // A preset click (a new `visibleFrom`, or the same one with a new `rangeKey`) moves the existing chart's view.
   useEffect(() => {
     if (chart.current) showRange(chart.current, series, visibleFrom);
   }, [series, visibleFrom, rangeKey]);
 
-  return <div ref={box} role="img" aria-label={label} className="h-80 w-full" />;
+  return <div ref={box} role="img" aria-label={label} className={compact ? "h-40 w-full" : "h-80 w-full"} />;
 }

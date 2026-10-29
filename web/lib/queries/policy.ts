@@ -33,6 +33,7 @@ import type {
   PolicyVoteRow,
   SeriesRow,
 } from "@/lib/queries/api";
+import type { StripDiff, StripDocument } from "@/lib/policy/changestrip";
 import { IncompleteReadError, readAll, type PageResult } from "@/lib/queries/read";
 
 export type PolicyDb = SupabaseClient<ApiDatabase, "api">;
@@ -444,4 +445,39 @@ export async function readDiff(db: PolicyDb, documentId: number): Promise<Docume
       .eq("document_id", documentId)
       .limit(1),
   );
+}
+
+// ------------------------------------------------------------------ How much each statement changed (ChangeStrip)
+
+/**
+ * What ChangeStrip reads (Pass 1b, #89), for /policy and the front page: every version of both banks' decision
+ * documents (the FOMC statement, the MPC resolution), and their diffs with only the stored word counts and
+ * `segments->words` (the two texts' lengths), not the diffs' sentences. Both lists are paged against an exact count.
+ */
+export async function readStatementChanges(db: PolicyDb): Promise<{ documents: StripDocument[]; diffs: StripDiff[] }> {
+  const documents = await readAll<StripDocument>("api.documents decision documents", (from, to) =>
+    db
+      .from("documents")
+      .select("id, event_slug, version_no", { count: "exact" })
+      .in("doc_type", Object.values(DECISION_DOC_TYPES))
+      .order("id")
+      .range(from, to),
+  );
+  const ids = documents.map((d) => d.id);
+  // Each id list is a short URL (a few dozen rows a bank), but a long list is read in slices of 200 to keep it so.
+  const diffs: StripDiff[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const slice = ids.slice(i, i + 200);
+    diffs.push(
+      ...(await readAll<StripDiff>(`api.document_diffs of ${slice.length} decision documents`, (from, to) =>
+        db
+          .from("document_diffs")
+          .select<string, StripDiff>("document_id, words_added, words_removed, words:segments->words", { count: "exact" })
+          .in("document_id", slice)
+          .order("document_id")
+          .range(from, to),
+      )),
+    );
+  }
+  return { documents, diffs };
 }

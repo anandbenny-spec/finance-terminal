@@ -7,6 +7,7 @@
 // never see errors: Arch 02). Nothing here computes a figure; it returns rows.
 import { cacheLife, cacheTag } from "next/cache";
 import { dateInZone } from "@/lib/format";
+import type { StripDiff, StripDocument } from "@/lib/policy/changestrip";
 import { IN_10Y, US_10Y } from "@/lib/policy/longrates";
 import { REACTION_SERIES } from "@/lib/policy/reactions";
 import type {
@@ -35,6 +36,7 @@ import {
   readRbiRateSettings,
   readReactions,
   readSeriesInfo,
+  readStatementChanges,
   readVotes,
   type Bank,
   type PolicyDb,
@@ -104,6 +106,8 @@ export type PolicyOverview = {
   reactions: Read<{ rows: MarketReactionRow[]; series: SeriesRow[] }>;
   /** The US and India 10-year yields since 2019, every row the database holds (Pass 1b, #71). */
   longRates: Read<{ us: ObservationRow[]; india: ObservationRow[]; series: SeriesRow[] }>;
+  /** The decision documents and the stored word counts of their diffs: ChangeStrip's inputs (#89). The front page (#152) reads the same. */
+  changes: Read<{ documents: StripDocument[]; diffs: StripDiff[] }>;
 };
 
 const UNCONFIGURED = "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set";
@@ -116,11 +120,11 @@ export async function readPolicyOverview(): Promise<PolicyOverview> {
   const db = publicClient();
   if (!db) {
     const no = failed("overview", UNCONFIGURED);
-    return { readAt, fieldPolicy: no, history: no, fed: no, rbi: no, rates: no, reactions: no, longRates: no };
+    return { readAt, fieldPolicy: no, history: no, fed: no, rbi: no, rates: no, reactions: no, longRates: no, changes: no };
   }
   // Decisions are dated in each bank's zone; the range runs to today in IST, which is never behind New York's date.
   const range = { from: POLICY_START, to: dateInZone(readAt, "Asia/Kolkata") };
-  const [fieldPolicy, history, fed, rbi, rates, reactions, longRates] = await Promise.all([
+  const [fieldPolicy, history, fed, rbi, rates, reactions, longRates, changes] = await Promise.all([
     attempt("field policy", async () => ({ rows: await readFieldPolicy(db) })),
     attempt("history", async () => {
       const decisions = await readDecisions(db, range);
@@ -148,6 +152,7 @@ export async function readPolicyOverview(): Promise<PolicyOverview> {
       ]);
       return { us, india, series };
     }),
+    attempt("statement changes", () => readStatementChanges(db)),
   ]);
-  return { readAt, fieldPolicy, history, fed, rbi, rates, reactions, longRates };
+  return { readAt, fieldPolicy, history, fed, rbi, rates, reactions, longRates, changes };
 }

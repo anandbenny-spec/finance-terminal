@@ -2,7 +2,7 @@
 // the rates chart), the latest decisions (a PolicyCard per bank: D13) and every decision since 2019. Every figure is
 // a row an `api` view returned with the browser key (lib/queries/overview.ts), formatted by lib/format.ts; every
 // panel says the question it answers and carries SourceLine and Freshness; no panel is ever blank (StateNote).
-// No hawk/dove UI (D9). Pass 1b adds the decision-day moves (#70) and long rates (#71); the change strip joins later.
+// No hawk/dove UI (D9). Pass 1b adds the decision-day moves (#70), long rates (#71) and the change strip (#89).
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Countdown } from "@/components/data/Countdown";
@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/data/PageHeader";
 import { Panel, PanelGrid } from "@/components/data/Panel";
 import { Section } from "@/components/data/SectionHeading";
 import { SourceLine } from "@/components/data/SourceLine";
+import { ChangeStrip } from "@/components/ai/ChangeStrip";
 import { Stat, StatRow } from "@/components/data/Stat";
 import { StateNote } from "@/components/data/StateNote";
 import { HistoryPanel } from "@/components/policy/HistoryPanel";
@@ -21,6 +22,7 @@ import { LongRatesPanel } from "@/components/policy/LongRatesPanel";
 import { RatesPanel } from "@/components/policy/RatesPanel";
 import { FEEDS, type TaskKey } from "@/lib/feeds";
 import { NOT_AVAILABLE, formatAxisNumber, formatAxisRange, formatDate, formatReleaseTime, type EventZone } from "@/lib/format";
+import { buildChangeStrips, stripScale } from "@/lib/policy/changestrip";
 import { changeInWords, historyRows, lastMove, stanceText } from "@/lib/policy/decisions";
 import { pressReleaseLabel } from "@/lib/policy/document";
 import { reactionRows, reactionSources } from "@/lib/policy/reactions";
@@ -133,6 +135,7 @@ export default async function PolicyPage() {
   const pageFresh = panelFreshness(freshness, allTasks, null, now);
   const stanceLabel = policies?.find((p) => p.field_key === "ai.stance_extraction" && p.status === "labelled")?.label ?? null;
   const rbiDoc = rbi?.document;
+  const strips = o.changes.ok && o.history.ok ? buildChangeStrips(o.history.decisions, o.changes.documents, o.changes.diffs) : null;
 
   return (
     <>
@@ -221,6 +224,26 @@ export default async function PolicyPage() {
               rbi?.meeting?.decision_date ?? null,
             )}
           />
+        </PanelGrid>
+      </Section>
+
+      <Section id="statement-changes" title="How much each statement changed">
+        <PanelGrid>
+          {o.changes.ok && o.history.ok ? (
+            <ChangeStrip
+              strips={strips!}
+              scale={stripScale(strips!)}
+              refresh={FEEDS.policyChanges}
+              footer={foot(
+                // The counts are of the banks' own documents; the shares are ours, derived from the counts.
+                [fedSource, rbiSource],
+                FEEDS.policyChanges,
+                latestOf(...strips!.flatMap((s) => s.bars.map((b) => b.date))),
+              )}
+            />
+          ) : (
+            <ErrorPanel title="How much each statement changed" id="panel-change-strip" refresh={FEEDS.policyChanges} />
+          )}
         </PanelGrid>
       </Section>
 

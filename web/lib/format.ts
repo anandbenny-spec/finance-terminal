@@ -135,6 +135,23 @@ export function formatAxisChange(value: Num, decimals = 0): string {
   return digits(value, { decimals, grouping: false, signed: true });
 }
 
+/** A share of a text in percent with its sign always, one decimal: `12.34` → `+12.3%`, `-4` → `−4.0%`, `0` → `0.0%`. */
+export function formatShareChange(pct: Num, decimals = 1): string {
+  if (isMissing(pct)) return NOT_AVAILABLE;
+  return `${digits(pct, { decimals, grouping: false, signed: true })}%`;
+}
+
+/** A share of a text in percent, no sign, one decimal: `12.34` → `12.3%`. */
+export function formatShare(pct: Num, decimals = 1): string {
+  if (isMissing(pct)) return NOT_AVAILABLE;
+  return `${digits(pct, { decimals, grouping: false })}%`;
+}
+
+/** A chart-axis label in percent, signed, whole numbers: `60` → `+60%`, `-60` → `−60%`, `0` → `0%`. */
+export function formatAxisShare(pct: Num): string {
+  return formatShareChange(pct, 0);
+}
+
 /** A yield change given in percentage points, shown in bps: `0.03` → `+3 bps` (× 100, no decimals, sign always). */
 export function formatYieldChange(pp: Num): string {
   if (isMissing(pp)) return NOT_AVAILABLE;
