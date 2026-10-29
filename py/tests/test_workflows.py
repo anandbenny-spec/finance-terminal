@@ -387,3 +387,79 @@ def test_the_keep_alive_fails_when_github_refuses_to_enable_a_workflow(tmp_path)
     code, out, enabled = _run_keep_alive(tmp_path, dict.fromkeys(KEPT_ALIVE, "active"), put_fails=["daily.yml"])
     assert code == 1 and "could not enable daily.yml" in out
     assert enabled == KEPT_ALIVE
+
+
+# ---------------------------------------------------------------- ci: the web job runs only when something it reads changed
+
+def _web_step():
+    steps = load("ci")["jobs"]["secrets"]["steps"]
+    return next(s for s in steps if s.get("id") == "changed")
+
+
+def test_the_web_job_follows_the_secrets_job_and_runs_only_when_it_says_so():
+    """Anand, 29 Oct 2026: the free 2,000 Actions minutes ran out in 8 days. The web job is skipped (a skipped check
+    counts as passed) when nothing it reads changed; the answer comes from the secrets job, which runs anyway, because a
+    job of its own would be billed at least a minute per run."""
+    jobs = load("ci")["jobs"]
+    assert jobs["web"]["needs"] == "secrets" and jobs["web"]["if"] == "needs.secrets.outputs.web == 'true'"
+    assert jobs["secrets"]["outputs"] == {"web": "${{ steps.changed.outputs.web }}"}
+    assert "needs" not in jobs["test"] and "if" not in jobs["test"]               # the SQL and Python tests always run
+    step = _web_step()
+    assert "${{" not in step["run"]                                              # inputs reach the script through env
+    assert set(step["env"]) == {"EVENT", "BASE_SHA", "BEFORE_SHA", "HEAD_SHA", "WEB_READS"}
+    # what the web job reads: web/, the labelling set its tests read, vercel.json and ci.yml itself
+    assert re.search(r"labelling_items\.json", (WORKFLOWS.parent.parent / "web/lib/labelling/labelling.test.ts").read_text())
+
+
+def _git(cwd, *args):
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.org", "-c", "commit.gpgsign=false",
+                           *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _ask(tmp_path, event, changed, *, base="parent"):
+    """Run the step's script in a throwaway repo whose last commit changes `changed`; returns its web output."""
+    _git(tmp_path, "init", "-q", "-b", "main")
+    for f in ("py/a.py", "web/lib/x.ts", "README.md"):
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text("1")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    parent = _git(tmp_path, "rev-parse", "HEAD")
+    for f in changed:
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text("2")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "change")
+    out = tmp_path / "output.txt"
+    step = _web_step()
+    env = {**os.environ, "EVENT": event, "HEAD_SHA": _git(tmp_path, "rev-parse", "HEAD"), "GITHUB_OUTPUT": str(out),
+           "BASE_SHA": {"parent": parent, "zeros": "0" * 40, "unknown": "f" * 40, "none": ""}[base],
+           "BEFORE_SHA": {"parent": parent, "zeros": "0" * 40, "unknown": "f" * 40, "none": ""}[base],
+           "WEB_READS": step["env"]["WEB_READS"]}
+    done = subprocess.run(["bash", "-e", "-c", step["run"]], check=False, cwd=tmp_path, env=env, capture_output=True,
+                          text=True)
+    assert done.returncode == 0, done.stderr
+    return out.read_text().strip()
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+@pytest.mark.parametrize("changed, web", [
+    (["py/src/ft/jobs/due.py"], "false"),
+    (["py/config/tasks.yaml", "supabase/migrations/20261029000000_x.sql", "README.md", "CLAUDE.md"], "false"),
+    ([".github/workflows/watch.yml", ".github/workflows/ci.yml.bak"], "false"),
+    (["web2/page.tsx", "py/web/page.py", "docs/vercel.json"], "false"),
+    (["web/app/page.tsx"], "true"),
+    (["py/src/ft/jobs/due.py", "web/lib/x.ts"], "true"),
+    (["py/config/eval/sets/labelling_items.json"], "true"),
+    (["vercel.json"], "true"),
+    ([".github/workflows/ci.yml"], "true"),
+])
+def test_the_web_job_runs_when_a_file_it_reads_changed(tmp_path, event, changed, web):
+    assert _ask(tmp_path, event, changed) == f"web={web}"
+
+
+@pytest.mark.parametrize("event, base", [("workflow_dispatch", "parent"), ("push", "zeros"), ("push", "unknown"),
+                                         ("pull_request", "none"), ("schedule", "parent")])
+def test_in_any_doubt_the_web_job_runs(tmp_path, event, base):
+    # a manual run, a first push (before is all zeros), a base the clone doesn't have, no base, any other event
+    assert _ask(tmp_path, event, ["py/src/ft/jobs/due.py"], base=base) == "web=true"

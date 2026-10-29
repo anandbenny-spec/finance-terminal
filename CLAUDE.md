@@ -228,13 +228,24 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   runs ruff, every SQL script and pytest on each push (and on `workflow_dispatch`, which Claude may start).
   Read the result from the run's annotations: each failing test and the counts are annotated, and Claude's
   workspace can't download logs. "Done" means CI green on the pushed commit, with the counts stated.
+- **Actions minutes (Anand, 29 Oct 2026).** The free plan's 2,000 Actions minutes a month ran out in 8 days of October
+  (about 1,940 used: `ci` 60%, backfills 33%), and then no job starts, scheduled production runs included. So:
+  (1) push a branch whenever it helps, but **open its pull request only when the job is ready**: CI runs on pull
+  requests and on `main`, not on a branch push, so a branch without a pull request costs nothing;
+  (2) **one push per fix round** on a pull request: read every failure annotation, fix them all, run the tests the
+  change touches first (§2), push once;
+  (3) **`web` is skipped when nothing it reads changed** (`web/`, the labelling set `py/config/eval/sets/`, `vercel.json`,
+  `ci.yml`; the first step of the `secrets` job decides, and any doubt runs it): a skipped `web` counts as passed;
+  (4) start `backfill`, `refresh` and manual `ci` runs only when the job needs them. Usage:
+  github.com/settings/billing/usage.
 - **Write files to the Mac or the repo before the session ends.** A session's cloud workspace is invisible to
   every other session. After writing a file to the Mac, read it back there.
 - **Branches and pull requests (Anand, 23 Oct 2026; replaces "Anand commits and pushes").** Claude commits in
   its own cloud clone, pushes only to `claude/<job>` branches it created, and opens a pull request; CI runs on
   it. If `main` moves, merge `main` into the branch; never rebase a branch that's been pushed (Anand, 24 Oct 2026).
   **Claude merges its own pull requests (Anand, 23 Oct 2026, 22:16 IST, so the build never waits on him):**
-  once every check on the pull request's latest commit has passed (`test`, `web`, `secrets`) and the handoff
+  once every check on the pull request's latest commit has passed (`test`, `web`, `secrets`; a `web` that was skipped because
+  nothing it reads changed counts as passed) and the handoff
   comment is written, Claude merges it into `main` with a merge commit through GitHub's merge API. A pull request
   holding anything §7 or the sub-prompt's stop conditions name waits for Anand, and so does one he's asked to see
   first. A merged migration still needs his `supabase db push` (say so). Anand reviews merged work when he
