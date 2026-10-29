@@ -661,3 +661,19 @@ def test_the_guard_holds_a_scheduled_run_until_the_task_has_a_recorded_success(s
         assert t.due(c, "refresh", NOW) is not None
         assert "migration isn't pushed" in guard.equity_due(c, "x", "weekly", t.due(c, "refresh", NOW),
                                                             requires="equity.nope").reason
+
+
+def test_the_session_before_the_calendars_first_year_is_none_not_an_error():
+    assert ep._previous_session(D(2019, 1, 1)) is None
+    assert ep._previous_session(D(2019, 1, 2)) == D(2019, 1, 1)
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_window_starting_on_the_first_session_of_2019_runs_its_checks_instead_of_crashing(s3):
+    make_companies()
+    code, tr = go(Exchange(), since=D(2019, 1, 1), until=D(2019, 1, 31))
+    # the fixtures lack the 1 Jan 2019 file, so the run fails by its check, naming the session (not a CalendarYearError)
+    assert code != 0 and checks(tr)["sessions_present"]["passed"] is False
+    assert "2019-01-01" in checks(tr)["sessions_present"]["detail"]
+    assert checks(tr)["continuity"]["passed"] is True
