@@ -12,10 +12,10 @@ What the files hold (Data Audit 02a findings 2–3; the saved filings in the fix
   ₹9,14,472 cr, is dated 1 Jan–31 Mar 2024). Integrated Filing files (2025 on) date them correctly, so re-dating must
   leave them unchanged (`Dating.changed` is empty for them; the statements check says so).
 - **Files to about early 2023 reference `OneD`, `FourD` and `OneI` without defining them** (found 29 Oct 2026 in
-  650 of the saved files, every company: the instance has the segment and expense contexts but not the three main
-  ones). The kit skipped facts in undefined contexts, so it read nothing from those files' statements. The column
-  says the period here too, so `date_columns` dates them from the header: `OneD` the quarter, `FourD` the year to
-  date, `OneI` the period end (`Dating.synthesized`).
+  622 of the saved files, every company that filed before 2023: the instance has the segment and expense contexts
+  but not the three main ones). The kit skipped facts in undefined contexts, so it read nothing from those files'
+  statements. The column says the period here too, so `date_columns` dates them from the header: `OneD` the
+  quarter, `FourD` the year to date, `OneI` the period end (`Dating.synthesized`).
 - Values are in **full rupees** (the rounding level, "Crores" or "Lakhs", is only the precision): a plain instance
   states every value in its unit, with `decimals` giving the precision. Facts are kept as `Decimal` (as filed, no
   float rounding).

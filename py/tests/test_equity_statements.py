@@ -116,7 +116,7 @@ def test_an_integrated_filing_file_is_dated_as_filed():
 
 @needs_fixtures
 def test_old_files_reference_their_main_contexts_without_defining_them_and_the_reader_dates_them_by_column():
-    """Files to about early 2023 point facts at OneD, FourD and OneI but define only the dimensioned contexts (650 of
+    """Files to about early 2023 point facts at OneD, FourD and OneI but define only the dimensioned contexts (622 of
     the saved files); the old bank files also lack the reporting period's start, so the quarter comes from the period
     end."""
     inst = xbrl.parse(raw("HDFCBANK", HDFCBANK_DEC18))
