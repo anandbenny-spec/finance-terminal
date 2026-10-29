@@ -20,10 +20,12 @@ const allLinks = NAV.flatMap((g) => g.items.flatMap((i) => [i.href, ...(i.sectio
 describe("sidebar", () => {
   it("lists Macro and policy › Fed vs RBI for visitors, and adds the admin group for the admin", () => {
     expect(visibleGroups(false).map((g) => [g.heading, g.items.map((i) => i.label)])).toEqual([
+      ["Overview", ["Start here"]],
       ["Macro and policy", ["Fed vs RBI"]],
       ["About", ["About and privacy"]],
     ]);
     expect(visibleGroups(true).map((g) => [g.heading, g.items.map((i) => i.label)])).toEqual([
+      ["Overview", ["Start here"]],
       ["Macro and policy", ["Fed vs RBI"]],
       ["About", ["About and privacy"]],
       ["Admin", ["Admin", "Health", "Labelling"]],
@@ -48,6 +50,7 @@ describe("sidebar", () => {
 
   it("names no page that isn't built (no 'coming soon')", () => {
     expect(allLinks).toEqual([
+      "/",
       "/policy",
       ...FED_VS_RBI_SECTIONS.map((s) => s.href),
       "/about",
@@ -55,6 +58,13 @@ describe("sidebar", () => {
       "/admin/health",
       "/admin/labelling",
     ]);
+  });
+
+  it("points every item at a live page, the front page included (#152)", () => {
+    for (const { href } of NAV.flatMap((g) => g.items)) {
+      const file = fileURLToPath(new URL(`../../app${href === "/" ? "" : href}/page.tsx`, import.meta.url));
+      expect(existsSync(file), `${file} must exist`).toBe(true);
+    }
   });
 
   it("points every section link at a live target: a section the page has, or a /latest route that exists", () => {
@@ -84,7 +94,10 @@ describe("sidebar", () => {
     expect(activeHref("/admin/labelling")).toBe("/admin/labelling");
     expect(activeHref("/about")).toBe("/about");
     expect(activeHref("/policyx")).toBeNull();
-    expect(activeHref("/")).toBeNull();
+    // "Start here" is current on the front page only, never as the parent of every path
+    expect(activeHref("/")).toBe("/");
+    expect(activeHref("/about")).not.toBe("/");
+    expect(activeHref("/nowhere")).toBeNull();
     expect(activeHref(null)).toBeNull();
   });
 

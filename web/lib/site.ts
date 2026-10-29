@@ -3,8 +3,8 @@
 
 export const SITE_NAME = "Finance Terminal";
 
-/** The site's current description (Brief §12's one-line positioning is still open, so this stays until Anand confirms it). */
-export const SITE_TAGLINE = "An AI research terminal for Indian and US markets.";
+/** The one-line positioning (Brief §12, decided by Anand on 28 Oct 2026, 08:49 IST). */
+export const SITE_TAGLINE = "An AI research terminal for Indian markets and the Fed–RBI policy cycle.";
 export const SITE_DESCRIPTION = `${SITE_TAGLINE} Informational only, not investment advice.`;
 
 /** The line under the name on the preview image: what this link shows today (module 1). */

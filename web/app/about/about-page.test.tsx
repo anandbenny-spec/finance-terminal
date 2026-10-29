@@ -1,5 +1,7 @@
 // /about (#86): the data ownership statement comes first, RBI is named and never linked, and the page promises
 // only what is true for this link (no cookies, no analytics, the command bar not live). Also the root redirect.
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import nextConfig from "../../next.config";
@@ -43,8 +45,10 @@ describe("/about", () => {
 });
 
 describe("the root route", () => {
-  it("sends / to /policy with a temporary (307) redirect", async () => {
-    const rules = await nextConfig.redirects!();
-    expect(rules).toContainEqual({ source: "/", destination: "/policy", permanent: false });
+  // #86 sent / to /policy until the front page existed; #152 replaced the redirect with app/page.tsx.
+  it("no longer redirects /: the front page answers it (#152)", async () => {
+    const rules = nextConfig.redirects ? await nextConfig.redirects() : [];
+    expect(rules.filter((r) => r.source === "/")).toEqual([]);
+    expect(existsSync(fileURLToPath(new URL("./../page.tsx", import.meta.url)))).toBe(true);
   });
 });

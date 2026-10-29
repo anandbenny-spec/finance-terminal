@@ -48,3 +48,21 @@ export function buildKeyChanges(pairs: readonly RedlinePair[]): KeyChanges {
   const groups = [...by.entries()].map(([topic, rows]) => ({ topic, rows })).sort((a, b) => rank(a.topic) - rank(b.topic));
   return { groups, changedSentences: n, otherSentences: by.get(OTHER_TOPIC)?.length ?? 0 };
 }
+
+/**
+ * The first `n` changed sentences in Key changes' own order (the topics' display order, then the document's), kept in
+ * their topic groups, and how many other sentences changed. No ranking of our own: the front page (#152) shows what
+ * the tab shows first.
+ */
+export function previewKeyChanges(model: KeyChanges, n: number): { groups: KeyGroup[]; shown: number; others: number } {
+  const limit = Math.max(0, Math.floor(n));
+  const groups: KeyGroup[] = [];
+  let shown = 0;
+  for (const g of model.groups) {
+    if (shown >= limit) break;
+    const rows = g.rows.slice(0, limit - shown);
+    groups.push({ topic: g.topic, rows });
+    shown += rows.length;
+  }
+  return { groups, shown, others: model.changedSentences - shown };
+}
