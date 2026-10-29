@@ -11,7 +11,7 @@ select 'policy_meeting', (select id from core.entity where slug='fed'), v.slug, 
        v.st, (select id from core.source where key='fed'), 'https://www.federalreserve.gov/x', v.pub
 from (values ('fomc-2026-09-16','FOMC, September 2026','2026-09-15','2026-09-16','2026-09-16 14:00 America/New_York','held',true),
              ('fomc-2026-07-29','FOMC, July 2026','2026-07-28','2026-07-29','2026-07-29 14:00 America/New_York','held',false),
-             ('fomc-2026-10-28','FOMC, October 2026','2026-10-27','2026-10-28','2026-10-28 14:00 America/New_York','scheduled',true)) v(slug,title,s,e,at,st,pub);
+             ('fomc-2036-10-28','FOMC, October 2036','2036-10-27','2036-10-28','2036-10-28 14:00 America/New_York','scheduled',true)) v(slug,title,s,e,at,st,pub);
 insert into policy.meeting (event_id, kind, is_rate_decision, has_press_conference)
 select id, 'scheduled', true, true from core.event where event_type='policy_meeting';
 

@@ -26,6 +26,8 @@ export const FEEDS = {
   policyLatestFed: ["policy.fed_documents", "policy.ai_batch"],
   policyLatestRbi: ["policy.rbi_documents", "policy.ai_batch"],
   policyHistory: ["policy.fed_documents", "policy.rbi_documents", "policy.ai_batch"],
+  // Pass 1b (#89): the change strip counts words in the stored statements and their diffs (document engine, no AI).
+  policyChanges: ["policy.fed_documents", "policy.rbi_documents"],
   // Pass 1b (#70): the decision-day moves, computed by policy.reactions from the stored series.
   policyReactions: ["policy.reactions"],
   // The meeting pages (C4; Spec 01 §4.3): each bank's documents and their AI outputs.
