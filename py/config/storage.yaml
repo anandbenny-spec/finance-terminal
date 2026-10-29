@@ -1,0 +1,8 @@
+# Which storage backend each target writes to and reads from (2B-01, #164; Arch 04 §1.1).
+#   supabase  the STORAGE_* settings (Supabase Storage's S3 endpoint)
+#   r2        the R2_* settings (Cloudflare R2)
+# Adding R2's secrets switches nothing: a line changes only in a pull request, after `ft.jobs.r2_copy` has copied and
+# verified every object for that target with 0 mismatches. (Otherwise new writes would reach R2 before the old objects.)
+# The Supabase copies are never deleted by any job; deleting them is Anand's call.
+dev: supabase
+production: supabase

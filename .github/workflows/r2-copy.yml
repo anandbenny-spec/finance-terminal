@@ -1,0 +1,59 @@
+# 2B-01 (#164): copy every raw file from Supabase Storage to Cloudflare R2 and verify each one by hash
+# (py/src/ft/jobs/r2_copy.py). Manual only; it reads the database and both stores, writes new objects to R2 only, and
+# never deletes on either side. It does not switch anything: the switch is a line in py/config/storage.yaml, flipped
+# in a pull request once the run shows 0 mismatches. Needs the target's R2 secrets (R2_* for production, DEV_R2_* for
+# dev). It shares backfill.yml's concurrency group, so it never overlaps a backfill.
+name: r2-copy
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Project to run against
+        type: choice
+        options: [dev, production]
+        default: dev
+      dry_run:
+        description: Read and compare everything, write nothing to R2
+        type: boolean
+        default: false
+concurrency:
+  group: jobs-backfill
+  cancel-in-progress: false
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: py
+jobs:
+  run:
+    runs-on: ubuntu-24.04   # pinned like the other job workflows
+    timeout-minutes: 300
+    env:
+      # Same rule as the job workflows (GitHub issue #2, item 1): dev unless production is chosen; a missing DEV_
+      # secret leaves the variable empty (the copy then stops), never falling back to production's.
+      FT_TARGET: ${{ inputs.target == 'production' && 'production' || 'dev' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0, pinned by SHA (setup-uv publishes no v8+ major tags)
+        with:
+          enable-cache: true
+          cache-dependency-glob: py/uv.lock
+      - run: uv sync --locked --extra jobs
+      - name: Copy
+        run: |
+          set --
+          [ "$INPUT_DRY_RUN" = "true" ] && set -- --dry-run
+          uv run --locked python -m ft.jobs.r2_copy --target "$FT_TARGET" "$@"
+        env:
+          # inputs go through the environment, never pasted into the script (injection)
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          JOB_DATABASE_URL: ${{ env.FT_TARGET == 'production' && secrets.JOB_DATABASE_URL || env.FT_TARGET == 'dev' && secrets.DEV_JOB_DATABASE_URL || '' }}
+          STORAGE_ENDPOINT: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_ENDPOINT || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_ENDPOINT || '' }}
+          STORAGE_ACCESS_KEY_ID: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_ACCESS_KEY_ID || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_ACCESS_KEY_ID || '' }}
+          STORAGE_SECRET_ACCESS_KEY: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_SECRET_ACCESS_KEY || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_SECRET_ACCESS_KEY || '' }}
+          STORAGE_BUCKET: ${{ secrets.STORAGE_BUCKET }}
+          STORAGE_REGION: ${{ secrets.STORAGE_REGION }}
+          R2_ENDPOINT: ${{ env.FT_TARGET == 'production' && secrets.R2_ENDPOINT || env.FT_TARGET == 'dev' && secrets.DEV_R2_ENDPOINT || '' }}
+          R2_BUCKET: ${{ env.FT_TARGET == 'production' && secrets.R2_BUCKET || env.FT_TARGET == 'dev' && secrets.DEV_R2_BUCKET || '' }}
+          R2_ACCESS_KEY_ID: ${{ env.FT_TARGET == 'production' && secrets.R2_ACCESS_KEY_ID || env.FT_TARGET == 'dev' && secrets.DEV_R2_ACCESS_KEY_ID || '' }}
+          R2_SECRET_ACCESS_KEY: ${{ env.FT_TARGET == 'production' && secrets.R2_SECRET_ACCESS_KEY || env.FT_TARGET == 'dev' && secrets.DEV_R2_SECRET_ACCESS_KEY || '' }}

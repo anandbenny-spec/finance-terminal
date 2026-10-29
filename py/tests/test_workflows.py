@@ -20,7 +20,8 @@ WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 JOBS = ("daily", "watch", "weekly", "refresh", "backfill")
 SCHEDULED = ("daily", "watch", "weekly")
 KEEP_ALIVE = ("keep-alive",)      # scheduled too, but not a job workflow: it runs no task (#142)
-PER_TARGET = ("JOB_DATABASE_URL", "STORAGE_ENDPOINT", "STORAGE_ACCESS_KEY_ID", "STORAGE_SECRET_ACCESS_KEY")
+PER_TARGET = ("JOB_DATABASE_URL", "STORAGE_ENDPOINT", "STORAGE_ACCESS_KEY_ID", "STORAGE_SECRET_ACCESS_KEY",
+              "R2_ENDPOINT", "R2_BUCKET", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")
 SHARED = ("STORAGE_BUCKET", "STORAGE_REGION", "FRED_API_KEY", "SEC_USER_AGENT", "ANTHROPIC_API_KEY", "VOYAGE_API_KEY")
 
 _TOKEN = re.compile(r"\s*(?:(\|\||&&|==|!=|!|\(|\))|'((?:[^']|'')*)'|([A-Za-z_][A-Za-z0-9_.\-]*))")

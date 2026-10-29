@@ -54,6 +54,11 @@ jobs:
           STORAGE_ENDPOINT: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_ENDPOINT || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_ENDPOINT || '' }}
           STORAGE_ACCESS_KEY_ID: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_ACCESS_KEY_ID || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_ACCESS_KEY_ID || '' }}
           STORAGE_SECRET_ACCESS_KEY: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_SECRET_ACCESS_KEY || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_SECRET_ACCESS_KEY || '' }}
+          # R2 (2B-01): read only where py/config/storage.yaml says the target uses R2; empty until Anand adds the secrets
+          R2_ENDPOINT: ${{ env.FT_TARGET == 'production' && secrets.R2_ENDPOINT || env.FT_TARGET == 'dev' && secrets.DEV_R2_ENDPOINT || '' }}
+          R2_BUCKET: ${{ env.FT_TARGET == 'production' && secrets.R2_BUCKET || env.FT_TARGET == 'dev' && secrets.DEV_R2_BUCKET || '' }}
+          R2_ACCESS_KEY_ID: ${{ env.FT_TARGET == 'production' && secrets.R2_ACCESS_KEY_ID || env.FT_TARGET == 'dev' && secrets.DEV_R2_ACCESS_KEY_ID || '' }}
+          R2_SECRET_ACCESS_KEY: ${{ env.FT_TARGET == 'production' && secrets.R2_SECRET_ACCESS_KEY || env.FT_TARGET == 'dev' && secrets.DEV_R2_SECRET_ACCESS_KEY || '' }}
           STORAGE_BUCKET: ${{ secrets.STORAGE_BUCKET }}
           STORAGE_REGION: ${{ secrets.STORAGE_REGION }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}

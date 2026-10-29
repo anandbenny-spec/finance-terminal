@@ -14,17 +14,41 @@ from __future__ import annotations
 import gzip
 import hashlib
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 import boto3
+import yaml
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
 TEXT_TYPES = ("text/", "application/json", "application/xml", "application/rss+xml", "application/xhtml+xml")
 
 
+BACKENDS = ("supabase", "r2")
+TARGETS = ("dev", "production")
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "storage.yaml"
+
+
 class IntegrityError(Exception):
     pass
+
+
+def backend_for(target: str | None, config_path: Path = CONFIG_PATH) -> str:
+    """The backend a target uses, from the committed config (py/config/storage.yaml). No target, an unknown target or a
+    missing config line means Supabase Storage, so R2 is used only where a line says so. A line with any other
+    value is an error, never a quiet fallback."""
+    if target not in TARGETS:
+        return "supabase"
+    try:
+        cfg = yaml.safe_load(config_path.read_text()) or {}
+    except FileNotFoundError:
+        return "supabase"
+    backend = cfg.get(target, "supabase")
+    if backend not in BACKENDS:
+        raise ValueError(f"{config_path.name}: {target} must be one of {', '.join(BACKENDS)}, not {backend!r}")
+    return backend
 
 
 def _norm_ext(ext: str) -> str:
@@ -57,10 +81,26 @@ class Storage:
                           retries={"max_attempts": 5, "mode": "standard"}))
 
     @classmethod
-    def from_env(cls) -> Storage:
-        e = os.environ
+    def from_env(cls, env: Mapping[str, str] | None = None, *, target: str | None = None,
+                 backend: str | None = None) -> Storage:
+        """The target's backend (FT_TARGET unless given; the job workflows set it), as the committed config says:
+        the STORAGE_* settings for Supabase Storage, the R2_* settings for R2. With no FT_TARGET it is Supabase."""
+        e = os.environ if env is None else env
+        backend = backend or backend_for(target or e.get("FT_TARGET"))
+        if backend == "r2":
+            return cls.r2_from_env(e)
+        return cls.supabase_from_env(e)
+
+    @classmethod
+    def supabase_from_env(cls, e: Mapping[str, str] | None = None) -> Storage:
+        e = os.environ if e is None else e
         return cls(e["STORAGE_ENDPOINT"], e["STORAGE_BUCKET"], e["STORAGE_ACCESS_KEY_ID"],
                    e["STORAGE_SECRET_ACCESS_KEY"], e.get("STORAGE_REGION", "auto"))
+
+    @classmethod
+    def r2_from_env(cls, e: Mapping[str, str] | None = None) -> Storage:
+        e = os.environ if e is None else e
+        return cls(e["R2_ENDPOINT"], e["R2_BUCKET"], e["R2_ACCESS_KEY_ID"], e["R2_SECRET_ACCESS_KEY"], "auto")
 
     # ------------------------------------------------------------------ write
     def put(self, data: bytes, *, source: str, media_type: str, ext: str) -> StoredObject:
