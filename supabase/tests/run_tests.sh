@@ -11,7 +11,7 @@ check() { # name, actual, expected-regex
 
 # --- visitors (anon) -------------------------------------------------------------
 check "T01 anon sees published + scheduled meetings only" \
-  "$(as_role anon "select string_agg(slug, ',' order by slug) from api.policy_meetings")" '^fomc-2026-09-16,fomc-2026-10-28$'
+  "$(as_role anon "select string_agg(slug, ',' order by slug) from api.policy_meetings")" '^fomc-2026-09-16,fomc-2036-10-28$'
 check "T02 stance shown and labelled, hawk/dove held back" \
   "$(as_role anon "select stance||'|'||stance_display_label||'|'||coalesce(hawk_dove_score::text,'NULL')||'|'||policy_rate_pct from api.policy_meetings where slug='fomc-2026-09-16'")" '^easing\|AI-extracted\|NULL\|4\.000$'
 check "T03 anon cannot read ops tables" \
@@ -25,7 +25,7 @@ check "T06 citation quote is rebuilt across two chunks" \
 check "T07 published series visible with date-ranged label; unpublished series hidden" \
   "$(as_role anon "select string_agg(series_key||':'||coalesce(label,'-'), ',' order by obs_date) from api.observations")" '^fred\.DGS2:back-calculated,fred\.DGS2:back-calculated,fred\.DGS2:-,fred\.DGS2:-,fred\.DGS2:-$'
 check "T08 next-meeting countdown" \
-  "$(as_role anon "select slug from api.next_meetings")" '^fomc-2026-10-28$'
+  "$(as_role anon "select slug from api.next_meetings")" '^fomc-2036-10-28$'
 check "T09 hawk/dove output hidden from api.ai_outputs; stance visible" \
   "$(as_role anon "select string_agg(task, ',') from api.ai_outputs")" '^stance_extraction$'
 as_pg "update core.source set is_suppressed = true where key = 'fed'" >/dev/null
@@ -38,7 +38,7 @@ check "T11 anon cannot see the health view" \
 # --- text-to-SQL role (real login) -------------------------------------------------
 check "T12 sql_reader reads the semantic view (published only, hidden field null)" \
   "$(login sql_reader "select string_agg(meeting_date||'|'||status||'|'||coalesce(policy_rate_pct::text,'-')||'|'||coalesce(hawk_dove_score::text,'NULL')||'|'||coalesce(stance,'-')||'|'||coalesce(us_2y_change_bps::text,'-'), ';' order by meeting_date) from policy_meetings")" \
-  '^2026-09-16\|held\|4\.000\|NULL\|easing\|-8;2026-10-28\|scheduled\|-\|NULL\|-\|-$'
+  '^2026-09-16\|held\|4\.000\|NULL\|easing\|-8;2036-10-28\|scheduled\|-\|NULL\|-\|-$'
 check "T13 sql_reader cannot touch base tables" \
   "$(login sql_reader "select count(*) from core.event")" 'permission denied for schema core'
 check "T14 sql_reader cannot see settings" \
