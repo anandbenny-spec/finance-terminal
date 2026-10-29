@@ -6,7 +6,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { ApiDatabase } from "@/lib/queries/api";
 
-export type Row = Record<string, string | number | boolean | null>;
+export type Row = Record<string, string | number | boolean | null | object>;
 export type Store = Record<string, Row[]>;
 export type SeenRequest = { view: string; params: URLSearchParams; countExact: boolean; returned: number };
 
@@ -53,9 +53,16 @@ export function fakePostgrest(store: Store, maxRows = 1000) {
     const table = store[view];
     if (!table) return json(404, { code: "42P01", message: `relation "api.${view}" does not exist` });
 
-    const columns = (url.searchParams.get("select") ?? "*").split(",").map((c) => c.trim());
+    // A select item is a column, or `alias:column->key` (PostgREST's JSON path into a json column): the fake serves
+    // the key of an object-valued column under the alias.
+    const selected = (url.searchParams.get("select") ?? "*").split(",").map((c) => {
+      const item = c.trim();
+      const m = /^(\w+):(\w+)->(\w+)$/.exec(item);
+      return m ? { name: m[1], column: m[2], key: m[3] } : { name: item, column: item, key: null };
+    });
+    const columns = selected.map((c) => c.name);
     const known = new Set(Object.keys(table[0] ?? {}));
-    const unknown = columns.filter((c) => c !== "*" && known.size > 0 && !known.has(c));
+    const unknown = selected.filter((c) => c.column !== "*" && known.size > 0 && !known.has(c.column)).map((c) => c.column);
     if (unknown.length) return json(400, { code: "42703", message: `column ${view}.${unknown[0]} does not exist` });
 
     let rows = table.slice();
@@ -84,9 +91,12 @@ export function fakePostgrest(store: Store, maxRows = 1000) {
     const offset = Number(url.searchParams.get("offset") ?? 0);
     const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : Infinity;
     const page = rows.slice(offset, offset + Math.min(limit, maxRows)); // the silent cut
-    const body = page.map((r) =>
-      columns.includes("*") ? r : Object.fromEntries(columns.map((c) => [c, r[c] ?? null])),
-    );
+    const pick = (r: Row, c: (typeof selected)[number]): unknown => {
+      const v = r[c.column] ?? null;
+      if (c.key === null) return v;
+      return typeof v === "object" && v !== null ? ((v as Record<string, unknown>)[c.key] ?? null) : null;
+    };
+    const body = page.map((r) => (columns.includes("*") ? r : Object.fromEntries(selected.map((c) => [c.name, pick(r, c)]))));
     const countExact = /count=exact/.test(headers.get("prefer") ?? "");
     seen.push({ view, params: url.searchParams, countExact, returned: body.length });
     const span = body.length ? `${offset}-${offset + body.length - 1}` : "*";

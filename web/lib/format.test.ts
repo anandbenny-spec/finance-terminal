@@ -9,6 +9,9 @@ import {
   NOT_AVAILABLE,
   NOT_AVAILABLE_LABEL,
   formatAxisChange,
+  formatAxisShare,
+  formatShare,
+  formatShareChange,
   formatAxisDate,
   formatAxisNumber,
   formatAxisRange,
@@ -335,5 +338,26 @@ describe("formatCount", () => {
     expect(formatCount(0)).toBe("0");
     expect(formatCount(1234)).toBe("1,234");
     expect(() => formatCount(1.5)).toThrow(RangeError);
+  });
+});
+
+describe("shares of a text (ChangeStrip, #89)", () => {
+  it("writes a share with one decimal and a true minus", () => {
+    expect(formatShare(12.34)).toBe("12.3%");
+    expect(formatShare(0)).toBe("0.0%");
+    expect(formatShare(null)).toBe("—");
+  });
+
+  it("writes a signed share, nothing for zero", () => {
+    expect(formatShareChange(12.34)).toBe("+12.3%");
+    expect(formatShareChange(-4)).toBe("−4.0%");
+    expect(formatShareChange(0)).toBe("0.0%");
+    expect(formatShareChange(-0.04)).toBe("0.0%");
+  });
+
+  it("writes scale labels as whole signed percents", () => {
+    expect(formatAxisShare(60)).toBe("+60%");
+    expect(formatAxisShare(-60)).toBe("−60%");
+    expect(formatAxisShare(0)).toBe("0%");
   });
 });

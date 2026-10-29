@@ -52,7 +52,7 @@ describe("TimeSeriesChart keeps the range in view", () => {
   });
 
   it("applies the range preset on every build, and again on every preset click", () => {
-    const build = chartSource.slice(chartSource.indexOf("const c = createChart("), chartSource.indexOf("}, [series, markers]);"));
+    const build = chartSource.slice(chartSource.indexOf("const c = createChart("), chartSource.indexOf("}, [series, markers, axisFormat, valueRange]);"));
     expect(build).toContain("showRange(c, series, from.current);");
     expect(chartSource).toMatch(/showRange\(chart\.current, series, visibleFrom\);\n\s+\}, \[series, visibleFrom, rangeKey\]\);/);
   });
@@ -65,5 +65,23 @@ describe("TimeSeriesChart keeps the range in view", () => {
     const panel = read(`../policy/${file}.tsx`);
     expect(panel).toMatch(/onClick=\{\(\) => \{\s+setPreset\(x\.id\);\s+setRangeKey\(\(k\) => k \+ 1\);\s+\}\}/);
     expect(panel).toContain("rangeKey={rangeKey}");
+  });
+});
+
+describe("TimeSeriesChart draws ChangeStrip's bars (#89)", () => {
+  it("has a histogram kind that takes an added-words or removed-words ink from the tokens", () => {
+    expect(chartSource).toContain('kind: "histogram"; tone: "ins" | "del"');
+    expect(chartSource).toContain('color: s.tone === "ins" ? t.ins : t.del');
+    expect(chartSource).toContain("c.addSeries(HistogramSeries");
+  });
+
+  it("can fix the price axis to a shared range and label it, and a click reports the day under the pointer", () => {
+    expect(chartSource).toContain("autoscaleInfoProvider");
+    expect(chartSource).toContain("priceFormatter: (p: number) => axisFormat(p)");
+    expect(chartSource).toContain("c.subscribeClick(");
+  });
+
+  it("draws no decision-day markers on bars", () => {
+    expect(chartSource).toContain('if (s.kind === "histogram") continue; // bars carry no decision-day markers');
   });
 });
