@@ -91,8 +91,8 @@ class EquityStatements(Task):
                    or (case when fl.parser_version ~ '^[0-9]+$' then fl.parser_version::int else 0 end) < %s
                 order by e.slug, fl.period_end, fl.basis, d.external_key""", (self.version,)).fetchall()
         out = Fetched()
-        needs_face = {r[1] for r in rows if r[5] in st.INSURERS}
-        faces, out.face_values = self._face_values(ctx, needs_face) if needs_face else ({}, "")
+        needs_face = any(r[5] in st.INSURERS for r in rows)
+        faces, out.face_values = self._face_values(ctx) if needs_face else ({}, "")
         for doc_id, entity_id, slug, name, basis, fmt, period_end, fy_start, raw_id, isin in rows:
             item = Item(doc_id, entity_id, slug, st.Filing(name, basis, fmt, period_end, fy_start))
             if raw_id is None:
@@ -106,7 +106,7 @@ class EquityStatements(Task):
             out.items.append(item)
         return out
 
-    def _face_values(self, ctx: Context, entity_ids: set[int]) -> tuple[dict[str, Decimal], str]:
+    def _face_values(self, ctx: Context) -> tuple[dict[str, Decimal], str]:
         """Face value by ISIN from the newest EQUITY_L the universe task stored (insurers file none)."""
         f = ctx.fetcher
         got = f.db.execute("""select id, fetched_at from core.raw_file where source_url = %s
