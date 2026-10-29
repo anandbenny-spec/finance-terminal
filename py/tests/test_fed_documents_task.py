@@ -260,7 +260,9 @@ def test_backfill_stores_statements_rates_votes_and_diffs_and_reruns_clean(s3, r
                                             "this meeting"))
     assert va[slug(PEOPLE[10])][:2] == (None, True)                          # not about the rate: no bps
     assert len(votes(slugs[0])) == 12 and len(votes(slugs[2])) == 12
-    assert votes(slugs[3]) == {}                                             # a tally statement: votes from the minutes
+    assert votes(slugs[3]) == {                                              # a tally statement: its dissenter's row
+        slug(PEOPLE[3]): (0, True, "preferred to maintain the target range for the federal funds rate at this meeting")}
+    #                                                                          (#159); the rest come from the minutes
 
     assert state(slugs[0]) == ("held", True, True, True, None)               # the baseline has no diff
     assert [state(s)[4] for s in slugs[1:]] == slugs[:3]                     # each diffed against the one before
@@ -671,7 +673,8 @@ def test_minutes_that_disagree_with_the_statement_warn_or_for_a_tally_statement_
     assert doc_rows(slugs[1], "fomc_minutes")[0][:2] == (1, True)            # stored all the same: it's the Fed's text
     mf = r["checks"]["minutes_failed"]
     assert not mf["passed"] and f"{slugs[2]}: dissents_match" in mf["detail"]
-    assert doc_rows(slugs[2], "fomc_minutes") == [] and votes(slugs[2]) == {}
+    assert doc_rows(slugs[2], "fomc_minutes") == []
+    assert set(votes(slugs[2])) == {slug(PEOPLE[5])}              # the statement's dissenter only: the failed minutes wrote nothing
     assert open_alert(f"fed_minutes_failed:{slugs[2]}")
 
     # In a daily run the same minutes fail the task (the last good data stays); corrected, they load.
@@ -834,3 +837,157 @@ def test_a_backfill_over_the_saved_pages_loads_every_statement_minutes_and_trans
     code, r2 = go(sites, task(members.CONFIG, slugs, meetings.FIRST_DAY), "backfill", datetime(2026, 10, 23, 12, tzinfo=UTC))
     assert (code, r2["status"], r2["rows"]) == (0, "success", 0), r2["error"]
     assert r2["http"].get("new_raw_files", 0) == 0
+
+
+# ---------------------------------------------------------------------------------------------- tally statements' dissenters
+HOLD_AT_3 = "decided to maintain the target range for the federal funds rate at 3 to 3-1/4 percent"
+RAISE_PHRASE = "preferred to raise the target range for the federal funds rate by 1/4 percentage point at this meeting"
+LOWER_PHRASE = "preferred to lower the target range for the federal funds rate by 1/4 percentage point at this meeting"
+
+
+def vote_rows_exact(s: str, dissents: bool | None = None):
+    """Every column the minutes path could change, per member: (member, bps, dissent, text, document, span)."""
+    return {r[0]: r[1:] for r in q("""select p.slug, v.voted_change_bps, v.is_dissent, v.dissent_text, v.document_id,
+                                             v.char_start, v.char_end
+                                        from policy.vote v join core.event e on e.id = v.meeting_event_id
+                                        join policy.member p on p.id = v.member_id
+                                       where e.slug = %s and (%s::boolean is null or v.is_dissent = %s)""",
+                                   s, dissents, dissents)}
+
+
+@pytest.mark.db
+def test_a_tally_statement_stores_its_dissenters_and_the_minutes_add_the_voters_for(s3, roster):
+    """#159: a 9-3 statement (the 29 Jul 2026 shape) writes its three dissenters' rows with the statement; the minutes,
+    three weeks on, add the nine voting for and leave the three rows exactly as they were, with their checks passing."""
+    base, a = date(2060, 12, 11), date(2061, 1, 29)
+    slugs = [meeting(d, press=True) for d in (base, a)]
+    fred(base - timedelta(days=1), "3", "3.25")
+    hawk1, hawk2, dove = PEOPLE[3], PEOPLE[4], PEOPLE[5]
+    against = (f"Voting against the monetary policy action were {hawk1} and {hawk2}, who {RAISE_PHRASE}; and {dove}, "
+               f"who {LOWER_PHRASE}.")
+    pages = {fed_calendar.CALENDAR: calendar(base, a),
+             url(base): named(base, HOLD_AT_3),
+             url(a): fed_page(fed_tally("9 – 3", HOLD_AT_3, against), day=when(a))}
+    sites = Sites(pages)
+    code, r = go(sites, task(roster, slugs, date(2061, 1, 1)), "backfill", datetime(2061, 2, 1, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert r["checks"]["statements_stored"]["passed"], r["checks"]["statements_stored"]["detail"]
+    assert r["checks"]["meetings_failed"]["passed"] and r["checks"]["voter_terms"]["passed"]
+
+    # At statement time: the three dissenters, from the statement, and nobody else.
+    at_statement = vote_rows_exact(slugs[1])
+    assert set(at_statement) == {slug(hawk1), slug(hawk2), slug(dove)}
+    assert {k: v[:3] for k, v in at_statement.items()} == {
+        slug(hawk1): (25, True, RAISE_PHRASE), slug(hawk2): (25, True, RAISE_PHRASE), slug(dove): (-25, True, LOWER_PHRASE)}
+    statement_doc = q("""select d.id from core.document d join core.event e on e.id = d.event_id
+                          where e.slug = %s and d.doc_type = 'fomc_statement'""", slugs[1])[0][0]
+    assert {v[3] for v in at_statement.values()} == {statement_doc}
+    assert len({v[4:] for v in at_statement.values()}) == 1                    # one span: the 'Voting against' sentence
+    assert votes(slugs[0]) != {} and len(votes(slugs[0])) == 12                # the named baseline is unaffected
+
+    # Three weeks on, the calendar links the minutes: the nine voting for are added, the three rows are unchanged.
+    voters_for = [n for n in PEOPLE if n not in (hawk1, hawk2, dove)]
+    pages[fed_calendar.CALENDAR] = calendar(base, a, docs=(a,))
+    pages[minutes_url(a)] = minutes_page(a, voters_for, names_list([hawk1, hawk2, dove]) + ".")
+    pages[presconf_url(a)] = fed_presconf_page("January 28-29, 2061", None)
+    code, r = go(sites, task(roster, slugs, date(2061, 1, 1)), "daily", datetime(2061, 2, 20, 20, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert r["checks"]["documents_stored"]["passed"], r["checks"]["documents_stored"]["detail"]
+    assert r["checks"]["statements_stored"]["passed"], r["checks"]["statements_stored"]["detail"]
+    assert vote_rows_exact(slugs[1], dissents=True) == at_statement           # unchanged: no revision of the rows
+    full = votes_full(slugs[1])
+    assert len(full) == 12
+    assert {k for k, v in full.items() if v[3] == "fomc_minutes"} == {slug(n) for n in voters_for}
+    assert {v[:2] for k, v in full.items() if k in {slug(n) for n in voters_for}} == {(0, False)}
+
+    # Run again: nothing changes.
+    code, r = go(sites, task(roster, slugs, date(2061, 1, 1)), "daily", datetime(2061, 2, 21, 20, tzinfo=UTC))
+    assert (code, r["status"], r["rows"]) == (0, "success", 0), r["error"]
+    assert vote_rows_exact(slugs[1], dissents=True) == at_statement
+
+
+@pytest.mark.db
+def test_a_unanimous_tally_statement_has_no_vote_rows_until_its_minutes(s3, roster):
+    """#159: the 17 Jun 2026 shape (12-0) names nobody against, so the statement writes no row; its minutes name all twelve."""
+    base, a = date(2062, 12, 10), date(2063, 1, 28)
+    slugs = [meeting(d, press=True) for d in (base, a)]
+    fred(base - timedelta(days=1), "3", "3.25")
+    pages = {fed_calendar.CALENDAR: calendar(base, a),
+             url(base): named(base, HOLD_AT_3),
+             url(a): fed_page(fed_tally("12 – 0", HOLD_AT_3), day=when(a))}
+    sites = Sites(pages)
+    code, r = go(sites, task(roster, slugs, date(2063, 1, 1)), "backfill", datetime(2063, 2, 1, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    assert r["checks"]["statements_stored"]["passed"], r["checks"]["statements_stored"]["detail"]
+    assert votes(slugs[1]) == {}
+    # A later daily run, still before the minutes, has nothing to add for it and writes nothing.
+    code, r = go(sites, task(roster, slugs, date(2063, 1, 1)), "daily", datetime(2063, 2, 2, 20, tzinfo=UTC))
+    assert (code, r["status"], r["rows"]) == (0, "success", 0), r["error"]
+    assert votes(slugs[1]) == {}
+
+    pages[fed_calendar.CALENDAR] = calendar(base, a, docs=(a,))
+    pages[minutes_url(a)] = minutes_page(a, PEOPLE)
+    pages[presconf_url(a)] = fed_presconf_page("January 27-28, 2063", None)
+    code, r = go(sites, task(roster, slugs, date(2063, 1, 1)), "daily", datetime(2063, 2, 19, 20, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    full = votes_full(slugs[1])
+    assert len(full) == 12 and {v[:2] for v in full.values()} == {(0, False)}
+    assert {v[3] for v in full.values()} == {"fomc_minutes"}
+
+
+@pytest.mark.db
+def test_a_stored_tally_statement_without_vote_rows_gets_its_dissenters_on_the_next_run_with_no_request(s3, roster):
+    """#159: the 28 Oct 2026 meeting was stored before the statement path wrote dissenters. Its next daily (or refresh)
+    run reads the stored statement back, writes the rows and fetches nothing for it."""
+    base, a = date(2064, 12, 8), date(2065, 1, 27)
+    slugs = [meeting(d, press=True) for d in (base, a)]
+    fred(base - timedelta(days=1), "3", "3.25")
+    against = f"Voting against the monetary policy action were {PEOPLE[3]} and {PEOPLE[4]}, who {RAISE_PHRASE}."
+    pages = {fed_calendar.CALENDAR: calendar(base, a),
+             url(base): named(base, HOLD_AT_3),
+             url(a): fed_page(fed_tally("10 – 2", HOLD_AT_3, against), day=when(a))}
+    sites = Sites(pages)
+    code, r = go(sites, task(roster, slugs, date(2065, 1, 1)), "backfill", datetime(2065, 2, 1, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]
+    written = vote_rows_exact(slugs[1])
+    assert set(written) == {slug(PEOPLE[3]), slug(PEOPLE[4])}
+
+    # The state production and dev are in: the statement stored, held and published, and no vote rows.
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        c.execute("""delete from policy.vote where meeting_event_id = (select id from core.event where slug = %s)""",
+                  (slugs[1],))
+    assert votes(slugs[1]) == {}
+
+    sites.seen.clear()
+    code, r = go(sites, task(roster, slugs, date(2065, 1, 1)), "daily", datetime(2065, 1, 28, 20, tzinfo=UTC))
+    assert (code, r["status"], r["rows"]) == (0, "success", 2), r["error"]
+    assert url(a) not in sites.seen                                           # read back from the stored file
+    assert r["checks"]["statements_stored"]["passed"], r["checks"]["statements_stored"]["detail"]
+    assert {k: v[:3] for k, v in vote_rows_exact(slugs[1]).items()} == {k: v[:3] for k, v in written.items()}
+    assert r["http"].get("new_raw_files", 0) == 0
+
+    # With the rows back, the next run has nothing to do for it.
+    code, r = go(sites, task(roster, slugs, date(2065, 1, 1)), "daily", datetime(2065, 1, 29, 20, tzinfo=UTC))
+    assert (code, r["status"], r["rows"]) == (0, "success", 0), r["error"]
+
+
+@pytest.mark.db
+def test_a_tally_statement_naming_a_stranger_fails_its_load_and_the_daily_run(s3, roster):
+    """#159: a dissenter the roster doesn't hold fails the statement (`voters_on_roster`), as the minutes path does; the
+    run's last good data stays (the load rolls back) and nothing is stored for the meeting."""
+    base, a = date(2066, 12, 14), date(2067, 1, 25)
+    slugs = [meeting(d) for d in (base, a)]
+    fred(base - timedelta(days=1), "3", "3.25")
+    against = ("Voting against the monetary policy action was Zed Q. Nobody, who "
+               f"{RAISE_PHRASE}.")
+    pages = {fed_calendar.CALENDAR: calendar(base, a),
+             url(base): named(base, HOLD_AT_3),
+             url(a): fed_page(fed_tally("11 – 1", HOLD_AT_3, against), day=when(a))}
+    sites = Sites(pages)
+    code, r = go(sites, task(roster, slugs, date(2067, 1, 1)), "backfill", datetime(2067, 2, 1, tzinfo=UTC))
+    assert (code, r["status"]) == (0, "success"), r["error"]                      # a backfill isolates the bad meeting
+    assert not r["checks"]["meetings_failed"]["passed"]
+    assert f"{slugs[1]}: voters_on_roster" in r["checks"]["meetings_failed"]["detail"]
+    assert state(slugs[1])[:3] == ("scheduled", False, False) and votes(slugs[1]) == {}
+    code, r = go(sites, task(roster, slugs, date(2067, 1, 1)), "daily", datetime(2067, 1, 26, 20, tzinfo=UTC))
+    assert (code, r["status"]) == (1, "checks_failed") and "voters_on_roster" in r["error"]
