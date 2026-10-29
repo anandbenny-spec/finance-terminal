@@ -90,6 +90,55 @@ describe("KeyChanges", () => {
   });
 });
 
+describe("KeyChanges preview (the front page, #152)", () => {
+  const pairs = parsePairs({
+    version: 2,
+    pairs: [
+      { kind: "changed", topic: "Decision and guidance", new_para: [3], old_para: [2], ops: [{ op: "eq", text: "Decided to " }, { op: "del", text: "hold" }, { op: "ins", text: "cut" }, { op: "eq", text: "." }] },
+      { kind: "added", topic: "Monitoring", text: "New sentence.", new_para: [4], old_para: [] },
+      { kind: "added", topic: "Votes", text: "Another sentence.", new_para: [5], old_para: [] },
+    ],
+  })!;
+  const render = (limit: number) =>
+    renderToStaticMarkup(
+      <KeyChanges
+        model={buildKeyChanges(pairs)}
+        before={{ href: "/documents/1", date: "30 Jul 2026" }}
+        now={{ href: "/documents/2", date: "17 Sep 2026" }}
+        limit={limit}
+        seeAllHref="/policy/fed/2026-09-17?tab=changes"
+      />,
+    );
+
+  it("shows the first rows only, with no switch, and ends with the others' count and the link to all of them", () => {
+    const out = render(2);
+    expect(out).toContain("<ins>cut</ins>");
+    expect(out).toContain("New sentence.");
+    expect(out).not.toContain("Another sentence.");
+    expect(out).not.toContain("Full redline");
+    expect(out).not.toContain("aria-pressed");
+    expect(text(out)).toContain("1 other sentence changed · See all changes →");
+    expect(out).toContain('href="/policy/fed/2026-09-17?tab=changes"');
+  });
+
+  it("drops the count, keeping the link, when nothing else changed", () => {
+    const t = text(render(5));
+    expect(t).not.toMatch(/\d+ other sentences? changed/);
+    expect(t).toContain("See all changes →");
+  });
+
+  it("reads at 14 px (text-ui) with 10 px of padding per row, in the preview and the tab alike (#152, step 4)", () => {
+    const tab = renderToStaticMarkup(
+      <KeyChanges model={buildKeyChanges(pairs)} before={{ href: "/documents/1", date: "a" }} now={{ href: "/documents/2", date: "b" }} unchangedParagraphs={0} redline={<p>r</p>} />,
+    );
+    for (const out of [render(2), tab]) {
+      expect(out).toContain("text-ui text-ink-1");
+      expect(out).toContain("py-2.5");
+      expect(out).not.toMatch(/text-data text-ink-1">.*<ins>/);
+    }
+  });
+});
+
 describe("VoteGrid", () => {
   it("shows a dissent as a tag and the member's preference, never a colour", () => {
     const out = renderToStaticMarkup(

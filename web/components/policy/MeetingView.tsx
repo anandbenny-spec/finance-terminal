@@ -14,8 +14,7 @@ import { DocumentView } from "@/components/ai/DocumentView";
 import { KeyChanges } from "@/components/ai/KeyChanges";
 import { Redline } from "@/components/ai/Redline";
 import { NumbersChanged } from "@/components/ai/NumbersChanged";
-import { VoteDotPlot } from "@/components/ai/VoteDotPlot";
-import { VoteGrid } from "@/components/ai/VoteGrid";
+import { VotesPanel } from "@/components/policy/VotesPanel";
 import { MeetingReactionView } from "@/components/policy/MeetingReaction";
 import { Freshness } from "@/components/data/Freshness";
 import { Gated, fieldPolicy, type FieldPolicies } from "@/components/data/Gated";
@@ -25,7 +24,7 @@ import { Qualifier } from "@/components/data/Qualifier";
 import { SourceLine } from "@/components/data/SourceLine";
 import { StateNote } from "@/components/data/StateNote";
 import { FEEDS, type TaskKey } from "@/lib/feeds";
-import { dateInZone, formatDate, formatReleaseTime } from "@/lib/format";
+import { formatDate, formatReleaseTime } from "@/lib/format";
 import { stanceCitations, summaryBlock } from "@/lib/policy/ai";
 import { TABS, decisionLine, meetingHref, meetingTabHref, stanceText, tabOf, tally, type TabId } from "@/lib/policy/decisions";
 import { documentSource, documentTitle } from "@/lib/policy/document";
@@ -42,13 +41,8 @@ import {
   releaseLine,
   speakerAnchors,
   transcriptNote,
-  voteRows,
-  votesAbsentNote,
 } from "@/lib/policy/meeting";
-import { buildKeyChanges } from "@/lib/policy/keychanges";
-import { buildRedline, parsePairs } from "@/lib/policy/redline";
-import { numbersChanged } from "@/lib/policy/numbers";
-import { dotPlot } from "@/lib/policy/votedots";
+import { changesModel, docDateOf, numbersModel } from "@/lib/policy/changes";
 import { meetingReaction } from "@/lib/policy/reaction";
 import { paragraphAt, paragraphs, textFromChunks, type Paragraph } from "@/lib/policy/text";
 import type { DocumentChunkRow, DocumentRow, PolicyMeetingRow } from "@/lib/queries/api";
@@ -77,7 +71,7 @@ type Ctx = {
 
 /** The day a document was published, in the bank's zone (its "Data to"), else the meeting's date. */
 function docDate(ctx: Ctx, d: DocumentRow | null | undefined): string {
-  return d?.published_at ? dateInZone(d.published_at, ZONE[ctx.bank]) : ctx.m.decision_date;
+  return docDateOf(ctx.bank, ctx.m, d);
 }
 
 /** A document's source line: the Fed's attribution; the RBI's names the document, its date and RBI's press-release
@@ -174,10 +168,6 @@ async function Overview({ ctx }: { ctx: Ctx }) {
   const stance = page.ai.ok ? page.ai.stance : null;
   const stanceChips = stance ? stanceCitations(stance.output, stance.citations) : [];
 
-  const t = page.votes.ok ? tally(m, page.votes.rows) : null;
-  const voteList = page.votes.ok ? page.votes.rows : [];
-  const rows = voteRows(m, voteList);
-  const plot = t?.kind === "tally" ? dotPlot(m, voteList) : null;
   const rates = settings ? rateRows(settings, paras, decisionDoc?.id ?? null) : null;
   const projections = page.projections.ok ? projectionRows(page.projections.rows, paras, decisionDoc?.id ?? null) : null;
   const market = fed ? "US" : "IN";
@@ -220,30 +210,7 @@ async function Overview({ ctx }: { ctx: Ctx }) {
           )}
         </Panel>
 
-        <Panel title="How members voted" titleId="panel-votes" subtitle="Who voted for what, and who dissented?" market={market} variant="flush" footer={decisionFoot}>
-          {t === null ? (
-            <div className="p-3"><StateNote kind="error">{ERROR}</StateNote></div>
-          ) : t.kind === "pending" ? (
-            <div className="p-3"><StateNote kind="unavailable">{t.note}</StateNote></div>
-          ) : t.kind === "absent" ? (
-            <div className="p-3"><StateNote kind="unavailable">{votesAbsentNote(m)}</StateNote></div>
-          ) : (
-            <>
-              <p className="px-3 py-2.5 text-data text-ink-1">{t.line}</p>
-              {!fed && t.line.includes("Stance") && (
-                // The stance tally's label (B6 part 1's decision, #21): how members the resolution doesn't name are counted.
-                <p className="px-3 pb-2.5 text-meta text-ink-3">
-                  Stance tally from the resolution: members it doesn&apos;t name as preferring another stance are counted with the decision.
-                </p>
-              )}
-              {plot ? (
-                <VoteDotPlot plot={plot} bank={fed ? "Fed" : "RBI"} rows={rows} stance={!fed} caption={`Votes at the ${meetingTitle(m)}`} />
-              ) : (
-                <VoteGrid rows={rows} stance={!fed} caption={`Votes at the ${meetingTitle(m)}`} />
-              )}
-            </>
-          )}
-        </Panel>
+        <VotesPanel bank={bank} m={m} votes={page.votes.ok ? page.votes.rows : null} footer={decisionFoot} />
 
         <Panel title="Rates set at this meeting" titleId="panel-rates" subtitle="What did each rate become, and by how much did it move?" market={market} variant="flush" footer={decisionFoot}>
           {rates === null ? (
@@ -403,29 +370,27 @@ async function Changes({ ctx }: { ctx: Ctx }) {
       </div>
     );
   }
-  const pairs = parsePairs(read.diff.segments);
-  const summary = read.summary ? summaryBlock(read.summary.output, read.summary.citations, { linkOfficial: ctx.bank === "Fed", label: "What changed" }) : null;
-  const baseLabel = read.base ? `${read.base.doc_type_label} of ${formatDate(docDate(ctx, read.base))}` : "the previous one";
+  const model = changesModel({ bank: ctx.bank, m: ctx.m, decisionDoc, diff: read.diff, base: read.base, summary: read.summary });
   return (
     <div className="mt-5">
       {panel(
         <div className="flex flex-col gap-5">
-          <p className="text-data text-ink-2">Compared with the {baseLabel}.</p>
-          {summary && ctx.policies ? (
+          <p className="text-data text-ink-2">Compared with the {model.baseLabel}.</p>
+          {model.summary && ctx.policies ? (
             <Gated policies={ctx.policies} field="ai.statement_diff_summary" showLabel={false}>
-              <AIBlock block={{ ...summary, label: "What changed" }} now={ctx.page.readAt} dense={false} />
+              <AIBlock block={{ ...model.summary, label: "What changed" }} now={ctx.page.readAt} dense={false} />
             </Gated>
           ) : (
             <StateNote kind="unavailable">No AI summary of the changes yet.</StateNote>
           )}
           <NumbersPart ctx={ctx} base={read.base} />
-          {pairs ? (
+          {model.keys && model.redline ? (
             <KeyChanges
-              model={buildKeyChanges(pairs)}
-              before={{ href: `/documents/${read.diff.base_document_id}`, date: read.base ? formatDate(docDate(ctx, read.base)) : "before" }}
-              now={{ href: `/documents/${decisionDoc.id}`, date: formatDate(docDate(ctx, decisionDoc)) }}
-              unchangedParagraphs={buildRedline(pairs).unchangedParagraphs}
-              redline={<Redline model={buildRedline(pairs)} added={read.diff.words_added} removed={read.diff.words_removed} />}
+              model={model.keys}
+              before={model.before}
+              now={model.now}
+              unchangedParagraphs={model.redline.unchangedParagraphs}
+              redline={<Redline model={model.redline} added={model.wordsAdded} removed={model.wordsRemoved} />}
             />
           ) : (
             <StateNote kind="unavailable">The redline isn&apos;t available for this document.</StateNote>
@@ -442,31 +407,25 @@ async function NumbersPart({ ctx, base }: { ctx: Ctx; base: DocumentRow | null }
   const { m, bank, page } = ctx;
   const heading = <h3 className="text-title text-ink-1">Numbers that changed</h3>;
   if (!base?.event_slug) return null;
-  if (!page.settings.ok || !page.votes.ok || !page.projections.ok) {
-    return <section className="flex flex-col gap-2">{heading}<StateNote kind="error">{ERROR}</StateNote></section>;
-  }
-  const earlier = await readNumbersBase(bank, base.event_slug);
-  if (!earlier.ok) return <section className="flex flex-col gap-2">{heading}<StateNote kind="error">{ERROR}</StateNote></section>;
-  if (!earlier.meeting) return null;
+  const earlier = page.settings.ok && page.votes.ok && page.projections.ok ? await readNumbersBase(bank, base.event_slug) : null;
   const stancePolicy = ctx.policies ? fieldPolicy(ctx.policies, "ai.stance_extraction") : null;
-  const items = numbersChanged({
-    current: m,
-    previous: earlier.meeting,
-    currentSettings: page.settings.rows,
-    previousSettings: earlier.settings,
-    currentProjections: page.projections.rows,
-    previousProjections: earlier.projections,
-    currentVotes: page.votes.rows,
-    previousVotes: earlier.votes,
+  const model = numbersModel({
+    m,
+    base,
+    current: page.settings.ok && page.votes.ok && page.projections.ok ? { settings: page.settings.rows, votes: page.votes.rows, projections: page.projections.rows } : null,
+    earlier: earlier && earlier.ok ? earlier : null,
     stance: { show: stancePolicy !== null && stancePolicy.status !== "hidden", label: stancePolicy?.status === "labelled" ? stancePolicy.label : null },
   });
+  if (model.kind === "none") return null;
   return (
     <section className="flex flex-col gap-2">
       {heading}
-      {items.length === 0 ? (
+      {model.kind === "error" ? (
+        <StateNote kind="error">{ERROR}</StateNote>
+      ) : model.kind === "unavailable" ? (
         <StateNote kind="unavailable">The numbers of the two decisions can&apos;t be compared yet.</StateNote>
       ) : (
-        <NumbersChanged items={items} previousDate={earlier.meeting.decision_date} newDate={m.decision_date} />
+        <NumbersChanged items={model.items} previousDate={model.previousDate} newDate={model.newDate} />
       )}
     </section>
   );

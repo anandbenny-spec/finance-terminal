@@ -4,32 +4,27 @@
 // panel says the question it answers and carries SourceLine and Freshness; no panel is ever blank (StateNote).
 // No hawk/dove UI (D9). Pass 1b adds the decision-day moves (#70), long rates (#71) and the change strip (#89).
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
-import { Countdown } from "@/components/data/Countdown";
 import { Freshness } from "@/components/data/Freshness";
-import { Gated } from "@/components/data/Gated";
 import { PageHeader } from "@/components/data/PageHeader";
 import { Panel, PanelGrid } from "@/components/data/Panel";
 import { Section } from "@/components/data/SectionHeading";
-import { SourceLine } from "@/components/data/SourceLine";
 import { ChangeStrip } from "@/components/ai/ChangeStrip";
-import { Stat, StatRow } from "@/components/data/Stat";
-import { StateNote } from "@/components/data/StateNote";
 import { HistoryPanel } from "@/components/policy/HistoryPanel";
+import { ErrorPanel, Foot, latestOf } from "@/components/policy/PanelFoot";
 import { PolicyCard } from "@/components/policy/PolicyCard";
+import { RateStats } from "@/components/policy/RateStats";
 import { ReactionsPanel } from "@/components/policy/ReactionsPanel";
 import { LongRatesPanel } from "@/components/policy/LongRatesPanel";
 import { RatesPanel } from "@/components/policy/RatesPanel";
 import { FEEDS, type TaskKey } from "@/lib/feeds";
-import { NOT_AVAILABLE, formatAxisNumber, formatAxisRange, formatDate, formatReleaseTime, type EventZone } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import { buildChangeStrips, stripScale } from "@/lib/policy/changestrip";
-import { changeInWords, historyRows, lastMove, stanceText } from "@/lib/policy/decisions";
+import { historyRows } from "@/lib/policy/decisions";
 import { pressReleaseLabel } from "@/lib/policy/document";
 import { reactionRows, reactionSources } from "@/lib/policy/reactions";
 import { POLICY_SECTIONS } from "@/lib/policy/sections";
-import type { NextMeetingRow, PolicyMeetingRow, TaskFreshnessRow } from "@/lib/queries/api";
-import { readPolicyOverview, type LatestDecision } from "@/lib/queries/overview";
-import { POLICY_START, type Bank } from "@/lib/queries/policy";
+import { readPolicyOverview } from "@/lib/queries/overview";
+import { POLICY_START } from "@/lib/queries/policy";
 import { readFreshness, readNextMeetings } from "@/lib/queries/shell";
 import { panelFreshness } from "@/lib/shell/freshness";
 
@@ -39,84 +34,7 @@ export const metadata: Metadata = {
     "Every FOMC and MPC decision since 2019: what each bank decided, what changed in its statement and how its members voted. Informational only, not investment advice.",
 };
 
-const ZONE: Record<Bank, EventZone> = { Fed: "America/New_York", RBI: "Asia/Kolkata" };
 const RBI_SOURCE = "Source: Reserve Bank of India";
-
-function latestOf(...dates: (string | null | undefined)[]): string | null {
-  return dates.filter((d): d is string => Boolean(d)).sort().at(-1) ?? null;
-}
-
-function lowerFirst(text: string): string {
-  return text.charAt(0).toLowerCase() + text.slice(1);
-}
-
-function Foot({ sources, tasks, dataTo, freshness, now }: { sources: (string | null | undefined)[]; tasks: readonly TaskKey[]; dataTo: string | null; freshness: TaskFreshnessRow[] | null; now: string }) {
-  return (
-    <>
-      <SourceLine lines={sources} />
-      <Freshness freshness={panelFreshness(freshness, tasks, dataTo, now)} />
-    </>
-  );
-}
-
-function ErrorPanel({ title, id, span, market, footer, refresh }: { title: string; id: string; span?: 12 | 6; market?: "US" | "IN"; footer?: ReactNode; refresh?: readonly TaskKey[] }) {
-  return (
-    <Panel title={title} titleId={id} span={span} market={market} footer={footer} refresh={refresh}>
-      <StateNote kind="error">Couldn&apos;t load this panel. Try again.</StateNote>
-    </Panel>
-  );
-}
-
-function RateStat({ bank, latest, decisions, policies }: { bank: Bank; latest: LatestDecision | null; decisions: PolicyMeetingRow[] | null; policies: Parameters<typeof Gated>[0]["policies"] | null }) {
-  const fed = bank === "Fed";
-  const label = fed ? "Fed funds target range" : "RBI repo rate";
-  const market = fed ? "US" : "IN";
-  const m = latest?.meeting ?? null;
-  if (latest === null) return <Stat label={label} value={NOT_AVAILABLE} context={<StateNote kind="error">Couldn&apos;t load this rate.</StateNote>} market={market} />;
-  if (m === null) return <Stat label={label} value={NOT_AVAILABLE} context={<StateNote kind="unavailable">No decision is published yet.</StateNote>} market={market} />;
-  const value = fed ? formatAxisRange(m.fed_target_lower_pct, m.fed_target_upper_pct) : formatAxisNumber(m.policy_rate_pct);
-  const moved = decisions ? lastMove(decisions.filter((d) => d.bank === bank)) : null;
-  const lastChange = moved && moved.slug !== m.slug ? changeInWords(moved) : null;
-  return (
-    <Stat
-      label={label}
-      value={value}
-      unit={value === NOT_AVAILABLE ? undefined : "%"}
-      context={changeInWords(m)}
-      asOf={
-        <>
-          {lastChange && <div>Last change: {lowerFirst(lastChange)}</div>}
-          {!fed && m.stance && policies && (
-            <div>
-              Stance:{" "}
-              <Gated policies={policies} field="ai.stance_extraction">
-                {stanceText(m.stance)}
-              </Gated>
-            </div>
-          )}
-        </>
-      }
-      market={market}
-    />
-  );
-}
-
-function NextStat({ bank, meetings }: { bank: Bank; meetings: NextMeetingRow[] | null }) {
-  const label = bank === "Fed" ? "Next FOMC" : "Next MPC";
-  const market = bank === "Fed" ? "US" : "IN";
-  if (meetings === null) return <Stat label={label} value={NOT_AVAILABLE} context={<StateNote kind="error">Couldn&apos;t load meeting dates.</StateNote>} market={market} />;
-  const next = meetings.filter((n) => n.bank === bank).sort((a, b) => a.decision_date.localeCompare(b.decision_date))[0];
-  if (!next) return <Stat label={label} value={NOT_AVAILABLE} context={<StateNote kind="unavailable">The next meeting isn&apos;t scheduled yet.</StateNote>} market={market} />;
-  return (
-    <Stat
-      label={label}
-      value={formatDate(next.decision_date)}
-      context={next.decision_at ? `Decision ${formatReleaseTime(next.decision_at, ZONE[bank])}` : "Decision time not published yet"}
-      asOf={<Countdown decisionDate={next.decision_date} decisionAt={next.decision_at} zone={ZONE[bank]} />}
-      market={market}
-    />
-  );
-}
 
 export default async function PolicyPage() {
   const [o, fresh, next] = await Promise.all([readPolicyOverview(), readFreshness(), readNextMeetings()]);
@@ -158,12 +76,7 @@ export default async function PolicyPage() {
             variant="flush"
             footer={foot([fedSource, rbiSource], FEEDS.policyRatesStand, latestOf(fed?.meeting?.decision_date, rbi?.meeting?.decision_date))}
           >
-            <StatRow>
-              <RateStat bank="Fed" latest={fed} decisions={decisions} policies={policies} />
-              <RateStat bank="RBI" latest={rbi} decisions={decisions} policies={policies} />
-              <NextStat bank="Fed" meetings={next.ok ? next.meetings : null} />
-              <NextStat bank="RBI" meetings={next.ok ? next.meetings : null} />
-            </StatRow>
+            <RateStats fed={fed} rbi={rbi} decisions={decisions} policies={policies} meetings={next.ok ? next.meetings : null} />
           </Panel>
           {o.rates.ok ? (
             <RatesPanel
