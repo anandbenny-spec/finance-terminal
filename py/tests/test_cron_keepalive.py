@@ -8,7 +8,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from ft.api import cron
+from ft.api import cron, health
 from ft.api.app import app
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -192,7 +192,7 @@ def test_the_route_is_one_get_under_the_api_prefix_and_is_mounted_on_the_app(env
 
 def test_the_existing_health_and_admin_routes_are_unchanged(env):
     client = TestClient(app)
-    assert "/api/health" in {getattr(r, "path", "") for r in app.routes}      # S3 (#198) replaced its static body: tests/test_health.py
+    assert [(r.path, sorted(r.methods)) for r in health.router.routes] == [("/api/health", ["GET"])]      # S3 (#198) replaced its static body: tests/test_health.py
     assert client.get("/api/admin/health").status_code == 401             # still behind the admin gate
 
 
