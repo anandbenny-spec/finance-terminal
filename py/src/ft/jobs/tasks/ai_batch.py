@@ -103,6 +103,7 @@ from ft.ai.client import (
     PRICES,
     REQUEST_OVERHEAD_TOKENS,
     TASKS,
+    AIUnavailable,
     BatchInfo,
     CallError,
     Client,
@@ -269,7 +270,7 @@ class Call:
 class Outcome:
     work: Work
     # real time: published | rejected | held (an extraction kept as a draft with an alert) | errored | done | waiting |
-    # too_long | budget
+    # too_long | budget | skipped (AI unavailable: no key, refused key, no credits; nothing sent, nothing lost)
     # batch, also: in_batch (waiting in an earlier run's batch) | submitted | retrying (its retry is next) | expired |
     # left (sendable, but already sent once in this run: the next run)
     status: str
@@ -312,6 +313,8 @@ class Fetched:
     embed_requests: int = 0
     embed_host: str | None = None
     embed_error: str | None = None
+    unavailable: str | None = None    # Claude can't be used: 'no_key' | 'auth' | 'billing' (AIUnavailable.reason, #197)
+    embed_unavailable: str | None = None   # the same for Voyage
     _by_target: dict[str, Outcome] = field(default_factory=dict, repr=False)
 
     def outcome(self, w: Work, status: str | None = None, reason: str = "", *, first: bool = False) -> Outcome:
@@ -326,6 +329,9 @@ class Fetched:
         elif status is not None and not first:
             o.status, o.reason = status, reason
         return o
+
+
+AI_REASONS = {"no_key": "no API key", "auth": "the API key was refused", "billing": "no API credits left"}
 
 
 def _md5(s: str) -> str:
@@ -530,7 +536,7 @@ class AiBatch(Task):
         if self.claude is None:
             key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
             if not key:
-                raise CallError("NoKey", None, "ANTHROPIC_API_KEY is not set")
+                raise AIUnavailable("no_key", "NoKey", None, "ANTHROPIC_API_KEY is not set")
             self.claude = Client(key)
         return self.claude
 
@@ -598,13 +604,24 @@ class AiBatch(Task):
                 else:
                     todo.append((w, p.step))
             if todo:
-                self._send(ctx, f, todo, prompts)
+                try:
+                    self._send(ctx, f, todo, prompts)
+                except AIUnavailable as e:
+                    self._skip_rest(f, e)
             unfinished = [o for o in f.outcomes if o.status in ("errored", "waiting")]
             if unfinished:
                 # Fail the poll, so the next one tries again while the window is open. What finished is stored.
                 raise CallError("Unfinished", None, "; ".join(f"{o.work.target}: {o.reason}" for o in unfinished))
         self._embed(db, f, docs if meeting is not None else None)
         return f
+
+    @staticmethod
+    def _skip_rest(f: Fetched, e: AIUnavailable) -> None:
+        """AI can't be used (#197): every target without an outcome yet is skipped, not failed. What was stored stays,
+        nothing new is published, and the run goes on (the embeddings, the other tasks' loads, the checks)."""
+        f.unavailable = f.unavailable or e.reason
+        for w in list(f.targets):
+            f.outcome(w, "skipped", f"AI unavailable ({e.reason})", first=True)
 
     @staticmethod
     def _retire_projections(db, f: Fetched, docs: list[Doc]) -> None:
@@ -722,6 +739,11 @@ class AiBatch(Task):
                 o.calls.append(call)
                 try:
                     call.reply = claude.send(req)
+                except AIUnavailable as e:                      # no credits, key refused: the rest skip, none fails
+                    db.execute("update ops.ai_request set status = 'errored', reject_reason = %s where custom_id = %s",
+                               (f"unavailable {e.reason}", cid))
+                    o.status, o.reason = "skipped", f"AI unavailable ({e.reason})"
+                    raise
                 except Failed as e:
                     call.reply, call.failed = e.reply, e.reason
                 except CallError as e:
@@ -899,6 +921,12 @@ class AiBatch(Task):
     def _batch_path(self, ctx: Context, f: Fetched, prompts, *, poll: float) -> None:
         """Collect what's ended, submit what's needed, and read the open batches until they end or `poll` seconds
         pass; a round that stored something plans again (retries, resends) and submits those too."""
+        try:
+            self._batch_rounds(ctx, f, prompts, poll=poll)
+        except AIUnavailable as e:                          # no key, key refused or no credits: skip, don't fail
+            self._skip_rest(f, e)
+
+    def _batch_rounds(self, ctx: Context, f: Fetched, prompts, *, poll: float) -> None:
         deadline = self.monotonic() + poll
         wait = BATCH_WAITS[0]
         todo = self._plan(ctx, f, prompts)
@@ -937,13 +965,7 @@ class AiBatch(Task):
             for w, _ in todo:
                 f.outcome(w, "budget", f"after {f.stopped}")
             return
-        try:
-            claude = self._claude()
-        except CallError as e:
-            f.batch.errors.append(str(e))
-            for w, _ in todo:
-                f.outcome(w, "errored", str(e))
-            return
+        claude = self._claude()                             # no key: AIUnavailable, up to `_batch_path`
         items = []                                          # (work, step, request, custom_id, worst case)
         for w, step in todo:
             req = w.request(prompts[w.task], note=step.note)
@@ -984,6 +1006,10 @@ class AiBatch(Task):
             started = datetime.now(UTC)
             try:
                 info = claude.create_batch([(batch_custom_id(cid), req) for _, req, cid, _ in chunk])
+            except AIUnavailable as e:                      # nothing was made: the claimed requests go back to errored
+                db.execute("""update ops.ai_request set status = 'errored', reject_reason = %s
+                               where custom_id = any(%s)""", (f"batch unavailable {e.reason}", cids))
+                raise
             except CallError as e:
                 info = self._find_created(db, f, claude, len(chunk), started, e) if maybe_created(e) else None
                 if info is None:
@@ -1014,6 +1040,8 @@ class AiBatch(Task):
         of the workspace's newest batches was created since, holds `n` requests and isn't one of ours already."""
         try:
             recent = claude.recent_batches()
+        except AIUnavailable:
+            raise
         except CallError as e:
             f.batch.errors.append(f"create: {err}; looking for it: {e}")
             return None
@@ -1047,17 +1075,15 @@ class AiBatch(Task):
         f.batch.open = []
         if not rows:
             return 0
-        try:
-            claude = self._claude()
-        except CallError as e:
-            f.batch.errors.append(str(e))
-            f.batch.open = list(rows)
-            return 0
+        claude = self._claude()                             # no key: AIUnavailable, up to `_batch_path`
         changed = 0
         index: dict[int, dict] = {}          # document id -> {custom_id: (work, request, attempt)}, this pass
         for bid, provider_id, at in rows:
             try:
                 info = claude.batch(provider_id)
+            except AIUnavailable:
+                f.batch.open.append((bid, provider_id, at))   # it stays open: the next run reads it
+                raise
             except CallError as e:
                 f.batch.errors.append(f"read {provider_id}: {e}")
                 if e.status == 404 and self._gone_for_good(at):
@@ -1128,6 +1154,8 @@ class AiBatch(Task):
                     if (e := self._entry(db, cid, doc_id, prompts, index)) is not None:
                         f.outcome(e[0], status, f"batch {res.error or res.kind}")
                 changed += 1
+        except AIUnavailable:
+            raise
         except CallError as e:
             if e.status == 404 and self._gone_for_good(at):
                 f.batch.errors.append(f"results {info.id}: {e}")
@@ -1281,11 +1309,7 @@ class AiBatch(Task):
             return
         try:
             if self.embedder is None:
-                key = os.environ.get("VOYAGE_API_KEY", "").strip()
-                if not key:
-                    f.embed_error = "VOYAGE_API_KEY is not set"
-                    return
-                self.embedder = Embedder(key)
+                self.embedder = Embedder(os.environ.get("VOYAGE_API_KEY", "").strip())   # AIUnavailable when unset
             f.embed_host = self.embedder.host
             texts = []
             for did, no, body, section, speaker, bank, bank_slug, label, published_at, event_day in rows:
@@ -1293,6 +1317,9 @@ class AiBatch(Task):
                 day = published_at.astimezone(tz).date() if published_at and tz else event_day
                 texts.append(context_line(bank or bank_slug, label, day, section, speaker) + "\n\n" + body)
             got = self.embedder.embed_documents(texts)
+        except AIUnavailable as e:                          # skipped, not failed: the chunks wait for a key or credits
+            f.embed_unavailable, f.embed_error = e.reason, f"skipped: AI unavailable ({e.reason})"
+            return
         except Exception as e:  # noqa: BLE001 - embeddings never fail the summaries; the next run tries again
             f.embed_error = f"{type(e).__name__}: {e}"
             return
@@ -1381,6 +1408,12 @@ class AiBatch(Task):
             "in_batches_worst_usd": str(f.batch.exposure.quantize(Decimal("0.0001"))),
             "stopped": f.stopped, "run_estimate_usd": str(f.run_estimate.quantize(Decimal("0.0001")))}),
             blocking=False))
+        skipped = [o.work.target for o in f.outcomes if o.status == "skipped"]
+        reason = f.unavailable or f.embed_unavailable
+        out.append(Check("ai_available", reason is None, json.dumps({
+            "outcome": None if reason is None else f"skipped: AI unavailable ({reason})",
+            "claude": f.unavailable, "embeddings": f.embed_unavailable, "skipped_targets": skipped,
+            "budget_stopped": f.stopped == "budget"}), blocking=False))
         if f.mode == "batch":
             b = f.batch
             now = datetime.now(UTC)
@@ -1443,6 +1476,10 @@ class AiBatch(Task):
                              f"AI spend reached the ${f.budget} monthly budget; requests stopped"))
         elif f.spend > 0:                                  # a run spent within the budget: it's been raised
             out.append(Alert(f"ai_budget:{month}", False))
+        reason = f.unavailable or f.embed_unavailable        # one alert a month, resolved by a run that finds AI again
+        out.append(Alert(f"ai_unavailable:{month}", reason is not None, "warn",
+                         f"AI paused ({AI_REASONS.get(reason, reason)}): summaries and embeddings are skipped; "
+                         "published outputs and the data are unchanged"))
         out.append(Alert("ai_run_estimate", f.stopped == "run_estimate", "error",
                          f"an AI run estimated at ${f.run_estimate:.2f} (over ${RUN_LIMIT_USD}) sent nothing more"))
         return out

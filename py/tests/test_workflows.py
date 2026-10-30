@@ -181,6 +181,29 @@ def test_a_manual_run_without_production_target_cannot_reach_production(name, in
         assert run[n] == f"SHARED:{n}"
 
 
+AI_KEYS = ("ANTHROPIC_API_KEY", "VOYAGE_API_KEY")
+AI_SWITCH = ("daily", "refresh", "watch", "backfill")
+
+
+@pytest.mark.parametrize("name", AI_SWITCH)
+def test_the_ai_input_defaults_on_and_off_leaves_both_ai_keys_out_of_the_run(name):
+    """#197: a manual run can turn AI off without a deploy; the AI steps then skip (their path is tested in
+    test_ai_batch_task.py). Everything else in the run's environment stays as it was."""
+    spec = load(name)["on"]["workflow_dispatch"]["inputs"]["ai"]
+    assert spec["type"] == "choice" and spec["options"] == ["on", "off"] and spec["default"] == "on"
+    _, on, _ = run_env(name, "workflow_dispatch", manual_inputs(name))
+    _, off, _ = run_env(name, "workflow_dispatch", {**manual_inputs(name), "ai": "off"})
+    assert all(on[k] == f"SHARED:{k}" for k in AI_KEYS) and all(off[k] == "" for k in AI_KEYS)
+    assert {k: v for k, v in off.items() if k not in AI_KEYS} == {k: v for k, v in on.items() if k not in AI_KEYS}
+    assert off["FRED_API_KEY"] == "SHARED:FRED_API_KEY"
+
+
+@pytest.mark.parametrize("name", [n for n in AI_SWITCH if n in SCHEDULED])
+def test_a_scheduled_run_keeps_the_ai_keys(name):
+    _, run, _ = run_env(name, "schedule", {})
+    assert all(run[k] == f"SHARED:{k}" for k in AI_KEYS)
+
+
 @pytest.mark.parametrize("name", JOBS)
 def test_a_manual_run_can_choose_production(name):
     target, run, values = run_env(name, "workflow_dispatch", {**manual_inputs(name), "target": "production"})

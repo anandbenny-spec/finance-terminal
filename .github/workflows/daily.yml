@@ -11,6 +11,11 @@ on:
         type: choice
         options: [dev, production]
         default: dev
+      ai:
+        description: 'AI for this run: off leaves the Anthropic and Voyage keys out, so the AI steps skip (a scheduled run is on)'
+        type: choice
+        options: ['on', 'off']
+        default: 'on'
 concurrency:
   group: jobs-daily
   cancel-in-progress: false
@@ -51,5 +56,5 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           COINGECKO_DEMO_KEY: ${{ secrets.COINGECKO_DEMO_KEY }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ inputs.ai != 'off' && secrets.ANTHROPIC_API_KEY || '' }}
+          VOYAGE_API_KEY: ${{ inputs.ai != 'off' && secrets.VOYAGE_API_KEY || '' }}
