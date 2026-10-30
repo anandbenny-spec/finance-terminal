@@ -11,7 +11,8 @@ export type TaskKey =
   | "policy.fed_documents"
   | "policy.rbi_documents"
   | "policy.ai_batch"
-  | "policy.reactions";
+  | "policy.reactions"
+  | "site.quality_summary";
 
 /** Live surfaces and their feeding tasks. */
 export const FEEDS = {
@@ -41,3 +42,12 @@ export type Surface = keyof typeof FEEDS;
 export function liveTasks(feeds: Record<string, readonly TaskKey[]> = FEEDS): TaskKey[] {
   return [...new Set(Object.values(feeds).flat())].sort();
 }
+
+/**
+ * Surfaces that are live but whose task hasn't run on production yet (#135). They are NOT in FEEDS, so the status bar
+ * doesn't count a task with no freshness row as stale. Once production's first `site.quality_summary` run has
+ * succeeded, move `accuracy` into FEEDS with a one-line pull request.
+ */
+export const PREVIEW_FEEDS = {
+  accuracy: ["site.quality_summary"],
+} as const satisfies Record<string, readonly TaskKey[]>;

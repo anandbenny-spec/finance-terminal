@@ -23,6 +23,7 @@ import { Panel } from "@/components/data/Panel";
 import { Qualifier } from "@/components/data/Qualifier";
 import { SourceLine } from "@/components/data/SourceLine";
 import { StateNote } from "@/components/data/StateNote";
+import { Tabs } from "@/components/data/Tabs";
 import { FEEDS, type TaskKey } from "@/lib/feeds";
 import { formatDate, formatReleaseTime } from "@/lib/format";
 import { stanceCitations, summaryBlock } from "@/lib/policy/ai";
@@ -129,24 +130,8 @@ async function documentText(id: number): Promise<{ text: string; paras: Paragrap
   }
 }
 
-function Tabs({ bank, date, tab }: { bank: Bank; date: string; tab: TabId }) {
-  return (
-    <nav aria-label="Meeting sections" className="mt-4 overflow-x-auto border-b border-line-strong">
-      <ul className="flex min-w-max gap-4">
-        {TABS.map((t) => (
-          <li key={t.id}>
-            <Link
-              href={meetingTabHref(bank, date, t.id)}
-              aria-current={t.id === tab ? "page" : undefined}
-              className="-mb-px inline-block border-b-2 border-transparent py-2 text-ui text-ink-2 no-underline hover:text-ink-1 aria-[current=page]:border-amber aria-[current=page]:text-ink-1"
-            >
-              {t.label}
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
+function MeetingTabs({ bank, date, tab }: { bank: Bank; date: string; tab: TabId }) {
+  return <Tabs label="Meeting sections" items={TABS.map((t) => ({ id: t.id, label: t.label, href: meetingTabHref(bank, date, t.id) }))} current={tab} />;
 }
 
 // ------------------------------------------------------------------ Overview
@@ -674,7 +659,7 @@ export async function MeetingView({ bank, slug, date, tab, doc }: { bank: Bank; 
 
   return (
     <>
-      <Header ctx={ctx} tab={tab} tabs={<Tabs bank={bank} date={m.decision_date} tab={tab} />} />
+      <Header ctx={ctx} tab={tab} tabs={<MeetingTabs bank={bank} date={m.decision_date} tab={tab} />} />
       {body}
     </>
   );
