@@ -58,3 +58,12 @@ jobs:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           ANTHROPIC_API_KEY: ${{ inputs.ai != 'off' && secrets.ANTHROPIC_API_KEY || '' }}
           VOYAGE_API_KEY: ${{ inputs.ai != 'off' && secrets.VOYAGE_API_KEY || '' }}
+      # S3 (#198): the dead-man check. A production run that succeeded pings the monitor, which emails Anand when a
+      # day passes without a ping. Skipped with no secret; a manual dev run never pings.
+      - name: Ping the dead-man check
+        if: success() && env.FT_TARGET == 'production'
+        run: |
+          if [ -z "$HEALTHCHECKS_PING_URL" ]; then echo "HEALTHCHECKS_PING_URL is not set: no ping"; exit 0; fi
+          curl -fsS -m 10 --retry 3 "$HEALTHCHECKS_PING_URL" > /dev/null
+        env:
+          HEALTHCHECKS_PING_URL: ${{ secrets.HEALTHCHECKS_PING_URL }}

@@ -65,8 +65,8 @@ def test_api_paths_go_to_the_api_service_and_everything_else_to_web(path, servic
 def test_the_app_answers_health_on_the_full_api_path():
     client = TestClient(_main().app)
     response = client.get("/api/health")
-    assert response.status_code == 200
-    assert response.json() == {"ok": True}
+    assert response.status_code in (200, 503)              # S3 (#198): the real check; 503 without a Data API here
+    assert response.json() in ({"status": "ok"}, {"status": "degraded"})
     assert response.headers["content-type"] == "application/json"
     # Vercel passes the full path (seen on the first deploy), so nothing is served without the prefix.
     assert client.get("/health").status_code == 404
