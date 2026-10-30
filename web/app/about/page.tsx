@@ -4,6 +4,7 @@
 // owner's objection is handled. Static text: it shows no figures, so the accuracy rule has nothing to check here.
 // RBI is named, never linked (CLAUDE.md §1). Update the "What is logged" section when the command bar lands.
 import type { Metadata } from "next";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { PageHeader } from "@/components/data/PageHeader";
 import { Panel, PanelGrid } from "@/components/data/Panel";
@@ -119,7 +120,11 @@ export default function AboutPage() {
           <Panel title="AI-written text" titleId="ai-title" variant="prose">
             <p className="text-ink-2">
               Summaries and other AI-written text are marked as AI and cite the passage of a stored document they come from. Text without
-              a verified citation is not published.
+              a verified citation is not published.{" "}
+              <Link href="/methodology" className="underline">
+                How the figures and AI text are made and checked
+              </Link>
+              .
             </p>
           </Panel>
         </PanelGrid>
