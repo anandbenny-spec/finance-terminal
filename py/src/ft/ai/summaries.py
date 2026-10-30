@@ -222,6 +222,16 @@ def _overlaps(s: int, e: int, spans: list[tuple[int, int]]) -> bool:
     return any(s < b and e > a for a, b in spans)
 
 
+# The stable phrases `check` writes into a reason, by the accuracy page's category (ft/quality/reasons.py reads this table;
+# tests run `check` on crafted bad replies and assert each phrase still lands where it says). Regexes, case-insensitive.
+# Change a message above and this table together.
+REASON_PHRASES: dict[str, tuple[str, ...]] = {
+    "citation": (r"no verified citation",),
+    "numbers": (r"numbers not in its cited passages",),
+    "format": (r"text outside the bullets", r"no bullets \(each bullet", r"\d+ bullets, not \d+ to \d+"),
+}
+
+
 def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
           changed: dict[int, list[tuple[int, int]]] | None = None, full_text: dict[int, str] | None = None) -> Checked:
     """Check a reply against our copies of the documents it was given (`sources`; `full_text` by document id when a
