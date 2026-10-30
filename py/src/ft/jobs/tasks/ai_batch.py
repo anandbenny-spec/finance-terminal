@@ -1318,7 +1318,7 @@ class AiBatch(Task):
                 texts.append(context_line(bank or bank_slug, label, day, section, speaker) + "\n\n" + body)
             got = self.embedder.embed_documents(texts)
         except AIUnavailable as e:                          # skipped, not failed: the chunks wait for a key or credits
-            f.embed_unavailable, f.embed_error = e.reason, f"skipped: AI unavailable ({e.reason})"
+            f.embed_unavailable, f.embed_error = e.reason, f"skipped: AI unavailable ({e.reason}); {e.kind}"
             return
         except Exception as e:  # noqa: BLE001 - embeddings never fail the summaries; the next run tries again
             f.embed_error = f"{type(e).__name__}: {e}"
