@@ -29,6 +29,11 @@ on:
         description: 'Replay a past decision day on dev: YYYY-MM-DD (blank = today; starts at its release time)'
         required: false
         type: string
+      ai:
+        description: 'AI for this run: off leaves the Anthropic and Voyage keys out, so the AI steps skip (a scheduled run is on)'
+        type: choice
+        options: ['on', 'off']
+        default: 'on'
 concurrency:
   group: jobs-watch
   cancel-in-progress: false
@@ -70,5 +75,5 @@ jobs:
           STORAGE_REGION: ${{ secrets.STORAGE_REGION }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ inputs.ai != 'off' && secrets.ANTHROPIC_API_KEY || '' }}
+          VOYAGE_API_KEY: ${{ inputs.ai != 'off' && secrets.VOYAGE_API_KEY || '' }}
