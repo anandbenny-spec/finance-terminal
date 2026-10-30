@@ -982,7 +982,9 @@ def test_a_tally_statement_naming_a_stranger_fails_its_load_and_the_daily_run(s3
                f"{RAISE_PHRASE}.")
     pages = {fed_calendar.CALENDAR: calendar(base, a),
              url(base): named(base, HOLD_AT_3),
-             url(a): fed_page(fed_tally("11 – 1", HOLD_AT_3, against), day=when(a))}
+             url(a): fed_page(fed_tally("11 – 1", HOLD_AT_3, against), day=when(a)),
+             fed_statement.RSS: fed_rss(("Federal Reserve issues FOMC statement", url(a),
+                                         "Tue, 25 Jan 2067 18:00:00 GMT"))}                              # the daily run reads the feed first
     sites = Sites(pages)
     code, r = go(sites, task(roster, slugs, date(2067, 1, 1)), "backfill", datetime(2067, 2, 1, tzinfo=UTC))
     assert (code, r["status"]) == (0, "success"), r["error"]                      # a backfill isolates the bad meeting
