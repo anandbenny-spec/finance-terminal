@@ -2,7 +2,7 @@
 // Test rows shaped like the views; the names and figures are test data, not a record of real meetings.
 import { describe, expect, it } from "vitest";
 import type { PolicyMeetingRow, PolicyVoteRow } from "@/lib/queries/api";
-import { TABS, changeInWords, decisionLine, historyRows, lastMove, meetingHref, meetingTabHref, tabOf, tally } from "./decisions";
+import { TABS, changeInWords, decisionLine, dissentLine, historyRows, lastMove, meetingHref, meetingTabHref, tabOf, tally } from "./decisions";
 
 function meeting(over: Partial<PolicyMeetingRow>): PolicyMeetingRow {
   return {
@@ -102,9 +102,52 @@ describe("Fed tally (Design 01 §1.14, §4.5)", () => {
     expect(t.kind === "tally" && t.line).toBe("Vote 11–1 · Dissent: Schmid (preferred to hold)");
   });
 
-  it("is absent with no votes, and counts only the meeting's own rows", () => {
-    expect(tally(meeting({}), [])).toEqual({ kind: "absent" });
-    expect(tally(meeting({}), [vote("fomc-2026-07-30", "A", 0)])).toEqual({ kind: "absent" });
+  it("is absent with no votes and no minutes date to wait for, and counts only the meeting's own rows", () => {
+    const baseline = meeting({ minutes_due_on: null });
+    expect(tally(baseline, [])).toEqual({ kind: "absent" });
+    expect(tally(baseline, [vote("fomc-2026-07-30", "A", 0)])).toEqual({ kind: "absent" });
+  });
+});
+
+describe("Fed tally while the minutes are out (#159): a tally statement names only its dissenters", () => {
+  const slug = "fomc-2026-10-28";
+  const oct = meeting({ slug, decision_date: "2026-10-28", minutes_due_on: "2026-11-18", policy_rate_change_bps: 0, dissent_count: 2 });
+  const NOTE = "Each member's vote is published in the minutes, due 18 Nov 2026.";
+  const cook = vote(slug, "Lisa D. Cook", 25, { is_dissent: true });
+  const hammack = vote(slug, "Beth M. Hammack", 25, { is_dissent: true });
+
+  it("shows the dissenters and §4.5's copy, and no count", () => {
+    const t = tally(oct, [cook, hammack]);
+    expect(t).toEqual({ kind: "pending", note: NOTE, dissents: ["Lisa D. Cook (preferred +25 bps)", "Beth M. Hammack (preferred +25 bps)"] });
+    expect(t.kind === "pending" && dissentLine(t.dissents ?? [])).toBe("Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps)");
+    expect(JSON.stringify(t)).not.toMatch(/\d+–\d+/); // "10–2" is not a stored number
+  });
+
+  it("writes a hold preference, and a dissent that isn't about the rate, as the tally line does", () => {
+    const t = tally(oct, [vote(slug, "A", 0, { is_dissent: true }), vote(slug, "B", null, { is_dissent: true })]);
+    expect(t).toMatchObject({ kind: "pending", dissents: ["A (preferred to hold)", "B (dissented, not on the rate)"] });
+  });
+
+  it("shows only the copy for a unanimous tally statement (no rows yet), in place of 'Votes aren't published yet.'", () => {
+    expect(tally(oct, [])).toEqual({ kind: "pending", note: NOTE });
+    expect(tally(meeting({ slug, minutes_due_on: null }), [])).toEqual({ kind: "absent" }); // nothing to wait for: say nothing
+    expect(tally(oct, [vote("fomc-2026-09-16", "Cook", 0, { is_dissent: true })])).toEqual({ kind: "pending", note: NOTE }); // another meeting's rows don't count
+  });
+
+  it("is the tally line again once the minutes add the members who voted for", () => {
+    const forTheDecision = Array.from({ length: 10 }, (_, i) => vote(slug, `Member ${i + 1}`, 0));
+    const t = tally(oct, [...forTheDecision, cook, hammack]);
+    expect(t).toMatchObject({ kind: "tally", short: "10–2", line: "Vote 10–2 · Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps)" });
+  });
+
+  it("leaves a named statement's full set of rows and the RBI's pending copy as they were", () => {
+    expect(tally(meeting({}), [vote("fomc-2026-09-17", "A", -25), vote("fomc-2026-09-17", "B", -50, { is_dissent: true })])).toMatchObject({ kind: "tally", short: "1–1" });
+    expect(tally(rbi({}), [])).toEqual({ kind: "pending", note: "Each member's vote is published in the minutes, due 22 Aug 2024." });
+  });
+
+  it("gives the history table a dash with the copy as its tooltip, and the dissent count from the meeting's row", () => {
+    const rows = historyRows([oct], [cook, hammack]);
+    expect(rows[0]).toMatchObject({ vote: "—", voteNote: NOTE, dissents: 2 });
   });
 });
 
