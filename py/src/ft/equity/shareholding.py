@@ -182,7 +182,8 @@ def parse_master(rows: list[dict], symbol: str) -> Listing:
     out, seen = Listing([]), set()
     for r in rows:
         link = r.get("xbrl")
-        if not isinstance(link, str) or not link.strip() or link.strip() in ("-", "NA"):
+        if not isinstance(link, str) or not link.strip() or link.strip() in ("-", "NA") \
+                or fl._empty_link(link.strip()):
             out.no_link += 1
             continue
         link = link.strip()
