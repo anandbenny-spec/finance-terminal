@@ -30,6 +30,11 @@ policy.ai_batch:
   workflows: {daily: every 20 hours, watch: after_decision_document}
   run_after: [policy.fed_documents, policy.rbi_documents]
   overdue_after: 3 days
+policy.rate_cycles:
+  description: Each bank's easing and tightening cycles, derived from its stored rate decisions
+  workflows: {daily: every 20 hours}
+  run_after: [policy.fed_documents, policy.rbi_documents]
+  overdue_after: 3 days
 crypto.coingecko_markets:
   description: CoinGecko daily market snapshot, top 500 (stored, unpublished)
   workflows: {daily: every 20 hours}
