@@ -17,6 +17,7 @@ import { Panel, PanelGrid } from "@/components/data/Panel";
 import { Section } from "@/components/data/SectionHeading";
 import { StateNote } from "@/components/data/StateNote";
 import { ErrorPanel, Foot, latestOf } from "@/components/policy/PanelFoot";
+import { PendingVote } from "@/components/policy/PendingVote";
 import { Row } from "@/components/policy/PolicyCard";
 import { RateStats } from "@/components/policy/RateStats";
 import { VotesPanel } from "@/components/policy/VotesPanel";
@@ -106,7 +107,7 @@ function ChangesPanel({ bank, latest, changes, policies, now, footer }: { bank: 
       <dl className="flex flex-col gap-1 text-data">
         {m.decision_at && <Row term={fed ? "Statement" : "Resolution"}><span className="font-mono">{formatReleaseTime(m.decision_at, ZONE[bank])}</span></Row>}
         <Row term="Vote">
-          {t?.kind === "tally" ? t.line : t?.kind === "pending" ? note("unavailable", t.note) : note("unavailable", "Votes aren't published yet.")}
+          {t?.kind === "tally" ? t.line : t?.kind === "pending" ? <PendingVote t={t} /> : note("unavailable", "Votes aren't published yet.")}
         </Row>
       </dl>
     </div>
