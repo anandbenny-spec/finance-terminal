@@ -19,7 +19,7 @@ import yaml
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 JOBS = ("daily", "watch", "weekly", "refresh", "backfill")
 SCHEDULED = ("daily", "watch", "weekly")
-KEEP_ALIVE = ("keep-alive",)      # scheduled too, but not a job workflow: it runs no task (#142)
+KEEP_ALIVE = ("keep-alive", "keepalive-db")      # scheduled too, but not job workflows: they run no task (#142; #196 added the database backup)
 PER_TARGET = ("JOB_DATABASE_URL", "STORAGE_ENDPOINT", "STORAGE_ACCESS_KEY_ID", "STORAGE_SECRET_ACCESS_KEY")
 SHARED = ("STORAGE_BUCKET", "STORAGE_REGION", "FRED_API_KEY", "SEC_USER_AGENT", "ANTHROPIC_API_KEY", "VOYAGE_API_KEY")
 
@@ -316,7 +316,7 @@ def test_the_coingecko_demo_key_reaches_the_daily_and_refresh_runs_for_both_targ
 
 # ---------------------------------------------------------------- the keep-alive (#142)
 
-KEPT_ALIVE = ["keep-alive.yml", "daily.yml", "weekly.yml", "watch.yml"]      # the order the script visits them
+KEPT_ALIVE = ["keep-alive.yml", "daily.yml", "weekly.yml", "watch.yml", "keepalive-db.yml"]   # the order the script visits them
 
 
 def _run_keep_alive(tmp_path, states, put_fails=()):
@@ -373,17 +373,234 @@ def test_the_keep_alive_enables_a_workflow_that_is_active_or_was_switched_off_fo
 def test_the_keep_alive_leaves_a_workflow_disabled_by_hand_alone(tmp_path):
     states = dict.fromkeys(KEPT_ALIVE, "active") | {"watch.yml": "disabled_manually", "daily.yml": "disabled_manually"}
     code, out, enabled = _run_keep_alive(tmp_path, states)
-    assert code == 0 and enabled == ["keep-alive.yml", "weekly.yml"]
+    assert code == 0 and enabled == ["keep-alive.yml", "weekly.yml", "keepalive-db.yml"]
     assert "daily.yml: disabled_manually, left alone" in out
 
 
 def test_the_keep_alive_fails_when_it_cannot_read_a_workflow_and_still_handles_the_others(tmp_path):
     code, out, enabled = _run_keep_alive(tmp_path, dict.fromkeys(KEPT_ALIVE, "active") | {"weekly.yml": None})
     assert code == 1 and "::error title=keep-alive::could not read weekly.yml" in out
-    assert enabled == ["keep-alive.yml", "daily.yml", "watch.yml"]
+    assert enabled == ["keep-alive.yml", "daily.yml", "watch.yml", "keepalive-db.yml"]
 
 
 def test_the_keep_alive_fails_when_github_refuses_to_enable_a_workflow(tmp_path):
     code, out, enabled = _run_keep_alive(tmp_path, dict.fromkeys(KEPT_ALIVE, "active"), put_fails=["daily.yml"])
     assert code == 1 and "could not enable daily.yml" in out
     assert enabled == KEPT_ALIVE
+
+
+# ---------------------------------------------------------------- the watch schedules (issue #158)
+
+def test_the_watch_runs_a_primary_inside_the_windows_lead_and_two_weekday_catch_ups_per_bank():
+    """GitHub starts scheduled runs late and sometimes never (33 minutes late on 27 Oct; the 28 Oct FOMC run was not
+    created). The primary starts inside the window's lead, so a start up to about 45 minutes late still polls; two
+    catch-up runs follow on weekdays, after the window has closed (one pass each: due.py's catch-up)."""
+    from datetime import date, datetime, time, timedelta
+
+    from ft.jobs.due import BANKS, LEAD
+
+    wf = load("watch")
+    got = [(e["cron"], e["timezone"]) for e in wf["on"]["schedule"]]
+    assert got == [("52 13 * * *", "America/New_York"), ("12 15 * * 1-5", "America/New_York"),
+                   ("42 17 * * 1-5", "America/New_York"), ("52 9 * * *", "Asia/Kolkata"),
+                   ("12 11 * * 1-5", "Asia/Kolkata"), ("42 13 * * 1-5", "Asia/Kolkata")]
+    timeout = timedelta(minutes=wf["jobs"]["run"]["timeout-minutes"])
+
+    def start(cron):
+        minute, hour, *_ = cron.split()
+        return datetime.combine(date(2030, 1, 1), time(int(hour), int(minute)))
+
+    for bank in BANKS.values():
+        primary, *catch_ups = [c for c, tz in got if tz == bank.tz.key]
+        release = datetime.combine(date(2030, 1, 1), bank.release)
+        assert primary.split()[2:] == ["*", "*", "*"]                       # every day, as before
+        assert release - LEAD <= start(primary) < release                   # inside the lead: a late start still polls
+        assert release + bank.window - start(primary) < timeout             # polling to the window's close fits
+        assert len(catch_ups) == 2
+        for cron in catch_ups:
+            assert cron.split()[2:] == ["*", "*", "1-5"]                    # weekdays
+            assert start(cron) >= release + bank.window                     # the window has closed: one pass
+
+
+# ---------------------------------------------------------------- ci: the web job runs only when something it reads changed
+
+def _web_step():
+    steps = load("ci")["jobs"]["secrets"]["steps"]
+    return next(s for s in steps if s.get("id") == "changed")
+
+
+def test_the_web_job_follows_the_secrets_job_and_runs_only_when_it_says_so():
+    """Anand, 29 Oct 2026: the free 2,000 Actions minutes ran out in 8 days. The web job is skipped (a skipped check
+    counts as passed) when nothing it reads changed; the answer comes from the secrets job, which runs anyway, because a
+    job of its own would be billed at least a minute per run."""
+    jobs = load("ci")["jobs"]
+    assert jobs["web"]["needs"] == "secrets" and jobs["web"]["if"] == "needs.secrets.outputs.web == 'true'"
+    assert jobs["secrets"]["outputs"] == {"web": "${{ steps.changed.outputs.web }}"}
+    assert "needs" not in jobs["test"] and "if" not in jobs["test"]               # the SQL and Python tests always run
+    step = _web_step()
+    assert "${{" not in step["run"]                                              # inputs reach the script through env
+    assert set(step["env"]) == {"EVENT", "BASE_SHA", "BEFORE_SHA", "HEAD_SHA", "WEB_READS"}
+    # what the web job reads: web/, the labelling set its tests read, vercel.json and ci.yml itself
+    assert re.search(r"labelling_items\.json", (WORKFLOWS.parent.parent / "web/lib/labelling/labelling.test.ts").read_text())
+
+
+def _git(cwd, *args):
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.org", "-c", "commit.gpgsign=false",
+                           *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _ask(tmp_path, event, changed, *, base="parent"):
+    """Run the step's script in a throwaway repo whose last commit changes `changed`; returns its web output."""
+    _git(tmp_path, "init", "-q", "-b", "main")
+    for f in ("py/a.py", "web/lib/x.ts", "README.md"):
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text("1")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    parent = _git(tmp_path, "rev-parse", "HEAD")
+    for f in changed:
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text("2")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "change")
+    out = tmp_path / "output.txt"
+    step = _web_step()
+    env = {**os.environ, "EVENT": event, "HEAD_SHA": _git(tmp_path, "rev-parse", "HEAD"), "GITHUB_OUTPUT": str(out),
+           "BASE_SHA": {"parent": parent, "zeros": "0" * 40, "unknown": "f" * 40, "none": ""}[base],
+           "BEFORE_SHA": {"parent": parent, "zeros": "0" * 40, "unknown": "f" * 40, "none": ""}[base],
+           "WEB_READS": step["env"]["WEB_READS"]}
+    done = subprocess.run(["bash", "-e", "-c", step["run"]], check=False, cwd=tmp_path, env=env, capture_output=True,
+                          text=True)
+    assert done.returncode == 0, done.stderr
+    return out.read_text().strip()
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+@pytest.mark.parametrize("changed, web", [
+    (["py/src/ft/jobs/due.py"], "false"),
+    (["py/config/tasks.yaml", "supabase/migrations/20261029000000_x.sql", "README.md", "CLAUDE.md"], "false"),
+    ([".github/workflows/watch.yml", ".github/workflows/ci.yml.bak"], "false"),
+    (["web2/page.tsx", "py/web/page.py", "docs/vercel.json"], "false"),
+    (["web/app/page.tsx"], "true"),
+    (["py/src/ft/jobs/due.py", "web/lib/x.ts"], "true"),
+    (["py/config/eval/sets/labelling_items.json"], "true"),
+    (["vercel.json"], "true"),
+    ([".github/workflows/ci.yml"], "true"),
+])
+def test_the_web_job_runs_when_a_file_it_reads_changed(tmp_path, event, changed, web):
+    assert _ask(tmp_path, event, changed) == f"web={web}"
+
+
+@pytest.mark.parametrize("event, base", [("workflow_dispatch", "parent"), ("push", "zeros"), ("push", "unknown"),
+                                         ("pull_request", "none"), ("schedule", "parent")])
+def test_in_any_doubt_the_web_job_runs(tmp_path, event, base):
+    # a manual run, a first push (before is all zeros), a base the clone doesn't have, no base, any other event
+    assert _ask(tmp_path, event, ["py/src/ft/jobs/due.py"], base=base) == "web=true"
+
+
+# ---------------------------------------------------------------- the database keep-alive backup (issue #196)
+
+KEEPALIVE_QUERY = "select count(*) from core.series"
+
+
+def _keepalive_db_script():
+    return load("keepalive-db")["jobs"]["ping"]["steps"][0]["run"]
+
+
+KEEPALIVE_URL = "postgresql://job_writer.ref@pooler.example:5432/postgres?application_name=marker-7"      # no password in it (the scanner's rule), a marker to prove it is never echoed
+
+
+def _run_keepalive_db(tmp_path, *, url=KEEPALIVE_URL, stdout="42\n", exit_code=0, stderr="", with_psql=True):
+    """Run the step's script with a stand-in `psql`; returns (exit code, output, the arguments psql got or None)."""
+    log = tmp_path / "psql.log"
+    if with_psql:
+        psql = tmp_path / "psql"
+        psql.write_text(f"""#!{sys.executable}
+import json, sys
+open({str(log)!r}, "w").write(json.dumps(sys.argv[1:]))
+sys.stdout.write({stdout!r})
+sys.stderr.write({stderr!r})
+sys.exit({exit_code})
+""")
+        psql.chmod(0o755)
+    env = {"PATH": f"{tmp_path}{os.pathsep}/usr/bin:/bin" if with_psql else "/nonexistent-bin-dir"}
+    if url is not None:
+        env["JOB_DATABASE_URL"] = url
+    bash = next(p for p in ("/usr/bin/bash", "/bin/bash") if Path(p).exists())
+    done = subprocess.run([bash, "-c", _keepalive_db_script()], check=False, env=env, capture_output=True, text=True,
+                          timeout=30)
+    return done.returncode, done.stdout + done.stderr, json.loads(log.read_text()) if log.exists() else None
+
+
+def test_the_database_keep_alive_is_scheduled_twice_a_day_and_can_be_started_by_hand():
+    wf = load("keepalive-db")
+    assert wf["on"]["schedule"] == [{"cron": "23 1,13 * * *"}]                  # 06:53 and 18:53 IST, in UTC
+    assert "workflow_dispatch" in wf["on"]
+    assert list(wf["jobs"]) == ["ping"]
+
+
+def test_the_database_keep_alive_holds_no_permission_and_checks_out_nothing():
+    wf = load("keepalive-db")
+    job = wf["jobs"]["ping"]
+    assert wf["permissions"] == {} and job["permissions"] == {} and job["timeout-minutes"] == 5
+    text = (WORKFLOWS / "keepalive-db.yml").read_text()
+    for forbidden in ("actions/checkout", "git push", "contents:", "GITHUB_TOKEN", "github.token", "DEV_", "inputs."):
+        assert forbidden not in text, forbidden
+
+
+def test_the_database_keep_alive_reads_production_with_the_secret_the_daily_workflow_uses():
+    job = load("keepalive-db")["jobs"]["ping"]
+    assert job["env"]["JOB_DATABASE_URL"] == "${{ secrets.JOB_DATABASE_URL }}"
+    # the daily workflow passes exactly this secret to a scheduled (production) run
+    daily = next(e for e in resolve("daily", "schedule", {}, secrets())[1] if "JOB_DATABASE_URL" in e)
+    assert daily["JOB_DATABASE_URL"] == "PROD:JOB_DATABASE_URL"
+    assert interpolate(job["env"]["JOB_DATABASE_URL"], {"secrets": secrets(), "env": {}}) == "PROD:JOB_DATABASE_URL"
+    for step in job["steps"]:                      # the secret never sits on a run line
+        assert "secrets." not in step.get("run", "") and "${{" not in step.get("run", "")
+
+
+def test_the_database_keep_alive_runs_one_read_only_query():
+    script = _keepalive_db_script()
+    assert script.count("--command") == 1 and f'--command "{KEEPALIVE_QUERY}"' in script
+    assert "--set ON_ERROR_STOP=1" in script
+    lowered = script.lower()
+    for word in ("insert ", "update ", "delete ", "drop ", "alter ", "create ", "truncate ", "grant "):
+        assert word not in lowered, word
+
+
+def test_the_database_keep_alive_passes_the_url_from_the_environment_and_prints_the_count(tmp_path):
+    code, out, argv = _run_keepalive_db(tmp_path)
+    assert code == 0 and "core.series rows: 42" in out and "::warning" not in out
+    assert argv[0] == KEEPALIVE_URL
+    assert argv[argv.index("--command") + 1] == KEEPALIVE_QUERY and "ON_ERROR_STOP=1" in argv
+    assert "marker-7" not in out                                                 # the url is never echoed
+
+
+def test_the_database_keep_alive_warns_when_the_catalogue_is_empty_but_still_succeeds(tmp_path):
+    code, out, _argv = _run_keepalive_db(tmp_path, stdout="0\n")
+    assert code == 0 and "::warning title=keepalive-db::core.series is empty" in out
+
+
+@pytest.mark.parametrize("exit_code", [1, 2, 3])
+def test_the_database_keep_alive_fails_without_printing_psqls_own_message(tmp_path, exit_code):
+    leak = 'missing "=" after "postgresql://job_writer.ref@pooler.example?application_name=marker-7" in connection info string'
+    code, out, _argv = _run_keepalive_db(tmp_path, exit_code=exit_code, stderr=leak, stdout="")
+    assert code == 1 and f"::error title=keepalive-db::the read-only query failed (psql exit {exit_code})" in out
+    assert "marker-7" not in out and "missing" not in out
+
+
+@pytest.mark.parametrize("stdout", ["", "not a number\n", "4 2\n", "-1\n"])
+def test_the_database_keep_alive_fails_when_the_answer_is_not_a_count(tmp_path, stdout):
+    code, out, _argv = _run_keepalive_db(tmp_path, stdout=stdout)
+    assert code == 1 and "::error title=keepalive-db::the query did not return a number" in out
+
+
+@pytest.mark.parametrize("url", [None, ""])
+def test_the_database_keep_alive_fails_when_the_secret_is_missing_and_never_calls_psql(tmp_path, url):
+    code, out, argv = _run_keepalive_db(tmp_path, url=url)
+    assert code == 1 and "::error title=keepalive-db::JOB_DATABASE_URL is not set" in out and argv is None
+
+
+def test_the_database_keep_alive_says_so_when_psql_is_missing(tmp_path):
+    code, out, argv = _run_keepalive_db(tmp_path, with_psql=False)
+    assert code == 1 and "::error title=keepalive-db::psql is not on this runner image" in out and argv is None

@@ -19,7 +19,8 @@ def test_repo_config_loads():
                           "equity.valuation_inputs", "equity.prices", "equity.filings", "equity.corporate_actions",
                           "equity.statements"}
     # the due-rule names are kept as tasks.yaml writes them (Prompt 01 A2)
-    assert tasks["policy.fed_documents"].rules == {"daily": "every 20 hours", "watch": "fomc_decision_day"}
+    # a daily rule may add the decision-day catch-up (#158: `every 20 hours or fomc_catch_up`; test_catch_up_rules.py)
+    assert tasks["policy.fed_documents"].rules == {"daily": "every 20 hours or fomc_catch_up", "watch": "fomc_decision_day"}
     assert tasks["policy.rbi_documents"].rules["watch"] == "mpc_decision_day"
     assert tasks["policy.ai_batch"].rules["watch"] == "after_decision_document"
     assert tasks["policy.calendar"].min_interval == timedelta(days=25)
@@ -81,7 +82,7 @@ def test_sync_mirrors_the_config_into_ops_task(tmp_path):
             "select key, workflows, due_rules, run_after, min_interval, overdue_after, enabled from ops.task")}
     for key, t in tasks.items():
         assert rows[key] == (list(t.workflows), t.rules, list(t.run_after), t.min_interval, t.overdue_after, t.enabled)
-    assert rows["policy.fed_documents"][1] == {"daily": "every 20 hours", "watch": "fomc_decision_day"}
+    assert rows["policy.fed_documents"][1] == {"daily": "every 20 hours or fomc_catch_up", "watch": "fomc_decision_day"}
     assert rows["policy.reactions"][-1] is True
 
 

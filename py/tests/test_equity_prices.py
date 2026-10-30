@@ -677,3 +677,17 @@ def test_a_window_starting_on_the_first_session_of_2019_runs_its_checks_instead_
     assert code != 0 and checks(tr)["sessions_present"]["passed"] is False
     assert "2019-01-01" in checks(tr)["sessions_present"]["detail"]
     assert checks(tr)["continuity"]["passed"] is True
+
+
+OLD = ("SYMBOL,SERIES,OPEN,HIGH,LOW,CLOSE,LAST,PREVCLOSE,TOTTRDQTY,TOTTRDVAL,TIMESTAMP,TOTALTRADES,ISIN,\n"
+       "INFY,EQ,10,12,9,11,11,10,100,1100,{d},5,INE009A01021,\n")
+
+
+@pytest.mark.parametrize("text", ["13-Jul-2020", "13-JUL-20", "13-07-2020", "2020-07-13"])
+def test_old_format_trade_dates_in_other_spellings_still_read_as_the_same_day(text):
+    assert bh.parse_bhavcopy(OLD.format(d=text).encode()).trade_date == D(2020, 7, 13)
+
+
+def test_an_unreadable_trade_date_is_refused_and_the_error_shows_the_cell():
+    with pytest.raises(bh.BhavError, match=r"readable trade date.*'INFY'"):
+        bh.parse_bhavcopy(OLD.format(d="n/a").encode())

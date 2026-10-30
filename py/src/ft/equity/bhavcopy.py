@@ -135,7 +135,7 @@ def parse_bhavcopy(body: bytes) -> Bhav:
                     "code": "FININSTRMID"}
     elif {"TIMESTAMP", "TOTTRDQTY", "SERIES"} <= ix.keys():
         fmt_exchange = "NSE"
-        parse_date = lambda r: _date(get(r, "TIMESTAMP"), "%d-%b-%Y")
+        parse_date = lambda r: _date(get(r, "TIMESTAMP"), "%d-%b-%Y", "%d-%b-%y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y")
         cols = {"sym": "SYMBOL", "isin": "ISIN", "series": "SERIES", "o": "OPEN", "h": "HIGH", "lo": "LOW", "c": "CLOSE",
                     "pc": "PREVCLOSE", "vol": "TOTTRDQTY", "val": "TOTTRDVAL", "trades": "TOTALTRADES", "code": ""}
     elif {"SC_CODE", "ISIN_CODE", "SC_GROUP"} <= ix.keys():
@@ -156,7 +156,7 @@ def parse_bhavcopy(body: bytes) -> Bhav:
                 continue
         d = parse_date(r)
         if d is None:
-            raise BhavError("a row without a readable trade date")
+            raise BhavError(f"a row without a readable trade date: {r[:3]!r}")
         dates.add(d)
         close = _dec(get(r, cols["c"]))
         if close is None:
