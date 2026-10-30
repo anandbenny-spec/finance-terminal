@@ -67,3 +67,9 @@ equity.statements:
   run_after: [equity.filings]
   overdue_after: 10 days
   uses_nse: false
+equity.shareholding:
+  description: Quarterly shareholding patterns of the universe companies from the exchange's XBRL, with each company's promoter and promoter-group holding
+  workflows: {weekly: every 6 days}
+  run_after: [equity.universe]
+  overdue_after: 100 days
+  uses_nse: true
