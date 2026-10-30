@@ -990,4 +990,4 @@ def test_a_tally_statement_naming_a_stranger_fails_its_load_and_the_daily_run(s3
     assert f"{slugs[1]}: voters_on_roster" in r["checks"]["meetings_failed"]["detail"]
     assert state(slugs[1])[:3] == ("scheduled", False, False) and votes(slugs[1]) == {}
     code, r = go(sites, task(roster, slugs, date(2067, 1, 1)), "daily", datetime(2067, 1, 26, 20, tzinfo=UTC))
-    assert (code, r["status"]) == (1, "checks_failed") and "voters_on_roster" in r["error"]
+    assert (code, r["status"]) == (1, "checks_failed") and "voters_on_roster" in r["error"], r["error"]
