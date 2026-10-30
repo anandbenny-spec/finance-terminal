@@ -1,7 +1,7 @@
 # Finance Terminal: instructions for every Claude session
 
-An AI research terminal for Indian and US markets, plus crypto, built by Anand Benny as a resume project for
-capital-markets recruiters. This file holds only what every session needs. The detail lives in the planning
+An AI research terminal for Indian markets and the Fed–RBI policy cycle (Anand's positioning, 28 Oct 2026; Brief
+§12), built by Anand Benny as a resume project for capital-markets recruiters. This file holds only what every session needs. The detail lives in the planning
 docs (§8) and in the module's sub-prompt ("Prompt - NN …"), which Anand pastes or names at the start of a session.
 
 **Precedence:** this file and the sub-prompt are the instructions; the planning docs hold the decisions they
@@ -50,6 +50,8 @@ the fallback. NSE tasks are never visitor-refreshable.
   piece of data belongs to its owner, named on each figure, and the project is non-commercial: it earns no
   money, and sells, licenses or exports no data. It promises no monetary gain and no data resale, not that
   nothing is shown, and it doesn't replace permission: anything an owner objects to is still removed.
+- **Transcript text stays private** (decided by Anand, 29 Oct 2026; Brief §6.2, Spec 02B §3.2): visitors, the command
+  bar included, see only the quotes of verified citations, at most 400 characters each, never a transcript's text.
 - "Informational only, not investment advice" on every page. Valuations and rankings are informational, never
   buy/sell recommendations, verdicts or upside percentages (Brief §11).
 - Other sources' terms (CoinGecko, Coin Metrics, SEBI, RBI, the Fed, transcripts, Yahoo) are in Brief §6.2: read
@@ -70,13 +72,16 @@ finance-terminal/            on the Mac: ~/Projects/finance-terminal/app
 │   ├── src/ft/policy/       module 1's source parsers and rules: dates, fed_calendar, rbi_calendar, meetings,
 │   │                        fed_statement, fed_minutes, fed_transcript, rbi_resolution, rbi_minutes,
 │   │                        rbi_statements (Governor's statements, transcripts), members (the rosters)
+│   ├── src/ft/equity/       module 2's parsers and rules: universe, bhavcopy, filings, actions, inputs, guard
 │   ├── src/ft/api/app.py    FastAPI service on Vercel at /api/* (entrypoint py/main.py, main:app)
 │   ├── config/              tasks.yaml · prompts/<task>/vN.md + schema · ai_prices.yaml (dated) · eval/sets/ ·
-│   │                        curated YAML (meeting_times, members)
+│   │                        curated YAML (meeting_times, members) · equity/ (universe, companies, peer groups)
 │   └── tests/               pytest
 ├── web/                     Next.js, created in the slice (layout: Design 01 §7)
 ├── data/fixtures/           git-ignored: a clone of the private finance-terminal-fixtures (saved Fed and RBI pages)
-├── .github/workflows/       daily · watch · weekly · refresh · backfill · ci
+├── ops/headless/            run-job.sh, run-queue.sh, job-prompt.md, README: headless runs on the Mac (#195)
+├── .github/workflows/       daily · watch · weekly · refresh · backfill · ci, plus manual checks (keep-alive,
+│                            freshness-drill, eval-items, backfill-check, supabase-local-check)
 └── vercel.json              one project, two services: web at /, api at /api/*
 ```
 
@@ -145,6 +150,7 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   never `user_metadata`, which the user can edit. That check is the only gate on routes holding the service key.
 - **Secrets never go in code, commits, fixtures, logs or chats.** Names are in `.env.example`; values live only
   in GitHub and Vercel secrets and the Mac's git-ignored `.env`. If a value shows up anywhere else, stop and tell Anand.
+- **Personal identifiers in filings** (a counterparty's PAN, for example) are never read or stored (29 Oct 2026; #190).
 - A pre-commit hook (`.githooks/pre-commit`: gitleaks with `.gitleaks.toml`) blocks a commit holding a secret;
   enable it once per clone (Claude's cloud clones too) with `git config core.hooksPath .githooks`; CI's `secrets`
   job scans the full history on every push. A false positive goes into the config's allowlist with its reason,
@@ -176,6 +182,10 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   states use `StateNote`, so no panel is ever blank. Gated fields render through `<Gated>`. AI blocks are marked
   (`AIBlock`) and cited (`CitationChip`, with the quote rebuilt from stored text).
 - Navigation lists live modules only; one shortcut (⌘K / Ctrl K). WCAG 2.2 AA; no sideways page scroll at 320 px.
+- **The look (Anand, 28–29 Oct 2026; Design 01 §1.1, §1.17, §4.1, §5.5):** the terminal look for the frame and data
+  views, a calmer reading layout for what people read; dark mode all black, header bars and outlines carrying the panel
+  edges (a light theme later, as a switch); `/` leads with What changed; the sidebar stays in view and new destinations
+  follow `web/lib/shell/nav.ts`'s shape (#147); long tables stop at about 12 rows and scroll in their panel (#145).
 - Build from Design 01 §4's components, with `web/design/specimen.html` as the visual reference. A new visual
   pattern is a question for Anand.
 
@@ -218,23 +228,41 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   and names the command (`/model opus` or `/model sonnet`). A Sonnet session that hits an Opus case adds
   `model:opus` to the job; a build chain also adds `needs-anand` and stops (step 6 of its prompt). Build chains
   skip `model:opus` jobs.
+- **The 18 Nov cutoff (Anand, 30 Oct 2026; Plan 04, tracker #30).** Claude Max ends on 18 Nov 2026 and no subscription
+  follows, so the site must be recruiter-ready by then and keep running with no Claude session, scheduled task or API
+  credit. Three modules, one per weekly window (the plan limit resets on Mondays, 20:30 IST): (a) Fed vs RBI, polished
+  to its link; (b) the Nifty 50 screener with valuation, rate sensitivity and the accuracy page; (c) the earnings-call
+  analyzer for each company's latest call. Jobs labelled `after-18-nov` aren't built before then. Nothing the live site
+  needs may depend on Claude: every AI feature degrades to a labelled state without a key or credits (#197).
+- **Credit pools and who runs what (Anand, 30 Oct 2026).** Cloud-session credit (until 5 Nov) funds the build chains;
+  the plan's $100 of API credit (until 18 Nov) funds the Batch API and **headless runs**: Anand starts
+  `ops/headless/run-job.sh <issue>` on his Mac (`claude --bare -p`, Sonnet, a dollar cap, its own clone in
+  `~/Projects/finance-terminal/headless`, never his `app/`). A headless run takes only jobs labelled `headless`
+  (self-contained cards: it can't read the claude.ai project), follows this file like any session, and stops with
+  `needs-anand` when a card isn't enough. The weekly plan is for Opus jobs, the Mac's jobs and work with Anand.
 - **Fresh sessions at break points (Anand, 23 Oct 2026; it saves his plan's usage).** When a sub-prompt job's
   done-when check passes, or the thread grows long, write a short handoff in that job's GitHub issue (done, next,
   open questions, files touched), then tell Anand it's a good point to start a fresh session from this file,
   the sub-prompt and that issue. **The next session's opening prompt is `/next-job`** (Anand, 24 Oct 2026: his
   skill that takes the next job in tracker #30's order; one session per lane), plus anything he must do first.
-  Write a full prompt only when a job needs instructions its issue doesn't hold.
+  Write a full prompt only when a job needs instructions its issue doesn't hold. Planning sessions, which have no job
+  issue, write their handoff as a project doc named "Handoff - <date> (<topic>)". A weekly drift check (Process 01;
+  register #192) checks that decisions reached this file, the Brief, #30 and the checklist.
 - **CI runs the full suite (Anand, 23 Oct 2026).** In a session, run the tests the change touches; `ci.yml`
   runs ruff, every SQL script and pytest on each push (and on `workflow_dispatch`, which Claude may start).
   Read the result from the run's annotations: each failing test and the counts are annotated, and Claude's
   workspace can't download logs. "Done" means CI green on the pushed commit, with the counts stated.
+- **CI and Actions (Anand, 29 Oct 2026; the repo is public since 30 Oct 2026, so Actions minutes are free).** Still
+  open a pull request only when the job is ready and push once per fix round; `web` is skipped when nothing it reads
+  changed (`web/`, `py/config/eval/sets/`, `vercel.json`, `ci.yml`), and a skipped `web` counts as passed.
 - **Write files to the Mac or the repo before the session ends.** A session's cloud workspace is invisible to
   every other session. After writing a file to the Mac, read it back there.
 - **Branches and pull requests (Anand, 23 Oct 2026; replaces "Anand commits and pushes").** Claude commits in
   its own cloud clone, pushes only to `claude/<job>` branches it created, and opens a pull request; CI runs on
   it. If `main` moves, merge `main` into the branch; never rebase a branch that's been pushed (Anand, 24 Oct 2026).
   **Claude merges its own pull requests (Anand, 23 Oct 2026, 22:16 IST, so the build never waits on him):**
-  once every check on the pull request's latest commit has passed (`test`, `web`, `secrets`) and the handoff
+  once every check on the pull request's latest commit has passed (`test`, `web`, `secrets`; a `web` that was skipped because
+  nothing it reads changed counts as passed) and the handoff
   comment is written, Claude merges it into `main` with a merge commit through GitHub's merge API. A pull request
   holding anything §7 or the sub-prompt's stop conditions name waits for Anand, and so does one he's asked to see
   first. A merged migration still needs his `supabase db push` (say so). Anand reviews merged work when he
@@ -259,10 +287,11 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   start **dev runs that spend no AI credits** (`daily`, `refresh`, `backfill`, `watch`, each with `target=dev`)
   without asking, and records each one on its issue (the run link, what it ran, the result). `policy.ai_batch` is
   the one task that spends: a `refresh` or `backfill` of it, a `daily` while any document still lacks its AI
-  outputs (check through the read-only dev connector first) and a decision-day `watch` are AI runs. **Dev AI runs
-  need Anand's OK beyond D1's $2 cap** (#24). **Production:** the backfills for module 1's early link are
-  approved, the data tasks first, then the AI backfill (expected under $1; §7's $5 stop applies), each recorded
-  on its tracker #30 launch issue. Any other production run, and any other AI spend, still needs his OK. Claude
+  outputs (check through the read-only dev connector first) and a decision-day `watch` are AI runs. **Dev AI runs** need Anand's OK beyond the cap his decision set for that work (D1's $2 for
+  module 1, #24; 2B's $3 in all, Spec 02B §0 decision 4). **Production:** a run is approved only where Anand's dated
+  approval is on its job card or tracker #30: module 1's early-link backfills (#84, #16), 2A's data backfills and first
+  runs (#122, #132), 2B's backfills with its AI backfill and weekly AI runs (#184), one D4 drill after #135. Each run
+  is recorded on its issue; §7's $5 stop applies. Any other production run, and any other AI spend, still needs his OK. Claude
   never pushes to `main`.
 - The Mac's shell can't run macOS virtual environments, and deleting files there needs Anand's permission.
 - **Campus Wi-Fi (Sophos, from 26 Oct):** `UV_SYSTEM_CERTS=true` for uv, `NODE_EXTRA_CA_CERTS` for npm and the
@@ -279,7 +308,9 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
 - publish anything the accuracy rule would hold back, or add a data source the docs don't list;
 - take a fallback the docs don't already name, or act against a dated decision;
 - spend beyond the plan: an AI run estimated above $5, or any paid plan or add-on;
-- do anything irreversible on a live service: delete data or stored objects, rotate keys, change roles.
+- do anything irreversible on a live service: delete data or stored objects, rotate keys, change roles;
+- change a repository's visibility or rewrite its history (the app repo is public since 30 Oct 2026; the fixtures,
+  audit and backup repos stay private for good).
 
 ## 8. Where the detail lives
 
@@ -295,14 +326,17 @@ never rebuild a rule from memory.
 | Arch 03 / 03a | Architecture - 03 AI layer · 03a AI layer prototypes | wrapper, citations, guard, retrieval, evaluation |
 | Arch 04 / 04a | Architecture - 04 Storage, repo layout, Python and lock file · 04a Repo skeleton | storage, CI, one-time setup, secrets |
 | Design 01 | Design - 01 Design system | tokens, formatting, components, layouts |
-| Spec NN | Spec - 01 Fed vs RBI policy tracker (one per module) | inputs, rules, outputs, UI, done when |
+| Spec NN | Spec - 01 Fed vs RBI policy tracker · 02A Equity screener and valuation (Nifty 50) · 02B Earnings calls and guidance (Nifty 50) | inputs, rules, outputs, UI, done when; from module 2 on, the build prompt (§9) |
 | Prompt NN | Prompt - 01 Fed vs RBI sub-prompt (one per module; from module 2 on, the build prompt is part of the spec: Spec 02A, 02B) | the module's build order and stop conditions |
-| Plan NN | Plan - 01 Pass 2 ECB and BoE · Plan - 02 Module 2 scope, releases and reuse | later work's scope, order and reuse |
+| Plan NN | Plan - 01 Pass 2 ECB and BoE · 02 Module 2 scope, releases and reuse · 03 Module 1 longer history · 04 Ship by 18 Nov | later work's scope, order and reuse; 04: the 18 Nov plan |
 | Setup NN | Setup - 01 Supabase projects · Setup - 02 Cloud environment | one-time setup steps |
 | Review 01 | Review - 01 Argon external review triage | the 22 Oct fixes and why |
-| Data Audit NN | Data Audit - 00 Process and status · 01 … 07 | source evidence; closed audit docs are frozen records |
+| Data Audit NN | Data Audit - 00 Process and status · 01 … 08 | source evidence; closed audit docs are frozen records |
+| Process 01 · Audit NN | Process - 01 Drift check · Audit - 01 Drift check (29 Oct 2026) | the weekly drift check and its findings |
+| Handoff | Handoff - <date> (<topic>) | planning sessions' handoffs (build jobs hand off on their issues) |
 
 On the Mac, `~/Projects/finance-terminal/` holds `app/` (this repo), `data-audit/` (the audit kits: read-only
-reference code, ported rather than imported) and `review-packs/`. `app/data/fixtures/` is a clone of
+reference code, ported rather than imported), `review-packs/` and `setup/` (one-time scripts, the Mac backup's files
+and the `shadcn-init` scratch copy). `app/data/fixtures/` is a clone of
 `finance-terminal-fixtures` (Anand, 24 Oct 2026), which also holds the module 1 kit's scripts and results
 (`kit/stagec_fed_rbi/`), so no job needs the Mac for the saved pages or that kit.

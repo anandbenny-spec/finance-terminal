@@ -31,13 +31,13 @@ from test_fed_documents_task import (  # noqa: F401 - s3 and roster are fixtures
 from test_fed_documents_task import meeting as fed_meeting
 from test_fed_documents_task import task as fed_task
 
-from ft.ai.client import Prompt, batch_custom_id, halfvec_literal
+from ft.ai.client import Prompt, VoyageAPIError, batch_custom_id, halfvec_literal
 from ft.engines.document.chunk import chunk_text
 from ft.engines.document.diff import diff_texts
 from ft.engines.document.store import DocumentRef, save_chunks, save_diff, save_version
 from ft.jobs import due as due_rules
 from ft.jobs import fetch
-from ft.jobs.runner import JobRun, connect, run
+from ft.jobs.runner import Check, JobRun, Task, connect, run
 from ft.jobs.tasks import ai_batch
 from ft.jobs.tasks.ai_batch import AiBatch, context_line
 from ft.jobs.watch import watch
@@ -47,6 +47,7 @@ JOB, ADMIN = dsn("job_writer"), dsn("postgres")
 NY = ZoneInfo("America/New_York")
 KEY = "test.b7_ai_batch"
 FED_KEY = "test.b5_fed_documents"
+DATA_KEY = "test.s2_data"
 
 
 def q(sql, *a):
@@ -68,7 +69,7 @@ def as_anon(sql, *a):
 @pytest.fixture(scope="module", autouse=True)
 def ai_task_row():
     with psycopg.connect(JOB, autocommit=True) as c:
-        for k, wf in ((KEY, "{daily,watch}"), (FED_KEY, "{daily,watch}")):
+        for k, wf in ((KEY, "{daily,watch}"), (FED_KEY, "{daily,watch}"), (DATA_KEY, "{daily}")):
             c.execute("""insert into ops.task (key, module, description, workflows, min_interval, overdue_after, enabled)
                          values (%s, 'test', 'B7 test task', %s, '20 hours', '3 days', false)
                          on conflict (key) do nothing""", (k, wf))
@@ -839,3 +840,124 @@ def test_decision_day_path_statement_then_summary_in_the_same_watch(s3, roster):
                 where e.slug = %s and d.doc_type = 'fomc_statement' and d.is_published""", slugs[1])[0][0]
     assert [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published"), ("statement_diff_summary", "published")]
     assert q("select count(*) from core.chunk_embedding where document_id = %s", doc)[0][0] > 0
+
+
+# ---------------------------------------------------------------------------------------------- S2 (#197): no AI
+def month() -> str:
+    return datetime.now(UTC).strftime("%Y-%m")
+
+
+def paused_alert():
+    return q("select severity, message from ops.alert where dedupe_key = %s and resolved_at is null",
+             f"ai_unavailable:{month()}")
+
+
+def resolve_paused() -> None:
+    x("update ops.alert set resolved_at = now() where dedupe_key = %s and resolved_at is null",
+      f"ai_unavailable:{month()}")
+
+
+def without_key(t: AiBatch) -> AiBatch:
+    t.claude = None                                         # built from ANTHROPIC_API_KEY on first use
+    return t
+
+
+@pytest.mark.db
+def test_with_no_anthropic_key_a_decision_day_skips_sends_nothing_and_the_run_is_green(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    (s0, s1), _, new = two_statements(date(2052, 1, 23), date(2052, 3, 12))
+    fake, voyage = FakeClaude(["ok"]), FakeVoyage()
+    _, code = watch_once(without_key(task([s0, s1], fake, voyage)), decision_day(date(2052, 3, 12)))
+    r = last_run()
+    assert code == 0 and r["status"] == "success", r["error"]
+    assert fake.requests == [] and outputs(new) == [] and requests(new) == []      # nothing sent, no ops.ai_request row
+    ok = r["checks"]["ai_available"]
+    assert not ok["passed"] and "skipped: AI unavailable (no_key)" in ok["detail"]
+    assert r["checks"]["embeddings"]["passed"]                                      # Voyage has its own key
+    (sev, msg) = paused_alert()[0]
+    assert sev == "warn" and "no API key" in msg and "published outputs" in msg
+    resolve_paused()
+
+
+@pytest.mark.db
+def test_with_no_anthropic_key_a_daily_run_skips_and_a_later_run_with_the_key_publishes(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    s, doc = one_statement(date(2052, 6, 18))
+    fake = FakeClaude(["ok"])
+    assert daily(without_key(task([s], fake)), datetime(2052, 6, 19, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert r["status"] == "success" and fake.create_calls == 0 and requests(doc) == [] and outputs(doc) == []
+    assert not r["checks"]["ai_available"]["passed"] and len(paused_alert()) == 1
+    assert daily(task([s], fake), datetime(2052, 6, 20, 12, tzinfo=UTC)) == 0       # the key is back
+    assert [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+    assert last_run()["checks"]["ai_available"]["passed"] and paused_alert() == []  # the alert resolves itself
+
+
+@pytest.mark.db
+def test_a_billing_error_mid_run_stops_further_requests_keeps_the_stored_reply_and_the_run_is_green():
+    (s0, s1), _, new = two_statements(date(2052, 8, 14), date(2052, 10, 2))
+    fake = FakeClaude(["ok", "402"])
+    _, code = watch_once(task([s0, s1], fake), decision_day(date(2052, 10, 2)))
+    r = last_run()
+    assert code == 0 and r["status"] == "success", r["error"]
+    assert len(fake.requests) == 2                                                  # the second one was refused: no more
+    assert [(g[0], g[1]) for g in outputs(new)] == [("doc_summary", "published")]   # the first reply stands
+    assert [x[:3] for x in requests(new)] == [("doc_summary", "succeeded", ""),
+                                             ("statement_diff_summary", "errored", "unavailable billing")]
+    assert not r["checks"]["ai_available"]["passed"] and "billing" in r["checks"]["ai_available"]["detail"]
+    assert "no API credits left" in paused_alert()[0][1]
+    resolve_paused()
+
+
+@pytest.mark.db
+def test_a_refused_key_in_a_batch_create_skips_and_the_next_run_sends_the_requests():
+    s, doc = one_statement(date(2052, 11, 20))
+    fake = FakeClaude(["ok"], creates=["401", "ok"])
+    assert daily(task([s], fake), datetime(2052, 11, 21, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert r["status"] == "success" and fake.create_calls == 1 and outputs(doc) == []
+    assert batch_requests([doc]) == [("doc_summary", "errored", "batch unavailable auth", False)]
+    assert not r["checks"]["ai_available"]["passed"] and "auth" in r["checks"]["ai_available"]["detail"]
+    resolve_paused()
+    assert daily(task([s], fake), datetime(2052, 11, 22, 12, tzinfo=UTC)) == 0
+    assert [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+
+
+@pytest.mark.db
+def test_a_refused_voyage_key_skips_the_embeddings_and_the_summaries_still_publish():
+    s, doc = one_statement(date(2053, 2, 12))
+
+    fake = FakeClaude(["ok"])
+    assert daily(task([s], fake, FakeVoyage(fail=[VoyageAPIError(401, "invalid key")])), datetime(2053, 2, 13, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert r["status"] == "success" and [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+    assert not r["checks"]["embeddings"]["passed"] and "skipped: AI unavailable (auth)" in r["checks"]["embeddings"]["detail"]
+    assert not r["checks"]["ai_available"]["passed"]
+    assert q("select count(*) from core.chunk_embedding where document_id = %s", doc)[0][0] == 0
+    resolve_paused()
+
+
+class DataTask(Task):
+    key = DATA_KEY
+    workflows = ("daily",)
+    loaded = 0
+
+    def load(self, tx, fetched, tr):
+        DataTask.loaded += 1
+        return 1
+
+    def checks(self, tx, fetched, tr):
+        return [Check("loaded", True, "")]
+
+
+@pytest.mark.db
+def test_a_run_with_a_data_task_and_the_ai_task_without_a_key_loads_the_data_and_is_green(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    s, doc = one_statement(date(2053, 5, 21))
+    DataTask.loaded = 0
+    code = run(JOB, "daily", [DataTask(), without_key(task([s], FakeClaude(["ok"])))], force=True,
+               clock=lambda: datetime(2053, 5, 22, 12, tzinfo=UTC))
+    assert code == 0 and DataTask.loaded == 1
+    assert last_run(DATA_KEY)["status"] == "success" and last_run()["status"] == "success"
+    assert outputs(doc) == [] and not last_run()["checks"]["ai_available"]["passed"]
+    resolve_paused()
