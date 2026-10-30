@@ -96,3 +96,80 @@ def test_main_prints_the_restore_line(row, capsys):
     out = capsys.readouterr().out
     assert "restore with: --last-success-at " in out and '"reads_stale": true' in out
     assert drill.main(["--task", "test.d4_missing", "--action", "status"], env={"JOB_DATABASE_URL": JOBS}) == 2
+
+
+def _records():
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        return c.execute("""select drill, target, finished_at is not null, passed, counts, github_run_id from ops.drill_run
+                             where counts->>'task' = %s order by id""", (TASK,)).fetchall()
+
+
+@pytest.fixture
+def clean_records():
+    def wipe():
+        with psycopg.connect(ADMIN, autocommit=True) as c:
+            c.execute("delete from ops.drill_run where counts->>'task' = %s", (TASK,))
+    wipe()
+    yield
+    wipe()
+
+
+@pytest.mark.db
+def test_push_opens_a_drill_record_and_restore_closes_it_as_passed(row, clean_records):
+    row()
+    with drill.connect(JOBS, autocommit=True, role="drill") as conn:
+        before, _ = drill.push(conn, TASK, target="dev", github_run_id=4242)
+        (open_rec,) = _records()
+        assert open_rec[:4] == ("d4_freshness", "dev", False, None) and open_rec[5] == 4242
+        assert open_rec[4]["before"]["reads_stale"] is False and open_rec[4]["after"]["reads_stale"] is True
+        drill.restore(conn, TASK, before["last_success_at"], before["last_checked_at"], target="dev")
+    (rec,) = _records()                                                 # the same row, now closed
+    assert rec[:4] == ("d4_freshness", "dev", True, True) and rec[5] == 4242
+    assert rec[4]["before_restore"]["reads_stale"] is True and rec[4]["after_restore"]["reads_stale"] is False
+
+
+@pytest.mark.db
+def test_restore_after_a_real_run_already_fixed_it_records_not_passed(row, clean_records):
+    row()
+    with drill.connect(JOBS, autocommit=True, role="drill") as conn:
+        before, _ = drill.push(conn, TASK)
+        conn.execute("update core.task_freshness set last_success_at = now(), last_checked_at = now() where task_key = %s", (TASK,))
+        drill.restore(conn, TASK, before["last_success_at"], None)      # it no longer read stale: nothing was proven
+    (rec,) = _records()
+    assert rec[2] is True and rec[3] is False and rec[4]["before_restore"]["reads_stale"] is False
+
+
+@pytest.mark.db
+def test_restore_without_a_recorded_push_still_records_the_run(row, clean_records):
+    row()
+    with drill.connect(JOBS, autocommit=True, role="drill") as conn:
+        before, _ = drill.push(conn, TASK)
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        c.execute("delete from ops.drill_run where counts->>'task' = %s", (TASK,))
+    with drill.connect(JOBS, autocommit=True, role="drill") as conn:
+        drill.restore(conn, TASK, before["last_success_at"], before["last_checked_at"], target="production")
+    (rec,) = _records()
+    assert rec[:4] == ("d4_freshness", "production", True, True) and rec[4]["push_not_recorded"] is True
+
+
+@pytest.mark.db
+def test_a_refused_push_writes_no_record(row, clean_records):
+    row(status="failed")
+    with drill.connect(JOBS, autocommit=True, role="drill") as conn, pytest.raises(drill.DrillError):
+        drill.push(conn, TASK)
+    assert _records() == []
+
+
+def test_main_passes_the_github_run_id_and_target(monkeypatch):
+    seen = {}
+
+    class Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(drill, "connect", lambda *a, **k: Conn())
+    row = {"last_success_at": datetime(2026, 10, 1, tzinfo=UTC), "last_checked_at": None}
+    monkeypatch.setattr(drill, "push", lambda conn, task, **k: (seen.update(k), (row, row))[1])
+    assert drill.main(["--task", TASK, "--action", "push", "--target", "production"],
+                      env={"JOB_DATABASE_URL": "x", "GITHUB_RUN_ID": "991"}) == 0
+    assert seen == {"target": "production", "github_run_id": 991}
