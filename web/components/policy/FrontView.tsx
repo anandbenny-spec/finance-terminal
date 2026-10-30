@@ -63,6 +63,9 @@ function Hero({ year }: { year: string }) {
         <Button asChild size="lg" variant="outline">
           <Link href="/policy#history">Every decision since {year}</Link>
         </Button>
+        <Button asChild size="lg" variant="outline">
+          <Link href="/methodology">How it works</Link>
+        </Button>
       </div>
     </header>
   );
