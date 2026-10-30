@@ -283,3 +283,17 @@ def date_columns(inst: Instance, period_end: date, fy_start: date | None) -> Dat
 def period_kind(start: date, end: date) -> str | None:
     """quarter | half_year | nine_months | year, by whole months; None for anything else."""
     return {3: "quarter", 6: "half_year", 9: "nine_months", 12: "year"}.get(months_between(start, end) or 0)
+
+
+def facts_on(inst: Instance, name: str, axis: str, members: tuple[str, ...] | str) -> list[Fact]:
+    """The numeric facts called `name` whose context has exactly one dimension, `axis`, set to one of `members` (local
+    names, case-insensitive). The second use of the reader (the shareholding pattern, job 2A-10): a fact is found by its
+    element and its dimension member, not by the column of a results context. Facts with no value are left out."""
+    wanted = {m.lower() for m in ([members] if isinstance(members, str) else members)}
+    out = []
+    for f in inst.facts:
+        c = inst.contexts.get(f.context)
+        if f.name == name and f.value is not None and c is not None and len(c.dims) == 1 \
+                and c.dims.get(axis, "").lower() in wanted:
+            out.append(f)
+    return out
