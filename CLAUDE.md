@@ -79,6 +79,7 @@ finance-terminal/            on the Mac: ~/Projects/finance-terminal/app
 │   └── tests/               pytest
 ├── web/                     Next.js, created in the slice (layout: Design 01 §7)
 ├── data/fixtures/           git-ignored: a clone of the private finance-terminal-fixtures (saved Fed and RBI pages)
+├── ops/headless/            run-job.sh, run-queue.sh, job-prompt.md, README: headless runs on the Mac (#195)
 ├── .github/workflows/       daily · watch · weekly · refresh · backfill · ci, plus manual checks (keep-alive,
 │                            freshness-drill, eval-items, backfill-check, supabase-local-check)
 └── vercel.json              one project, two services: web at /, api at /api/*
