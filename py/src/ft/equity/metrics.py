@@ -129,9 +129,11 @@ class Break:
 
 @dataclass(frozen=True)
 class Lease:
-    """A filing's lease payments over its year to date (None: the filing doesn't tag them)."""
+    """A filing's lease payments over its year to date (None: the filing doesn't tag them; `unreadable`: the stored
+    file couldn't be read again, so the check can't be made)."""
     value: Decimal | None
     element: str | None = None
+    unreadable: bool = False
 
 
 @dataclass
@@ -783,6 +785,9 @@ def _lease_check(book: Book, d: Data, rules: Rules, t: date) -> dict:
     lease = d.leases.get(f.document_id)
     out = {"document_id": f.document_id, "basis": f.basis, "period_kind": f.kind, "period_end": f.end.isoformat(),
            "threshold": str(rules.lease_threshold)}
+    if lease is not None and lease.unreadable:
+        return {**out, "material": False,
+                "held": "Lease payments can't be checked against EBIT: the filing couldn't be read again."}
     if lease is None or lease.value is None:
         return {**out, "lease_payments": None, "material": False}
     out.update(lease_payments=str(lease.value), element=lease.element)

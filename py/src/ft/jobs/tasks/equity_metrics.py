@@ -114,11 +114,16 @@ class EquityMetrics(Task):
             row = mx.lease_row(mx.Book(fins[eid]), last) if last and comp.family not in mx.NON_OPERATING else None
             if row is not None:
                 raw_id, filing = filings[row.document_id]
-                got = None
-                if raw_id is not None:
-                    got = st.lease_payments(ctx.fetcher.read(raw_id), filing)   # a storage error fails the task
+                if raw_id is None:
+                    data.leases[row.document_id] = mx.Lease(None, unreadable=True)
+                else:
+                    body = ctx.fetcher.read(raw_id)               # a storage or hash error fails the task
                     out.lease_reads += 1
-                data.leases[row.document_id] = mx.Lease(*got) if got else mx.Lease(None)
+                    try:
+                        got = st.lease_payments(body, filing)
+                        data.leases[row.document_id] = mx.Lease(*got) if got else mx.Lease(None)
+                    except st.StatementError:
+                        data.leases[row.document_id] = mx.Lease(None, unreadable=True)
             out.values[eid] = mx.compute(data, rules)
         return out
 

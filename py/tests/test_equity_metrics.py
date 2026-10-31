@@ -8,15 +8,24 @@ import functools
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import boto3
+import httpx
+import psycopg
 import pytest
 import yaml
+from conftest import dsn
+from moto.server import ThreadedMotoServer
 from test_equity_statements import XBRL, filing_of, needs_fixtures, parse, raw
 
 from ft.equity import metrics as mx
 from ft.equity import statements as st
 from ft.jobs import config
+from ft.jobs.fetch import HttpClient
+from ft.jobs.runner import run
 from ft.jobs.tasks import registry
+from ft.jobs.tasks.equity_filings import EquityFilings
 from ft.jobs.tasks.equity_metrics import EquityMetrics
+from ft.jobs.tasks.equity_statements import EquityStatements
 
 D = date
 RULES = mx.Rules.load()
@@ -382,6 +391,17 @@ def test_ev_is_held_where_lease_payments_are_material_against_ebit():
         Decimal(ok.inputs["lease_check"]["ebit"]) < Decimal("0.06")
 
 
+@needs_fixtures
+def test_ev_is_held_when_the_lease_check_can_t_be_made():
+    t = D(2026, 10, 23)
+    f = mx.lease_row(mx.Book(list(fins("RELIANCE"))), t)
+    v = values("RELIANCE", prices=prices(t, "1400"), leases={f.document_id: mx.Lease(None, unreadable=True)})
+    assert v[("ev", "consolidated", "market", t)].held == \
+        "Lease payments can't be checked against EBIT: the filing couldn't be read again."
+    untagged = values("RELIANCE", prices=prices(t, "1400"), leases={f.document_id: mx.Lease(None)})
+    assert untagged[("ev", "consolidated", "market", t)].value is not None     # no lease payments are filed
+
+
 def test_the_lease_rule_and_breaks_files_load_and_refuse_malformed_rows(tmp_path):
     assert RULES.lease_threshold == Decimal("0.10")
     bad = tmp_path / "m.yaml"
@@ -429,3 +449,194 @@ def test_the_task_is_wired_in_tasks_yaml():
     assert t.rules == {"weekly": "every 6 days"}
     assert t.run_after == ("equity.statements", "equity.corporate_actions", "equity.shareholding")
     assert t.uses_nse is False and registry()["equity.metrics"] is EquityMetrics
+
+
+# ---------------------------------------------------------------------------------------------- through the runner
+JOB, ADMIN = dsn("job_writer"), dsn("postgres")
+PORT, BUCKET = 5597, "equity-metrics-raw"
+FKEY, SKEY, MKEY = "test.equity_metrics_filings", "test.equity_metrics_statements", "test.equity_metrics"
+NOW = datetime(2026, 10, 30, 6, 0, tzinfo=UTC)
+LAST = D(2026, 10, 23)
+CO = {"RELIANCE": ("INE002A01018", "operating"), "SBIN": ("INE062A01020", "lender")}
+
+
+@pytest.fixture(scope="module")
+def s3():
+    with psycopg.connect(JOB, autocommit=True) as c:
+        for key in (FKEY, SKEY, MKEY):
+            c.execute("""insert into ops.task (key, module, description, workflows, min_interval, overdue_after, enabled)
+                         values (%s, 'test', 'equity metrics test', '{weekly}', '6 days', '10 days', false)
+                         on conflict (key) do nothing""", (key,))
+    srv = ThreadedMotoServer(ip_address="127.0.0.1", port=PORT)
+    srv.start()
+    boto3.client("s3", endpoint_url=f"http://127.0.0.1:{PORT}", region_name="us-east-1", aws_access_key_id="test",
+                 aws_secret_access_key="test").create_bucket(Bucket=BUCKET)
+    yield
+    srv.stop()
+
+
+def storage():
+    from ft.storage import Storage
+    return Storage(f"http://127.0.0.1:{PORT}", BUCKET, "test", "test", region="us-east-1")
+
+
+def q(sql, *a):
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        return c.execute(sql, a or None).fetchall()
+
+
+def wipe():
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        ids = "(select id from core.entity where slug like 'zm-%')"
+        for sql in (f"delete from equity.metric_value where entity_id in {ids}",
+                    f"delete from equity.financials where entity_id in {ids}",
+                    f"delete from equity.filing where entity_id in {ids}",
+                    f"delete from core.document where entity_id in {ids}",
+                    f"delete from equity.adjustment_factor where entity_id in {ids}",
+                    f"delete from equity.corporate_action where event_id in (select id from core.event where entity_id in {ids})",
+                    f"delete from core.event where entity_id in {ids}",
+                    f"delete from equity.price_daily where entity_id in {ids}",
+                    f"delete from equity.company where entity_id in {ids}",
+                    f"delete from core.entity_identifier where entity_id in {ids}",
+                    "delete from core.entity where slug like 'zm-%'",
+                    "delete from core.raw_file where object_key = 'zm-prices'"):
+            c.execute(sql)
+        c.execute("delete from ops.alert where task_key = any(%s)", ([FKEY, SKEY, MKEY],))
+
+
+@pytest.fixture(autouse=True)
+def clean(request):
+    if "db" not in request.keywords:
+        yield
+        return
+    wipe()
+    yield
+    wipe()
+
+
+def _task(base, key, workflows=("weekly", "refresh", "backfill")):
+    t = type("T", (base,), {"key": key})()
+    t.workflows = workflows
+    return t
+
+
+def refuse(request: httpx.Request) -> httpx.Response:
+    raise AssertionError(f"a database-only task fetched {request.url}")
+
+
+def setup_companies():
+    """RELIANCE and SBI: their filings registered (2A-07) and parsed (2A-09) from the saved replies and instances,
+    then 300 sessions of prices to 23 Oct 2026, a dividend and Reliance's 2023 demerger with its factor."""
+    from test_equity_filings import Nse
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        for s, (isin, family) in CO.items():
+            eid = c.execute("""insert into core.entity (kind, slug, name, market, currency, is_published)
+                               values ('company', %s, %s, 'IN', 'INR', false) returning id""",
+                            (f"zm-{s.lower()}", f"{s} test")).fetchone()[0]
+            c.execute("""insert into equity.company (entity_id, isin, nse_symbol, fy_end_month, valuation_family)
+                         values (%s, %s, %s, 3, %s)""", (eid, isin, s, family))
+    http = HttpClient(transport=httpx.MockTransport(Nse()), sleep=lambda s: None, clock=lambda: NOW)
+    code = run(JOB, "backfill", [_task(EquityFilings, FKEY)], only=FKEY, force=True, http=http, storage=storage,
+               clock=lambda: NOW, since=D(2019, 1, 1), until=D(2026, 10, 27))
+    assert code == 0, q("select status, error from ops.task_run where task_key = %s order by id desc limit 1", FKEY)
+    nohttp = HttpClient(transport=httpx.MockTransport(refuse), sleep=lambda s: None, clock=lambda: NOW)
+    assert run(JOB, "refresh", [_task(EquityStatements, SKEY)], only=SKEY, force=True, http=nohttp,
+               storage=storage, clock=lambda: NOW) == 0
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        c.execute("""insert into core.raw_file (object_key, source_id, source_url, sha256, bytes, media_type, fetched_at,
+                                                task_run_id)
+                     select 'zm-prices', s.id, null, sha256('zm'::bytea), 1, 'text/csv', now(),
+                            (select max(id) from ops.task_run) from core.source s where s.key = 'nse'""")
+        for s, close in (("RELIANCE", 1400), ("SBIN", 880)):
+            c.execute("""insert into equity.price_daily (entity_id, trade_date, exchange, series, close, traded_value,
+                                                         raw_file_id, task_run_id)
+                         select e.id, d::date, 'NSE', 'EQ', %s, 1e9, (select id from core.raw_file
+                                where object_key = 'zm-prices'), (select max(id) from ops.task_run)
+                           from core.entity e, generate_series(%s::date - 420, %s::date, '1 day') d
+                          where e.slug = %s and extract(isodow from d) < 6""",
+                      (close, LAST, LAST, f"zm-{s.lower()}"))
+        for slug, kind, ex, dps in (("zm-reliance-demerger-2023-07-20", "demerger", D(2023, 7, 20), None),
+                                    ("zm-reliance-dividend-2026-08-14", "dividend", D(2026, 8, 14), 5.5)):
+            ev = c.execute("""insert into core.event (event_type, entity_id, slug, title, starts_on, status, source_id,
+                                                      is_published)
+                              select 'corporate_action', e.id, %s, %s, %s, 'effective',
+                                     (select id from core.source where key = 'nse'), true
+                                from core.entity e where e.slug = 'zm-reliance' returning id, entity_id""",
+                           (slug, slug, ex)).fetchone()
+            c.execute("""insert into equity.corporate_action (event_id, kind, ex_date, subject, dividend_per_share,
+                                                              exchange) values (%s, %s, %s, %s, %s, 'NSE')""",
+                      (ev[0], kind, ex, slug, dps))
+            if kind == "demerger":
+                c.execute("""insert into equity.adjustment_factor (event_id, entity_id, ex_date, price_factor, method,
+                                                                   status) values (%s, %s, %s, 0.90785932,
+                                                                   'special_preopen', 'applied')""", (ev[0], ev[1], ex))
+
+
+def go(workflow: str = "refresh"):
+    http = HttpClient(transport=httpx.MockTransport(refuse), sleep=lambda s: None, clock=lambda: NOW)
+    code = run(JOB, workflow, [_task(EquityMetrics, MKEY)], only=MKEY, force=True, http=http, storage=storage,
+               clock=lambda: NOW)
+    tr = q("""select status, rows_written, checks, error from ops.task_run where task_key = %s
+              order by id desc limit 1""", MKEY)[0]
+    return code, tr
+
+
+def stored(symbol: str, key: str, kind: str, end: date):
+    return q("""select v.basis, v.value, v.held_reason, v.inputs from equity.metric_value v
+                  join core.entity e on e.id = v.entity_id
+                 where e.slug = %s and v.metric_key = %s and v.period_kind = %s and v.period_end = %s""",
+             f"zm-{symbol.lower()}", key, kind, end)
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_refresh_writes_every_company_s_metrics_and_a_rerun_writes_nothing(s3):
+    setup_companies()
+    code, tr = go()
+    assert code == 0 and tr[0] == "success", tr
+    c = {x["name"]: x for x in tr[2]}
+    assert {n: (x["passed"], x["blocking"]) for n, x in c.items()} == {
+        "ttm_sums": (True, True), "ebit_inputs": (True, True), "keys": (True, True), "roa_scale": (False, False),
+        "ebit_margin": (True, False), "companies": (True, False), "computed": (True, False)}
+    n = q("select count(*) from equity.metric_value where entity_id in (select id from core.entity where slug like 'zm-%%')")
+    assert tr[1] == n[0][0] > 500
+    assert stored("SBIN", "roa", "quarter", D(2026, 6, 30))[0][:3] == ("standalone", Decimal("0.0111"), None)
+    # SBI's Dec 2018 quarter files a ROA 2.41 times PAT ÷ segment assets: neither scale, held and named (a warning)
+    assert c["roa_scale"]["detail"] == ("banks' quarters: 0 quarterly (× 4), 28 annualised, 1 held "
+                                        "(zm-sbin 2018-12-31 (ratio 2.4134))")
+    cagr = stored("RELIANCE", "revenue_cagr_5y", "year", D(2026, 3, 31))[0]
+    assert cagr[2] == "The window spans a demerger, so its years aren't comparable."
+    assert cagr[3]["structural_breaks"][0]["source"] == "zm-reliance-demerger-2023-07-20"
+    ev = stored("RELIANCE", "ev", "market", LAST)[0]
+    assert ev[1] is not None and ev[3]["lease_check"]["material"] is False and ev[3]["label"] == mx.LEASE_LABEL
+    assert stored("SBIN", "ev", "market", LAST)[0][2] == "N/A: not meaningful for a lender"
+    dy = stored("RELIANCE", "dividend_yield", "market", LAST)[0]
+    assert dy[1] == (Decimal("5.5") / 1400).quantize(mx.PLACES)
+    # a re-run on unchanged data writes nothing
+    code, tr = go()
+    assert code == 0 and tr[0] == "success" and tr[1] == 0, tr
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_stale_period_s_value_is_deleted_and_market_history_kept(s3):
+    setup_companies()
+    go()
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        c.execute("""insert into equity.metric_value (entity_id, metric_key, basis, period_kind, period_end, value)
+                     select id, 'revenue', 'consolidated', 'ttm', '2001-03-31', 1 from core.entity
+                      where slug = 'zm-reliance'""")
+        c.execute("""insert into equity.metric_value (entity_id, metric_key, basis, period_kind, period_end, value)
+                     select id, 'market_cap', 'none', 'market', '2026-01-02', 1 from core.entity
+                      where slug = 'zm-reliance'""")
+    code, tr = go()
+    assert code == 0 and tr[1] == 1, tr
+    assert stored("RELIANCE", "revenue", "ttm", D(2001, 3, 31)) == []
+    assert stored("RELIANCE", "market_cap", "market", D(2026, 1, 2))[0][1] == 1
+
+
+@pytest.mark.db
+def test_the_production_guard_holds_a_scheduled_run_until_the_first_recorded_one():
+    with psycopg.connect(JOB, autocommit=True) as db:
+        due = _task(EquityMetrics, "test.equity_metrics_never_ran").due(db, "weekly")
+    assert not due.due and "first recorded run" in due.reason
