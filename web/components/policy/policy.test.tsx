@@ -187,13 +187,23 @@ describe("HistoryPanel", () => {
     expect(t).toContain("Every decision since 2019");
     expect(t).toContain("2 decisions");
     expect(t).toContain("Stance, RBI (AI-extracted)");
-    expect(t).toMatch(/07 Oct 2026 RBI Scheduled Hike 5\.50 \+25 — 0 Calibrated tightening/);
-    expect(t).toMatch(/17 Sep 2026 Fed Scheduled Cut 3\.25–3\.50 −25 11–1 1/);
+    expect(t).toMatch(/07 Oct 2026 RBI Scheduled Hike 5\.50 \+25 up 25 basis points — 0 Calibrated tightening/);
+    expect(t).toMatch(/17 Sep 2026 Fed Scheduled Cut 3\.25–3\.50 −25 down 25 basis points 11–1 1/);
     expect(out).toContain('href="/policy/rbi/2026-10-07"');
     expect(out).toContain('aria-sort="descending"');
     // the filters stay above a capped table; its other rows scroll inside the panel (Anand, 28 Oct 2026)
     expect(out).toMatch(/role="region" aria-label="Every FOMC and MPC rate decision since 2019" tabindex="0"/);
     expect(out.indexOf("2 decisions")).toBeLessThan(out.indexOf('role="region"'));
+  });
+
+  it("shows a neutral triangle on a hike and a cut, none on a hold, and no green or red", () => {
+    const rows = historyRows([FED, RBI, OCT], fedLatest.votes);
+    const out = html(<HistoryPanel rows={rows} stanceLabel="AI-extracted" footer="Sources" />);
+    expect(out.match(/<svg[^>]*size-1\.5/g)).toHaveLength(2);
+    expect(out).toContain("up 25 basis points");
+    expect(out).toContain("down 25 basis points");
+    expect(out).toContain("unchanged, 0 basis points");
+    expect(out).not.toMatch(/text-up|text-down/);
   });
 
   it("says so when nothing matches", () => {

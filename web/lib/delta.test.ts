@@ -14,4 +14,10 @@ describe("changeOf", () => {
     expect(changeOf(formatPctChange(0.001))).toEqual({ text: "0.00%", direction: "flat", spoken: "unchanged, 0.00 percent" });
     expect(changeOf(formatYieldChange(0.001))).toEqual({ text: "0 bps", direction: "flat", spoken: "unchanged, 0 basis points" });
   });
+
+  it("says percentage points for pp, and names a unit the text lacks", () => {
+    expect(changeOf("+0.2 pp").spoken).toBe("up 0.2 percentage points");
+    expect(changeOf("+25", { unit: "basis points" }).spoken).toBe("up 25 basis points");
+    expect(changeOf("0", { unit: "basis points" }).spoken).toBe("unchanged, 0 basis points");
+  });
 });
