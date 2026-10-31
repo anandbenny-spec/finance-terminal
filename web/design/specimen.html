@@ -14,7 +14,7 @@
   --canvas:#000000;--panel:#000000;--raised:#15191f;--active:#20262e;
   --line:#252a31;--line-strong:#3b434e;--line-input:#646c78;
   --ink-1:#e6e8eb;--ink-2:#afb5be;--ink-3:#8c939e;
-  --amber:#edb84a;--amber-ink:#111418;--amber-wash:rgb(237 184 74 / .12);
+  --highlight:#ffffff;--highlight-ink:#000000;--highlight-wash:rgb(255 255 255 / .1);
   --up:#45c16a;--down:#f26b6b;--flat:var(--ink-2);--warn:#f0913e;
   --ins-ink:#8fdda4;--ins-wash:rgb(69 193 106 / .14);--del-ink:#f59a9a;--del-wash:rgb(242 107 107 / .14);
   --series-1:#1aa3b5;--series-2:#9085e9;--series-3:#d55181;
@@ -25,23 +25,23 @@
 *{box-sizing:border-box;border-color:var(--line)}
 html{background:var(--canvas);color:var(--ink-1);font-family:var(--sans);-webkit-font-smoothing:antialiased}
 body{margin:0;font:var(--ui);font-variant-numeric:tabular-nums}
-a{color:inherit;text-underline-offset:3px;text-decoration-color:var(--line-strong)}
-a:hover{text-decoration-color:var(--amber)}
-:focus-visible{outline:2px solid var(--amber);outline-offset:2px;border-radius:2px}
-::selection{background:var(--amber-wash)}
+a{color:inherit;text-underline-offset:3px;text-decoration-color:var(--highlight)}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--highlight);outline-offset:2px;border-radius:2px}
+::selection{background:var(--highlight-wash)}
 ins{color:var(--ins-ink);background:var(--ins-wash);text-decoration:underline;text-decoration-thickness:1px}
 del{color:var(--del-ink);background:var(--del-wash);text-decoration:line-through;text-decoration-thickness:1px}
-mark{color:var(--ink-1);background:var(--amber-wash);box-shadow:inset 0 -2px 0 var(--amber)}
+mark{color:var(--ink-1);background:var(--highlight-wash);box-shadow:inset 0 -2px 0 var(--highlight)}
 .mono{font-family:var(--mono)}
 svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.skip{position:absolute;left:-999px;top:8px}.skip:focus{left:8px;z-index:99;background:var(--amber);color:var(--amber-ink);padding:6px 10px}
+.skip{position:absolute;left:-999px;top:8px}.skip:focus{left:8px;z-index:99;background:var(--highlight);color:var(--highlight-ink);padding:6px 10px}
 
 /* ---------- shell ---------- */
 .shell{display:grid;min-height:100vh;grid-template-columns:232px 1fr;grid-template-rows:48px auto 1fr 28px;
   grid-template-areas:"top top" "tape tape" "nav main" "status status"}
 .topbar{grid-area:top;display:flex;align-items:center;gap:16px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
 .wordmark{display:flex;align-items:center;gap:8px;font:500 14px/20px var(--mono);white-space:nowrap;min-width:200px}
-.wordmark::before{content:"";width:8px;height:8px;background:var(--amber)}
+.wordmark::before{content:"";width:8px;height:8px;background:var(--highlight)}
 .cmd{flex:1;max-width:640px;margin:0 auto;display:flex;align-items:center;gap:8px;height:36px;padding:0 10px;background:var(--raised);border:1px solid var(--line-input);border-radius:4px;color:var(--ink-3)}
 .cmd span.ph{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 kbd{font:500 12px/16px var(--mono);color:var(--ink-2);border:1px solid var(--line-strong);border-radius:2px;padding:1px 5px}
@@ -65,7 +65,7 @@ nav.sidebar{grid-area:nav;background:var(--panel);border-right:1px solid var(--l
 .sidebar h2:first-child{margin-top:4px}
 .sidebar a{display:flex;align-items:center;gap:10px;height:32px;padding:0 10px;color:var(--ink-2);text-decoration:none;border-radius:4px;border-left:2px solid transparent}
 .sidebar a:hover{background:var(--raised);color:var(--ink-1)}
-.sidebar a[aria-current]{background:var(--amber-wash);color:var(--ink-1);border-left-color:var(--amber);border-radius:0 4px 4px 0}
+.sidebar a[aria-current]{background:var(--highlight-wash);color:var(--ink-1);border-left-color:var(--highlight);border-radius:0 4px 4px 0}
 
 main{grid-area:main;min-width:0;padding:20px 24px 32px}
 .wrap{max-width:1280px;margin:0 auto}
@@ -119,16 +119,17 @@ h1{font:600 22px/28px var(--sans);margin:0}
 .kv dt{color:var(--ink-2)}.kv dd{margin:0}
 .ai{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
 .aih{display:flex;align-items:center;gap:6px;font:500 13px/18px var(--sans);color:var(--ink-1)}
-.aih .i{color:var(--amber)}
+.aih .i{color:var(--highlight)}
 .aih .info{color:var(--ink-3);margin-left:2px}
 .ai ul{margin:8px 0 0;padding-left:18px;font:var(--ui)}
 .ai li{margin:6px 0}
-.cite{display:inline-grid;place-items:center;min-width:24px;height:24px;font:500 12px/16px var(--sans);color:var(--amber);background:none;border:0;cursor:pointer;padding:0 2px;vertical-align:baseline;border-radius:2px}
+.cite{display:inline-grid;place-items:center;min-width:24px;height:24px;font:500 12px/16px var(--sans);color:var(--highlight);background:none;border:0;cursor:pointer;padding:0 2px;vertical-align:baseline;border-radius:2px}
 .nw{white-space:nowrap} /* a citation chip never wraps onto a line alone */
-.cite:hover{background:var(--amber-wash)}
+.cite .face{border:1px solid var(--line-input);background:var(--raised);border-radius:2px;padding:0 5px}
+.cite:hover .face,.cite:focus-visible .face{border-color:var(--highlight)}
 .pop{position:relative}
 .popover{white-space:normal;position:absolute;z-index:40;top:28px;left:-40px;width:340px;background:var(--raised);border:1px solid var(--line-strong);border-radius:4px;box-shadow:0 8px 24px rgb(0 0 0/.5);padding:12px;font:var(--data);color:var(--ink-1)}
-.popover blockquote{margin:0 0 10px;padding-left:10px;border-left:2px solid var(--amber);color:var(--ink-1)}
+.popover blockquote{margin:0 0 10px;padding-left:10px;border-left:2px solid var(--highlight);color:var(--ink-1)}
 .popover .src{color:var(--ink-3);font:var(--meta)}
 .popover .links{display:flex;gap:14px;margin-top:8px;font:var(--meta)}
 .note{display:flex;gap:8px;align-items:flex-start;font:var(--data);color:var(--ink-2);background:var(--canvas);border:1px solid var(--line);border-radius:4px;padding:8px 10px;margin-top:12px}
@@ -153,7 +154,7 @@ h1{font:600 22px/28px var(--sans);margin:0}
 .pairs tr:hover td{background:none}
 .pairs .gone{color:var(--ink-3);font-style:italic}
 a.para{font:12px var(--mono);color:var(--ink-3);text-decoration:none;white-space:nowrap}
-a.para:hover{color:var(--amber)}
+a.para:hover{color:var(--ink-1)}
 .minih{font:500 13px/18px var(--sans);margin:14px 0 6px}
 .nums td{height:30px}
 .nums td,.nums th{white-space:normal;padding:4px 8px}
@@ -174,8 +175,8 @@ a.para:hover{color:var(--amber)}
 .rl-legend{display:flex;gap:12px;align-items:center;font:var(--meta);color:var(--ink-2);margin-bottom:10px;flex-wrap:wrap}
 .sw{display:inline-flex;gap:6px;align-items:center}
 .toggle{margin-left:auto;display:inline-flex;align-items:center;gap:6px;color:var(--ink-2)}
-.switch{width:28px;height:16px;border-radius:8px;background:var(--amber);position:relative}
-.switch::after{content:"";position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:var(--amber-ink)}
+.switch{width:28px;height:16px;border-radius:8px;background:var(--highlight);position:relative}
+.switch::after{content:"";position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:var(--highlight-ink)}
 .fold{font:var(--meta);color:var(--ink-3);border:1px dashed var(--line-strong);border-radius:2px;padding:2px 8px;display:inline-block;margin:0 0 12px}
 
 table{width:100%;border-collapse:collapse;font:var(--data)}
@@ -183,7 +184,7 @@ th{position:sticky;top:0;background:var(--raised);font:500 12px/16px var(--sans)
 td{height:32px;padding:0 12px;border-bottom:1px solid var(--line);white-space:nowrap}
 tr:hover td{background:var(--raised)}
 .r{text-align:right}
-th .sort{display:inline-block;margin-left:4px;color:var(--amber)}
+th .sort{display:inline-block;margin-left:4px;color:var(--highlight)}
 .tablebox{overflow-x:auto}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
 
@@ -204,7 +205,7 @@ details summary{cursor:pointer;font:var(--meta);color:var(--ink-2);margin-top:10
 .types code{font:12px var(--mono);color:var(--ink-3);min-width:110px}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
 .btn{font:500 13px/18px var(--sans);height:32px;padding:0 12px;border-radius:4px;border:1px solid var(--line-input);background:var(--raised);color:var(--ink-1)}
-.btn.primary{background:var(--amber);color:var(--amber-ink);border-color:var(--amber)}
+.btn.primary{background:var(--highlight);color:var(--highlight-ink);border-color:var(--highlight)}
 
 .foot{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);font:var(--meta);color:var(--ink-3);display:flex;gap:16px;flex-wrap:wrap}
 .statusbar{grid-area:status;display:flex;align-items:center;gap:24px;padding:0 12px;background:var(--panel);border-top:1px solid var(--line);font:12px/16px var(--mono);color:var(--ink-2);position:sticky;bottom:0;z-index:20;white-space:nowrap;overflow-x:auto}
@@ -376,14 +377,14 @@ details summary{cursor:pointer;font:var(--meta);color:var(--ink-2);margin-top:10
           <div class="ai">
             <div class="aih"><svg class="i"><use href="#spark"/></svg>AI summary<svg class="i info" aria-label="Haiku 5.5 · prompt v1 · generated 18 Sep, 00:02 IST"><use href="#info"/></svg></div>
             <ul>
-              <li>The Committee lowered the target range by a quarter point, citing a softer labour <span class="nw">market <span class="pop"><button class="cite" aria-expanded="true">[1]</button>
+              <li>The Committee lowered the target range by a quarter point, citing a softer labour <span class="nw">market <span class="pop"><button class="cite" aria-expanded="true"><span class="face">[1]</span></button>
                 <span class="popover" role="dialog" aria-label="Cited passage">
                   <blockquote>… the Committee decided to lower the target range for the federal funds rate by 1/4 percentage point …</blockquote>
                   <span class="src">FOMC statement · 17 Sep 2026 (sample)</span>
                   <span class="links"><a href="#">Open in document</a><a href="#">Official source ↗</a></span>
                 </span></span></span></li>
-              <li>Inflation is described as "somewhat elevated", unchanged from <span class="nw">July <button class="cite">[2]</button></span></li>
-              <li>One member dissented in favour of a larger <span class="nw">cut <button class="cite">[3]</button></span></li>
+              <li>Inflation is described as "somewhat elevated", unchanged from <span class="nw">July <button class="cite"><span class="face">[2]</span></button></span></li>
+              <li>One member dissented in favour of a larger <span class="nw">cut <button class="cite"><span class="face">[3]</span></button></span></li>
             </ul>
           </div>
           <div class="note"><svg class="i"><use href="#info"/></svg><span>Hawk/dove score held back until it passes evaluation (at least 80% on 30 hand-labelled statements).</span></div>
@@ -429,8 +430,8 @@ details summary{cursor:pointer;font:var(--meta);color:var(--ink-2);margin-top:10
           <div class="ai">
             <div class="aih"><svg class="i"><use href="#spark"/></svg>What changed<svg class="i info"><use href="#info"/></svg></div>
             <ul>
-              <li>The stance stayed neutral; the resolution dropped its reference to "elevated food <span class="nw">prices" <button class="cite">[1]</button></span></li>
-              <li>The CPI projection for the year was <span class="nw">lowered <button class="cite">[2]</button></span></li>
+              <li>The stance stayed neutral; the resolution dropped its reference to "elevated food <span class="nw">prices" <button class="cite"><span class="face">[1]</span></button></span></li>
+              <li>The CPI projection for the year was <span class="nw">lowered <button class="cite"><span class="face">[2]</span></button></span></li>
             </ul>
           </div>
           <div class="note delayed"><svg class="i"><use href="#clock"/></svg><span>Minutes update delayed; showing data to 1 Oct. (Sample of the delayed state.)</span></div>
@@ -690,8 +691,8 @@ details summary{cursor:pointer;font:var(--meta);color:var(--ink-2);margin-top:10
           <div class="ai" style="margin-top:12px;border-top:0;padding-top:0">
             <div class="aih"><svg class="i"><use href="#spark"/></svg>What changed<svg class="i info"><use href="#info"/></svg></div>
             <ul>
-              <li>The labour market is now described as softening, where July called it <span class="nw">solid <button class="cite">[1]</button></span></li>
-              <li>The Committee moved from holding to a quarter-point <span class="nw">cut <button class="cite">[2]</button></span></li>
+              <li>The labour market is now described as softening, where July called it <span class="nw">solid <button class="cite"><span class="face">[1]</span></button></span></li>
+              <li>The Committee moved from holding to a quarter-point <span class="nw">cut <button class="cite"><span class="face">[2]</span></button></span></li>
             </ul>
           </div>
           <table class="pairs">
@@ -754,7 +755,7 @@ details summary{cursor:pointer;font:var(--meta);color:var(--ink-2);margin-top:10
         <div class="ph"><h2>Command bar (open state)</h2></div>
         <div class="pb">
           <div class="cmdopen">
-            <div class="q"><svg class="i" style="color:var(--amber)"><use href="#spark"/></svg><span>How many RBI cuts since 2024?</span></div>
+            <div class="q"><svg class="i" style="color:var(--highlight)"><use href="#spark"/></svg><span>How many RBI cuts since 2024?</span></div>
             <div class="stage" aria-live="polite">Done · 2.1 s · read policy_meetings</div>
             <div class="ans">
               <div style="font:var(--ui)">The RBI cut the repo rate at 5 meetings since 1 Jan 2024. <span class="tag">AI summary</span></div>
@@ -801,7 +802,7 @@ LIMIT 200</pre></details>
             <div class="swatch"><div class="c" style="background:var(--panel)"></div><div class="t"><b>panel</b>#000000</div></div>
             <div class="swatch"><div class="c" style="background:var(--raised)"></div><div class="t"><b>raised · panel headers</b>#15191f</div></div>
             <div class="swatch"><div class="c" style="background:var(--active)"></div><div class="t"><b>active</b>#20262e</div></div>
-            <div class="swatch"><div class="c" style="background:var(--amber)"></div><div class="t"><b>amber</b>#edb84a</div></div>
+            <div class="swatch"><div class="c" style="background:var(--highlight)"></div><div class="t"><b>highlight</b>#ffffff</div></div>
             <div class="swatch"><div class="c" style="background:var(--up)"></div><div class="t"><b>up</b>#45c16a</div></div>
             <div class="swatch"><div class="c" style="background:var(--down)"></div><div class="t"><b>down</b>#f26b6b</div></div>
             <div class="swatch"><div class="c" style="background:var(--warn)"></div><div class="t"><b>warn</b>#f0913e</div></div>
@@ -822,7 +823,7 @@ LIMIT 200</pre></details>
           <div class="row" style="margin-top:16px">
             <span class="tag">AI-extracted</span><span class="tag">monthly</span><span class="tag">annualised</span><span class="tag">proxy</span><span class="tag">back-calculated</span><span class="tag">from Feb 2023</span>
             <span class="delta up"><svg><use href="#tri"/></svg>+0.42%</span><span class="delta down"><svg><use href="#tri"/></svg>−0.18%</span><span class="delta flat">0.00%</span>
-            <button class="btn primary">Primary</button><button class="btn">Secondary</button><button class="btn" style="outline:2px solid var(--amber);outline-offset:2px">Focused</button>
+            <button class="btn primary">Primary</button><button class="btn">Secondary</button><button class="btn" style="outline:2px solid var(--highlight);outline-offset:2px">Focused</button>
             <span>Missing: <span title="Not available">—</span> · Doesn't apply: N/A</span>
           </div>
         </div>

@@ -138,7 +138,7 @@ function Tabs({ bank, date, tab }: { bank: Bank; date: string; tab: TabId }) {
             <Link
               href={meetingTabHref(bank, date, t.id)}
               aria-current={t.id === tab ? "page" : undefined}
-              className="-mb-px inline-block border-b-2 border-transparent py-2 text-ui text-ink-2 no-underline hover:text-ink-1 aria-[current=page]:border-amber aria-[current=page]:text-ink-1"
+              className="-mb-px inline-block border-b-2 border-transparent py-2 text-ui text-ink-2 no-underline hover:text-ink-1 aria-[current=page]:border-highlight aria-[current=page]:text-ink-1"
             >
               {t.label}
             </Link>
@@ -562,12 +562,12 @@ export function OtherMeetings({ bank, tab, previous, next }: { bank: Bank; tab: 
   return (
     <nav aria-label="Other meetings" className="flex flex-wrap gap-x-4 gap-y-1">
       {previous && (
-        <Link href={meetingTabHref(bank, previous.decision_date, tab)} className="text-ink-3 underline hover:text-ink-1">
+        <Link href={meetingTabHref(bank, previous.decision_date, tab)} className="text-ink-3 underline decoration-line-strong hover:text-ink-1 hover:decoration-highlight">
           ← Previous: {formatDate(previous.decision_date)}
         </Link>
       )}
       {next && (
-        <Link href={meetingTabHref(bank, next.decision_date, tab)} className="text-ink-3 underline hover:text-ink-1">
+        <Link href={meetingTabHref(bank, next.decision_date, tab)} className="text-ink-3 underline decoration-line-strong hover:text-ink-1 hover:decoration-highlight">
           Next: {formatDate(next.decision_date)} →
         </Link>
       )}
