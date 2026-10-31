@@ -19,9 +19,9 @@ const DESIGN_TOKENS: Record<string, string> = {
   "--ink-2": "#afb5be",
   "--ink-3": "#8c939e",
   // §2.2 accent, direction, status, redline
-  "--amber": "#edb84a",
-  "--amber-ink": "#111418",
-  "--amber-wash": "rgb(237 184 74 / 0.12)",
+  "--highlight": "#ffffff",
+  "--highlight-ink": "#000000",
+  "--highlight-wash": "rgb(255 255 255 / 0.1)",
   "--up": "#45c16a",
   "--down": "#f26b6b",
   "--flat": "var(--ink-2)",
@@ -48,8 +48,8 @@ const SHADCN_ROLES: Record<string, string> = {
   "--card-foreground": "var(--ink-1)",
   "--popover": "var(--raised)",
   "--popover-foreground": "var(--ink-1)",
-  "--primary": "var(--amber)",
-  "--primary-foreground": "var(--amber-ink)",
+  "--primary": "var(--highlight)",
+  "--primary-foreground": "var(--highlight-ink)",
   "--secondary": "var(--raised)",
   "--secondary-foreground": "var(--ink-1)",
   "--muted": "var(--raised)",
@@ -59,7 +59,7 @@ const SHADCN_ROLES: Record<string, string> = {
   "--destructive": "var(--down)",
   "--border": "var(--line)",
   "--input": "var(--line-input)",
-  "--ring": "var(--amber)",
+  "--ring": "var(--highlight)",
   "--radius": "4px",
   "--chart-1": "var(--series-1)",
   "--chart-2": "var(--series-2)",
@@ -78,6 +78,12 @@ beforeAll(async () => {
 describe("globals.css: the tokens (Design 01 §2.6)", () => {
   it("declares every token at its Design 01 value", () => {
     for (const [name, value] of Object.entries(DESIGN_TOKENS)) expect(root.get(name), name).toBe(value);
+  });
+
+  it("names the tape's row height --tape-row-h (32 px) and keeps no stale --tape-h (1 Nov 2026, #227)", () => {
+    expect(root.get("--tape-row-h")).toBe("32px");
+    expect(root.has("--tape-h")).toBe(false);
+    expect(code).not.toContain("--tape-h:");
   });
 
   it("maps shadcn's roles onto the tokens", () => {
@@ -101,10 +107,26 @@ describe("globals.css: the tokens (Design 01 §2.6)", () => {
   });
 });
 
+describe("no old accent name left (1 Nov 2026, #228)", () => {
+  it("has no file in web/ that still names the old accent", () => {
+    const word = ["am", "ber"].join(""); // built here so this file doesn't match itself
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(path.join(WEB, dir), { withFileTypes: true })) {
+        const rel = path.join(dir, e.name);
+        if (e.isDirectory()) walk(rel);
+        else if (/\.(tsx?|css|html|md|mts)$/.test(e.name) && readWeb(rel).toLowerCase().includes(word)) hits.push(rel);
+      }
+    };
+    for (const d of ["app", "components", "lib", "tests", "design"]) walk(d);
+    expect(hits).toEqual([]);
+  });
+});
+
 describe("globals.css compiled by Tailwind", () => {
   it("resolves every utility Design 01 §2.6 names", () => {
     const named = ["bg-panel", "text-ink-3", "text-data", "rounded-md", "font-mono", "bg-primary", "bg-accent",
-      "text-up", "bg-series-1", "bg-amber-wash"];
+      "text-up", "bg-series-1", "bg-highlight-wash"];
     const colourTokens = Object.keys(DESIGN_TOKENS)
       .filter((n) => !["--band-alpha", "--market-edge"].includes(n))
       .map((n) => `bg-${n.slice(2)}`);

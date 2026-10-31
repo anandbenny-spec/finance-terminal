@@ -42,7 +42,7 @@ const ITEMS = parseItems(rawItems);
 const GUIDE = "https://github.com/anandbenny-spec/finance-terminal/blob/main/py/config/eval/sets/GUIDE.md";
 const DOC_LABEL = { fomc_statement: "FOMC statement", mpc_resolution: "MPC resolution", mpc_minutes: "MPC minutes" } as const;
 const INPUT =
-  "h-9 w-full rounded-md border border-line-input bg-raised px-2.5 text-ui text-ink-1 placeholder:text-ink-3 focus-visible:outline-2 focus-visible:outline-amber";
+  "h-9 w-full rounded-md border border-line-input bg-raised px-2.5 text-ui text-ink-1 placeholder:text-ink-3 focus-visible:outline-2 focus-visible:outline-highlight";
 
 type Loaded = { state: "loading" } | { state: "error" } | { state: "missing" } | { state: "ok"; text: ItemText; source: string };
 
@@ -101,7 +101,7 @@ function ItemForm({ set, item, saved, onSave }: { set: SetName; item: Item; save
         <div className="flex flex-wrap gap-x-4 gap-y-1.5">
           {choices(set, item).map((c) => (
             <label key={c} className="inline-flex items-center gap-1.5 text-ui text-ink-1">
-              <input type="radio" name="label" value={c} checked={label === c} onChange={() => setLabel(c)} className="accent-amber" />
+              <input type="radio" name="label" value={c} checked={label === c} onChange={() => setLabel(c)} className="accent-highlight" />
               <span className={set === "policy_stance" ? "" : "font-mono"}>{c.replace("-", "−")}</span>
             </label>
           ))}

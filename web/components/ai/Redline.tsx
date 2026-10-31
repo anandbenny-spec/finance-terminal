@@ -44,7 +44,7 @@ export function Redline({ model, added, removed }: { model: Model; added: number
           {formatAxisChange(added)} / {formatAxisChange(-removed)} words
         </span>
         <label className="ml-auto inline-flex cursor-pointer items-center gap-1.5">
-          <input type="checkbox" checked={changesOnly} onChange={(e) => setChangesOnly(e.target.checked)} className="size-4 accent-amber" />
+          <input type="checkbox" checked={changesOnly} onChange={(e) => setChangesOnly(e.target.checked)} className="size-4 accent-highlight" />
           Changes only
         </label>
       </div>
@@ -62,7 +62,7 @@ export function Redline({ model, added, removed }: { model: Model; added: number
               <button
                 type="button"
                 onClick={() => setOpen(new Set([...open, ...b.keys]))}
-                className="text-meta text-ink-3 underline hover:text-ink-1"
+                className="text-meta text-ink-3 underline decoration-line-strong hover:text-ink-1 hover:decoration-highlight"
               >
                 {b.keys.length === 1 ? "1 unchanged paragraph" : `${formatAxisNumber(b.keys.length, 0)} unchanged paragraphs`}
               </button>

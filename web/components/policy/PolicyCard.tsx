@@ -11,6 +11,7 @@ import { DecisionLine } from "@/components/ai/DecisionLine";
 import { Gated, type FieldPolicies } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
 import { StateNote } from "@/components/data/StateNote";
+import { PendingVote } from "@/components/policy/PendingVote";
 import { FEEDS } from "@/lib/feeds";
 import { formatDate, formatReleaseTime } from "@/lib/format";
 import { stanceCitations, summaryBlock } from "@/lib/policy/ai";
@@ -74,7 +75,7 @@ export function PolicyCard({
       <dl className="mt-2.5 flex flex-col gap-1 text-data">
         {m.decision_at && <Row term={fed ? "Statement" : "Resolution"}><span className="font-mono">{formatReleaseTime(m.decision_at, zone)}</span></Row>}
         <Row term="Vote">
-          {t.kind === "tally" ? t.line : t.kind === "pending" ? <StateNote kind="unavailable">{t.note}</StateNote> : <StateNote kind="unavailable">Votes aren&apos;t published yet.</StateNote>}
+          {t.kind === "tally" ? t.line : t.kind === "pending" ? <PendingVote t={t} /> : <StateNote kind="unavailable">Votes aren&apos;t published yet.</StateNote>}
         </Row>
         {!fed && (
           <Row term="Stance">

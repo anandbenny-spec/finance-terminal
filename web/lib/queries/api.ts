@@ -214,6 +214,68 @@ export type PolicyRateSettingRow = {
   change_bps: number;
 };
 
+/** One column's note on a snapshot row (api.screener `notes`): its label and the reason it is held back, either may be null. */
+export type ScreenerNote = { label: string | null; reason: string | null };
+
+/** api.screener (0024): one row per company from its latest weekly snapshot. Ratios are fractions; money in full units of `currency`. */
+export type ScreenerRow = {
+  slug: string;
+  name: string;
+  short_name: string | null;
+  nse_symbol: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  peer_group_key: string | null;
+  peer_group_label: string | null;
+  snapshot_date: string;
+  price: number | null;
+  price_date: string | null;
+  market_cap: number | null;
+  shares: number | null;
+  pe_ttm: number | null;
+  pb: number | null;
+  ev: number | null;
+  ev_ebit: number | null;
+  ev_sales: number | null;
+  dividend_yield: number | null;
+  roe: number | null;
+  ebit_margin: number | null;
+  revenue_cagr_3y: number | null;
+  revenue_cagr_5y: number | null;
+  debt_to_equity: number | null;
+  promoter_pct: number | null;
+  beta: number | null;
+  return_1y: number | null;
+  traded_value_median_3m: number | null;
+  implied_growth: number | null;
+  delivered_growth: number | null;
+  growth_gap: number | null;
+  implied_roe: number | null;
+  delivered_roe: number | null;
+  roe_gap: number | null;
+  valuation_family: string | null;
+  notes: Record<string, ScreenerNote> | null;
+  ebit_label: string | null;
+  beta_label: string | null;
+  implied_growth_label: string | null;
+  implied_roe_label: string | null;
+  index_slugs: string[] | null;
+  source_key: string;
+};
+
+/** api.index_members (0024): each index's latest member set. */
+export type IndexMemberRow = {
+  index_slug: string;
+  index_name: string;
+  snapshot_date: string;
+  slug: string;
+  name: string;
+  short_name: string | null;
+  nse_symbol: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+};
+
 type View<Row> = { Row: Row; Relationships: [] };
 
 /** The slice of the `api` schema typed so far, for supabase-js: the shell's views (C2), the policy pages' (A1, C3, C4, Pass 1b). */
@@ -238,6 +300,8 @@ export type ApiDatabase = {
       ai_citations: View<AiCitationRow>;
       field_policy: View<FieldPolicyRow>;
       market_reactions: View<MarketReactionRow>;
+      screener: View<ScreenerRow>;
+      index_members: View<IndexMemberRow>;
     };
     Functions: { [_ in never]: never };
   };

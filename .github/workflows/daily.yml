@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '37 6 * * *'
       timezone: 'Asia/Kolkata'
+    # Issue #105: a weekday evening run, after the Indian close at 15:30, so the ticker tape shows the same day's Nifty 50,
+    # Nifty Bank and Sensex closes. Only policy.market_series is due at it (its rule is `every 8 hours`); every other
+    # daily task keeps `every 20 hours` and skips, so policy.ai_batch never runs here and spends nothing.
+    - cron: '37 16 * * 1-5'
+      timezone: 'Asia/Kolkata'
   workflow_dispatch:
     inputs:
       target:
@@ -11,6 +16,11 @@ on:
         type: choice
         options: [dev, production]
         default: dev
+      ai:
+        description: 'AI for this run: off leaves the Anthropic and Voyage keys out, so the AI steps skip (a scheduled run is on)'
+        type: choice
+        options: ['on', 'off']
+        default: 'on'
 concurrency:
   group: jobs-daily
   cancel-in-progress: false
@@ -51,5 +61,14 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           COINGECKO_DEMO_KEY: ${{ secrets.COINGECKO_DEMO_KEY }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ inputs.ai != 'off' && secrets.ANTHROPIC_API_KEY || '' }}
+          VOYAGE_API_KEY: ${{ inputs.ai != 'off' && secrets.VOYAGE_API_KEY || '' }}
+      # S3 (#198): the dead-man check. A production run that succeeded pings the monitor, which emails Anand when a
+      # day passes without a ping. Skipped with no secret; a manual dev run never pings.
+      - name: Ping the dead-man check
+        if: success() && env.FT_TARGET == 'production'
+        run: |
+          if [ -z "$HEALTHCHECKS_PING_URL" ]; then echo "HEALTHCHECKS_PING_URL is not set: no ping"; exit 0; fi
+          curl -fsS -m 10 --retry 3 "$HEALTHCHECKS_PING_URL" > /dev/null
+        env:
+          HEALTHCHECKS_PING_URL: ${{ secrets.HEALTHCHECKS_PING_URL }}

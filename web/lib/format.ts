@@ -411,3 +411,41 @@ export function formatMinutesUntil(instant: Instant, now: Instant): string | nul
 export function formatCount(value: number): string {
   return digits(integer(value, "a count"), { decimals: 0 });
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Company figures (module 2; Spec 02A §8). Ratios are stored as fractions (0.18 is 18%); the rupee amounts in full rupees.
+
+/** A stored fraction as a percentage level, one decimal by default: `0.1834` → `18.3%`, `-0.05` → `−5.0%`. */
+export function formatFraction(fraction: Num, decimals = 1): string {
+  if (isMissing(fraction)) return NOT_AVAILABLE;
+  return `${digits(fraction * 100, { decimals, grouping: false })}%`;
+}
+
+/** A stored fraction as a signed percentage, for a market move (1-year return): `0.2` → `+20.0%`, `-0.0412` → `−4.1%`. */
+export function formatFractionChange(fraction: Num, decimals = 1): string {
+  if (isMissing(fraction)) return NOT_AVAILABLE;
+  return `${digits(fraction * 100, { decimals, grouping: false, signed: true })}%`;
+}
+
+/** A stored fraction of a percentage-point gap as points, signed: `0.04` → `+4.0 pts`. */
+export function formatFractionPoints(fraction: Num, decimals = 1): string {
+  if (isMissing(fraction)) return NOT_AVAILABLE;
+  return `${digits(fraction * 100, { decimals, grouping: false, signed: true })} pts`;
+}
+
+/** A multiple (P/E, P/B, EV/EBIT, debt to equity): `23.456` → `23.5×`; grouped by the figure's market. */
+export function formatMultiple(value: Num, market: Market = "IN", decimals = 1): string {
+  if (isMissing(value)) return NOT_AVAILABLE;
+  return `${digits(value, { decimals, locale: LOCALE[market] })}×`;
+}
+
+/** A per-share price in its own currency, 2 decimals: INR `1234.5` → `₹1,234.50`, USD `98.1` → `$98.10`. */
+export function formatPrice(value: Num, currency: Currency): string {
+  return formatMoney(value, currency, { decimals: 2 });
+}
+
+/** Rupees given in full, shown in crore (1 crore = 10,000,000): `1.2345e12` → `₹1,23,450 cr`. */
+export function formatRupeesAsCrore(rupees: Num): string {
+  if (isMissing(rupees)) return NOT_AVAILABLE;
+  return formatMoney(rupees / 10_000_000, "INR", { unit: "crore" });
+}

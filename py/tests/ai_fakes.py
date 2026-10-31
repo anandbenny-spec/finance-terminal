@@ -94,7 +94,7 @@ def _error(mode: str) -> httpx2.Response:
     status = int(mode)
     headers = {"retry-after": "3"} if mode == "429" else {}
     kind = {"400": "invalid_request_error", "429": "rate_limit_error", "500": "api_error", "503": "api_error",
-            "529": "overloaded_error"}[mode]
+            "529": "overloaded_error", "401": "authentication_error", "402": "billing_error"}[mode]
     return httpx2.Response(status, json={"type": "error", "error": {"type": kind, "message": f"fake {mode}"}},
                            headers=headers)
 
@@ -105,7 +105,7 @@ class FakeClaude:
     'ok' · 'bad_number' (the first bullet writes '25 basis points', which its passage doesn't) · 'uncited' (the first
     bullet has no citation) · 'wrong_offsets' (offsets shifted, cited text right: found by search) · 'two_bullets' ·
     'max_tokens' · 'refusal' · 'nul' (the first bullet ends with a NUL character, which Postgres refuses) · '400' ·
-    '429' (with Retry-After: 3) · '529' (no Retry-After). In a batch, a request's '400' is an `errored` result, and
+    '429' (with Retry-After: 3) · '529' (no Retry-After) · '401' (the key is refused) · '402' (no credits: billing_error). In a batch, a request's '400' is an `errored` result, and
     'expired' and 'canceled' are those results.
     Batches: `creates` is a script for each batch create ('ok', '400', '429', '500', '503', 'lost': the batch is created
     and then the connection times out, 'lost_before': it times out before anything is created); a batch ends on its
@@ -149,7 +149,7 @@ class FakeClaude:
         body = json.loads(request.content)
         self.requests.append(body)
         mode = self._mode()
-        if mode in ("400", "429", "529"):
+        if mode in ("400", "401", "402", "429", "529"):
             return _error(mode)
         return httpx2.Response(200, json=self._message(body, mode))
 
