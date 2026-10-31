@@ -22,7 +22,9 @@ policy.rbi_documents:
   overdue_after: 3 days
 policy.market_series:
   description: FRED and yfinance series for the policy tracker and ticker tape
-  workflows: {daily: every 20 hours}
+  # every 8 hours (issue #105): due at both daily runs, 06:37 IST (14 h after the evening run) and the weekday
+  # 16:37 IST run (10 h after the morning one). Every other daily task keeps 20 hours, so the evening run skips it.
+  workflows: {daily: every 8 hours}
   overdue_after: 4 days
 policy.reactions:
   description: Market reactions around each decision
@@ -77,3 +79,9 @@ equity.shareholding:
   run_after: [equity.universe]
   overdue_after: 100 days
   uses_nse: true
+equity.metrics:
+  description: Derived metrics of the universe companies (TTM figures, margins, returns, growth, banks' ratios and market multiples) from the stored statements, prices and corporate actions, each with its inputs or the reason it is held back
+  workflows: {weekly: every 6 days}
+  run_after: [equity.statements, equity.corporate_actions, equity.shareholding]
+  overdue_after: 10 days
+  uses_nse: false

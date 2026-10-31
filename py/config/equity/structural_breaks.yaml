@@ -1,0 +1,17 @@
+# Structural breaks for equity.metrics (Spec 02A §5.6; job 2A-11), read by ft/equity/metrics.py. Labelled curated.
+#
+# A demerger or merger changes what a company's figures cover, so growth across it compares two different
+# businesses: revenue_cagr_3y and revenue_cagr_5y are held back when a break falls inside their window (after the
+# first day of the base year, up to the last day of the final year). Demergers and mergers in the exchange's
+# corporate-action record count by themselves (their ex-dates); this file adds the ones the record doesn't list.
+#
+# Each row: company (its slug, as companies.yaml), kind (demerger | merger), effective (yyyy-mm-dd: the date the
+# scheme took effect), announcement (the exchange announcement's title), announced (its date) and link (where it is).
+# Candidates found but not yet confirmed are listed on 2A-11's issue (#117) for Anand, not here.
+breaks:
+  - company: hdfcbank
+    kind: merger
+    effective: 2023-07-01
+    announcement: "HDFC Bank: Disclosure under Regulation 30 of the SEBI (LODR) Regulations, 2015 (Composite Scheme of Amalgamation of HDFC Investments, HDFC Holdings and HDFC Limited into HDFC Bank effective 1 July 2023)"
+    announced: 2023-07-01
+    link: https://archives.nseindia.com/corporate/HDFCBANK_01072023073519_SEEffectiveDateJuly12023.pdf

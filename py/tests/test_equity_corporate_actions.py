@@ -17,6 +17,7 @@ import boto3
 import httpx
 import psycopg
 import pytest
+import yaml
 from conftest import dsn
 from moto.server import ThreadedMotoServer
 
@@ -184,6 +185,15 @@ def write(tmp_path, text: str) -> Path:
 def test_the_shipped_review_file_loads():
     r = ac.load_reviews()
     assert isinstance(r.releases, dict) and isinstance(r.jumps, dict)
+
+
+def test_every_shipped_review_names_a_curated_company():
+    """A review keyed on a mistyped slug would never match its jump (the warning would go on naming it), so every
+    shipped entry names a company in companies.yaml and an event of one (#113's first review, 31 Oct 2026)."""
+    curated = set(yaml.safe_load((ac.CONFIG_DIR / "companies.yaml").read_text()))
+    r = ac.load_reviews()
+    assert {c for c, _ in r.jumps} <= curated
+    assert all(any(slug.startswith(f"{c}-") for c in curated) for slug in r.releases)
 
 
 def test_a_release_and_a_jump_review_load_and_malformed_entries_fail(tmp_path):

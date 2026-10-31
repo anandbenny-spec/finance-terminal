@@ -167,10 +167,11 @@ def test_a_listing_row_is_read_to_its_quarter_end_submission_time_and_nse_figure
 
 def test_rows_without_a_link_are_counted_and_unreadable_rows_named_and_a_file_listed_twice_is_one_pattern():
     rows = [ROW, {**ROW}, {**ROW, "xbrl": None}, {**ROW, "xbrl": "-"}, {**ROW, "xbrl": " "},
+            {**ROW, "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/-"},
             {**ROW, "xbrl": ROW["xbrl"].replace(".xml", ".html")},
             {**ROW, "xbrl": ROW["xbrl"].replace("SHP_1741905", "SHP_9"), "date": "soon"}]
     lst = sh.parse_master(rows, "X")
-    assert len(lst.patterns) == 1 and lst.no_link == 3
+    assert len(lst.patterns) == 1 and lst.no_link == 4
     assert len(lst.unreadable) == 2 and "not an .xml link" in lst.unreadable[0] and "quarter end unreadable" in lst.unreadable[1]
 
 
