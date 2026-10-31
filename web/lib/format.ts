@@ -407,9 +407,10 @@ export function formatMinutesUntil(instant: Instant, now: Instant): string | nul
   return `${Math.ceil(ms / 60_000)} min`;
 }
 
-/** A whole count (rows written, open alerts): `1234` → `1,234`. Never the viewer's locale. */
-export function formatCount(value: number): string {
-  return digits(integer(value, "a count"), { decimals: 0 });
+/** A whole count (rows written, open alerts): `1234` → `1,234`. Never the viewer's locale. A count of a company's own
+ * (its shares) passes its market and is grouped as that market groups: `1234567` → `12,34,567` for IN. */
+export function formatCount(value: number, market?: Market): string {
+  return digits(integer(value, "a count"), { decimals: 0, locale: market ? LOCALE[market] : undefined });
 }
 
 // ---------------------------------------------------------------------------------------------------------------

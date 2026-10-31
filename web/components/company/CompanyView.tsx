@@ -1,7 +1,6 @@
 // CompanyView (2A-19; Spec 02A §8): the company page's header, tabs and the tab shown, from one cached read
 // (lib/queries/company.ts). The tab and the basis are in the URL (?tab=financials&basis=standalone), so every view can be
-// linked. Only Overview and Financials exist yet: Valuation (2A-20) and Rate decisions (2A-25) add their tabs with their
-// pages. Each panel carries its source line and freshness; a figure with no value says why. Server-rendered.
+// linked. Overview, Financials and Valuation (2A-20) exist; Rate decisions (2A-25) adds its tab with its page. Each panel carries its source line and freshness; a figure with no value says why. Server-rendered.
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ActionsPanel } from "@/components/company/ActionsPanel";
@@ -11,6 +10,7 @@ import { PeersPanel } from "@/components/company/PeersPanel";
 import { PriceChartPanel } from "@/components/company/PriceChartPanel";
 import { PromoterPanel } from "@/components/company/PromoterPanel";
 import { StatementTable } from "@/components/company/StatementTable";
+import { ValuationTab } from "@/components/company/valuation/ValuationTab";
 import { Freshness } from "@/components/data/Freshness";
 import { PageHeader } from "@/components/data/PageHeader";
 import { Panel } from "@/components/data/Panel";
@@ -281,7 +281,13 @@ export function CompanyView({
         items={TABS.map((t) => ({ id: t.id, label: t.label, href: companyHref(company.slug, t.id) }))}
         current={tab}
       />
-      {tab === "overview" ? <Overview data={data} freshness={freshness} /> : <Financials data={data} basis={basis} freshness={freshness} />}
+      {tab === "overview" ? (
+        <Overview data={data} freshness={freshness} />
+      ) : tab === "financials" ? (
+        <Financials data={data} basis={basis} freshness={freshness} />
+      ) : (
+        <ValuationTab data={data} freshness={freshness} />
+      )}
     </>
   );
 }

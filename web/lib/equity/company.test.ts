@@ -10,7 +10,8 @@ describe("tab and basis", () => {
   it("reads the tab and basis from the URL, defaulting to Overview and consolidated", () => {
     expect(tabOf(undefined)).toBe("overview");
     expect(tabOf("financials")).toBe("financials");
-    expect(tabOf("valuation")).toBe("overview");
+    expect(tabOf("valuation")).toBe("valuation");
+    expect(tabOf("rates")).toBe("overview");
     expect(tabOf(["financials", "x"])).toBe("overview");
     expect(basisOf("standalone")).toBe("standalone");
     expect(basisOf("x")).toBe("consolidated");

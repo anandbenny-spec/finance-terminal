@@ -1,6 +1,7 @@
 // The company-figure formats (module 2; Spec 02A §8): fractions as per cent, multiples, prices and crore, by the figure's market.
 import { describe, expect, it } from "vitest";
 import {
+  formatCount,
   formatFraction,
   formatFractionChange,
   formatFractionPoints,
@@ -38,6 +39,11 @@ describe("company figures", () => {
   it("shows full rupees as crore with Indian grouping", () => {
     expect(formatRupeesAsCrore(1_234_500_000_000)).toBe("₹1,23,450 cr");
     expect(formatRupeesAsCrore(null)).toBe(NOT_AVAILABLE);
+  });
+  it("groups a company's own count by its market", () => {
+    expect(formatCount(3_600_000_000, "IN")).toBe("3,60,00,00,000");
+    expect(formatCount(3_600_000_000, "US")).toBe("3,600,000,000");
+    expect(formatCount(1234)).toBe("1,234");
   });
   it("shows a percentage level that may exceed 100 grouped by its market (the promoter note)", () => {
     expect(formatPercentLevel(6613)).toBe("6,613.00%");
