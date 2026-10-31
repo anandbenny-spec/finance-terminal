@@ -222,7 +222,7 @@ def seed():
         c.execute("""insert into ops.task (key, module, description, workflows, min_interval, overdue_after, enabled)
                      values ('test.equity_beta_seed', 'test', 'seed', '{weekly}', '6 days', '10 days', false)
                      on conflict (key) do nothing""")
-        job = c.execute("insert into ops.job_run (workflow, trigger, runner) values ('manual', 'cli', 'local') "
+        job = c.execute("insert into ops.job_run (workflow, trigger, runner) values ('refresh', 'cli', 'local') "
                         "returning id").fetchone()[0]
         run_id = c.execute("insert into ops.task_run (job_run_id, task_key, status) values (%s, "
                            "'test.equity_beta_seed', 'success') returning id", (job,)).fetchone()[0]
