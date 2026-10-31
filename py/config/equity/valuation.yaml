@@ -33,3 +33,17 @@ model:
     source: >-
       Spec 02A §5.7 (28 Oct 2026): the 3-FY effective rate gives way to the marginal rate when it's outside 0 to 50%
       or profit before tax is zero or negative; Brief §6.3 and Data Audit 02 E8 (effective rate to marginal rate)
+
+# A lender's delivered return on equity, the figure its implied ROE is set against (Spec 02A §5.9; job 2A-14), read by
+# ft/equity/assemble.py. The spec's window is five financial years, but results filings carry balance sheets only from
+# March 2023 (banks' from March 2024; #114's finding), so average equity exists for fewer years: the average runs over
+# the consecutive financial years, up to `years`, that end with the latest and have a stored return on equity, and is
+# held back below `min_years`.
+delivered_roe:
+  years: 5
+  min_years: 3
+  source: >-
+    Spec 02A §5.9 (the 5-FY average of PAT to owners ÷ average equity to owners); the window and the hold-back rule
+    decided by Claude (standing delegation, 1 Nov 2026, #120), as Anand's note of 30 Oct 2026 on #120 asked (his
+    example: "the average over the fiscal years with filed opening and closing equity, n shown, held back below 3
+    years")

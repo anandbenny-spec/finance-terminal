@@ -158,6 +158,9 @@ def wipe():
         c.execute("delete from core.observation where task_run_id in (select id from ops.task_run where task_key = %s)",
                   (SEED,))
         for sql in (f"delete from equity.metric_value where entity_id in {ids}",
+                    (f"delete from equity.corporate_action where event_id in (select id from core.event "
+                     f"where entity_id in {ids})"),
+                    f"delete from core.event where entity_id in {ids}",
                     f"delete from equity.company where entity_id in {ids}",
                     "delete from core.entity where slug like 'zv-%'"):
             c.execute(sql)
@@ -223,3 +226,38 @@ def test_fetch_and_market_inputs_read_the_stored_rows(clean):
         assert run.status == "not_applicable" and run.reason == "Lease payments couldn't be checked against EBIT."
         early = assemble.market_inputs(c, D(2000, 1, 1))                        # nothing stored that early
         assert early.risk_free.held and early.erp.held and early.gross_yield.held
+
+
+@pytest.mark.db
+def test_fetch_reads_a_lender_s_pb_and_roe_and_its_recorded_and_curated_breaks(clean, monkeypatch):
+    """2A-14: P/B and the yearly ROE come with the market and year metrics; a merger in the corporate-action record
+    (a withdrawn one and a dividend aren't breaks) and the curated file's rows become the company's breaks."""
+    curated = mx.Break("demerger", D(2031, 1, 1), "curated row", curated=True)
+    monkeypatch.setattr(mx, "load_breaks", lambda path=None: {"zv-b": [curated]})
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        eid = c.execute("""insert into core.entity (kind, slug, name, market, currency, is_published)
+                           values ('company', 'zv-b', 'zv-b', 'IN', 'INR', false) returning id""").fetchone()[0]
+        c.execute("insert into equity.company (entity_id, fy_end_month, valuation_family) values (%s, 3, 'lender')",
+                  (eid,))
+        for key, kind, basis, end, value in (("pb", "market", "consolidated", D(2031, 6, 27), "2.5"),
+                                             ("roe", "year", "consolidated", D(2031, 3, 31), "0.15"),
+                                             ("revenue_cagr_5y", "year", "consolidated", D(2031, 3, 31), "0.12")):
+            c.execute("""insert into equity.metric_value (entity_id, metric_key, basis, period_kind, period_end, value,
+                                                          inputs) values (%s, %s, %s, %s, %s, %s, '{}')""",
+                      (eid, key, basis, kind, end, value))
+        for slug, kind, ex, status in (("zv-b-merger-2030-07-01", "merger", D(2030, 7, 1), "effective"),
+                                       ("zv-b-demerger-2030-09-01", "demerger", D(2030, 9, 1), "withdrawn"),
+                                       ("zv-b-dividend-2030-08-01", "dividend", D(2030, 8, 1), "effective")):
+            ev = c.execute("""insert into core.event (event_type, entity_id, slug, title, starts_on, status, source_id,
+                                                      is_published)
+                              values ('corporate_action', %s, %s, %s, %s, %s,
+                                      (select id from core.source where key = 'nse'), false) returning id""",
+                           (eid, slug, slug, ex, status)).fetchone()[0]
+            c.execute("""insert into equity.corporate_action (event_id, kind, ex_date, subject, exchange)
+                         values (%s, %s, %s, %s, 'NSE')""", (ev, kind, ex, slug))
+    with psycopg.connect(JOB, autocommit=True) as c:
+        s = assemble.fetch(c, [eid])[eid]
+    assert set(s.metrics) == {("pb", "consolidated", "market", D(2031, 6, 27)),
+                              ("roe", "consolidated", "year", D(2031, 3, 31)),
+                              ("revenue_cagr_5y", "consolidated", "year", D(2031, 3, 31))}
+    assert s.breaks == [mx.Break("merger", D(2030, 7, 1), "zv-b-merger-2030-07-01"), curated]

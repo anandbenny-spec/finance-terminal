@@ -15,8 +15,11 @@ from datetime import date
 from decimal import Decimal
 
 MODEL_VERSION = "dcf-1"
+IMPLIED_ROE_VERSION = "implied-roe-1"
 FAMILIES = ("operating", "lender", "insurer", "mixed")
-UNITS = ("fraction", "money", "shares", "beta")
+RUN_KINDS = ("reverse_dcf", "implied_roe")       # 2A-14's kinds of equity.valuation_run (dcf_default is `Result`)
+RUN_STATUSES = ("solved", "no_solution", "not_applicable")
+UNITS = ("fraction", "money", "shares", "beta", "multiple")
 
 # The N/A sentences of the non-operating families (Spec 02A §5.9's wording for insurers and mixed companies).
 FAMILY_NA = {
@@ -115,6 +118,62 @@ class Company:
         return {"key": self.key, "market": self.market, "currency": self.currency, "family": self.family,
                 **{k: v.json() for k, v in self.inputs().items()},
                 **({"held": list(self.extra_held)} if self.extra_held else {})}
+
+
+@dataclass(frozen=True)
+class Lender:
+    """A lender's inputs for the return on equity its price implies (Spec 02A §5.9; job 2A-14), in its own currency."""
+    key: str
+    market: str
+    currency: str
+    family: str
+    pb: Input                      # market capitalisation ÷ equity to owners at the latest balance sheet
+    beta: Input                    # the industry's levered beta (not relevered: debt is a lender's raw material)
+    delivered_roe: Input           # the average return on equity it has delivered (the caller's window and rules)
+    price: Input                   # the latest close (stored with the run; the model reads P/B)
+
+    def __post_init__(self):
+        if self.family not in FAMILIES:
+            raise ValueError(f"{self.key}: unknown valuation family {self.family!r}")
+
+    def json(self) -> dict:
+        return {"key": self.key, "market": self.market, "currency": self.currency, "family": self.family,
+                **{f.name: getattr(self, f.name).json() for f in fields(self)
+                   if isinstance(getattr(self, f.name), Input)}}
+
+
+@dataclass(frozen=True)
+class Run:
+    """One `equity.valuation_run` row of 2A-14's kinds, as data (storing it is 2A-15's): `solved` with its result,
+    or `no_solution` / `not_applicable` with the visitor's sentence. `outcome` names the case (it goes into `inputs`
+    too); `delivered` is the figure the result is compared with, or `delivered_reason` says why it's held."""
+    kind: str                      # reverse_dcf | implied_roe
+    status: str                    # solved | no_solution | not_applicable
+    outcome: str                   # solved, not_applicable, or the no-solution case
+    reason: str | None
+    price: Decimal | None
+    result: Decimal | None         # implied revenue growth, or implied return on equity (fractions)
+    delivered: Decimal | None
+    delivered_reason: str | None
+    inputs: dict
+    model_version: str
+
+    def __post_init__(self):
+        if self.kind not in RUN_KINDS or self.status not in RUN_STATUSES:
+            raise ValueError(f"unknown run kind or status: {self.kind!r}, {self.status!r}")
+        if (self.status == "solved") != (self.result is not None):
+            raise ValueError("a solved run has a result; any other has none")
+        if self.status != "solved" and not self.reason:
+            raise ValueError("a run that isn't solved has its reason")
+        if (self.delivered is None) == (self.delivered_reason is None):
+            raise ValueError("a run has the delivered figure or the reason it's held, not both or neither")
+
+    @property
+    def gap(self) -> Decimal | None:
+        """Implied − delivered (a fraction a year: points ÷ 100), only when both exist."""
+        if self.result is None or self.delivered is None:
+            return None
+        return self.result - self.delivered
 
 
 @dataclass(frozen=True)
