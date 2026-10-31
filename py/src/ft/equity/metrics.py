@@ -25,6 +25,11 @@ inputs. Anywhere else a missing line holds the value back.
 **Debt** is borrowings only, labelled "excluding lease liabilities (not in results filings)" (Anand, 30 Oct 2026, on
 #117: no results filing tags lease liabilities). EV-based figures are held back where the filed lease payments are
 material against EBIT over the same period (`py/config/equity/metrics.yaml`).
+
+**Lines a filing gets wrong are held, not shown** (decided by Claude, standing delegation, 31 Oct 2026, #117's dev
+run; each only holds figures back): profit to owners when owners + NCI isn't the period's profit (`owners_disagree`);
+total segment assets filed as zero or less; and the newest filing's share count when it disagrees more than twice
+either way with both of the two filings before it, after the share actions between them (`_shares_agree`).
 """
 from __future__ import annotations
 
@@ -252,6 +257,11 @@ class Calc:
         self.extra: dict = {}
 
     def take(self, f: Fin, col: str) -> Decimal:
+        if col == "pat_owners" and owners_disagree(f):
+            for line in ("pat", "pat_owners", "pat_nci"):
+                if f.values.get(line) is not None:
+                    self._record(f, line, f.values[line], f.tags.get(line) or line)
+            raise Held(OWNERS_HELD)
         got = owners_line(f, col)
         if got is None and col in ABSENT_IS_NONE:
             got = ZERO, "not filed: taken as none"
@@ -260,15 +270,36 @@ class Calc:
                 raise Held(f"N/A: {FORMAT_NAMES.get(f.format, f.format)} filings don't report {LINES.get(col, col)}.")
             raise Held(f"The filing doesn't report {LINES.get(col, col)}.")
         v, element = got
+        self._record(f, col, v, element)
+        return v
+
+    def _record(self, f: Fin, col: str, v: Decimal, element: str) -> None:
         row = self.lines.setdefault((f.document_id, f.kind, f.end), {
             "document_id": f.document_id, "basis": f.basis, "period_kind": f.kind, "period_end": f.end.isoformat(),
             "lines": {}})
         row["lines"][col] = {"value": str(v), "element": element}
-        return v
 
     def inputs(self, **more) -> dict:
         out = {"financials": list(self.lines.values()), **self.extra, **more}
         return {k: v for k, v in out.items() if v not in (None, [], {})}
+
+
+OWNERS_IDENTITY = ("ind_as", "nbfc")     # formats whose profit for the period is the owners' share plus the NCI's
+OWNERS_TOLERANCE = (Decimal(1_000_000), Decimal("0.005"))      # ₹10 lakh, or 0.5% of the profit if larger
+OWNERS_HELD = "The filing's profit attributable to owners doesn't agree with its profit for the period."
+
+
+def owners_disagree(f: Fin) -> bool:
+    """Profit to owners + NCI ≠ profit for the period beyond rounding: one of the lines is misfiled, and the file can't
+    say which, so profit to owners is held (31 Oct 2026, #117's dev run: Nestlé India files 0 for owners and NCI
+    every period; Adani Ports' FY2026 owners ₹914.83 cr against a profit of ₹12,782.03 cr; Tech Mahindra's Dec 2025
+    quarter ₹199 cr against ₹1,119 cr). Banks' consolidated profit comes before minority interest and associates, so
+    the identity isn't theirs; a row filing no owners' line isn't checked (the standalone rule then applies)."""
+    v = f.values
+    if f.format not in OWNERS_IDENTITY or v.get("pat_owners") is None or v.get("pat") is None:
+        return False
+    tol = max(OWNERS_TOLERANCE[0], abs(v["pat"]) * OWNERS_TOLERANCE[1])
+    return abs(v["pat_owners"] + (v.get("pat_nci") or ZERO) - v["pat"]) > tol
 
 
 def owners_line(f: Fin, col: str) -> tuple[Decimal, str] | None:
@@ -602,10 +633,15 @@ def _banks(out: Out, book: Book) -> None:
 
 
 def _segment_assets(c: Calc, book: Book, end: date) -> Decimal:
+    """A quarter end's total segment assets. Zero or less is held like a missing figure (31 Oct 2026, #117's dev run:
+    ICICI Bank files 0 for Sep 2020 to Dec 2022, and averaged with Mar 2023's figure it doubled that NIM proxy)."""
     f = book.get("standalone", "instant", end)
     if f is None or f.values.get("segment_assets_total") is None:
         raise Held("Total segment assets aren't filed for the quarter end.")
-    return c.take(f, "segment_assets_total")
+    sa = c.take(f, "segment_assets_total")
+    if sa <= 0:
+        raise Held("Total segment assets are filed as zero or less for the quarter end.")
+    return sa
 
 
 def roa_scale(r: Decimal) -> str | None:
@@ -620,7 +656,7 @@ def _roa(c: Calc, book: Book, q: Fin) -> Decimal:
     """Brief §6.3: r = filed ROA ÷ (quarter PAT ÷ quarter-end total segment assets) decides the filing's scale."""
     filed, pat = c.take(q, "roa_filed"), c.take(q, "pat")
     sa = _segment_assets(c, book, q.end)
-    if pat == 0 or sa <= 0:
+    if pat == 0:
         raise Held("The filed return on assets' scale can't be decided.")
     r = (filed / (pat / sa)).quantize(Decimal("0.0001"))
     scale = roa_scale(r)
@@ -653,6 +689,44 @@ def _factor_span(d: Data, after: date, upto: date, held: str) -> tuple[Decimal, 
     return prod, used
 
 
+SHARES_BAND = (Decimal("0.5"), Decimal(2))       # newest filed shares ÷ an earlier filing's, after the share actions
+SHARES_HELD = "The latest filing's share count doesn't agree with the company's earlier filings."
+
+
+def _shares_agree(c: Calc, d: Data, rows: list[Fin], f: Fin) -> None:
+    """The newest filing's shares against the two period ends before it (each its best row: consolidated, then the
+    quarter's), scaled by the applied split, bonus and consolidation factors between them. Agreement with either, within
+    SHARES_BAND, passes; disagreement with both holds them (31 Oct 2026, #117's dev run: Bharti Airtel's and Bajaj
+    Finserv's Jun 2026 filings carry face values of 15,86,949 and 159.87, so 19,662 and 62,551 shares). An earlier
+    filing with a share action under review between the two isn't comparable; with none comparable there is nothing
+    to check. What was compared goes in the value's inputs (`shares_check`)."""
+    def rank(g: Fin) -> tuple:
+        return g.basis == "consolidated", g.kind == "quarter", g.order
+
+    earlier: dict[date, Fin] = {}
+    for g in rows:
+        if g.end < f.end and (g.end not in earlier or rank(g) > rank(earlier[g.end])):
+            earlier[g.end] = g
+    tried = []
+    for end in sorted(earlier, reverse=True)[:2]:
+        g = earlier[end]
+        span = [a for a in d.actions if a.kind in SHARE_KINDS and end < a.ex_date <= f.end]
+        if any(a.status != "applied" or a.factor is None for a in span):
+            continue                                     # an action under review between them: not comparable
+        prod = Decimal(1)
+        for a in span:
+            prod *= a.factor
+        r = (f.values["shares_outstanding"] * prod / g.values["shares_outstanding"]).quantize(Decimal("0.0001"))
+        tried.append({"document_id": g.document_id, "period_end": end.isoformat(),
+                      "shares": str(g.values["shares_outstanding"]), "factors": str(prod), "ratio": str(r)})
+        if SHARES_BAND[0] <= r <= SHARES_BAND[1]:
+            c.extra["shares_check"] = {"agrees_with": tried[-1]}
+            return
+    if tried:
+        c.extra["shares_check"] = {"disagrees_with": tried}
+        raise Held(SHARES_HELD)
+
+
 def _latest(book: Book, kind: str, upto: date, *, where=None) -> date | None:
     ends = [e for e in book.ends(kind, where=where) if e <= upto]
     return ends[-1] if ends else None
@@ -673,6 +747,7 @@ def _market(out: Out, book: Book, d: Data, rules: Rules, na: str | None) -> None
             raise Held("No filing reports shares outstanding.")
         f = max(rows, key=lambda f: (f.end, f.basis == "consolidated", f.kind == "quarter", f.order))
         filed = c.take(f, "shares_outstanding")
+        _shares_agree(c, d, rows, f)
         prod, used = _factor_span(d, f.end, t, "A corporate action since the last filing is under review.")
         c.extra["factors"] = used
         return (filed / prod).quantize(Decimal(1))
