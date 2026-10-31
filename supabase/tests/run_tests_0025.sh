@@ -39,7 +39,7 @@ check "B3 only the one correction kind is allowed" \
 check "B4 promoter_pct stays between 0 and 100" \
   "$(as_pg "update equity.shareholding set promoter_pct = 6613 where as_of = '2021-06-30'")" 'violates check constraint'
 check "B5 job_writer can write the new columns" \
-  "$(as_pg "set role job_writer; update equity.shareholding set nse_pct = 60.8 where as_of = '2021-06-30'")" 'UPDATE 1'
+  "$(as_role job_writer "update equity.shareholding set nse_pct = null where as_of = '2021-06-30' and source_url like 'https://example.invalid/%' returning as_of")" '^2021-06-30$'
 check "B6 the view shows the latest filed pattern per company and quarter" \
   "$(as_role anon "select string_agg(as_of||' '||promoter_pct, ',' order by as_of) from api.company_promoter_holding where slug = 'eq25-a'")" '^2021-06-30 60.8,2021-09-30 66.2$'
 as_pg "delete from equity.shareholding where document_id = (select id from core.document where external_key = 'eq25-3')" >/dev/null
