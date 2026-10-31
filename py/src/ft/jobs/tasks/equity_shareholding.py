@@ -18,11 +18,14 @@ Checks, B blocking, W warning:
 - (B) `lists_read`: every company's listing was read (a reply that is not JSON, or refused after the retries, fails);
 - (B) `instances_are_patterns`: every fetched file is an XBRL instance with shareholder-category contexts and a quarter
   end; a file that is not one fails the run, named (never a guessed 0%);
-- (B) `promoter_range`: every promoter % is between 0 and 100;
-- (W) `unit_suspect`: a file whose promoter % is outside 0–100 by a factor of 100 while its own share counts agree with the
-  figure divided by 100 (BHARTIARTL, quarter ended 30 Sep 2020, filed as 5,623%; Anand, 31 Oct 2026, option 1): held
-  back, no row stored, named with the filed value, the value divided by 100, the file's share-count ratio and NSE's own
-  figure; any other out-of-range figure still fails `promoter_range`;
+- (B) `promoter_range`: every stored promoter % is between 0 and 100;
+- (W) `corrected`: a file whose promoter % is outside 0–100 by a factor of 100 (filed in percent, not as a fraction)
+  while its own share counts **and** NSE's figure (where listed) agree with the figure divided by 100 is stored ÷ 100 as
+  a labelled correction (`correction`, `filed_pct`, `share_ratio_pct`, `nse_pct`; Anand, 1 Nov 2026), named in full in the
+  run's result; if NSE disagrees it is a range error;
+- (W) `held_back`: an out-of-range file its share counts can't confirm that is on the approved list
+  (`config/equity/shareholding_held.yaml`, Anand, 1 Nov 2026): no row stored, named; any other fails `promoter_range`
+  (blocking, every name listed);
 - (W) `quarter_move`: a move of more than 10 points between consecutive quarters, named;
 - (W) `agrees_with_nse`: the XBRL figure differs from NSE's own `pr_and_prgrp` by more than 0.01 points, named, or the
   listing's quarter end differs from the file's (both added by Claude under the standing delegation: they only add checks;
@@ -131,8 +134,16 @@ class EquityShareholding(DocumentJob):
         if got is None:
             return None
         try:
-            pattern = sh.parse_pattern(got.body)
+            try:
+                pattern = sh.parse_pattern(got.body)
+            except sh.ShareholdingError as e:
+                if e.kind != "unit_suspect":
+                    raise
+                pattern = sh.corrected(e, c.meta["nse_pct"])
         except sh.ShareholdingError as e:
+            held = sh.held_files().get(c.external_key) if e.kind == "range" else None
+            if held:
+                raise FetchError(c.url, f"held: {e} ({held})") from None
             raise FetchError(c.url, f"{e.kind}: {e}") from None
         return PatternGot(c, got.raw_file_id, got.sha256, got.body, got.media_type, pattern)
 
@@ -146,10 +157,11 @@ class EquityShareholding(DocumentJob):
             previous)
         tx.execute(
             """insert into equity.shareholding (document_id, entity_id, as_of, promoter_pct, promoter_shares, total_shares,
-                                                filed_at, source_url, exchange)
-               values (%s,%s,%s,%s,%s,%s,%s,%s,'NSE')""",
+                                                filed_at, source_url, exchange, correction, filed_pct, share_ratio_pct,
+                                                nse_pct)
+               values (%s,%s,%s,%s,%s,%s,%s,%s,'NSE',%s,%s,%s,%s)""",
             (reg.document_id, m["entity_id"], p.as_of, p.promoter_pct, p.promoter_shares, p.total_shares,
-             m["filed_at"], c.url))
+             m["filed_at"], c.url, p.correction, p.filed_pct, p.ratio_pct, p.nse_pct))
         return reg
 
     # ------------------------------------------------------------------ checks
@@ -162,23 +174,26 @@ class EquityShareholding(DocumentJob):
                          ("the listings of " + _names(failed) + " weren't read") if failed
                          else f"{len(n['companies'])} companies' listings read"))
         why = {k: [f"{c.meta['symbol']} {c.external_key} ({w.split(': ', 1)[1]})" for c, w in h.unserved
-                   if w.startswith(k + ":")] for k in ("invalid", "range", "unit_suspect")}
+                   if w.startswith(k + ":")] for k in ("invalid", "range", "held")}
         out.append(Check("instances_are_patterns", not why["invalid"],
                          ("not a shareholding pattern: " + _names(why["invalid"])) if why["invalid"]
                          else f"{len(h.got)} files are shareholding patterns with a quarter end"))
+        # every name, never "and N more": a file outside the approved list is Anand's to look at
         out.append(Check("promoter_range", not why["range"],
-                         ("promoter % outside 0–100: " + _names(why["range"])) if why["range"]
+                         ("promoter % outside 0–100: " + "; ".join(why["range"])) if why["range"]
                          else "every promoter % is between 0 and 100"))
+        out.append(Check("held_back", not why["held"],
+                         ("held back by name (approved 1 Nov 2026), no row stored: " + "; ".join(why["held"]))
+                         if why["held"] else "no file is held back", blocking=False))
 
-        held = []
-        for c, w in h.unserved:
-            if w.startswith("unit_suspect:"):
-                nse = c.meta["nse_pct"]
-                held.append(f"{c.meta['symbol']} {c.external_key} ({w.split(': ', 1)[1]}; NSE "
-                            f"{'lists ' + str(nse) + '%' if nse is not None else 'lists no figure'})")
-        out.append(Check("unit_suspect", not held,
-                         ("held back, no row stored: " + _names(held)) if held
-                         else "no file's promoter % looks 100 times too large", blocking=False))
+        fixed = [g for g in h.got if g.pattern.correction]
+        lines = [f"{g.candidate.meta['symbol']} {g.pattern.as_of.isoformat()} {g.candidate.external_key} (filed "
+                 f"{g.pattern.filed_pct:f}%, shown {g.pattern.promoter_pct:f}%, share counts {g.pattern.ratio_pct:.2f}%, NSE "
+                 f"{'lists ' + str(g.pattern.nse_pct) + '%' if g.pattern.nse_pct is not None else 'lists no figure'})"
+                 for g in fixed]
+        out.append(Check("corrected", not fixed,
+                         f"{len(fixed)} files filed in percent, stored ÷ 100 with the evidence: " + _names(lines) if fixed
+                         else "no file's promoter % needed a correction", blocking=False))
 
         # the XBRL figure against NSE's own, and the listing's quarter end against the file's
         gaps = []
@@ -215,7 +230,7 @@ class EquityShareholding(DocumentJob):
         out.append(Check("quarters_filed", not missing,
                          ("no pattern for: " + _names(missing)) if missing
                          else "every quarter in the window has a pattern", blocking=False))
-        gone_files = [c.external_key for c, w in h.unserved if not w.startswith(("invalid", "range", "unit_suspect"))]
+        gone_files = [c.external_key for c, w in h.unserved if not w.startswith(("invalid", "range", "held"))]
         out.append(Check("files_served", not gone_files,
                          ("listed but not served: " + _names(gone_files)) if gone_files else "every listed file was served",
                          blocking=False))
@@ -223,5 +238,6 @@ class EquityShareholding(DocumentJob):
                          f"{n['no_link']} listing rows without an XBRL link, {n['outside']} patterns outside the window",
                          blocking=False))
         self.result = {"skipped": self.outcome.get("skipped", 0), "added": len(self.outcome.get("added", [])),
-                       "versions": len(self.outcome.get("versions", [])), "candidates": len(h.candidates)}
+                       "versions": len(self.outcome.get("versions", [])), "candidates": len(h.candidates),
+                       "corrected": lines, "held": why["held"]}      # the full lists (the checks' details stop at 12)
         return out
