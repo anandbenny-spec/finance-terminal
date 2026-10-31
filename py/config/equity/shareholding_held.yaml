@@ -16,3 +16,6 @@ held:
   - {file: SHP_164863_590876_17012022091237_WEB.xml, company: "CIPLA", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
   - {file: SHP_164869_590936_18012022020754_WEB.xml, company: "SBIN", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
   - {file: SHP_165045_592375_18012022064200_WEB.xml, company: "AXISBANK", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_165209_593871_19012022053313_WEB.xml, company: "TATACONSUM", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_165515_596451_21012022114610_WEB.xml, company: "M&M", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_165605_597539_21012022080551_WEB.xml, company: "RELIANCE", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
