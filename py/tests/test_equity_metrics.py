@@ -116,6 +116,22 @@ def test_a_roa_whose_scale_cant_be_decided_is_held_with_its_ratio():
 
 
 @needs_fixtures
+def test_segment_assets_filed_as_zero_hold_roa_and_the_nim_proxy_on_both_sides():
+    """Regression (31 Oct 2026, #117's dev run): ICICI Bank's standalone filings give total segment assets of 0 at
+    each quarter end from Sep 2020 to Dec 2022. Averaged with Mar 2023's ₹1,57,50,950 cr, that zero made Mar 2023's
+    NIM proxy 8.97%, twice its neighbours' (about 4.5%). Zero is now held like a missing figure."""
+    v = values("ICICIBANK")
+    zero = "Total segment assets are filed as zero or less for the quarter end."
+    assert one(v, "roa", "quarter", D(2022, 12, 31)).held == zero
+    assert one(v, "nim_proxy", "quarter", D(2022, 12, 31)).held == zero
+    assert one(v, "nim_proxy", "quarter", D(2023, 3, 31)).held == zero          # the average needs Dec 2022's
+    roa = one(v, "roa", "quarter", D(2023, 3, 31))                             # its own quarter end is positive
+    assert roa.held is None and roa.inputs["scale"]["class"] == "annualised"
+    nim = one(v, "nim_proxy", "quarter", D(2023, 6, 30))
+    assert nim.held is None and Decimal("0.035") < nim.value < Decimal("0.055")
+
+
+@needs_fixtures
 def test_tier1_is_cet1_plus_at1_and_lenders_have_no_ebit_or_ev():
     v = values("SBIN")
     q = next(f for f in fins("SBIN") if f.basis == "standalone" and f.kind == "quarter" and f.end == D(2026, 6, 30))
@@ -307,6 +323,82 @@ def test_bajaj_finance_shares_today_are_ten_times_a_filing_before_its_split_and_
         "A corporate action since the last filing is under review."
 
 
+@needs_fixtures
+def test_shares_that_disagree_with_the_earlier_filings_are_held_with_what_was_compared():
+    """Regression (31 Oct 2026, #117's dev run): Bajaj Finserv's Jun 2026 filings give paid-up capital ₹1 cr and a face
+    value of 159.87, so 62,551 shares against Mar 2026's 159.87 crore: the market cap read ₹10 cr and P/E 0.00. Held,
+    with both earlier counts compared in the inputs; up to Mar 2026 its shares agree and are used."""
+    t = D(2026, 10, 23)
+    v = values("BAJAJFINSV", prices=prices(t, "2000"), leases={})
+    s = v[("shares_today", "none", "market", t)]
+    assert s.value is None and s.held == mx.SHARES_HELD
+    assert [x["period_end"] for x in s.inputs["shares_check"]["disagrees_with"]] == ["2026-03-31", "2025-12-31"]
+    for key, basis in (("market_cap", "none"), ("pe_ttm", "consolidated"), ("pb", "consolidated")):
+        assert v[(key, basis, "market", t)].held == mx.SHARES_HELD
+    rows = [f for f in fins("BAJAJFINSV") if f.end <= D(2026, 3, 31)]
+    ok = values("BAJAJFINSV", rows=rows, prices=prices(t, "2000"), leases={})[("shares_today", "none", "market", t)]
+    assert ok.value == Decimal(1598700000) and ok.inputs["shares_check"]["agrees_with"]["period_end"] == "2025-12-31"
+
+
+def _quarter(i: int, end: date, pat: str, owners: str | None, nci: str | None, fmt: str = "ind_as",
+             basis: str = "consolidated") -> mx.Fin:
+    vals = {"revenue": Decimal(10**11), "pat": Decimal(pat), "shares_outstanding": Decimal(10**9)}
+    vals |= {k: Decimal(v) for k, v in (("pat_owners", owners), ("pat_nci", nci)) if v is not None}
+    return mx.Fin(i, basis, "quarter", mx.month_end(end, -2).replace(day=1), end, vals, {}, fmt)
+
+
+def test_profit_to_owners_that_doesnt_add_up_with_its_profit_is_held_and_rounding_passes():
+    """Regression (31 Oct 2026, #117's dev run): Nestlé India files profit to owners and to NCI as 0 every period
+    (FY2026 ROE read 0.00%), Adani Ports' FY2026 owners ₹914.83 cr against a profit of ₹12,782.03 cr (ROE 1.15%),
+    Tech Mahindra's Dec 2025 quarter ₹199 cr against ₹1,119 cr (its P/E read 34). Owners + NCI ≠ profit beyond
+    rounding holds profit to owners and what's built on it; a ₹1 lakh rounding gap passes; banks aren't checked."""
+    t = D(2026, 4, 30)
+    ends = [D(2025, 6, 30), D(2025, 9, 30), D(2025, 12, 31), D(2026, 3, 31)]
+    good = [_quarter(i, e, "10000000000", "9900000000", "100100000") for i, e in enumerate(ends[:3], 1)]
+    bad = good + [_quarter(4, ends[3], "11000000000", "0", "0")]
+    v = values("X", rows=bad, prices=prices(t, "100"), leases={})
+    held = v[("net_margin", "consolidated", "quarter", ends[3])]
+    assert held.held == mx.OWNERS_HELD
+    lines = held.inputs["financials"][0]["lines"]
+    assert {k: lines[k]["value"] for k in ("pat", "pat_owners", "pat_nci")} == {
+        "pat": "11000000000", "pat_owners": "0", "pat_nci": "0"}
+    assert v[("pe_ttm", "consolidated", "market", t)].held == mx.OWNERS_HELD
+    assert v[("pat_owners", "consolidated", "ttm", ends[3])].held == mx.OWNERS_HELD
+    ok = values("X", rows=good + [_quarter(4, ends[3], "11000000000", "10890000000", "110100000")],
+                prices=prices(t, "100"), leases={})                        # 1,089 cr + 11.01 cr: ₹1 lakh over
+    assert ok[("pe_ttm", "consolidated", "market", t)].value == \
+        (Decimal(100) * 10**9 / (Decimal(9900000000) * 3 + Decimal(10890000000))).quantize(mx.PLACES)
+    assert not mx.owners_disagree(_quarter(5, ends[3], "11000000000", "0", "0", fmt="bank"))
+    assert not mx.owners_disagree(_quarter(6, ends[3], "11000000000", None, None, basis="standalone"))
+
+
+def _shares_row(i: int, end: date, shares: str) -> mx.Fin:
+    return mx.Fin(i, "consolidated", "quarter", None, end, {"shares_outstanding": Decimal(shares)}, {}, "ind_as")
+
+
+def test_shares_pass_against_the_older_filing_when_the_previous_one_is_wrong_and_a_bonus_scales_them():
+    """Trent's Dec 2025 filing gives a face value of 10 (35.55 lakh shares against 35.55 crore): a newest filing that
+    agrees with the one before it still passes. A bonus between filings scales the comparison; one under review makes
+    that filing not comparable; a newest count off by more than twice from both earlier ones is held."""
+    t = D(2026, 4, 30)
+    rows = [_shares_row(1, D(2025, 9, 30), "355500000"), _shares_row(2, D(2025, 12, 31), "35550000"),
+            _shares_row(3, D(2026, 3, 31), "355500000")]
+    s = values("X", rows=rows, prices=prices(t, "100"))[("shares_today", "none", "market", t)]
+    assert s.value == Decimal(355500000) and s.inputs["shares_check"]["agrees_with"]["period_end"] == "2025-09-30"
+    bonus = mx.Action("x-bonus-2026-02-02", "bonus", D(2026, 2, 2), factor=Decimal("0.5"), status="applied")
+    rows2 = [_shares_row(1, D(2025, 9, 30), "100"), _shares_row(2, D(2025, 12, 31), "100"),
+             _shares_row(3, D(2026, 3, 31), "200")]
+    got = values("X", rows=rows2, prices=prices(t, "100"), actions=[bonus])[("shares_today", "none", "market", t)]
+    assert got.value == 200 and got.inputs["shares_check"]["agrees_with"]["ratio"] == "1.0000"
+    rows3 = rows2[:2] + [_shares_row(3, D(2026, 3, 31), "2000")]
+    held = values("X", rows=rows3, prices=prices(t, "100"), actions=[bonus])[("shares_today", "none", "market", t)]
+    assert held.held == mx.SHARES_HELD and [x["ratio"] for x in held.inputs["shares_check"]["disagrees_with"]] == \
+        ["10.0000", "10.0000"]
+    review = mx.Action(bonus.slug, "bonus", bonus.ex_date, status="held")
+    free = values("X", rows=rows3, prices=prices(t, "100"), actions=[review])[("shares_today", "none", "market", t)]
+    assert free.value == 2000 and "shares_check" not in free.inputs
+
+
 def test_a_dividend_before_a_split_is_restated_per_today_s_share():
     t = D(2026, 6, 30)
     acts = [mx.Action("x-dividend-2025-12-01", "dividend", D(2025, 12, 1), dps=Decimal(10)),
@@ -353,9 +445,10 @@ def test_market_multiples_by_hand_for_an_operating_company():
 @needs_fixtures
 def test_pe_is_held_for_a_loss_and_a_lender_s_ev_multiples_are_na():
     t = D(2026, 10, 23)
+    loss = ("pat", "pat_owners", "pat_nci")          # all three, so owners + NCI still make the period's profit
     rows = [mx.Fin(f.document_id, f.basis, f.kind, f.start, f.end,
-                   {**f.values, "pat_owners": -abs(f.values["pat_owners"])} if "pat_owners" in f.values else f.values,
-                   f.tags, f.format, f.filed_at) for f in fins("TCS")]
+                   {**f.values, **{k: -f.values[k] for k in loss if k in f.values}} if "pat_owners" in f.values
+                   else f.values, f.tags, f.format, f.filed_at) for f in fins("TCS")]
     pe = values("TCS", rows=rows, prices=prices(t, "3000"))[("pe_ttm", "consolidated", "market", t)]
     assert pe.held == "Loss-making: profit to owners over the last four quarters isn't positive."
     bank = values("HDFCBANK", prices=prices(t, "900"))
