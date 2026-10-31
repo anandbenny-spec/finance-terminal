@@ -345,7 +345,7 @@ def test_a_backfill_registers_every_pattern_with_the_promoter_percent_x1_found(s
     c = checks(tr)
     assert {n: (v["passed"], v["blocking"]) for n, v in c.items()} == {
         "lists_read": (True, True), "instances_are_patterns": (True, True), "promoter_range": (True, True),
-        "unit_suspect": (True, False), "agrees_with_nse": (True, False), "quarter_move": (True, False), "quarters_filed": (False, False),
+        "held_back": (True, False), "corrected": (True, False), "agrees_with_nse": (True, False), "quarter_move": (True, False), "quarters_filed": (False, False),
         "files_served": (True, False), "skipped_links": (True, False)}
     got = rows()
     assert len(got) == tr[1] == 22                                    # 20 companies, two quarters for TCS and HUL
@@ -434,7 +434,7 @@ def test_a_served_file_that_is_not_a_pattern_fails_the_run_naming_it_and_nothing
 
 @pytest.mark.db
 @needs_fixtures
-def test_a_unit_suspect_file_is_held_back_with_a_warning_and_the_run_passes(s3):
+def test_a_file_filed_in_percent_is_stored_divided_by_100_with_its_evidence_and_the_run_passes(s3):
     make_companies(["TCS", "RELIANCE"])
     name, path = latest("TCS")
     ex = Nse()
@@ -442,11 +442,69 @@ def test_a_unit_suspect_file_is_held_back_with_a_warning_and_the_run_passes(s3):
     code, tr = go(ex, **WINDOW)
     assert code == 0 and tr[0] == "success", tr
     c = checks(tr)
+    assert c["promoter_range"]["passed"] is True and c["held_back"]["passed"] is True
+    assert c["corrected"]["passed"] is False and c["corrected"]["blocking"] is False
+    d = c["corrected"]["detail"]
+    assert "TCS" in d and "7177" in d and "shown 71.77%" in d and name in d and "NSE lists 71.77%" in d
+    r = q("""select s.promoter_pct, s.correction, s.filed_pct, s.share_ratio_pct, s.nse_pct, s.promoter_shares
+               from equity.shareholding s join core.document d on d.id = s.document_id where d.external_key = %s""", name)[0]
+    assert r[0] == Decimal("71.77") and r[1] == "percent_for_fraction" and r[2] == Decimal("7177.00")
+    assert abs(r[3] - Decimal("71.77")) <= sh.UNIT_GAP and r[4] == Decimal("71.77") and r[5] is not None
+    plain = [x for x in q("select correction from equity.shareholding s join core.entity e on e.id = s.entity_id where e.slug = 'zs-reliance'")]
+    assert plain and all(x[0] is None for x in plain)
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_percent_file_that_nse_does_not_confirm_fails_promoter_range_naming_it(s3):
+    make_companies(["TCS"])
+    name, path = latest("TCS")
+    ex = Nse()
+    ex.files[name] = unzipped(path).replace(b">0.7177<", b">71.77<")
+    ex.nse[name] = "50.00"
+    code, tr = go(ex, **WINDOW)
+    assert code != 0 and tr[0] == "checks_failed" and rows() == []
+    c = checks(tr)
+    assert c["promoter_range"]["passed"] is False and "NSE lists 50" in c["promoter_range"]["detail"]
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_an_out_of_range_file_on_the_approved_list_is_held_back_by_name_and_any_other_still_fails(s3, monkeypatch):
+    make_companies(["TCS", "RELIANCE"])
+    n1, p1 = latest("TCS")
+    n2, p2 = latest("RELIANCE")
+    ex = Nse()
+    ex.files[n1] = unzipped(p1).replace(b">0.7177<", b">1.7177<")
+    ex.files[n2] = unzipped(p2)
+    monkeypatch.setattr(sh, "held_files", lambda path=None: {n1: "own share counts don't confirm"})
+    code, tr = go(ex, **WINDOW)
+    assert code == 0 and tr[0] == "success", tr
+    c = checks(tr)
     assert c["promoter_range"]["passed"] is True
-    assert c["unit_suspect"]["passed"] is False and c["unit_suspect"]["blocking"] is False
-    assert "TCS" in c["unit_suspect"]["detail"] and "7177" in c["unit_suspect"]["detail"] and name in c["unit_suspect"]["detail"]
-    assert c["files_served"]["passed"] is True
-    assert name not in [r[7] for r in rows()] and any(r[0] == "zs-reliance" for r in rows())
+    assert c["held_back"]["passed"] is False and c["held_back"]["blocking"] is False and n1 in c["held_back"]["detail"]
+    assert c["files_served"]["passed"] is True and n1 not in [r[7] for r in rows()]
+    monkeypatch.setattr(sh, "held_files", lambda path=None: {})
+    code, tr = go(ex, **WINDOW)
+    assert code != 0 and checks(tr)["promoter_range"]["passed"] is False
+
+
+@needs_fixtures
+def test_corrected_needs_nse_to_agree_where_it_lists_a_figure():
+    body = unzipped(latest("TCS")[1]).replace(b">0.7177<", b">71.77<")
+    with pytest.raises(sh.ShareholdingError) as e:
+        sh.parse_pattern(body)
+    p = sh.corrected(e.value, Decimal("71.77"))
+    assert (p.promoter_pct, p.filed_pct, p.correction) == (Decimal("71.77"), Decimal("7177.00"), sh.CORRECTION)
+    assert sh.corrected(e.value, None).nse_pct is None
+    with pytest.raises(sh.ShareholdingError) as bad:
+        sh.corrected(e.value, Decimal(50))
+    assert bad.value.kind == "range" and "NSE lists 50" in str(bad.value)
+
+
+def test_the_approved_list_is_well_formed():
+    held = sh.held_files()
+    assert all(k.endswith(".xml") and v for k, v in held.items())
 
 
 @pytest.mark.db

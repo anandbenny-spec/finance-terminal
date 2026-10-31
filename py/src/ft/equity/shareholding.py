@@ -12,6 +12,11 @@ Reading what the stored rows mean (for 2A-15, the screener's promoter filter):
   member, a fraction, stored × 100). It is never recomputed from the share counts: the filing's own denominator can
   differ from the total row (Infosys, Reliance and SBI file a percentage that is not promoter shares ÷ total shares), so
   `promoter_shares` and `total_shares` are the filed share counts of the same two rows, shown for what they are.
+- **A corrected row** (`correction = 'percent_for_fraction'`): some filings (about 6 Oct 2021 to 18 Jan 2022, and
+  BHARTIARTL's 30 Sep 2020) give the promoter figure in percent where the taxonomy wants a fraction. When the file's own
+  share-count ratio and NSE's figure (where listed) both confirm the figure ÷ 100, `promoter_pct` is that value and the
+  row keeps `filed_pct` (as filed), `share_ratio_pct` and `nse_pct`; pages show a note linked to the filing. Anything
+  else outside 0–100 is not stored.
 - A pattern with category rows but no promoter-group row (L&T, HDFC Bank, Federal Bank: no promoter) gives **0%**, with
   no promoter share count. A file with no category rows at all is not a shareholding pattern: it is refused, never 0%.
 
@@ -25,6 +30,9 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
+
+import yaml
 
 from ft.equity import filings as fl
 from ft.equity import xbrl as x
@@ -61,6 +69,12 @@ class Pattern:
     promoter_shares: Decimal | None
     total_shares: Decimal | None
     found_by: str
+    # a labelled correction (Anand, 1 Nov 2026): the filed figure was a percent where the taxonomy wants a fraction, so
+    # `promoter_pct` is the filed value divided by 100 and these keep the evidence. All None for an ordinary row.
+    correction: str | None = None
+    filed_pct: Decimal | None = None       # the figure as filed (after the ×100 every file gets), e.g. 6613
+    ratio_pct: Decimal | None = None       # the file's own promoter shares ÷ total shares × 100
+    nse_pct: Decimal | None = None         # NSE's own figure for the quarter, where it lists one
 
 
 @dataclass(frozen=True)
@@ -157,9 +171,35 @@ def parse_pattern(body: bytes) -> Pattern:
                 raise ShareholdingError(
                     f"promoter holding {pct:f}% is outside 0–100; divided by 100 it is {pct / 100:f}%, matching the "
                     f"file's own share counts ({ratio:.2f}%)", "unit_suspect",
-                    {"as_of": as_of, "filed": pct, "divided": pct / 100, "ratio": ratio})
+                    {"as_of": as_of, "filed": pct, "divided": pct / 100, "ratio": ratio, "p_shares": p_shares,
+                     "t_shares": t_shares, "found_by": found_by})
         raise ShareholdingError(f"promoter holding {pct:f}% is outside 0–100", "range")
     return Pattern(as_of, pct, p_shares, t_shares, found_by)
+
+
+CORRECTION = "percent_for_fraction"
+CONFIG_DIR = Path(__file__).resolve().parents[3] / "config" / "equity"
+HELD_FILE = CONFIG_DIR / "shareholding_held.yaml"
+
+
+def corrected(err: ShareholdingError, nse_pct: Decimal | None) -> Pattern:
+    """The labelled correction (Anand, 1 Nov 2026): a promoter figure outside 0–100 by a factor of 100 is read as the
+    value ÷ 100 only when the file's own share-count ratio confirms it (`parse_pattern` has checked that) **and** NSE's
+    figure agrees where NSE lists one. Otherwise it is a range error (blocking, unless the file is on the approved list)."""
+    d = err.detail
+    if nse_pct is not None and abs(nse_pct - d["divided"]) > UNIT_GAP:
+        raise ShareholdingError(
+            f"promoter holding {d['filed']:f}% is outside 0–100; divided by 100 it is {d['divided']:f}% and the file's "
+            f"share counts agree, but NSE lists {nse_pct:f}%", "range")
+    return Pattern(d["as_of"], d["divided"], d["p_shares"], d["t_shares"], d["found_by"], CORRECTION, d["filed"],
+                   d["ratio"], nse_pct)
+
+
+def held_files(path: Path | None = None) -> dict[str, str]:
+    """File names whose out-of-range promoter figure their own share counts can't confirm, held back by name with
+    Anand's approval (1 Nov 2026): file name → reason. Any other such file still fails `promoter_range`."""
+    raw = yaml.safe_load((path or HELD_FILE).read_text("utf-8")) or {}
+    return {e["file"]: e["reason"] for e in raw.get("held", [])}
 
 
 # ---------------------------------------------------------------------------------------- the listing
