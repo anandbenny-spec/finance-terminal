@@ -14,7 +14,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import type { SeriesLatestRow, SeriesRow } from "@/lib/queries/api";
 import { summarise } from "@/lib/shell/freshness";
 import { toUpcoming } from "@/lib/shell/meetings";
-import { buildTape } from "@/lib/shell/tape";
+import { buildTape, TAPE } from "@/lib/shell/tape";
 
 const html = (node: ReactNode) => renderToStaticMarkup(<TooltipProvider>{node}</TooltipProvider>);
 const text = (markup: string) => markup.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
@@ -55,6 +55,49 @@ describe("TapeView", () => {
   it("is never blank: nothing published yet, or a failed read", () => {
     expect(text(html(<TapeView items={[]} delayed />))).toBe("EOD No end-of-day values published yet.");
     expect(text(html(<TapeView items={null} delayed={false} />))).toBe("EOD Couldn't load market values.");
+  });
+
+  // The wrap from lg (1 Nov 2026, #227): the classes are the layout, so they are what is asserted (as for the sidebar).
+  describe("wraps from lg", () => {
+    const keys = TAPE.map((t) => t.key);
+    const series: SeriesRow[] = keys.map((key) => ({ key, name: `Series ${key}`, market: "US", attribution: "Source: test" }));
+    const latest: SeriesLatestRow[] = keys.map((key) => ({
+      series_key: key, name: `Series ${key}`, unit: "index_points", frequency: "D", last_date: "2026-10-23", last_value: 100, prev_date: "2026-10-22", prev_value: 99, change: 1,
+    }));
+    const nine = buildTape(latest, series);
+
+    it("has all nine items in the fixture", () => {
+      expect(nine).toHaveLength(9);
+    });
+
+    it("gives every cell one row's height and never wraps inside a cell", () => {
+      const out = html(<TapeView items={nine} delayed />);
+      const cells = out.match(/<(?:li|span)[^>]*tabindex="0"[^>]*>/g) ?? [];
+      expect(cells).toHaveLength(nine.length + 1);
+      for (const cell of cells) expect(cell).toContain("h-(--tape-row-h)");
+      expect(out.match(/<ul[^>]*>/)?.[0]).toContain("whitespace-nowrap");
+    });
+
+    it("wraps one list from lg, with no fixed height and no sideways scroll", () => {
+      const out = html(<TapeView items={nine} delayed />);
+      const list = out.match(/<ul[^>]*>/)?.[0] ?? "";
+      expect(list).toContain("lg:flex-wrap");
+      expect(list).toContain("lg:h-auto");
+      expect(out).toContain("lg:overflow-x-visible");
+      expect(out).toContain("lg:overflow-y-visible");
+    });
+
+    it("keeps one scrolling row below lg", () => {
+      const out = html(<TapeView items={nine} delayed={false} />);
+      expect(out).toContain("overflow-x-auto");
+      expect(out.match(/<ul[^>]*>/)?.[0]).toContain("w-max");
+    });
+
+    it("puts the EOD tag and the delayed note in the list's own flow", () => {
+      const out = html(<TapeView items={nine} delayed />);
+      const list = out.slice(out.indexOf("<ul"), out.indexOf("</ul>"));
+      expect(text(list)).toMatch(/^EOD Update delayed /);
+    });
   });
 });
 

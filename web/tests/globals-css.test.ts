@@ -80,6 +80,12 @@ describe("globals.css: the tokens (Design 01 §2.6)", () => {
     for (const [name, value] of Object.entries(DESIGN_TOKENS)) expect(root.get(name), name).toBe(value);
   });
 
+  it("names the tape's row height --tape-row-h (32 px) and keeps no stale --tape-h (1 Nov 2026, #227)", () => {
+    expect(root.get("--tape-row-h")).toBe("32px");
+    expect(root.has("--tape-h")).toBe(false);
+    expect(code).not.toContain("--tape-h:");
+  });
+
   it("maps shadcn's roles onto the tokens", () => {
     for (const [name, value] of Object.entries(SHADCN_ROLES)) expect(root.get(name), name).toBe(value);
   });
