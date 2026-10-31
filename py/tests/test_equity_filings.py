@@ -323,7 +323,7 @@ def filings():
                        d.version_no, d.is_published, d.doc_type, ev.slug, ev.status
                   from equity.filing f join core.document d on d.id = f.document_id
                   join core.entity e on e.id = f.entity_id join core.event ev on ev.id = f.event_id
-                 where e.slug like 'zf-%%' order by 1, 2, 3, 8""")
+                 where e.slug like 'zf-%%' order by 1, 2, 3, 8, 9""")
 
 
 @pytest.mark.db
