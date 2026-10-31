@@ -172,9 +172,19 @@ export function dissentLine(dissents: readonly string[]): string {
   return `Dissent: ${dissents.join(", ")}`;
 }
 
+/**
+ * An RBI member the resolution says "voted against the repo rate hike" without saying what they preferred: their row
+ * has no change in bps, and the verbatim clause stored with it (dissent_text) names the rate. Their vote is against
+ * the decision; what they preferred isn't stated, so no bps is shown for them (Launch check #87: 7 Dec 2022 and
+ * 8 Feb 2023). A null change without that clause is a vote not stored yet, not a vote against.
+ */
+export function votedAgainstRate(v: PolicyVoteRow): boolean {
+  return v.voted_change_bps === null && v.is_dissent && /\bvoted against the (?:policy )?(?:repo )?rate\b/i.test(v.dissent_text ?? "");
+}
+
 function rbiTally(m: PolicyMeetingRow, votes: readonly PolicyVoteRow[]): Tally {
   const decision = m.policy_rate_change_bps;
-  if (votes.length < MPC_MEMBERS || votes.some((v) => v.voted_change_bps === null)) {
+  if (votes.length < MPC_MEMBERS || votes.some((v) => v.voted_change_bps === null && !votedAgainstRate(v))) {
     return { kind: "pending", note: minutesNote(m) };
   }
   if (votes.length !== MPC_MEMBERS || decision === null) return { kind: "absent" };
@@ -186,7 +196,8 @@ function rbiTally(m: PolicyMeetingRow, votes: readonly PolicyVoteRow[]): Tally {
   const dissents: string[] = [];
   for (const v of votes) {
     const why: string[] = [];
-    if (v.voted_change_bps !== decision) why.push(preferred(v.voted_change_bps!));
+    if (v.voted_change_bps === null) why.push("voted against the rate");
+    else if (v.voted_change_bps !== decision) why.push(preferred(v.voted_change_bps));
     // A stance dissent: a stance vote other than the adopted one; with the adopted stance unknown (not every
     // member's stance vote is stored), only a stored dissent whose rate vote matched the decision is one.
     const stanceDissent =

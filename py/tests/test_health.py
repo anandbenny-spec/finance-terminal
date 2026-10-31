@@ -52,6 +52,23 @@ def test_a_fresh_daily_load_is_ok_and_the_body_has_one_key(get):
     assert req.url.path == "/rest/v1/task_freshness" and "policy.market_series" in str(req.url)
 
 
+def test_the_legacy_jwt_key_goes_in_apikey_and_as_a_bearer_token(get):
+    get()
+    (req,) = get.seen
+    assert req.headers["authorization"] == f"Bearer {ANON}"
+
+
+def test_a_publishable_key_goes_in_apikey_alone(get, monkeypatch):
+    """Supabase refuses an `sb_publishable_` key sent as a Bearer token (it isn't a JWT): launch check #87."""
+    publishable = "sb_publishable_for_the_test_only"
+    monkeypatch.setenv("SUPABASE_ANON_KEY", publishable)
+    r = get()
+    assert r.status_code == 200 and r.json() == {"status": "ok"}
+    (req,) = get.seen
+    assert req.headers["apikey"] == publishable and "authorization" not in req.headers
+    assert req.headers["accept-profile"] == "api"
+
+
 @pytest.mark.parametrize("age, code", [(timedelta(hours=35), 200), (timedelta(hours=37), 503)])
 def test_the_newest_load_must_be_under_36_hours_old(get, age, code):
     r = get(age=age)

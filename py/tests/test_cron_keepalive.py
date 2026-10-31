@@ -118,6 +118,18 @@ def test_a_good_call_makes_one_anon_key_read_of_series_latest_and_answers_ok(cal
     assert req.headers["accept-profile"] == "api"
 
 
+def test_a_publishable_key_goes_in_apikey_alone(call, env):
+    """Supabase refuses an `sb_publishable_` key sent as a Bearer token (it isn't a JWT): launch check #87."""
+    publishable = "sb_publishable_for_the_test_only"
+    env.setenv("SUPABASE_ANON_KEY", publishable)
+    up = Upstream()
+    r = call(up)
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    req = up.requests[0]
+    assert req.headers["apikey"] == publishable and "authorization" not in req.headers
+    assert req.headers["accept-profile"] == "api"
+
+
 def test_the_service_role_key_is_never_sent(call):
     up = Upstream()
     call(up)

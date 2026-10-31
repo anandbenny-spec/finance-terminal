@@ -15,7 +15,7 @@ import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from ft.api.cron import DataApi, data_api, data_api_client
+from ft.api.cron import DataApi, data_api, data_api_client, data_api_headers
 
 DAILY_TASK = "policy.market_series"             # the daily load every other daily task follows
 MAX_AGE = timedelta(hours=36)
@@ -30,8 +30,7 @@ def newest_success(client: httpx.Client, api: DataApi) -> datetime | None:
         resp = client.get(
             f"{api.url}/rest/v1/task_freshness",
             params={"select": "last_success_at", "task_key": f"eq.{DAILY_TASK}", "limit": 1},
-            headers={"apikey": api.anon_key, "Authorization": f"Bearer {api.anon_key}", "Accept-Profile": "api",
-                     "Accept": "application/json"})
+            headers=data_api_headers(api))
     except httpx.HTTPError as e:
         print(f"health: Data API unreachable: {type(e).__name__}")
         return None
