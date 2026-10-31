@@ -10,7 +10,7 @@
       "finance_cost": ["FinanceCosts", "FinanceCost"],
       "total_expenses": ["Expenses", "TotalExpenses"],
       "share_of_associates": ["ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod", "ShareOfProfitLossOfAssociates"],
-      "pbt_before_exceptional": ["ProfitBeforeExceptionalItemsAndTax", "ProfitLossBeforeExceptionalItemsAndTax"],
+      "pbt_before_exceptional": ["ProfitBeforeExceptionalItemsAndTax", "ProfitLossBeforeExceptionalItemsAndTax", "ProfitBeforeExceptionalAndExtraordinaryItemsAndTax"],
       "exceptional": ["ExceptionalItemsBeforeTax", "ExceptionalItems"],
       "pbt": ["ProfitBeforeTax", "ProfitLossBeforeTax", "ProfitBeforeTaxFromContinuingOperations", "ProfitOrLossBeforeTax"],
       "tax": ["TaxExpense", "TotalTaxExpense", "IncomeTaxExpenseContinuingOperations"],
@@ -54,7 +54,7 @@
       "regulatory_deferral": ["NetMovementInRegulatoryDeferralAccountBalancesRelatedToProfitOrLossAndTheRelatedDeferredTaxMovement"]
     },
     "minority_layout": {
-      "_comment": "One layout (the pre-Ind AS Schedule III one) files the profit after minority interest as ProfitLossForThePeriod, with the profit before it as ProfitLossForPeriodBeforeMinorityInterest and the minority's share (negative) as ProfitLossOfMinorityInterest, and its balance sheet as ShareholdersFunds and MinorityInterest instead of Equity (LT's first Integrated Filing pair, Q4 FY25, the only saved files that use it). There, when both P&L markers are filed: pat = before minority interest + share of associates (derived), pat_owners = ProfitLossForThePeriod, pat_nci = − ProfitLossOfMinorityInterest; and when Equity isn't filed: equity_owners = ShareholdersFunds, total_equity = ShareholdersFunds + MinorityInterest (derived), nci = MinorityInterest.",
+      "_comment": "One layout (the pre-Ind AS Schedule III one) files the profit after minority interest as ProfitLossForThePeriod, with the profit before it as ProfitLossForPeriodBeforeMinorityInterest and the minority's share (negative) as ProfitLossOfMinorityInterest, and its balance sheet as ShareholdersFunds and MinorityInterest instead of Equity, and its profit before exceptional items as ProfitBeforeExceptionalAndExtraordinaryItemsAndTax, mapped under 'duration' (added 31 Oct 2026 for #117; LT Q4 FY25 consolidated quarter: ₹7,539 cr + exceptional items ₹475 cr = PBT ₹8,014 cr). LT's first Integrated Filing pair, Q4 FY25, are the only saved files that use this layout. There, when both P&L markers are filed: pat = before minority interest + share of associates (derived), pat_owners = ProfitLossForThePeriod, pat_nci = − ProfitLossOfMinorityInterest; and when Equity isn't filed: equity_owners = ShareholdersFunds, total_equity = ShareholdersFunds + MinorityInterest (derived), nci = MinorityInterest.",
       "before_minority": ["ProfitLossForPeriodBeforeMinorityInterest"],
       "minority": ["ProfitLossOfMinorityInterest"],
       "after_minority": ["ProfitLossForThePeriod"],
@@ -159,7 +159,7 @@
     }
   },
   "shares": {
-    "_comment": "Shares outstanding = paid-up equity capital ÷ face value (Data Audit 02 C5): every results filing carries both, except insurers, which file no face value (EQUITY_L's FACE VALUE is used, noted). Read from the row's own context, then the instant at the period end, then the quarter's context (the kit's fallback order).",
+    "_comment": "Shares outstanding = paid-up equity capital ÷ face value (Data Audit 02 C5): every results filing carries both, except insurers, which file no face value (EQUITY_L's FACE VALUE is used, noted). Read from the row's own context, then the other duration column, the instant at the period end and the quarter's context; a 0 is not filed. Where the file gives no non-zero paid-up capital or face value (30 of the Nifty 50's filings since 2019: HCL Tech 21, Eicher, M&M, IndiGo, Dr Reddy's, Grasim, Titan), the three columns are left blank and the filing keeps its other figures (Anand, 31 Oct 2026, #114).",
     "paid_up_capital": ["PaidUpValueOfEquityShareCapital", "PaidUpEquityShareCapital", "PaidupValueOfEquityShareCapital", "PaidUpEquityCapital"],
     "face_value": ["FaceValueOfEquityShareCapital", "FaceValuePerShare", "FaceValueOfEquityShare"]
   }

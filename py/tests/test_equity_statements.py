@@ -247,9 +247,13 @@ def test_a_life_insurer_s_gross_assets_equity_tax_and_face_value():
     assert y.values["shares_outstanding"] == Decimal(1003092100)
     assert y.values["cfo"] == Decimal(345226720000) and not {"capex", "dividends_paid"} & y.values.keys()
     assert "revenue" not in y.values                                       # X1's reference has none for an insurer
-    with pytest.raises(st.StatementError, match="shares"):                 # an insurer without EQUITY_L's face value
-        st.parse_filing(raw("SBILIFE", "INTEGRATED_FILING_LI_1657299_22042026060213_WEB.xml"),
-                        filing_of("SBILIFE", "INTEGRATED_FILING_LI_1657299_22042026060213_WEB.xml"), face_value=None)
+    # an insurer without EQUITY_L's face value: its shares are held, its other figures kept (Anand, 31 Oct 2026, #114)
+    bare = st.parse_filing(raw("SBILIFE", "INTEGRATED_FILING_LI_1657299_22042026060213_WEB.xml"),
+                           filing_of("SBILIFE", "INTEGRATED_FILING_LI_1657299_22042026060213_WEB.xml"), face_value=None)
+    assert "shares held on the quarter, year, instant rows" in bare.note
+    for r in bare.rows:
+        assert not {"paid_up_capital", "face_value", "shares_outstanding"} & (r.values.keys() | r.tags.keys())
+    assert by_kind(bare)["year"].values["pat"] == Decimal(24702998000)
 
 
 @needs_fixtures
@@ -281,6 +285,13 @@ def test_the_pre_ind_as_layout_files_pat_after_minority_interest():
     assert y.values["pat"] == y.values["pat_owners"] + y.values["pat_nci"] and "(derived" in y.tags["pat"]
     assert (i.values["equity_owners"], i.values["nci"], i.values["total_equity"]) == (
         Decimal(976556000000), Decimal(177480800000), Decimal(1154036800000))
+    # its profit before exceptional items has this layout's own element (#117; parser v2): ₹7,539 cr + exceptional
+    # items ₹475 cr = PBT ₹8,014 cr in the quarter
+    qr = r["quarter"]
+    assert (qr.values["pbt_before_exceptional"], qr.values["exceptional"], qr.values["pbt"]) == (
+        Decimal(75392400000), Decimal(4747800000), Decimal(80140200000))
+    assert qr.tags["pbt_before_exceptional"] == "ProfitBeforeExceptionalAndExtraordinaryItemsAndTax"
+    assert y.values["pbt_before_exceptional"] == Decimal(231040100000)
 
 
 @needs_fixtures
@@ -337,6 +348,67 @@ def test_an_integrated_filing_file_that_would_need_re_dating_fails():
         parse("RELIANCE", RELIANCE_FY26, data)
 
 
+RELIANCE_SEP25 = "INTEGRATED_FILING_INDAS_1552809_17102025073643_WEB.xml"   # Q2 FY26: a quarter and a half-year column
+
+
+def ytd_only(data: bytes) -> bytes:
+    """The instance as a year-to-date-only file: the year-to-date contexts and their facts removed, and the quarter's
+    contexts dated as the year to date. That is the shape of Axis Bank's 15 Oct 2025 pair (the quarter's figures dated
+    1 Apr–30 Sep; its Dec 2025 revision dates them as filed) and of Coal India's 30 Sep 2026 pair (whose one column
+    is the real half-year): from the file alone the two can't be told apart."""
+    inst = xbrl.parse(data)
+    pe = xbrl.to_date(inst.header["period_end"])
+    q, ytd = xbrl.quarter_of(pe), (fl.fy_of(pe, 3)[0], pe)
+    gone = {c.id for c in inst.contexts.values() if (c.start, c.end) == ytd}
+    root = etree.fromstring(data, xbrl.PARSER)
+    for el in list(root):
+        if not isinstance(el.tag, str):
+            continue
+        if el.get("contextRef") in gone or (etree.QName(el).localname == "context" and el.get("id") in gone):
+            root.remove(el)
+        elif etree.QName(el).localname == "context" and el.findtext(f".//{{{xbrl.XBRLI}}}startDate") == q[0].isoformat():
+            el.find(f".//{{{xbrl.XBRLI}}}startDate").text = ytd[0].isoformat()
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8")
+
+
+@needs_fixtures
+def test_a_file_with_only_a_year_to_date_column_fails_as_ytd_only():
+    """Anand, 31 Oct 2026 (#114): a file whose one duration column is dated as the year to date isn't stored."""
+    data = raw("RELIANCE", RELIANCE_SEP25)
+    assert [r.period_kind for r in parse("RELIANCE", RELIANCE_SEP25, data).rows] == ["quarter", "half_year", "instant"]
+    with pytest.raises(st.StatementError) as e:
+        parse("RELIANCE", RELIANCE_SEP25, ytd_only(data))
+    assert e.value.check == "ytd_only"
+    assert str(e.value).startswith("ytd_only: the file has no quarter column, only one dated as the year to date "
+                                   "(2025-04-01 to 2025-09-30)")
+
+
+@needs_fixtures
+def test_a_file_that_gives_no_shares_keeps_its_other_figures_with_the_shares_held():
+    """Grasim's Sep 2023 standalone files its paid-up capital (₹131.7 cr) with a face value of 0: the filing's other
+    figures are stored, and paid-up capital, face value and shares are left blank together, with the reason in the
+    note (Anand, 31 Oct 2026, #114: hold the field, not the filing)."""
+    p = parse("GRASIM", "INDAS_100768_987746_13112023085050.xml")
+    assert [r.period_kind for r in p.rows] == ["quarter", "half_year", "instant"]
+    assert "shares held on the quarter, half_year, instant rows: the file gives no paid-up capital or no face value " \
+           "other than 0" in p.note
+    for r in p.rows:
+        assert not {"paid_up_capital", "face_value", "shares_outstanding"} & (r.values.keys() | r.tags.keys())
+        assert set(r.tags) == set(r.values)
+    q = by_kind(p)["quarter"]
+    assert {"revenue", "pbt", "tax", "pat"} <= q.values.keys()
+
+
+@needs_fixtures
+def test_a_negative_paid_up_capital_still_fails_the_filing():
+    """IndiGo's Dec 2020 consolidated file gives a paid-up capital of −₹384.86 cr: a wrong figure, not a missing one."""
+    data = raw("RELIANCE", RELIANCE_FY26)
+    for ctx in ("OneD", "FourD"):
+        data = edited(data, "PaidUpValueOfEquityShareCapital", ctx, text="-135320000000")
+    with pytest.raises(st.StatementError, match=r"^shares: quarter: shares outstanding -"):
+        parse("RELIANCE", RELIANCE_FY26, data)
+
+
 # ---------------------------------------------------------------------------------------------- X1's reference values
 def universe_symbols() -> set[str]:
     """The universe's companies by NSE symbol (companies.yaml is keyed by slug)."""
@@ -381,16 +453,17 @@ def test_a_reference_difference_names_the_element_and_both_values():
 
 
 # ---------------------------------------------------------------------------------------------- every saved filing
-# The three saved filings that fail, all on shares: the file gives a paid-up capital or face value of 0 in every
-# column (the filer's error; nothing to divide by). M&M's Q4 FY26 standalone is the only FY2026 one.
-EXPECTED_FAILURES = {("GRASIM", "INDAS_100768_987746_13112023085050.xml"),
-                     ("M&M", "INDAS_46891_128671_07082019073845_WEB.xml"),
-                     ("M&M", "INTEGRATED_FILING_INDAS_1663643_05052026042738_WEB.xml")}
+# The three saved filings whose shares are held: the file gives a paid-up capital or face value of 0 in every column
+# (the filer's error; nothing to divide by). Until parser v2 they failed; since Anand's decision of 31 Oct 2026 (#114)
+# they keep their other figures. M&M's Q4 FY26 standalone is the only FY2026 one. No saved filing fails.
+EXPECTED_HELD = {("GRASIM", "INDAS_100768_987746_13112023085050.xml"),
+                 ("M&M", "INDAS_46891_128671_07082019073845_WEB.xml"),
+                 ("M&M", "INTEGRATED_FILING_INDAS_1663643_05052026042738_WEB.xml")}
 
 
 @needs_fixtures
 def test_every_saved_filing_parses_or_fails_with_its_reason():
-    failed, kinds, faces = {}, {}, face_values()
+    failed, held, kinds, faces = {}, set(), {}, face_values()
     for path in sorted(XBRL.glob("*/*.xml.gz")):
         symbol, name = path.parent.name, path.name[:-3]
         if name.startswith("NONINDAS_"):
@@ -403,11 +476,15 @@ def test_every_saved_filing_parses_or_fails_with_its_reason():
             continue
         if st.is_integrated(name):
             assert "columns dated as filed" in p.note, (symbol, name)
+        if "shares held" in p.note:
+            held.add((symbol, name))
         for r in p.rows:
             assert set(r.tags) == set(r.values) and set(r.values) <= set(st.COLUMNS), (symbol, name)
+            assert ("shares_outstanding" in r.values) == ((symbol, name) not in held), (symbol, name, r.period_kind)
             kinds[r.period_kind] = kinds.get(r.period_kind, 0) + 1
-    assert set(failed) == EXPECTED_FAILURES and {e.check for e in failed.values()} == {"shares"}
-    assert kinds == {"quarter": 1362, "half_year": 317, "nine_months": 345, "year": 363, "instant": 652}
+    assert failed == {}
+    assert held == EXPECTED_HELD
+    assert kinds == {"quarter": 1365, "half_year": 318, "nine_months": 345, "year": 364, "instant": 654}
 
 
 # ---------------------------------------------------------------------------------------------- config and schema
@@ -691,6 +768,25 @@ def test_a_latest_quarter_that_fails_stops_the_load(s3):
     assert c["failed_share"]["passed"]                                              # 1 of 61
     assert "zs-reliance 2026-06-30 consolidated" in c["latest_quarters"]["detail"]
     assert {r[6] for r in registered()} == {"pending"} and stored_rows() == []
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_latest_filing_with_no_quarter_column_fails_without_stopping_the_load(s3):
+    """Anand, 31 Oct 2026 (#114): a `ytd_only` failure at a company's newest period end isn't a failed latest quarter
+    (Coal India's 30 Sep 2026 pair has no quarter column); any other failure there still is."""
+    register(("RELIANCE",))
+    doc, eid, pe = q("""select f.document_id, f.entity_id, f.period_end from equity.filing f
+                         where f.entity_id in (select id from core.entity where slug like 'zs-%%')
+                         order by f.period_end desc, f.document_id limit 1""")[0]
+    assert pe == D(2026, 6, 30)
+    filing = st.Filing("latest.xml", "consolidated", "ind_as", pe, D(2026, 4, 1))
+    ytd = es.Item(doc, eid, "zs-reliance", filing, error=st.StatementError("ytd_only", "no quarter column"))
+    tie = es.Item(doc, eid, "zs-reliance", filing, error=st.StatementError("pat", "quarter: PAT ≠ PBT − tax"))
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        skipped, counted = EquityStatements._latest_quarters(c, [ytd]), EquityStatements._latest_quarters(c, [tie])
+    assert skipped.passed and skipped.blocking and skipped.detail == "no company's latest quarter failed"
+    assert not counted.passed and "zs-reliance 2026-06-30 consolidated (pat: quarter" in counted.detail
 
 
 @pytest.mark.db
