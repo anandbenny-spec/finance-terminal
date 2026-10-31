@@ -298,6 +298,170 @@ export type IndexMemberRow = {
   currency: "INR" | "USD";
 };
 
+type Num = number | null;
+
+/** api.companies (0024): one row per company: its identifiers, peer group, index memberships and the last two closes. */
+export type CompanyRow = {
+  slug: string;
+  name: string;
+  short_name: string | null;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  isin: string | null;
+  nse_symbol: string;
+  bse_code: string | null;
+  nse_industry: string | null;
+  peer_group_key: string | null;
+  peer_group_label: string | null;
+  peer_group_label_kind: string | null;
+  valuation_family: string | null;
+  family_note: string | null;
+  fy_end_month: number | null;
+  price_exchange: string;
+  listed_on: string | null;
+  index_slugs: string[] | null;
+  index_as_of: string | null;
+  last_close: Num;
+  last_close_date: string | null;
+  previous_close: Num;
+  previous_close_date: string | null;
+  price_source_key: string | null;
+};
+
+/** api.company_prices (0024): one row per session; `adj_close` is null while a held corporate action lies after it. */
+export type CompanyPriceRow = {
+  slug: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  trade_date: string;
+  exchange: string;
+  close: number;
+  volume: Num;
+  traded_value: Num;
+  adj_close: Num;
+  adj_held: boolean;
+  source_key: string;
+};
+
+/** api.company_metrics (0024): one row per metric, basis, period kind and period end. `state` tells a held value from a not-applicable one. */
+export type CompanyMetricRow = {
+  slug: string;
+  name: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  metric_key: string;
+  label: string;
+  unit: string | null;
+  basis: string;
+  period_kind: string;
+  period_end: string;
+  as_of: string;
+  value: Num;
+  label_kind: string | null;
+  held_reason: string | null;
+  state: "value" | "held" | "not_applicable";
+  source_key: string;
+};
+
+/** api.peer_comps (0024): a company's peers (row_kind 'peer') and the median of those peers (row_kind 'median'). */
+export type PeerCompRow = {
+  company_slug: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  peer_group_key: string;
+  row_kind: "peer" | "median";
+  peer_slug: string | null;
+  peer_name: string | null;
+  peer_short_name: string | null;
+  peer_nse_symbol: string | null;
+  snapshot_date: string | null;
+  pe_ttm: Num;
+  pb: Num;
+  ev_ebit: Num;
+  ev_sales: Num;
+  roe: Num;
+  ebit_margin: Num;
+  revenue_cagr_3y: Num;
+  peer_count: Num;
+  median_n: Record<string, number> | null;
+  median_note: string | null;
+  source_key: string;
+};
+
+/** The statement lines api.company_financials carries (full units of the reporting currency; ratios as fractions). */
+export const FINANCIAL_LINES = [
+  "revenue", "other_income", "total_income", "employee_cost", "dna", "finance_cost", "total_expenses", "pbt", "tax", "pat",
+  "pat_owners", "eps_basic", "eps_diluted", "total_assets", "cash", "bank_balances_other", "current_investments",
+  "noncurrent_investments", "trade_receivables", "inventories", "total_equity", "equity_owners", "borrowings_current",
+  "borrowings_noncurrent", "trade_payables", "cfo", "cfi", "cff", "capex", "dividends_paid", "interest_earned",
+  "interest_expended", "operating_profit", "provisions", "gnpa_ratio", "nnpa_ratio", "cet1_ratio", "deposits", "advances",
+  "gross_premium", "net_premium", "ebit_derived",
+] as const;
+export type FinancialLine = (typeof FINANCIAL_LINES)[number];
+
+/** api.company_financials (0024): one row per basis, period kind and period end (the latest filing for it). */
+export type CompanyFinancialRow = {
+  slug: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  basis: "consolidated" | "standalone";
+  period_kind: "quarter" | "half_year" | "nine_months" | "year" | "instant";
+  period_start: string | null;
+  period_end: string;
+  ebit_derived_label: string | null;
+  ebit_derived_held_reason: string | null;
+  ebit_derived_state: "value" | "held" | "not_applicable" | null;
+  format: string | null;
+  audited: boolean | null;
+  filed_at: string | null;
+  source_url: string | null;
+  source_key: string;
+  attribution: string | null;
+} & Record<FinancialLine, Num>;
+
+/** api.company_corporate_actions (0024; status from 2A-08b): a company's corporate actions with each price factor's status. */
+export type CorporateActionRow = {
+  slug: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  kind: string;
+  ex_date: string | null;
+  record_date: string | null;
+  subject: string | null;
+  ratio_new: Num;
+  ratio_old: Num;
+  face_value_old: Num;
+  face_value_new: Num;
+  dividend_per_share: Num;
+  rights_price: Num;
+  exchange: string;
+  status: string;
+  title: string | null;
+  source_url: string | null;
+  factor_status: "applied" | "held" | "none";
+  price_factor: Num;
+  factor_reason: string | null;
+  source_key: string;
+  attribution: string | null;
+};
+
+/** api.company_promoter_holding (0025): the latest filed promoter holding per company and quarter. */
+export type PromoterHoldingRow = {
+  slug: string;
+  as_of: string;
+  promoter_pct: Num;
+  promoter_shares: Num;
+  total_shares: Num;
+  filed_at: string | null;
+  source_url: string | null;
+  source_key: string;
+  correction: "percent_for_fraction" | null;
+  label_kind: string | null;
+  filed_pct: Num;
+  share_ratio_pct: Num;
+  nse_pct: Num;
+};
+
 type View<Row> = { Row: Row; Relationships: [] };
 
 /** The slice of the `api` schema typed so far, for supabase-js: the shell's views (C2), the policy pages' (A1, C3, C4, Pass 1b). */
@@ -326,6 +490,13 @@ export type ApiDatabase = {
       eval_summary: View<EvalSummaryRow>;
       screener: View<ScreenerRow>;
       index_members: View<IndexMemberRow>;
+      companies: View<CompanyRow>;
+      company_prices: View<CompanyPriceRow>;
+      company_metrics: View<CompanyMetricRow>;
+      peer_comps: View<PeerCompRow>;
+      company_financials: View<CompanyFinancialRow>;
+      company_corporate_actions: View<CorporateActionRow>;
+      company_promoter_holding: View<PromoterHoldingRow>;
     };
     Functions: { [_ in never]: never };
   };

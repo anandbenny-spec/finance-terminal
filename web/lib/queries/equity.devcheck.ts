@@ -5,6 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 import type { ApiDatabase } from "@/lib/queries/api";
+import { readCompany, readCompanyMetrics, readCompanyPrices, readFinancials, readPeers } from "@/lib/queries/company";
 import { readIndexMembers, readScreener, type EquityDb } from "@/lib/queries/equity";
 
 function client(): EquityDb {
@@ -38,5 +39,35 @@ describe("the dev project (2A-18)", () => {
     const count = await held(db.from("index_members").select("slug", { count: "exact", head: true }));
     expect(members.length).toBe(count);
     expect(members.length, "has 2A-01 stored the Nifty 50's members on dev?").toBeGreaterThan(0);
+  });
+});
+
+describe("the dev project (2A-19, the company page)", () => {
+  const db = client();
+
+  it("reads one company's header row, and null for a slug nobody has", async () => {
+    const rows = await readScreener(db);
+    expect(rows.length, "has 2A-15 written a screener snapshot on dev?").toBeGreaterThan(0);
+    const company = await readCompany(db, rows[0].slug);
+    expect(company?.slug).toBe(rows[0].slug);
+    expect(company?.market && company?.currency).toBeTruthy();
+    expect(await readCompany(db, "no-such-company")).toBeNull();
+  });
+
+  it("reads a company's whole price history against the exact count (two pages)", async () => {
+    const slug = (await readScreener(db))[0].slug;
+    const prices = await readCompanyPrices(db, slug);
+    const count = await held(db.from("company_prices").select("slug", { count: "exact", head: true }).eq("slug", slug));
+    expect(prices.length).toBe(count);
+    expect(prices.length, "has 2A-05 stored prices on dev?").toBeGreaterThan(0);
+    expect(new Set(prices.map((p) => p.trade_date)).size).toBe(prices.length);
+  });
+
+  it("reads a company's metrics, peers and filings against their exact counts", async () => {
+    const slug = (await readScreener(db))[0].slug;
+    const [metrics, peers, financials] = await Promise.all([readCompanyMetrics(db, slug), readPeers(db, slug), readFinancials(db, slug)]);
+    expect(metrics.length).toBe(await held(db.from("company_metrics").select("slug", { count: "exact", head: true }).eq("slug", slug)));
+    expect(peers.length).toBe(await held(db.from("peer_comps").select("company_slug", { count: "exact", head: true }).eq("company_slug", slug)));
+    expect(financials.length).toBe(await held(db.from("company_financials").select("slug", { count: "exact", head: true }).eq("slug", slug)));
   });
 });

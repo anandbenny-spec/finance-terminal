@@ -449,3 +449,9 @@ export function formatRupeesAsCrore(rupees: Num): string {
   if (isMissing(rupees)) return NOT_AVAILABLE;
   return formatMoney(rupees / 10_000_000, "INR", { unit: "crore" });
 }
+
+/** A percentage level that may exceed 100 and is grouped by the figure's market, for a value shown as filed (the promoter note, #116): `6613` → `6,613.00%`, `66.13` → `66.13%`. */
+export function formatPercentLevel(pct: Num, market: Market = "IN", decimals = 2): string {
+  if (isMissing(pct)) return NOT_AVAILABLE;
+  return `${digits(pct, { decimals, locale: LOCALE[market] })}%`;
+}

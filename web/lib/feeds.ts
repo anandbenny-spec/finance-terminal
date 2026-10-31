@@ -58,6 +58,8 @@ export function liveTasks(feeds: Record<string, readonly TaskKey[]> = FEEDS): Ta
 export const PREVIEW_FEEDS = {
   // /screener (2A-18): the latest weekly snapshot, built from the metrics, prices, statements and beta.
   screener: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
+  // /companies/[slug] (2A-19): prices, filings, derived metrics and betas; the header and chips come from the universe.
+  company: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
   accuracy: ["site.quality_summary"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 

@@ -5,6 +5,7 @@ import {
   formatFractionChange,
   formatFractionPoints,
   formatMultiple,
+  formatPercentLevel,
   formatPrice,
   formatRupeesAsCrore,
   NOT_AVAILABLE,
@@ -37,5 +38,11 @@ describe("company figures", () => {
   it("shows full rupees as crore with Indian grouping", () => {
     expect(formatRupeesAsCrore(1_234_500_000_000)).toBe("₹1,23,450 cr");
     expect(formatRupeesAsCrore(null)).toBe(NOT_AVAILABLE);
+  });
+  it("shows a percentage level that may exceed 100 grouped by its market (the promoter note)", () => {
+    expect(formatPercentLevel(6613)).toBe("6,613.00%");
+    expect(formatPercentLevel(66.13)).toBe("66.13%");
+    expect(formatPercentLevel(1234567, "US", 0)).toBe("1,234,567%");
+    expect(formatPercentLevel(null)).toBe(NOT_AVAILABLE);
   });
 });
