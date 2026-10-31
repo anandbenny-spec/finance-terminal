@@ -5,8 +5,9 @@ factors and nulls a company's earlier adjusted closes while one of its factors i
 
 Fetch, per universe company: NSE's corporate-actions API (`/api/corporates-corporateActions`, through the impersonating
 client, the homepage first for its cookies), each reply stored as a raw file. A weekly run reads ex-dates from 400 days
-back to 90 days ahead; a backfill reads `--since` to `--until` (floored at 1 Jan 2019; with no `--until`, 90 days
-ahead). BSE's endpoint (`DefaultData/w`, windows of 360 days or less) is asked only for a company NSE returns nothing
+back to today; a backfill reads `--since` to `--until` (floored at 1 Jan 2019, and never past today). NSE answers a
+`to_date` after today with a page, not JSON (#113's first dev backfill, 30 Oct 2026: every company's reply), so an
+action is stored once its ex-date has come, as `effective`. BSE's endpoint (`DefaultData/w`, windows of 360 days or less) is asked only for a company NSE returns nothing
 for and has never served (MEESHO's case, Data Audit 02a finding 12): BSE fills in where NSE has nothing, and a company
 NSE serves is never sent to BSE.
 
@@ -58,7 +59,7 @@ from ft.jobs.tasks import register
 INDIA = ZoneInfo("Asia/Kolkata")
 CALENDAR = "xnse"
 FLOOR = date(2019, 1, 1)
-BACK, AHEAD = timedelta(days=400), timedelta(days=90)
+BACK = timedelta(days=400)
 BSE_CHUNK = timedelta(days=360)                 # BSE's APIs refuse windows over 12 months (Data Audit 02a finding 24)
 JUMP = Decimal("0.15")
 SHOWN = 12
@@ -176,7 +177,7 @@ class EquityCorporateActions(Task):
         reviews = ac.load_reviews()
         today = ctx.now.astimezone(INDIA).date()
         start = max(ctx.since, FLOOR) if ctx.since else max(today - BACK, FLOOR)
-        end = ctx.until or (today + AHEAD)
+        end = min(ctx.until or today, today)            # NSE refuses a later to_date (#113)
         companies = {r[0]: Company(*r) for r in db.execute(
             """select c.entity_id, e.slug, c.nse_symbol, c.bse_code, c.price_exchange,
                       exists (select 1 from equity.corporate_action ca join core.event ev on ev.id = ca.event_id
