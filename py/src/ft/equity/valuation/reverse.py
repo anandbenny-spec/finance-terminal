@@ -16,8 +16,8 @@ two grid points that hold the price. Outcomes, in this order (each a `Run`, stor
 4. the price below the value at −20%: `below_range`; above the value at +50%: `above_range` (§5.9's sentences);
 5. else `solved`, with the implied growth to 0.01 points.
 
-**Where the model's value doesn't follow the return on capital** (found by this job, 1 Nov 2026, #120; the cases and
-the choice are on the issue for Anand): §5.9 says the value rises with growth only when the 3-FY return on capital
+**Where the model's value doesn't follow the return on capital** (found by this job, 1 Nov 2026; Anand chose option 1
+on #120, 1 Nov 2026, and the cases are there): §5.9 says the value rises with growth only when the 3-FY return on capital
 exceeds WACC. In this model it doesn't hold exactly, for two reasons:
 - each year's reinvestment buys that same year's revenue, so growth adds value down to a return of about WACC ÷
   (1 + WACC), not WACC: between the two, the value rises a little with growth, and §5.9's sentence ("faster growth
