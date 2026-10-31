@@ -11,6 +11,14 @@ action is stored once its ex-date has come, as `effective`. BSE's endpoint (`Def
 for and has never served (MEESHO's case, Data Audit 02a finding 12): BSE fills in where NSE has nothing, and a company
 NSE serves is never sent to BSE.
 
+The undated read (job 2A-08b): the same endpoint without dates, market-wide (`?index=equities`), or per company
+(`&symbol=`) when that reply isn't a JSON list, gives the actions announced before their ex-date. Its rows for universe
+companies (matched by NSE symbol, and by ISIN where the row carries one) whose ex-date is after today are stored as
+`announced`, through the same parser, slug and match key as a dated row, so on the ex-date the dated read matches the
+same event and it turns `effective`. Rows dated today or earlier come only from the dated read. An action missing from
+the undated reply is never withdrawn for that: it is withdrawn once its ex-date has passed and the dated read doesn't
+list it. The undated read never blocks a run, never rolls back the dated read and never changes a factor.
+
 Load (one transaction):
 1. **Events.** One `core.event` per action (type `corporate_action`, published, source `nse` or `bse`; slug
    `<company-slug>-<kind>-<ex-date>`, with `-2`, `-3` … for a second action of one kind on one ex-date; title the
@@ -30,6 +38,8 @@ Checks, B blocking, W warning:
 - (B) `lists_read`: every company's list was read (a reply that isn't JSON, or refused after the retries, fails);
 - (B) `ratios_exact`: every split, bonus and consolidation factor equals its ratio exactly (12 places);
 - (B) `applied_checked`: no factor is applied without passing the plausibility check or a review entry;
+- (W) `upcoming_read`: the route used, the rows read, the universe's announced actions by kind (named), and any reply
+  that wasn't a JSON list (route, size); never blocking;
 - (W) `not_applied`: the held factors with their reasons; the window's mergers, buybacks and unrecognised entries;
   the actions waiting for their ex-date's prices; dividends and meeting notices counted;
 - (W) `unexplained_jumps`: every session since 2019 where a universe company's |ln(close ÷ previous close)| > 0.15
@@ -67,6 +77,7 @@ SHOWN_JUMPS = 60
 
 NSE_HOME = "https://www.nseindia.com/"
 NSE_API = "https://www.nseindia.com/api/corporates-corporateActions"
+NSE_UPCOMING = {"index": "equities"}               # no dates: the actions announced, before their ex-date
 NSE_HEADERS = {"Referer": NSE_HOME, "Accept": "application/json, text/plain, */*"}
 BSE_API = "https://api.bseindia.com/BseIndiaAPI/api/DefaultData/w"
 BSE_HEADERS = {**bh.BSE_ORIGIN_HEADERS, "Accept": "application/json, text/plain, */*"}
@@ -117,6 +128,7 @@ class Company:
     bse_code: str | None
     price_exchange: str
     nse_served: bool                    # an NSE-sourced action is stored for it
+    isin: str | None = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +154,8 @@ class Fetched:
     undated: list[str]
     reviews: ac.Reviews
     note: str = ""
+    upcoming: list[Row] = field(default_factory=list)           # announced, ex-date after today (the undated read)
+    upcoming_info: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -181,7 +195,7 @@ class EquityCorporateActions(Task):
         companies = {r[0]: Company(*r) for r in db.execute(
             """select c.entity_id, e.slug, c.nse_symbol, c.bse_code, c.price_exchange,
                       exists (select 1 from equity.corporate_action ca join core.event ev on ev.id = ca.event_id
-                               where ev.entity_id = c.entity_id and ca.exchange = 'NSE')
+                               where ev.entity_id = c.entity_id and ca.exchange = 'NSE'), c.isin
                  from equity.company c join core.entity e on e.id = c.entity_id order by e.slug""").fetchall()}
         out = Fetched((start, end), today, companies, [], {}, [], [], reviews)
         if start > end:
@@ -216,7 +230,58 @@ class EquityCorporateActions(Task):
             elif not c.nse_symbol:
                 out.failed.append(f"{c.slug}: no NSE symbol, and BSE can't be asked (no scrip code, or NSE has "
                                   f"served it before)")
+        if ctx.until is None or ctx.until >= today:
+            self._upcoming(f, out)
         return out
+
+    def _upcoming(self, f, out: Fetched) -> None:
+        """The undated read: never raises (a failed read is only a warning)."""
+        db = f.db
+        known: dict[int, set[str]] = {}
+        for eid, value in db.execute("select entity_id, value from core.entity_identifier where scheme = 'isin' "
+                                     "and entity_id = any(%s)", (list(out.companies),)).fetchall():
+            known.setdefault(eid, set()).add(value)
+        by_symbol = {c.nse_symbol: c for c in out.companies.values() if c.nse_symbol}
+        info = out.upcoming_info = {"route": None, "read": 0, "problems": [], "isin_mismatch": []}
+        seen: set[tuple[int, date, str]] = set()
+        try:
+            rows, raw_id = self._nse_get(f, NSE_UPCOMING)
+            info["route"] = "market-wide"
+            self._keep_upcoming(out, by_symbol, known, rows, raw_id, seen)
+            return
+        except (FetchError, ValueError) as e:
+            info["problems"].append(f"market-wide: {str(e)[:120]}")
+        for c in by_symbol.values():                    # (ii): the same, per company
+            try:
+                rows, raw_id = self._nse_get(f, {**NSE_UPCOMING, "symbol": c.nse_symbol})
+            except (FetchError, ValueError) as e:
+                info["problems"].append(f"{c.slug}: {str(e)[:120]}")
+                continue
+            info["route"] = "per company"
+            self._keep_upcoming(out, by_symbol, known, rows, raw_id, seen)
+
+    @staticmethod
+    def _keep_upcoming(out: Fetched, by_symbol: dict[str, Company], known: dict[int, set[str]], rows: list[dict],
+                       raw_id: int, seen: set) -> None:
+        out.upcoming_info["read"] += len(rows)
+        for r in rows:
+            c = by_symbol.get(str(r.get("symbol") or "").strip())
+            if c is None:
+                continue
+            ex_date = parse_day(r.get("exDate"))
+            if ex_date is None or ex_date <= out.today:     # today and earlier come only from the dated read
+                continue
+            isin = str(r.get("isin") or "").strip()
+            if isin and isin != "-" and isin not in (known.get(c.entity_id, set()) | {c.isin}):
+                out.upcoming_info["isin_mismatch"].append(f"{c.slug} {ex_date} ({isin})")
+                continue
+            subject = "" if r.get("subject") is None else str(r.get("subject"))
+            k = (c.entity_id, ex_date, ac.clean(subject).lower())
+            if k in seen:
+                continue
+            seen.add(k)
+            out.upcoming.append(Row(c.entity_id, "NSE", ex_date, parse_day(r.get("recDate")), subject,
+                                    _face_value(r.get("faceVal")), raw_id))
 
     @staticmethod
     def _keep(out: Fetched, c: Company, exchange: str, raw_id: int, ex, rec, subject, fv, seen) -> None:
@@ -243,20 +308,24 @@ class EquityCorporateActions(Task):
             pass                                        # the list calls will say if the cookies were needed
 
     def _nse(self, f, symbol: str, start: date, end: date) -> tuple[list[dict], int]:
-        params = {"index": "equities", "symbol": symbol, "from_date": start.strftime("%d-%m-%Y"),
-                  "to_date": end.strftime("%d-%m-%Y")}
+        return self._nse_get(f, {"index": "equities", "symbol": symbol, "from_date": start.strftime("%d-%m-%Y"),
+                                 "to_date": end.strftime("%d-%m-%Y")})
+
+    def _nse_get(self, f, params: dict) -> tuple[list[dict], int]:
+        size = 0
         for attempt in (1, 2):
             try:
                 got = f.get(NSE_API, source="nse", params=params, headers=NSE_HEADERS, conditional=False,
                             media_type="application/json", ext="json")
                 body = got.body if got.body is not None else f.read(got.raw_file_id)
+                size = len(body)
                 return _rows(json.loads(body), "NSE"), got.raw_file_id
             except FetchError as e:
                 if attempt == 2 or e.status not in (401, 403):
                     raise
             except ValueError:
                 if attempt == 2:
-                    raise ValueError("the reply isn't a JSON list of actions") from None
+                    raise ValueError(f"the reply isn't a JSON list of actions ({size} bytes)") from None
             self._warm(f)
         raise AssertionError("unreachable")
 
@@ -294,10 +363,11 @@ class EquityCorporateActions(Task):
         by_key: dict[tuple, list] = {}
         for row in stored:
             by_key.setdefault((row[1], row[4], row[5], row[6]), []).append(row)
-        parsed = {row: ac.parse_subject(row.subject, row.face_value) for row in f.rows}
+        rows = f.rows + f.upcoming                   # the dated read's, and the undated read's (ex-date ahead)
+        parsed = {row: ac.parse_subject(row.subject, row.face_value) for row in rows}
         matched: dict[int, Row] = {}                 # event id -> this run's row
         unmatched: list[Row] = []
-        for row in f.rows:
+        for row in rows:
             k = (row.entity_id, row.exchange, row.ex_date, parsed[row].kind)
             hit = next((s for s in by_key.get(k, []) if s[0] not in matched
                         and ac.clean(s[7]).lower() == ac.clean(row.subject).lower()), None)
@@ -526,6 +596,29 @@ class EquityCorporateActions(Task):
         return out
 
     # ------------------------------------------------------------------ checks (same transaction)
+    @staticmethod
+    def _upcoming_check(f: Fetched) -> Check:
+        info = f.upcoming_info
+        if not info:
+            return Check("upcoming_read", True, "not asked: the run's window ends before today", blocking=False)
+        problems = list(info["problems"])
+        if info["isin_mismatch"]:
+            problems.append("rows with another ISIN left out: " + _names(info["isin_mismatch"]))
+        names = [f"{ac.parse_subject(x.subject).kind}: {f.companies[x.entity_id].slug} {x.ex_date}"
+                 for x in sorted(f.upcoming, key=lambda x: (x.ex_date, f.companies[x.entity_id].slug))]
+        kinds: dict[str, int] = {}
+        for n in names:
+            kinds[n.split(":")[0]] = kinds.get(n.split(":")[0], 0) + 1
+        if info["route"] is None:
+            head = "no route returned a JSON list"
+        else:
+            head = (f"route {info['route']}: {info['read']} rows read, {len(f.upcoming)} announced actions of the "
+                    f"universe with an ex-date after {f.today}"
+                    + (" (" + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())) + ")" if kinds else ""))
+        detail = head + ("; " + _names(names) if names else "") + ("; " + "; ".join(problems) if problems else "")
+        return Check("upcoming_read", info["route"] is not None and not info["problems"] and not info["isin_mismatch"],
+                     detail, blocking=False)
+
     def checks(self, tx, f: Fetched, task_run_id) -> list[Check]:
         r = self.result
         ids = list(f.companies)
@@ -584,6 +677,7 @@ class EquityCorporateActions(Task):
         k = r["window_kinds"]
         parts.append(f"in the window: {k.get('dividend', 0)} dividends, "
                      f"{sum(1 for x in f.rows if ac.parse_subject(x.subject).notice)} meeting notices")
+        out.append(self._upcoming_check(f))
         out.append(Check("not_applied", not held and not r["window_unrecognised"], "; ".join(parts), blocking=False))
 
         jumps = []
