@@ -85,3 +85,9 @@ equity.metrics:
   run_after: [equity.statements, equity.corporate_actions, equity.shareholding]
   overdue_after: 10 days
   uses_nse: false
+equity.beta:
+  description: Regression beta (104 weekly returns against the Nifty 50) and Damodaran's bottom-up beta relevered at market debt to equity, for the universe companies
+  workflows: {weekly: every 6 days}
+  run_after: [equity.metrics, equity.valuation_inputs, policy.market_series]
+  overdue_after: 10 days
+  uses_nse: false
