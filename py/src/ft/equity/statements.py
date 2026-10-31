@@ -19,7 +19,14 @@ that as the filing's parse note (the bad figures are never stored). The checks:
 - `pat`: PAT = PBT − tax (± 0.1% or ₹1 lakh), counting the lines the format places between tax and PAT (see `_pat_tie`);
 - `total_income`: total income = revenue + other income (Ind AS and NBFC formats; the same tolerance);
 - `balance_sheet`: total assets = equity + liabilities (± 0.1%) at the instant;
-- `shares`: shares outstanding (paid-up capital ÷ face value) > 0 on every row, and present on the quarter's;
+- `shares`: shares outstanding (paid-up capital ÷ face value) > 0 on every row that has them. A row whose file gives
+  no paid-up capital or no face value other than 0 keeps its other figures, with paid-up capital, face value and shares
+  left blank and the reason in the parse note (Anand, 31 Oct 2026, #114: hold the field, not the filing; 30 filings
+  of HCL Tech, Eicher, M&M, IndiGo, Dr Reddy's, Grasim and Titan file a 0). A negative result still fails the filing;
+- `ytd_only`: the file has a quarter column. A file whose one duration column is dated as the year to date (Coal India
+  30 Sep 2026, Axis Bank 15 Oct 2025) can't be told apart from a quarter misdated as the year to date: Axis's column
+  holds the quarter's figures, as its Dec 2025 revision shows. So it isn't stored (Anand, 31 Oct 2026, #114), and the
+  task doesn't count it as a failed latest quarter;
 - `figures`: the quarter's PBT, tax and PAT are in the file (a filing whose statements can't be read isn't stored empty);
 - `ambiguous`: no column's element has two different values in one period.
 """
@@ -34,7 +41,9 @@ from pathlib import Path
 
 from ft.equity import xbrl
 
-PARSER_VERSION = 1          # bump it when a change alters what a filing parses to: the task re-parses older filings
+# Bump it when a change alters what a filing parses to: the task re-parses older filings. 2 (31 Oct 2026, #114): shares
+# held instead of failing the filing; year-to-date-only files fail as `ytd_only`; L&T's PBT before exceptional items.
+PARSER_VERSION = 2
 TAGS = json.loads((Path(__file__).resolve().parents[3] / "config" / "equity" / "xbrl_tags.json").read_text("utf-8"))
 LAKH = Decimal(100_000)
 TIE = Decimal("0.001")      # 0.1%
@@ -121,6 +130,7 @@ class _Periods:
         assert d is not None
         self.quarter, self.ytd = d.quarter, d.year_to_date
         self.facts: dict[str, dict[str, list[xbrl.Fact]]] = {"quarter": {}, "ytd": {}, "instant": {}}
+        self.contexts: dict[str, int] = {"quarter": 0, "ytd": 0, "instant": 0}     # the file's contexts of each kind
         kinds: dict[str, list[str]] = {}
         for cid, c in inst.contexts.items():
             if not _basis_only(c, basis):
@@ -137,6 +147,8 @@ class _Periods:
                 ks.append("ytd")
             if ks:
                 kinds[cid] = ks
+                for k in ks:
+                    self.contexts[k] += 1
         for f in inst.facts:
             for k in kinds.get(f.context, ()):
                 self.facts[k].setdefault(f.name, []).append(f)
@@ -214,6 +226,13 @@ def parse_filing(body: bytes, filing: Filing, *, face_value: Decimal | None = No
         raise StatementError("period", f"the year to date {dating.year_to_date[0].isoformat()} to "
                                        f"{pe.isoformat()} isn't 3, 6, 9 or 12 months")
     per = _Periods(inst, filing.basis)
+    if per.ytd is not None and per.ytd != per.quarter and not per.contexts["quarter"] and per.contexts["ytd"]:
+        # Anand, 31 Oct 2026 (#114): Coal India's 30 Sep 2026 pair holds the real half-year in its one column, while
+        # Axis Bank's 15 Oct 2025 pair holds the quarter's figures dated as the half-year (its Dec 2025 revision, which
+        # dates them correctly, shows it). Nothing in the file tells the two apart, so neither is stored.
+        raise StatementError("ytd_only", f"the file has no quarter column, only one dated as the year to date "
+                                         f"({per.ytd[0].isoformat()} to {per.ytd[1].isoformat()}); a quarter misdated "
+                                         "as the year to date would look the same, so it isn't stored")
     sec = section(filing.format)
     rows, notes = _rows(per, sec, filing, face_value)
     _check(rows, per, sec, filing)
@@ -236,6 +255,7 @@ def _rows(per: _Periods, sec: dict, filing: Filing, face_value: Decimal | None) 
     fmt, standalone = filing.format, filing.basis == "standalone"
     out: list[Row] = []
     notes: list[str] = []
+    held: list[str] = []                    # the rows whose shares are held (the file gives a 0)
     plan: list[tuple[str, str, date | None]] = [("quarter", "quarter", q[0])]
     if ytd is not None and ytd != q:
         plan.append(("ytd", xbrl.period_kind(*ytd), ytd[0]))
@@ -261,7 +281,7 @@ def _rows(per: _Periods, sec: dict, filing: Filing, face_value: Decimal | None) 
             # (HINDUNILVR, ITC, SBIN and others) fill the quarter column with zeros: it isn't filed, so not stored
             notes.append(f"the {period_kind} column is filed as zeros: not stored")
             continue
-        _shares(r, per, kind, face_value, fmt)
+        _shares(r, per, kind, face_value, fmt, held)
         out.append(r)
     inst_row = Row("instant", None, q[1])
     _read(inst_row, per, "instant", sec["instant"])
@@ -284,8 +304,12 @@ def _rows(per: _Periods, sec: dict, filing: Filing, face_value: Decimal | None) 
     if inst_row.values.get("total_assets") == 0 or inst_row.values.get("assets_net") == 0:
         notes.append("the balance sheet is filed as zeros: not stored")
     elif inst_row.values:
-        _shares(inst_row, per, "instant", face_value, fmt)
+        _shares(inst_row, per, "instant", face_value, fmt, held)
         out.append(inst_row)
+    if held:
+        notes.append(f"shares held on the {', '.join(held)} row{'s' if len(held) > 1 else ''}: the file gives no "
+                     "paid-up capital or no face value other than 0, so paid-up capital, face value and shares are "
+                     "left blank")
     return out, notes
 
 
@@ -399,12 +423,17 @@ def _insurer_instant(r: Row, per: _Periods, sec: dict) -> None:
     _sum(r, per, "total_equity", "share_capital", sec["tie"]["reserves"])
 
 
-def _shares(r: Row, per: _Periods, kind: str, face_value: Decimal | None, fmt: str) -> None:
+def _shares(r: Row, per: _Periods, kind: str, face_value: Decimal | None, fmt: str, held: list[str]) -> None:
     """Paid-up capital and face value from the row's own context, then the other duration column, the instant and the
     quarter; a 0 is not filed (some files tag the quarter column's 0 and the year's value: HINDUNILVR Q4 FY19). Shares
     = paid-up ÷ face value. An insurer files no face value: the security master's is used, noted (Spec 02A §5.4);
     for any other format a face value the filing doesn't give is left out, since today's face value may not be the
-    filing's (a split since)."""
+    filing's (a split since).
+
+    When either is missing, the three columns are held together (Anand, 31 Oct 2026, #114: hold the field, not the
+    filing): a paid-up capital without its face value, or the reverse, isn't stored, and the row's period kind goes into
+    `held` for the parse note. Titan's Jun 2025 consolidated file shows why the lone figure is dropped too: its paid-up
+    capital (₹1,085 cr) is not the company's (₹88.78 cr)."""
     order = [kind] + [k for k in ("ytd", "quarter", "instant") if k != kind]
     for col in ("paid_up_capital", "face_value"):
         for k in order:
@@ -417,12 +446,17 @@ def _shares(r: Row, per: _Periods, kind: str, face_value: Decimal | None, fmt: s
             r.values[col] = v
             r.tags[col] = f.name + ("" if k == kind else f" (from the {'year-to-date' if k == 'ytd' else k} context)")
             break
-    if "face_value" not in r.values and face_value is not None and fmt in INSURERS:
+    if "face_value" not in r.values and face_value is not None and face_value > 0 and fmt in INSURERS:
         r.values["face_value"] = face_value
         r.tags["face_value"] = "EQUITY_L FACE VALUE (not in the filing)"
-    if "paid_up_capital" in r.values and "face_value" in r.values and r.values["face_value"] != 0:
+    if "paid_up_capital" in r.values and "face_value" in r.values:
         r.values["shares_outstanding"] = r.values["paid_up_capital"] / r.values["face_value"]
         r.tags["shares_outstanding"] = f"{r.tags['paid_up_capital']} ÷ {r.tags['face_value']}"
+        return
+    for col in ("paid_up_capital", "face_value"):
+        r.values.pop(col, None)
+        r.tags.pop(col, None)
+    held.append(r.period_kind)
 
 
 # ---------------------------------------------------------------------------------------- the checks
@@ -455,9 +489,8 @@ def _check(rows: list[Row], per: _Periods, sec: dict, filing: Filing) -> None:
         if s is not None and s <= 0:
             raise StatementError("shares", f"{r.period_kind}: shares outstanding {s} (paid-up "
                                            f"{r.values.get('paid_up_capital')} ÷ face value {r.values.get('face_value')})")
-    if "shares_outstanding" not in main.values:
-        raise StatementError("shares", "the file gives no paid-up capital or no face value other than 0 (both are "
-                                        "needed for the shares outstanding)")
+    # Shares that the file doesn't give (a 0 for paid-up capital or face value) no longer fail the filing: the three
+    # columns are held and the parse note says so (`_shares`; Anand, 31 Oct 2026, #114: hold the field, not the filing).
 
 
 def _pat_tie(r: Row, per: _Periods, sec: dict, fmt: str) -> None:

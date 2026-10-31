@@ -12,7 +12,9 @@ noted in the row's tags.
 Checks, B blocking, W warning:
 - (W) `filings_failed`: every filing that failed, named with its reason;
 - (B) `failed_share`: no more than 5% of the run's filings failed;
-- (B) `latest_quarters`: no universe company's latest quarter failed;
+- (B) `latest_quarters`: no universe company's latest quarter failed. A file that failed `ytd_only` isn't counted: it
+  has no quarter column, so it isn't a quarter that failed (Anand, 31 Oct 2026, #114: Coal India's 30 Sep 2026 pair
+  carries only the half-year; it still fails, and `filings_failed` names it);
 - (B) `reference`: when the audit's reference file is here (`FT_EQUITY_REFERENCE`, or the fixtures checkout's
   `equity/audit/reference_values.csv`), X1's FY2026 figures for every reference filing that is registered equal the
   stored rows exactly (Spec 02A §5.4: blocking on the first backfill, then a test; the file lives in the private
@@ -172,9 +174,14 @@ class EquityStatements(Task):
 
     @staticmethod
     def _latest_quarters(tx, failed: list[Item]) -> Check:
-        """A universe company's latest quarter (its newest period end with a registered filing) failed in this run."""
+        """A universe company's latest quarter (its newest period end with a registered filing) failed in this run. A
+        `ytd_only` failure isn't counted (Anand, 31 Oct 2026, #114): the file has no quarter column, so the check, which
+        exists to stop a parser fault from dropping a company's newest quarter, has no quarter to protect there. The
+        failure is still named by `filings_failed`."""
         bad = []
         for it in failed:
+            if it.error is not None and it.error.check == "ytd_only":
+                continue
             latest = tx.execute("""select max(fl.period_end) from equity.filing fl
                                     where fl.entity_id = %s
                                       and exists (select 1 from equity.company c where c.entity_id = fl.entity_id)""",
