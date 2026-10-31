@@ -1,0 +1,8 @@
+# Valuation engine settings (Spec 02A §5; started by 2A-12, which needs only the tax rate; 2A-13 adds the rest).
+#
+# india_marginal_tax_rate: the rate that relevers Damodaran's unlevered industry beta at a company's market debt to
+# equity (Spec 02A §5.8): beta = unlevered x (1 + (1 - rate) x D/E). 25.168% is the new-regime corporate rate of 22%
+# plus the 10% surcharge and 4% cess (22 x 1.10 x 1.04 = 25.168%). Brief §6.3; Data Audit 02 E8.
+india_marginal_tax_rate:
+  rate: 0.25168
+  source: Income-tax Act 2025, section 200 (the 22% rate), with the 10% surcharge and 4% cess; Data Audit 02 E8
