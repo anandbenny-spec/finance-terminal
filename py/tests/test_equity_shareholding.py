@@ -131,6 +131,16 @@ def test_a_promoter_figure_outside_0_to_100_is_refused_as_a_range_error():
 
 
 @needs_fixtures
+def test_a_figure_100_times_too_large_that_its_own_share_counts_confirm_is_unit_suspect():
+    body = unzipped(latest("TCS")[1])
+    with pytest.raises(sh.ShareholdingError, match="divided by 100") as e:
+        sh.parse_pattern(body.replace(b">0.7177<", b">71.77<"))
+    assert e.value.kind == "unit_suspect"
+    d = e.value.detail
+    assert d["filed"] == Decimal("7177.00") and d["divided"] == Decimal("71.77") and abs(d["ratio"] - d["divided"]) <= sh.UNIT_GAP
+
+
+@needs_fixtures
 def test_two_different_promoter_figures_at_the_best_rank_are_refused():
     body = unzipped(latest("TCS")[1])
     inst = x.parse(body)
@@ -335,7 +345,7 @@ def test_a_backfill_registers_every_pattern_with_the_promoter_percent_x1_found(s
     c = checks(tr)
     assert {n: (v["passed"], v["blocking"]) for n, v in c.items()} == {
         "lists_read": (True, True), "instances_are_patterns": (True, True), "promoter_range": (True, True),
-        "agrees_with_nse": (True, False), "quarter_move": (True, False), "quarters_filed": (False, False),
+        "unit_suspect": (True, False), "agrees_with_nse": (True, False), "quarter_move": (True, False), "quarters_filed": (False, False),
         "files_served": (True, False), "skipped_links": (True, False)}
     got = rows()
     assert len(got) == tr[1] == 22                                    # 20 companies, two quarters for TCS and HUL
@@ -420,6 +430,23 @@ def test_a_served_file_that_is_not_a_pattern_fails_the_run_naming_it_and_nothing
     c = checks(tr)
     assert c["instances_are_patterns"]["passed"] is False and name in c["instances_are_patterns"]["detail"]
     assert rows() == []                                              # the load rolled back: not even TCS
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_unit_suspect_file_is_held_back_with_a_warning_and_the_run_passes(s3):
+    make_companies(["TCS", "RELIANCE"])
+    name, path = latest("TCS")
+    ex = Nse()
+    ex.files[name] = unzipped(path).replace(b">0.7177<", b">71.77<")
+    code, tr = go(ex, **WINDOW)
+    assert code == 0 and tr[0] == "success", tr
+    c = checks(tr)
+    assert c["promoter_range"]["passed"] is True
+    assert c["unit_suspect"]["passed"] is False and c["unit_suspect"]["blocking"] is False
+    assert "TCS" in c["unit_suspect"]["detail"] and "7177" in c["unit_suspect"]["detail"] and name in c["unit_suspect"]["detail"]
+    assert c["files_served"]["passed"] is True
+    assert name not in [r[7] for r in rows()] and any(r[0] == "zs-reliance" for r in rows())
 
 
 @pytest.mark.db

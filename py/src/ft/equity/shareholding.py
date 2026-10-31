@@ -42,11 +42,16 @@ FILE_STAMP = re.compile(r"_(\d{14})(?:_|\.|$)")
 
 class ShareholdingError(ValueError):
     """A listing row or a file that can't be read as a shareholding pattern; the message says why. `kind` is `invalid`
-    (not a pattern, or unreadable) or `range` (a promoter figure outside 0–100)."""
+    (not a pattern, or unreadable), `range` (a promoter figure outside 0–100) or `unit_suspect` (outside 0–100 by a
+    factor of 100, the file's own share counts agreeing with the figure divided by 100: held back, never stored)."""
 
-    def __init__(self, msg: str, kind: str = "invalid"):
+    def __init__(self, msg: str, kind: str = "invalid", detail: dict | None = None):
         super().__init__(msg)
         self.kind = kind
+        self.detail = detail or {}
+
+
+UNIT_GAP = Decimal("0.01")      # points between the figure divided by 100 and the file's own share-count ratio
 
 
 @dataclass(frozen=True)
@@ -144,9 +149,17 @@ def parse_pattern(body: bytes) -> Pattern:
         pct, found_by, p_shares = Decimal(0), NO_PROMOTER, None
     else:
         pct, found_by, p_shares = f.value * 100, f.name, _shares(inst, PROMOTER_MEMBER)
+    t_shares = _shares(inst, TOTAL_MEMBER)
     if not Decimal(0) <= pct <= Decimal(100):
+        if p_shares is not None and t_shares and pct > 0:
+            ratio = p_shares / t_shares * 100
+            if pct / 100 <= 100 and abs(pct / 100 - ratio) <= UNIT_GAP:
+                raise ShareholdingError(
+                    f"promoter holding {pct:f}% is outside 0–100; divided by 100 it is {pct / 100:f}%, matching the "
+                    f"file's own share counts ({ratio:.2f}%)", "unit_suspect",
+                    {"as_of": as_of, "filed": pct, "divided": pct / 100, "ratio": ratio})
         raise ShareholdingError(f"promoter holding {pct:f}% is outside 0–100", "range")
-    return Pattern(as_of, pct, p_shares, _shares(inst, TOTAL_MEMBER), found_by)
+    return Pattern(as_of, pct, p_shares, t_shares, found_by)
 
 
 # ---------------------------------------------------------------------------------------- the listing
