@@ -230,7 +230,7 @@ def seed():
                                                        task_run_id)
                            select 'zb-raw', s.id, sha256('zb'::bytea), 1, 'text/csv', now(), %s from core.source s
                             where s.key = 'nse' returning id""", (run_id,)).fetchone()[0]
-        c.executemany("""insert into core.observation (series_id, obs_date, value, task_run_id)
+        c.cursor().executemany("""insert into core.observation (series_id, obs_date, value, task_run_id)
                          select s.id, %s, %s, %s from core.series s where s.key = 'yf.^NSEI'
                          on conflict do nothing""", [(d, v, run_id) for d, v in index.items()])
         for industry, unlevered, levered in (("ZB Operating", "1.0", "1.3"), ("ZB Lending", "0.5", "0.9")):
@@ -246,7 +246,7 @@ def seed():
                                values ('company', %s, %s, 'IN', 'INR', false) returning id""", (slug, slug)).fetchone()[0]
             c.execute("""insert into equity.company (entity_id, fy_end_month, valuation_family, peer_group_key)
                          values (%s, 3, %s, %s)""", (eid, family, group))
-            c.executemany("""insert into equity.price_daily (entity_id, trade_date, exchange, series, close, traded_value,
+            c.cursor().executemany("""insert into equity.price_daily (entity_id, trade_date, exchange, series, close, traded_value,
                                                              raw_file_id, task_run_id)
                              values (%s, %s, 'NSE', 'EQ', %s, 1e9, %s, %s)""",
                           [(eid, d, v, raw, run_id) for d, v in prices.items()])
