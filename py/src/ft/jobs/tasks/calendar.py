@@ -12,7 +12,9 @@ A backfill's --since and --until don't apply: the calendar always reads from the
 
 Loads one core.event + policy.meeting per meeting (meetings.py has the rules): upcoming meetings as `scheduled` and
 published at once (the countdown); past ones unpublished until their decision document passes its checks (B5, B6
-mark them `held`). A meeting the calendar has moved keeps its row under its new date. Statuses only move forward.
+mark them `held`). The exception is a special meeting (RBI's no. 39, 3 Nov 2022): it is `held` from the start and has
+no decision document to publish it later, so the calendar publishes it itself and its page answers (Spec 01 §4.5;
+launch check #87). A meeting the calendar has moved keeps its row under its new date. Statuses only move forward.
 """
 from __future__ import annotations
 
@@ -28,6 +30,13 @@ from ft.policy import fed_calendar, meetings, rbi_calendar
 from ft.policy.meetings import Meeting
 
 NEW_YORK, INDIA = ZoneInfo("America/New_York"), ZoneInfo("Asia/Kolkata")
+
+
+def publishes_at_once(m: Meeting, today: date) -> bool:
+    """Whether the calendar itself publishes this meeting: an upcoming scheduled one (the countdown), or a held special
+    meeting. Every other past meeting waits for its decision document to pass its checks (B5, B6). A special meeting has
+    no decision document, so without this it stayed unpublished and its page answered 404 (launch check #87)."""
+    return (m.status == "scheduled" and m.decision_date >= today) or (m.kind == "special" and m.status == "held")
 HISTORICAL_YEARS = (2018, 2019, 2020)    # the calendar page covers 2021 on (Spec 01 §1.1)
 FIRST_FISCAL_END = 2019                  # FY 2018-19 holds the RBI's Dec 2018 baseline
 CLOSED_AFTER = timedelta(days=60)        # a fiscal year's page is final this long after 31 March
@@ -174,7 +183,7 @@ class PolicyCalendar(Task):
         return written
 
     def _upsert(self, tx, m: Meeting, s: Stored | None, today: date) -> int:
-        publish = m.status == "scheduled" and m.decision_date >= today
+        publish = publishes_at_once(m, today)
         if s is None:
             eid = tx.execute(
                 """insert into core.event (event_type, entity_id, slug, title, starts_on, ends_on, occurs_at, status,
