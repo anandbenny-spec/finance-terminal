@@ -77,3 +77,9 @@ equity.shareholding:
   run_after: [equity.universe]
   overdue_after: 100 days
   uses_nse: true
+equity.metrics:
+  description: Derived metrics of the universe companies (TTM figures, margins, returns, growth, banks' ratios and market multiples) from the stored statements, prices and corporate actions, each with its inputs or the reason it is held back
+  workflows: {weekly: every 6 days}
+  run_after: [equity.statements, equity.corporate_actions, equity.shareholding]
+  overdue_after: 10 days
+  uses_nse: false

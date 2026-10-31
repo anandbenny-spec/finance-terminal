@@ -565,3 +565,41 @@ def reference_differences(ref: Reference, rows: dict[str, dict[str, Decimal | No
             element = (tags or {}).get(kind, {}).get(col) or "no element"
             out.append(f"{key} ({kind} {col}, {element}): reference {want}, stored {got}")
     return out
+
+
+# ---------------------------------------------------------------------------------------- lease payments (2A-11)
+# Results filings tag no lease liabilities, so `equity.metrics` holds EV-based figures back where lease payments are
+# material against EBIT (Anand, 30 Oct 2026, on #117). No column of equity.financials holds the payments, so the
+# metrics task reads them from the stored instance on demand, through the same reader and re-dating as the parse.
+LEASE_PAYMENTS = ("PaymentsOfLeaseLiabilitiesClassifiedAsFinancingActivities",)
+
+
+def lease_payments(body: bytes, filing: Filing) -> tuple[Decimal, str] | None:
+    """The year to date's lease payments (financing cash flow) as a positive amount with its element, or None when the
+    filing doesn't tag them. A file the parse would refuse raises StatementError the same way."""
+    try:
+        inst = xbrl.parse(body)
+    except xbrl.XbrlError as e:
+        raise StatementError("unreadable", str(e)) from None
+    pe = xbrl.to_date(inst.header.get("period_end"))
+    if inst.basis != filing.basis or pe != filing.period_end:
+        raise StatementError("period", "the file isn't the filing's basis and period")
+    fs = xbrl.to_date(inst.header.get("fy_start")) or filing.fy_start
+    xbrl.date_columns(inst, pe, fs)
+    per = _Periods(inst, filing.basis)
+    got = None
+    for kind in (["ytd"] if per.ytd is not None else []) + ["quarter"]:
+        # Sep 2020 to Mar 2021 files put the half-year's cash flow in the quarter column (see _rows); results carry no
+        # quarterly cash flow, so the quarter column's figure is the year to date's
+        if kind == "quarter" and per.ytd is not None and per.ytd != per.quarter \
+                and per.get("ytd", section(filing.format)["cash_flow"]["cfo"], "cfo") is not None:
+            break
+        got = per.get(kind, list(LEASE_PAYMENTS), "lease_payments")
+        if got is not None:
+            break
+    if got is None:
+        return None
+    f, v = got
+    if (f.unit or "").upper() != "INR":
+        raise StatementError("unit", f"{f.name} is in {f.unit or 'no unit'}, not INR")
+    return abs(v), f.name
