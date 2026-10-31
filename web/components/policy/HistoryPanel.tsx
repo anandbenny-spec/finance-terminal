@@ -6,9 +6,11 @@
 // formatted (lib/policy/decisions.ts). Mixes both markets, so no market edge.
 import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
+import { Delta } from "@/components/data/Delta";
 import { DataTable, type Column } from "@/components/data/DataTable";
 import { Panel } from "@/components/data/Panel";
 import { StateNote } from "@/components/data/StateNote";
+import { changeOf } from "@/lib/delta";
 import { NOT_AVAILABLE, formatAxisNumber, formatTableDate } from "@/lib/format";
 import type { Direction, HistoryRow } from "@/lib/policy/decisions";
 
@@ -66,7 +68,7 @@ export function HistoryPanel({ rows, stanceLabel, footer, refresh }: { rows: His
       { id: "kind", header: "Kind", cell: (r) => r.kind },
       { id: "decision", header: "Decision", cell: (r) => r.decision },
       { id: "rate", header: "Rate after (%)", align: "right", cell: (r) => r.rateAfter },
-      { id: "change", header: "Change (bps)", align: "right", sortValue: (r) => r.changeBps, cell: (r) => r.change },
+      { id: "change", header: "Change (bps)", align: "right", sortValue: (r) => r.changeBps, cell: (r) => (r.change === NOT_AVAILABLE ? r.change : <Delta change={changeOf(r.change, { unit: "basis points" })} tone="neutral" />) },
       { id: "vote", header: "Vote", cell: (r) => (r.voteNote ? <span title={r.voteNote}>{NOT_AVAILABLE}</span> : r.vote) },
       { id: "dissents", header: "Dissents", align: "right", sortValue: (r) => r.dissents, cell: (r) => formatAxisNumber(r.dissents, 0) },
       {

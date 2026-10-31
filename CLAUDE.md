@@ -168,7 +168,7 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   components. shadcn primitives in `components/ui/` are restyled by the tokens only.
 - **Green and red only for market moves** (a number rose or fell), always with a **sign and a triangle**
   (`Delta`, inline SVG). Never for policy decisions, hawk/dove, stance or forecast revisions: those are words
-  and position (`DecisionLine`, `VoteDotPlot`; `HawkDoveMeter` has no hue). White (`--highlight`, `#ffffff`) is the one accent, for
+  and position (`DecisionLine`, `VoteDotPlot`; `HawkDoveMeter` has no hue). A signed policy or forecast change (`NumbersChanged`, the History table's change) carries its sign and a neutral triangle in the ink colour (`Delta` with `tone="neutral"`), never green or red (Anand, 1 Nov 2026). White (`--highlight`, `#ffffff`) is the one accent, for
   interaction. Chart colour follows the entity: cyan for the US and the Fed, violet for India and the RBI,
   magenta for a third series.
 - **Every number, date and time goes through `web/lib/format.ts`:** true minus, a fixed month table, grouping
