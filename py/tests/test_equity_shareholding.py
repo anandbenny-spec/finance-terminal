@@ -452,8 +452,6 @@ def test_a_file_filed_in_percent_is_stored_divided_by_100_with_its_evidence_and_
     assert abs(r[3] - Decimal("71.77")) <= sh.UNIT_GAP and r[4] == Decimal("71.77") and r[5] is not None
     plain = [x for x in q("select correction from equity.shareholding s join core.entity e on e.id = s.entity_id where e.slug = 'zs-reliance'")]
     assert plain and all(x[0] is None for x in plain)
-    full = q("select result from ops.task_run where task_key = %s order by id desc limit 1", KEY)[0][0]
-    assert full is None or "corrected" in json.dumps(full)
 
 
 @pytest.mark.db

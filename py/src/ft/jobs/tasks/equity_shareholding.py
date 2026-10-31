@@ -21,8 +21,8 @@ Checks, B blocking, W warning:
 - (B) `promoter_range`: every stored promoter % is between 0 and 100;
 - (W) `corrected`: a file whose promoter % is outside 0–100 by a factor of 100 (filed in percent, not as a fraction)
   while its own share counts **and** NSE's figure (where listed) agree with the figure divided by 100 is stored ÷ 100 as
-  a labelled correction (`correction`, `filed_pct`, `share_ratio_pct`, `nse_pct`; Anand, 1 Nov 2026), named in full in the
-  run's result; if NSE disagrees it is a range error;
+  a labelled correction (`correction`, `filed_pct`, `share_ratio_pct`, `nse_pct`; Anand, 1 Nov 2026), named in full (every file, in the
+  check's detail); if NSE disagrees it is a range error;
 - (W) `held_back`: an out-of-range file its share counts can't confirm that is on the approved list
   (`config/equity/shareholding_held.yaml`, Anand, 1 Nov 2026): no row stored, named; any other fails `promoter_range`
   (blocking, every name listed);
@@ -192,7 +192,7 @@ class EquityShareholding(DocumentJob):
                  f"{'lists ' + str(g.pattern.nse_pct) + '%' if g.pattern.nse_pct is not None else 'lists no figure'})"
                  for g in fixed]
         out.append(Check("corrected", not fixed,
-                         f"{len(fixed)} files filed in percent, stored ÷ 100 with the evidence: " + _names(lines) if fixed
+                         f"{len(fixed)} files filed in percent, stored ÷ 100 with the evidence: " + "; ".join(lines) if fixed
                          else "no file's promoter % needed a correction", blocking=False))
 
         # the XBRL figure against NSE's own, and the listing's quarter end against the file's
@@ -239,5 +239,5 @@ class EquityShareholding(DocumentJob):
                          blocking=False))
         self.result = {"skipped": self.outcome.get("skipped", 0), "added": len(self.outcome.get("added", [])),
                        "versions": len(self.outcome.get("versions", [])), "candidates": len(h.candidates),
-                       "corrected": lines, "held": why["held"]}      # the full lists (the checks' details stop at 12)
+                       "corrected": len(lines), "held": len(why["held"])}
         return out
