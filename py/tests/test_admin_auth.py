@@ -138,7 +138,8 @@ def test_tampered_token_is_refused(env):
     r = _get(client, f"{head}.{forged}.{sig}")                      # payload swapped, signature kept
     assert r.status_code == 401 and auth.calls == 1 and store.touched == 0
     head, body, sig = auth.token(ADMIN_ID).split(".")
-    r = _get(client, f"{head}.{body}.{sig[:-2]}AA")                  # signature altered
+    altered = ("B" if sig[0] == "A" else "A") + sig[1:]  # always differs (sig[:-2] + "AA" didn't, 1 in 1,024)
+    r = _get(client, f"{head}.{body}.{altered}")                     # signature altered
     assert r.status_code == 401 and store.touched == 0
 
 
