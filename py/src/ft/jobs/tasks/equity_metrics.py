@@ -133,8 +133,7 @@ class EquityMetrics(Task):
         have = {(r[0], r[1], r[2], r[3], r[4]): (r[5], r[6], r[7]) for r in tx.execute(
             """select entity_id, metric_key, basis, period_kind, period_end, value, held_reason, inputs
                  from equity.metric_value where entity_id = any(%s)""", (ids,)).fetchall()}
-        inserted = updated = deleted = 0
-        want = set()
+        new, changed, want = [], [], set()
         for eid, values in f.values.items():
             for v in values:
                 k = (eid, v.key, v.basis, v.period_kind, v.period_end)
@@ -144,23 +143,29 @@ class EquityMetrics(Task):
                 if old is not None and old[0] == v.value and old[1] == v.held and (old[2] or {}) == inputs:
                     continue
                 if old is None:
-                    tx.execute("""insert into equity.metric_value (entity_id, metric_key, basis, period_kind,
-                                      period_end, value, held_reason, inputs) values (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                               (*k, v.value, v.held, Jsonb(inputs)))
-                    inserted += 1
+                    new.append((*k, v.value, v.held, Jsonb(inputs)))
                 else:
-                    tx.execute("""update equity.metric_value set value = %s, held_reason = %s, inputs = %s
-                                   where entity_id = %s and metric_key = %s and basis = %s and period_kind = %s
-                                     and period_end = %s""", (v.value, v.held, Jsonb(inputs), *k))
-                    updated += 1
+                    changed.append((v.value, v.held, Jsonb(inputs), *k))
         stale = [k for k in have if k not in want and k[3] != "market" and k[1] not in ("beta_regression",
                                                                                          "beta_bottom_up")]
-        for k in stale:
-            tx.execute("""delete from equity.metric_value where entity_id = %s and metric_key = %s and basis = %s
-                           and period_kind = %s and period_end = %s""", k)
-            deleted += 1
-        self.result = {"inserted": inserted, "updated": updated, "deleted": deleted, "lease_reads": f.lease_reads}
-        return inserted + updated + deleted
+        # One pipelined executemany per kind, not a statement per row: the first dev run (31 Oct 2026, #117) spent
+        # its 30 minutes on single-row inserts, each a round trip from GitHub's US runner to the Mumbai project
+        # (market_series.py met the same on #13).
+        with tx.cursor() as cur:
+            if new:
+                cur.executemany("""insert into equity.metric_value (entity_id, metric_key, basis, period_kind,
+                                       period_end, value, held_reason, inputs) values (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                                new)
+            if changed:
+                cur.executemany("""update equity.metric_value set value = %s, held_reason = %s, inputs = %s
+                                    where entity_id = %s and metric_key = %s and basis = %s and period_kind = %s
+                                      and period_end = %s""", changed)
+            if stale:
+                cur.executemany("""delete from equity.metric_value where entity_id = %s and metric_key = %s
+                                      and basis = %s and period_kind = %s and period_end = %s""", stale)
+        self.result = {"inserted": len(new), "updated": len(changed), "deleted": len(stale),
+                       "lease_reads": f.lease_reads}
+        return len(new) + len(changed) + len(stale)
 
     # ------------------------------------------------------------------ checks
     def checks(self, tx, f: Fetched, task_run_id) -> list[Check]:

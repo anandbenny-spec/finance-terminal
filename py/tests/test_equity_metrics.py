@@ -451,6 +451,46 @@ def test_the_task_is_wired_in_tasks_yaml():
     assert t.uses_nse is False and registry()["equity.metrics"] is EquityMetrics
 
 
+class _Tx:
+    """A load transaction that records its statements: the stored rows come back from the first select."""
+
+    def __init__(self, stored: list[tuple]):
+        self.stored, self.executes, self.batches = stored, [], []
+
+    def execute(self, sql, params=None):
+        self.executes.append(sql)
+        return type("R", (), {"fetchall": lambda _: self.stored})()
+
+    def cursor(self):
+        tx = self
+
+        class Cur:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def execute(self, sql, params=None): tx.executes.append(sql)
+            def executemany(self, sql, rows): tx.batches.append((sql.split()[0], len(list(rows))))
+        return Cur()
+
+
+def test_the_load_batches_its_writes_however_many_rows_change():
+    """Regression (31 Oct 2026, #117): the first dev run wrote one statement per row, a round trip each from GitHub's
+    US runner to the Mumbai project, and hit the workflow's 30 minutes. Now one select, then one executemany per
+    kind: 3,000 inserts, an update and a stale row's delete are four statements."""
+    E = D(2026, 3, 31)
+    vals = [mx.Value(f"k{i}", "consolidated", "quarter", E, Decimal(i), None, {}) for i in range(3000)]
+    vals.append(mx.Value("revenue", "consolidated", "ttm", E, Decimal(2), None, {}))
+    stored = [(1, "revenue", "consolidated", "ttm", E, Decimal(1), None, {}),              # changed: updated
+              (1, "revenue", "consolidated", "ttm", D(2001, 3, 31), Decimal(1), None, {}),  # stale: deleted
+              (1, "market_cap", "none", "market", D(2026, 1, 2), Decimal(1), None, {})]     # market history: kept
+    fetched = type("F", (), {"companies": {1: None}, "values": {1: vals}, "lease_reads": 0})()
+    t, tx = EquityMetrics(), _Tx(stored)
+    assert t.load(tx, fetched, 1) == 3002
+    assert len(tx.executes) == 1 and tx.batches == [("insert", 3000), ("update", 1), ("delete", 1)]
+    assert t.result == {"inserted": 3000, "updated": 1, "deleted": 1, "lease_reads": 0}
+    tx = _Tx(stored[2:] + [(1, v.key, v.basis, v.period_kind, v.period_end, v.value, None, {}) for v in vals])
+    assert t.load(tx, fetched, 1) == 0 and tx.batches == []                   # unchanged: nothing written
+
+
 # ---------------------------------------------------------------------------------------------- through the runner
 JOB, ADMIN = dsn("job_writer"), dsn("postgres")
 PORT, BUCKET = 5597, "equity-metrics-raw"
