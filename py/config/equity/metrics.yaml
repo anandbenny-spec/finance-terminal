@@ -1,0 +1,18 @@
+# Rules for equity.metrics (Spec 02A §5.6; job 2A-11), read by ft/equity/metrics.py.
+#
+# lease_materiality (Anand, 30 Oct 2026, on #117): no results filing tags lease liabilities, so debt is borrowings
+# only, labelled "excluding lease liabilities (not in results filings)", and EV, EV/EBIT and EV/sales are held back
+# (with the reason shown) where the company's filed lease payments are material against its EBIT. The measure is the
+# cash flow's PaymentsOfLeaseLiabilitiesClassifiedAsFinancingActivities over the newest half-year or year that has a
+# cash flow, against derived EBIT over the same period from the same filing. EBIT at or below zero with any lease
+# payment counts as material.
+lease_materiality:
+  threshold: 0.10
+  reason: >-
+    Set by Claude (standing delegation, 31 Oct 2026; recorded on #117): a lease liability is typically about four to
+    seven years of payments, so payments of 10% of EBIT mean a missing liability of roughly 0.4 to 0.7 times EBIT, about
+    1% to 4% of EV at the EV/EBIT multiples of Nifty 50 companies (15 to 40). Below that, EV and the ratios on it move
+    less than the rounding a visitor reads them at; above it, the understatement grows past what a label covers. On the
+    saved FY2026 and Sep 2026 filings the largest ratios among operating companies were 5.4% (Reliance, Grasim) and the
+    two held were Eternal (367%) and Tata Motors Passenger Vehicles (EBIT negative). The alternative was 5%, which would
+    also hold Reliance and Grasim back on a liability of under 2% of EV.
