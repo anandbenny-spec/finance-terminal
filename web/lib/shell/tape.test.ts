@@ -96,6 +96,13 @@ describe("buildTape", () => {
     );
   });
 
+  it("ends a source line that already ends in a full stop without a second one (launch check #87: \"Inc..\")", () => {
+    const description = byKey.get("yf.^IXIC")?.description ?? "";
+    expect(description.endsWith("Source: Nasdaq, Inc., via Yahoo Finance. © Nasdaq, Inc.")).toBe(true);
+    expect(description).not.toContain("..");
+    for (const item of byKey.values()) expect(item.description).not.toContain("..");
+  });
+
   it("leaves out a series the view doesn't return (unpublished, or suppressed: RLS hides it)", () => {
     const tape = buildTape(
       LATEST.filter((r) => r.series_key !== "yf.^IXIC"),

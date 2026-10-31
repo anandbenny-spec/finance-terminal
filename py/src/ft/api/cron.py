@@ -36,6 +36,20 @@ class DataApi:
     anon_key: str       # the browser key; the same value as the web service's NEXT_PUBLIC_SUPABASE_ANON_KEY
 
 
+def data_api_headers(api: DataApi) -> dict[str, str]:
+    """Headers for a Data API read with the browser key (the cron read and `/api/health` share them).
+
+    A legacy anon key is a JWT and goes in both `apikey` and `Authorization: Bearer`. Supabase's newer publishable key
+    (`sb_publishable_...`) isn't a JWT: it belongs in `apikey` alone, and sent as a Bearer token it is forwarded to the
+    database and refused with a 401 (Supabase docs, "Understanding API keys"). Production's health check got a 401 on
+    31 Oct 2026 (launch check #87); this removes that cause: the Bearer header goes only with a key that isn't an
+    `sb_` key."""
+    headers = {"apikey": api.anon_key, "Accept-Profile": "api", "Accept": "application/json"}
+    if not api.anon_key.startswith("sb_"):
+        headers["Authorization"] = f"Bearer {api.anon_key}"
+    return headers
+
+
 def cron_secret() -> str | None:
     return os.environ.get("CRON_SECRET") or None
 
@@ -63,8 +77,7 @@ def read_one_row(client: httpx.Client, api: DataApi) -> bool:
     try:
         resp = client.get(
             f"{api.url}/rest/v1/series_latest", params={"select": "series_key", "limit": 1},
-            headers={"apikey": api.anon_key, "Authorization": f"Bearer {api.anon_key}", "Accept-Profile": "api",
-                     "Accept": "application/json"})
+            headers=data_api_headers(api))
     except httpx.HTTPError as e:
         print(f"keepalive: Data API unreachable: {type(e).__name__}")                 # server log only
         return False
