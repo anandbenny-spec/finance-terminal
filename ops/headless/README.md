@@ -50,6 +50,8 @@ Runs the issues one after another under `caffeinate -i`. It stops when the ledge
 ~/Projects/finance-terminal/app/ops/headless/run-queue.sh 196 198 197
 ```
 
+**Which jobs to queue (1 Nov 2026):** jobs labelled `headless` from tracker #30's order. Module (c)'s jobs are lane C (`lane-c`), which no build chain takes, so this runner builds them, in lane C's order. Queue only jobs whose dependencies are merged, or will be by the time they run: each run checks its card's "Depends on" row first and stops with a comment if one isn't met. One run at a time for all lanes: the lock below is shared.
+
 ## Where the numbers are
 
 Each run's JSON is saved as `~/Projects/finance-terminal/headless-logs/job-<issue>-<UTC time>.json`. One line per run goes to `~/Projects/finance-terminal/headless-logs/ledger.csv`: UTC time, issue, `total_cost_usd`, exit code, `is_error`, session id. The script prints the running total after each run.
