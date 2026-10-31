@@ -56,3 +56,22 @@ select n, item, result from (
   union all select 7, 'control: api.policy_meetings · with both Fed bounds', (select count(*) || ' · ' || count(*) filter (where fed_target_lower_pct is not null and fed_target_upper_pct is not null) from api.policy_meetings)
   union all select 8, 'control: api.documents', (select count(*)::text from api.documents)
 ) r order by n;
+
+
+-- ========== Block 4: record the run (migration 0021's ops.drill_run; run AFTER block 3, as postgres) ==========
+-- Fill in the six FRED counts from the "FRED" half of items 2 to 6 of blocks 1, 2 and 3 (api.series, api.series_latest,
+-- api.observations, api.observation_steps, api.market_reactions: five numbers each; item 2 of the yfinance half is not
+-- needed). Change 'dev' to 'production' for a production run. It writes one row and nothing else. The run counts as
+-- passed when every FRED count read 0 while suppressed and each came back to its block 1 value after the restore.
+with r as (
+  select array[0, 0, 0, 0, 0]::int[] as before_fred,     -- block 1: FRED counts of items 2 to 6
+         array[0, 0, 0, 0, 0]::int[] as during_fred,     -- block 2: all must read 0
+         array[0, 0, 0, 0, 0]::int[] as after_fred,      -- block 3: must equal block 1
+         'dev'::text as target
+)
+insert into ops.drill_run (drill, target, started_at, finished_at, passed, counts)
+select 'd3_suppression', target, now(), now(),
+       during_fred = array[0, 0, 0, 0, 0] and after_fred = before_fred and before_fred <> array[0, 0, 0, 0, 0],
+       jsonb_build_object('source', 'fred', 'before', to_jsonb(before_fred), 'during', to_jsonb(during_fred), 'after', to_jsonb(after_fred))
+from r
+returning id, drill, target, passed;

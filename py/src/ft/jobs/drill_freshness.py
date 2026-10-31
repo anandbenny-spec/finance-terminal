@@ -21,6 +21,11 @@ its `stale_after`, and Anand looks at the status bar, which should then read tha
 It connects as `job_writer` (JOB_DATABASE_URL; the workflow picks dev's or production's from `--target`) and
 changes only the one `core.task_freshness` row, in one transaction. Prompt 01 §3, phase D: ask Anand before each
 run; the production run needs his OK too.
+
+Each run is also recorded in `ops.drill_run` (migration 0021; issue #133), so "drills run and passed" on the accuracy
+page comes from the database: `push` opens a row (the times it moved), `restore` first reads the row the way
+`status` does and records that reading, puts the times back, and closes the row with `passed` true when the row read
+as stale just before the restore. The record is written in the same transaction as the change it describes.
 """
 from __future__ import annotations
 
@@ -29,6 +34,8 @@ import json
 import os
 import sys
 from datetime import datetime
+
+from psycopg.types.json import Jsonb
 
 from ft.jobs.runner import connect
 
@@ -59,8 +66,12 @@ def _show(row: dict) -> dict:
     return out
 
 
-def push(conn, task: str) -> tuple[dict, dict]:
-    """Moves the task's times back past stale_after. Returns the row before and after."""
+def _iso(v):
+    return v.isoformat() if isinstance(v, datetime) else v
+
+
+def push(conn, task: str, *, target: str = "dev", github_run_id: int | None = None) -> tuple[dict, dict]:
+    """Moves the task's times back past stale_after and opens the drill record. Returns the row before and after."""
     with conn.transaction():
         before = _row(conn, task)
         if before is None:
@@ -76,19 +87,45 @@ def push(conn, task: str) -> tuple[dict, dict]:
                                 last_checked_at = now() - stale_after - interval '{MARGIN}'
                           where task_key = %s""", (task,))
         after = _row(conn, task)
+        conn.execute("""insert into ops.drill_run (drill, target, github_run_id, counts) values ('d4_freshness', %s, %s, %s)""",
+                     (target, github_run_id, Jsonb({
+                         "task": task,
+                         "before": {"last_success_at": _iso(before["last_success_at"]),
+                                    "last_checked_at": _iso(before["last_checked_at"]), "reads_stale": before["reads_stale"]},
+                         "after": {"last_success_at": _iso(after["last_success_at"]),
+                                   "last_checked_at": _iso(after["last_checked_at"]), "reads_stale": after["reads_stale"]},
+                     })))
     return before, after
 
 
-def restore(conn, task: str, last_success_at: datetime, last_checked_at: datetime | None) -> dict:
-    """Puts the printed times back, keeping anything newer (a real run since the push)."""
+def restore(conn, task: str, last_success_at: datetime, last_checked_at: datetime | None, *,
+            target: str = "dev", github_run_id: int | None = None) -> dict:
+    """Records the reading, puts the printed times back (keeping anything newer: a real run since the push) and
+    closes the drill record: passed when the row read as stale just before the restore."""
     with conn.transaction():
-        if _row(conn, task) is None:
+        reading = _row(conn, task)
+        if reading is None:
             raise DrillError(f"{task}: no core.task_freshness row")
+        passed = bool(reading["reads_stale"])
         conn.execute("""update core.task_freshness
                            set last_success_at = greatest(last_success_at, %s),
                                last_checked_at = greatest(last_checked_at, coalesce(%s, last_checked_at))
                          where task_key = %s""", (last_success_at, last_checked_at, task))
-        return _row(conn, task)
+        after = _row(conn, task)
+        counts = {"task": task,
+                  "before_restore": {"last_success_at": _iso(reading["last_success_at"]), "reads_stale": reading["reads_stale"]},
+                  "after_restore": {"last_success_at": _iso(after["last_success_at"]), "reads_stale": after["reads_stale"]}}
+        open_id = conn.execute("""select id from ops.drill_run where drill = 'd4_freshness' and finished_at is null
+                                     and counts->>'task' = %s order by id desc limit 1""", (task,)).fetchone()
+        if open_id is not None:
+            conn.execute("""update ops.drill_run set finished_at = now(), passed = %s, counts = counts || %s::jsonb,
+                                   github_run_id = coalesce(github_run_id, %s) where id = %s""",
+                         (passed, Jsonb(counts), github_run_id, open_id[0]))
+        else:                  # a push made before the record existed (or on another database): record the restore alone
+            conn.execute("""insert into ops.drill_run (drill, target, finished_at, passed, counts, github_run_id)
+                            values ('d4_freshness', %s, now(), %s, %s, %s)""",
+                         (target, passed, Jsonb({**counts, "push_not_recorded": True}), github_run_id))
+        return after
 
 
 def _instant(text: str) -> datetime:
@@ -117,17 +154,19 @@ def main(argv: list[str] | None = None, *, env=None) -> int:
     dsn = (env.get("JOB_DATABASE_URL") or "").strip()
     if not dsn:
         p.error("JOB_DATABASE_URL is not set (for target dev, the workflow reads the DEV_ secrets)")
+    run_id = int(env["GITHUB_RUN_ID"]) if (env.get("GITHUB_RUN_ID") or "").isdigit() else None
     print(f"freshness drill: {args.action} {args.task}, target {args.target}")
     try:
         with connect(dsn, autocommit=True, role="drill") as conn:
             if args.action == "push":
-                before, after = push(conn, args.task)
+                before, after = push(conn, args.task, target=args.target, github_run_id=run_id)
                 print("before:", json.dumps(_show(before)))
                 print("after: ", json.dumps(_show(after)))
                 print(f"restore with: --last-success-at {before['last_success_at'].isoformat()}"
                       + (f" --last-checked-at {before['last_checked_at'].isoformat()}" if before["last_checked_at"] else ""))
             elif args.action == "restore":
-                print("after:", json.dumps(_show(restore(conn, args.task, args.last_success_at, args.last_checked_at))))
+                print("after:", json.dumps(_show(restore(conn, args.task, args.last_success_at, args.last_checked_at,
+                                                    target=args.target, github_run_id=run_id))))
             else:
                 row = _row(conn, args.task)
                 if row is None:

@@ -17,6 +17,9 @@ so the tests build them from the saved filings without a database.
 - Rates: the INR risk-free rate (India's 10-year from FRED less Damodaran's default spread) and India's ERP (the
   mature-market ERP plus India's country risk premium), both from `ft/equity/inputs.py`; the gross 10-year as the cost
   of debt's floor; the marginal rate from `valuation.yaml`.
+- For the reverse DCF and implied ROE (2A-14): the latest close (the one market capitalisation was computed at); the
+  delivered 5-year revenue CAGR on the TTM's basis; a lender's P/B, the industry's levered beta and its delivered
+  return on equity (`delivered_roe`: the window in `valuation.yaml`, the structural breaks read with the rows).
 
 **One basis** (decided by Claude, standing delegation, 1 Nov 2026, #119): the three years and the balance sheet must be
 on the TTM's basis (consolidated where filed), else the model is held; the alternative, mixing bases, would set one
@@ -24,8 +27,8 @@ basis's margins against another's capital.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import date
+from dataclasses import dataclass, field, replace
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -34,12 +37,12 @@ import yaml
 from ft.equity import inputs as inp
 from ft.equity import metrics as mx
 from ft.equity import statements as st
-from ft.equity.valuation.model import Company, Input, Market, Settings
+from ft.equity.valuation.model import Company, Input, Lender, Market, Settings
 
 CONFIG = Path(__file__).resolve().parents[3] / "config" / "equity"
 MARKET, CURRENCY = "IN", "INR"
-MARKET_KEYS = ("shares_today", "market_cap", "beta_bottom_up", "ev")
-YEAR_KEYS = ("revenue_cagr_3y",)
+MARKET_KEYS = ("shares_today", "market_cap", "beta_bottom_up", "ev", "pb")
+YEAR_KEYS = ("revenue_cagr_3y", "revenue_cagr_5y", "roe")
 FILINGS = "results filings (NSE)"
 LEASE_MATERIAL = ("This company's lease payments are material against its EBIT, and results filings don't report "
                   "lease liabilities, so the model would understate its debt.")
@@ -107,6 +110,7 @@ class Stored:
     currency: str
     fins: list[mx.Fin]
     metrics: dict[tuple, tuple] = field(default_factory=dict)   # (key, basis, kind, end) → (value, held, inputs)
+    breaks: list[mx.Break] = field(default_factory=list)          # demergers and mergers, recorded and curated
 
 
 def fetch(db, entity_ids: list[int] | None = None) -> dict[int, Stored]:
@@ -135,6 +139,17 @@ def fetch(db, entity_ids: list[int] | None = None) -> dict[int, Stored]:
                                                or (period_kind = 'year' and metric_key = any(%s)))""",
             (ids, list(MARKET_KEYS), list(YEAR_KEYS))).fetchall():
         out[eid].metrics[(key, basis, kind, end)] = (value, held, inputs or {})
+    # structural breaks, as the metrics task reads them (2A-11): demergers and mergers in the corporate-action record,
+    # and the curated rows of structural_breaks.yaml
+    for eid, slug, kind, ex in db.execute(
+            """select ev.entity_id, ev.slug, ca.kind, ca.ex_date
+                 from equity.corporate_action ca join core.event ev on ev.id = ca.event_id
+                where ev.entity_id = any(%s) and ev.status <> 'withdrawn' and ca.kind = any(%s)
+                order by ca.ex_date, ev.slug""", (ids, list(mx.BREAK_KINDS))).fetchall():
+        out[eid].breaks.append(mx.Break(kind, ex, slug))
+    curated = mx.load_breaks()
+    for s in out.values():
+        s.breaks += curated.get(s.company.slug, [])
     return out
 
 
@@ -183,12 +198,44 @@ class _Years:
         return self.rows
 
 
-def company_inputs(s: Stored, as_of: date) -> Company:
-    """The engine's inputs for one company at the newest price date on or before `as_of`."""
+@dataclass
+class _Frame:
+    """Where one company's figures are read: the price date, the TTM and its basis, the last three years."""
+    book: mx.Book
+    t: date | None                 # the price date: the newest market capitalisation stored on or before `as_of`
+    upto: date
+    q_end: date | None
+    basis: str
+    ttm_rows: list[mx.Fin] | None
+    ttm_held: str | None
+    years: _Years
+    fy_end: date | None
+
+
+def _frame(s: Stored, as_of: date) -> _Frame:
     book = mx.Book(s.fins)
     caps = [k[3] for k in s.metrics if k[0] == "market_cap" and k[2] == "market" and k[3] <= as_of]
     t = max(caps) if caps else None
     upto = t or as_of
+    # TTM, and the basis every statement figure must share
+    q_end = mx._latest(book, "quarter", upto)
+    basis, ttm_rows, ttm_held = "consolidated", None, "No quarter is filed."
+    if q_end is not None:
+        try:
+            basis, ttm_rows = mx.ttm(book, q_end)
+            ttm_held = None
+        except mx.Held as h:
+            ttm_held = h.reason
+    years = _Years(book, basis, upto)
+    fy_end = years.rows[-1].end if years.rows else None
+    return _Frame(book, t, upto, q_end, basis, ttm_rows, ttm_held, years, fy_end)
+
+
+def company_inputs(s: Stored, as_of: date) -> Company:
+    """The engine's inputs for one company at the newest price date on or before `as_of`."""
+    fr = _frame(s, as_of)
+    book, t, upto, q_end, basis = fr.book, fr.t, fr.upto, fr.q_end, fr.basis
+    ttm_rows, ttm_held, years, fy_end = fr.ttm_rows, fr.ttm_held, fr.years, fr.fy_end
 
     def market(key, unit, source, missing):
         return _stored(s, key, "none", "market", t, unit, source, missing)
@@ -199,16 +246,6 @@ def company_inputs(s: Stored, as_of: date) -> Company:
                  "Market capitalisation isn't stored.")
     beta = market("beta_bottom_up", "beta", "bottom-up beta: Damodaran's India industry beta relevered at market D/E "
                   "(equity.beta)", "The bottom-up beta isn't stored.")
-
-    # TTM, and the basis every statement figure must share
-    q_end = mx._latest(book, "quarter", upto)
-    basis, ttm_rows, ttm_held = "consolidated", None, "No quarter is filed."
-    if q_end is not None:
-        try:
-            basis, ttm_rows = mx.ttm(book, q_end)
-            ttm_held = None
-        except mx.Held as h:
-            ttm_held = h.reason
 
     def ttm_sum(fn, name):
         def f(c):
@@ -222,9 +259,6 @@ def company_inputs(s: Stored, as_of: date) -> Company:
                           ttm_sum(mx._col("revenue"), "revenue"), q_end)
     ebit_ttm = _figure("money", f"derived EBIT over the last four quarters ({FILINGS})",
                        ttm_sum(mx._ebit, "ebit_derived"), q_end)
-
-    years = _Years(book, basis, upto)
-    fy_end = years.rows[-1].end if years.rows else None
 
     def three(fn, name):
         def f(c):
@@ -298,3 +332,106 @@ def _lease(s: Stored, t: date) -> list[str]:
     if check.get("held"):
         return [check["held"]]
     return []
+
+
+# ------------------------------------------------------------------------------------------------ 2A-14's inputs
+NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
+CLOSE_SOURCE = "the latest close (Source: NSE; equity.metrics)"
+ROE_SOURCE = ("return on equity (profit to owners ÷ average equity to owners), averaged over consecutive financial "
+              "years ending with the latest (equity.metrics)")
+
+
+@dataclass(frozen=True)
+class DeliveredRoe:
+    """The window of a lender's delivered return on equity (valuation.yaml's `delivered_roe`)."""
+    years: int                     # at most this many financial years
+    min_years: int                 # fewer: held
+
+
+def load_delivered_roe(path: Path | None = None) -> DeliveredRoe:
+    raw = _valuation_yaml(path).get("delivered_roe")
+    if not isinstance(raw, dict) or not str(raw.get("source") or "").strip():
+        raise ValueError("valuation.yaml: delivered_roe needs its years, min_years and a source")
+    out = DeliveredRoe(int(raw["years"]), int(raw["min_years"]))
+    if not 1 <= out.min_years <= out.years <= max(NUMBER_WORDS):
+        raise ValueError("valuation.yaml: delivered_roe needs 1 ≤ min_years ≤ years ≤ 5")
+    return out
+
+
+def price(s: Stored, as_of: date) -> Input:
+    """The latest close: the one the market capitalisation at the price date was computed at (equity.metrics)."""
+    t = _frame(s, as_of).t
+    rows = [v for k, v in s.metrics.items() if k[0] == "market_cap" and k[2] == "market" and k[3] == t]
+    p = (rows[0][2] or {}).get("price") if rows else None
+    if not p:
+        return Input.withheld("The latest close isn't stored.", "money", CLOSE_SOURCE, t)
+    return Input.of(Decimal(str(p["close"])), "money", date.fromisoformat(p["trade_date"]), CLOSE_SOURCE)
+
+
+def delivered_growth(s: Stored, as_of: date) -> Input:
+    """What an operating company has delivered (Spec 02A §5.9): the 5-year revenue CAGR at the latest financial year,
+    on the basis of its last four quarters (the reverse DCF's), with the metric's own held reason (2A-11: the
+    structural-break rule, a window without filed years)."""
+    fr = _frame(s, as_of)
+    got = _stored(s, "revenue_cagr_5y", fr.basis, "year", fr.fy_end, "fraction",
+                  "revenue growth a year over the last five financial years (equity.metrics)",
+                  "The five-year revenue growth isn't stored.")
+    return replace(got, detail={**got.detail, "years": 5, "basis": fr.basis})
+
+
+def _pb_basis(s: Stored, fr: _Frame) -> str:
+    keys = [k for k in s.metrics if k[0] == "pb" and k[2] == "market" and k[3] == fr.t]
+    return keys[0][1] if keys else fr.basis
+
+
+def delivered_roe(s: Stored, as_of: date, rule: DeliveredRoe | None = None) -> Input:
+    """What a lender has delivered (Spec 02A §5.9): the average of its financial-year return on equity (2A-11's `roe`)
+    on the basis of its P/B, over the consecutive years, up to `rule.years`, that end with the latest year stored on
+    or before the price date and have a value; held below `rule.min_years`, or when a demerger or merger falls inside
+    the years averaged (2A-11's structural-break rule, applied from the first averaged year's first day). The window
+    is decided by Claude (standing delegation, 1 Nov 2026, #120), as Anand's note of 30 Oct on #120 asked: results
+    filings carry balance sheets only from March 2023 (banks' from March 2024; #114), so five years aren't filed yet."""
+    rule = rule or load_delivered_roe()
+    fr = _frame(s, as_of)
+    basis = _pb_basis(s, fr)
+    ends = sorted(k[3] for k in s.metrics if k[0] == "roe" and k[1] == basis and k[2] == "year" and k[3] <= fr.upto)
+    if not ends:
+        return Input.withheld("No financial year's return on equity is stored.", "fraction", ROE_SOURCE,
+                              basis=basis)
+    last = ends[-1]
+    used: list[tuple[date, Decimal]] = []
+    for k in range(rule.years):
+        row = s.metrics.get(("roe", basis, "year", mx.month_end(last, -12 * k)))
+        if row is None or row[0] is None or row[1] is not None:
+            break
+        used.append((mx.month_end(last, -12 * k), row[0]))
+    used.reverse()
+    detail = {"basis": basis, "n": len(used), "years": [{"period_end": e.isoformat(), "roe": str(v)} for e, v in used]}
+    if used:
+        start = mx.month_end(used[0][0], -12) + timedelta(days=1)            # the first averaged year's first day
+        inside = [b for b in s.breaks if start <= b.effective <= last]
+        if inside:
+            detail["structural_breaks"] = [{"kind": b.kind, "effective": b.effective.isoformat(), "source": b.source,
+                                            "curated": b.curated} for b in inside]
+            kinds = sorted({b.kind for b in inside})
+            return Input.withheld(f"The window spans a {' and a '.join(kinds)}, so its years aren't comparable.",
+                                  "fraction", ROE_SOURCE, last, **detail)
+    if len(used) < rule.min_years:
+        return Input.withheld(f"Fewer than {NUMBER_WORDS[rule.min_years]} consecutive financial years of return on "
+                              f"equity are filed, so its average isn't shown.", "fraction", ROE_SOURCE, last, **detail)
+    average = (sum(v for _, v in used) / len(used)).quantize(mx.PLACES)
+    return Input.of(average, "fraction", last, ROE_SOURCE, **detail)
+
+
+def lender_inputs(s: Stored, as_of: date, rule: DeliveredRoe | None = None) -> Lender:
+    """A lender's implied-ROE inputs at the newest price date on or before `as_of`: P/B (2A-11), the industry's levered
+    beta (2A-12 stores it as `beta_bottom_up` for lenders), the delivered average and the latest close."""
+    fr = _frame(s, as_of)
+    pb = _stored(s, "pb", _pb_basis(s, fr), "market", fr.t, "multiple",
+                 "price-to-book: market capitalisation ÷ equity to owners at the latest balance sheet (Source: NSE; "
+                 "equity.metrics)", "Price-to-book isn't stored.")
+    beta = _stored(s, "beta_bottom_up", "none", "market", fr.t, "beta",
+                   "the industry's levered beta: Damodaran's India industry beta, not relevered (equity.beta)",
+                   "The industry beta isn't stored.")
+    return Lender(s.company.slug, s.market, s.currency, s.company.family, pb, beta, delivered_roe(s, as_of, rule),
+                  price(s, as_of))
