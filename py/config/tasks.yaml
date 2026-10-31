@@ -2,23 +2,29 @@
 # Per task: description, workflows (workflow: due rule), run_after, overdue_after, and optionally uses_nse,
 # visitor_refreshable and enabled (default true). Due rules: `every <n> minutes|hours|days`, fomc_decision_day,
 # mpc_decision_day, after_decision_document (ft/jobs/due.py). Each task needs at least one `every` rule.
+# A decision-day rule is due inside the meeting's watch window; once the window has closed it stays due as a
+# *catch-up* while the decision document (or, for after_decision_document, the AI step) is missing, until the end of
+# the next calendar day in the bank's zone. A daily rule may add that catch-up: `every 20 hours or fomc_catch_up`
+# (also mpc_catch_up, ai_catch_up) is due after 20 hours, or while the named rule's catch-up applies (ft/jobs/config.py).
 policy.calendar:
   description: FOMC and MPC meeting calendars
   workflows: {weekly: every 25 days}
   overdue_after: 40 days
 policy.fed_documents:
   description: FOMC statements, minutes, press-conference transcripts
-  workflows: {daily: every 20 hours, watch: fomc_decision_day}
+  workflows: {daily: every 20 hours or fomc_catch_up, watch: fomc_decision_day}
   run_after: [policy.calendar]
   overdue_after: 3 days
 policy.rbi_documents:
   description: MPC resolutions, Governor's statements, minutes, transcripts (old site + RSS)
-  workflows: {daily: every 20 hours, watch: mpc_decision_day}
+  workflows: {daily: every 20 hours or mpc_catch_up, watch: mpc_decision_day}
   run_after: [policy.calendar]
   overdue_after: 3 days
 policy.market_series:
   description: FRED and yfinance series for the policy tracker and ticker tape
-  workflows: {daily: every 20 hours}
+  # every 8 hours (issue #105): due at both daily runs, 06:37 IST (14 h after the evening run) and the weekday
+  # 16:37 IST run (10 h after the morning one). Every other daily task keeps 20 hours, so the evening run skips it.
+  workflows: {daily: every 8 hours}
   overdue_after: 4 days
 policy.reactions:
   description: Market reactions around each decision
@@ -27,7 +33,7 @@ policy.reactions:
   overdue_after: 4 days
 policy.ai_batch:
   description: Summaries, diffs, stance, scores and projections for new documents
-  workflows: {daily: every 20 hours, watch: after_decision_document}
+  workflows: {daily: every 20 hours or ai_catch_up, watch: after_decision_document}
   run_after: [policy.fed_documents, policy.rbi_documents]
   overdue_after: 3 days
 crypto.coingecko_markets:
@@ -61,3 +67,27 @@ equity.corporate_actions:
   run_after: [equity.prices]
   overdue_after: 10 days
   uses_nse: true
+equity.statements:
+  description: Statements parsed from the stored results XBRL filings (quarter, year to date and balance sheet), each filing checked before its figures are stored
+  workflows: {weekly: every 6 days}
+  run_after: [equity.filings]
+  overdue_after: 10 days
+  uses_nse: false
+equity.shareholding:
+  description: Quarterly shareholding patterns of the universe companies from the exchange's XBRL, with each company's promoter and promoter-group holding
+  workflows: {weekly: every 6 days}
+  run_after: [equity.universe]
+  overdue_after: 100 days
+  uses_nse: true
+equity.metrics:
+  description: Derived metrics of the universe companies (TTM figures, margins, returns, growth, banks' ratios and market multiples) from the stored statements, prices and corporate actions, each with its inputs or the reason it is held back
+  workflows: {weekly: every 6 days}
+  run_after: [equity.statements, equity.corporate_actions, equity.shareholding]
+  overdue_after: 10 days
+  uses_nse: false
+equity.beta:
+  description: Regression beta (104 weekly returns against the Nifty 50) and Damodaran's bottom-up beta relevered at market debt to equity, for the universe companies
+  workflows: {weekly: every 6 days}
+  run_after: [equity.metrics, equity.valuation_inputs, policy.market_series]
+  overdue_after: 10 days
+  uses_nse: false

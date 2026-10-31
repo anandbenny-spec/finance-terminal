@@ -155,6 +155,12 @@ describe("tables", () => {
     ]);
     const stanceOnly = voteRows(RBI, [{ ...v("Var", 25, { is_dissent: true, stance_vote: "neutral" }), meeting_slug: RBI.slug }]);
     expect(stanceOnly[0]).toMatchObject({ stance: "Neutral", dissent: "stance: voted neutral" });
+    // An RBI member who "voted against the repo rate hike" with no stated alternative is a vote against the rate, not a
+    // dissent "not on the rate" (launch check #87): the row's own clause says which.
+    const againstRate = voteRows(RBI, [
+      { ...v("Var", null, { is_dissent: true, stance_vote: "against", dissent_text: "voted against the repo rate hike" }), meeting_slug: RBI.slug },
+    ]);
+    expect(againstRate[0]).toMatchObject({ vote: "—", dissent: "voted against the rate" });
   });
 
   it("anchors each member's first statement in minutes", () => {

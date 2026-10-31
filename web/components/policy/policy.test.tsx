@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { Gated } from "@/components/data/Gated";
 import { HistoryPanel } from "@/components/policy/HistoryPanel";
 import { PolicyCard } from "@/components/policy/PolicyCard";
+import { VotesPanel } from "@/components/policy/VotesPanel";
 import { LongRatesPanel } from "@/components/policy/LongRatesPanel";
 import { ReactionsPanel } from "@/components/policy/ReactionsPanel";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -35,6 +36,13 @@ const RBI: PolicyMeetingRow = {
   minutes_due_on: "2026-10-21", policy_rate_pct: 5.5, policy_rate_change_bps: 25, stance: "calibrated tightening",
   stance_display_label: "AI-extracted", dissent_count: 0, attribution: "Source: Reserve Bank of India", fed_target_lower_pct: null, fed_target_upper_pct: null,
 };
+// The 28 Oct 2026 FOMC as the database holds it between the statement and the minutes (#159): a tally statement named
+// its two dissenters, so those are the only rows, and "10–2" is not a stored number.
+const OCT: PolicyMeetingRow = {
+  ...FED, slug: "fomc-2026-10-28", decision_date: "2026-10-28", decision_at: "2026-10-28T18:00:00+00:00", minutes_due_on: "2026-11-18",
+  policy_rate_pct: 3.5, policy_rate_change_bps: 0, dissent_count: 2,
+};
+const OCT_NOTE = "Each member's vote is published in the minutes, due 18 Nov 2026.";
 const vote = (slug: string, name: string, bps: number, dissent = false): PolicyVoteRow => ({
   meeting_slug: slug, member_slug: name, member_name: name, voted_change_bps: bps, stance_vote: null, is_dissent: dissent, dissent_text: null,
 });
@@ -91,6 +99,26 @@ describe("PolicyCard", () => {
     expect(out).toContain("border-t-series-2");
   });
 
+  it("shows a tally statement's dissenters before the minutes copy, and no count (#159)", () => {
+    const latest = { ...fedLatest, meeting: OCT, votes: [vote(OCT.slug, "Lisa D. Cook", 25, true), vote(OCT.slug, "Beth M. Hammack", 25, true)] };
+    const t = text(html(<PolicyCard bank="Fed" latest={latest} policies={POLICIES} now={NOW} footer="" />));
+    expect(t).toContain(`Vote Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps) · ${OCT_NOTE}`);
+    expect(t).not.toContain("Votes aren't published yet.");
+    expect(t).not.toMatch(/Vote \d+–\d+/);
+  });
+
+  it("shows only the minutes copy for a unanimous tally statement, in place of 'Votes aren't published yet.' (#159)", () => {
+    const t = text(html(<PolicyCard bank="Fed" latest={{ ...fedLatest, meeting: OCT, votes: [] }} policies={POLICIES} now={NOW} footer="" />));
+    expect(t).toContain(`Vote ${OCT_NOTE}`);
+    expect(t).not.toContain("Votes aren't published yet.");
+    expect(t).not.toContain("Dissent:");
+  });
+
+  it("still says 'Votes aren't published yet.' for a Fed meeting with no rows and no minutes date to wait for", () => {
+    const t = text(html(<PolicyCard bank="Fed" latest={{ ...fedLatest, meeting: { ...OCT, minutes_due_on: null }, votes: [] }} policies={POLICIES} now={NOW} footer="" />));
+    expect(t).toContain("Votes aren't published yet.");
+  });
+
   it("links the meeting, then its What changed tab, then (Fed only) the official statement (#147)", () => {
     const row = (out: string) => {
       const p = /<p class="mt-3 flex[^"]*">([\s\S]*?)<\/p>/.exec(out);
@@ -121,6 +149,33 @@ describe("PolicyCard", () => {
     expect(text(html(<PolicyCard bank="Fed" latest={{ ...fedLatest, meeting: null }} policies={POLICIES} now={NOW} footer="" />))).toContain("No decision is published yet.");
     expect(text(html(<PolicyCard bank="Fed" latest={null} policies={POLICIES} now={NOW} footer="" />))).toContain("Couldn't load this panel. Try again.");
     expect(text(html(<PolicyCard bank="Fed" latest={{ ...fedLatest, summary: null }} policies={POLICIES} now={NOW} footer="" />))).toContain("No AI summary of this decision yet.");
+  });
+});
+
+describe("VotesPanel while the minutes are out (#159)", () => {
+  const panel = (m: PolicyMeetingRow, votes: PolicyVoteRow[] | null) => html(<VotesPanel bank="Fed" m={m} votes={votes} footer="Source: Federal Reserve Board" />);
+
+  it("shows the dissenters and the copy, draws no dots and no count", () => {
+    const out = panel(OCT, [vote(OCT.slug, "Lisa D. Cook", 25, true), vote(OCT.slug, "Beth M. Hammack", 25, true)]);
+    const t = text(out);
+    expect(t).toContain(`Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps) · ${OCT_NOTE}`);
+    expect(out).not.toContain("View as table"); // VoteDotPlot is tally-only: a partial meeting is never drawn as a whole vote
+    expect(out).not.toContain("hollow dot");
+    expect(t).not.toMatch(/\d+–\d+/);
+    expect(t).toContain("Source: Federal Reserve Board");
+  });
+
+  it("shows the copy alone with no rows, and still draws the plot once the minutes add the members who voted for", () => {
+    expect(text(panel(OCT, []))).toContain(OCT_NOTE);
+    expect(text(panel(OCT, []))).not.toContain("Dissent:");
+    const full = [...Array.from({ length: 10 }, (_, i) => vote(OCT.slug, `Member ${i + 1}`, 0)), vote(OCT.slug, "Lisa D. Cook", 25, true), vote(OCT.slug, "Beth M. Hammack", 25, true)];
+    const out = panel(OCT, full);
+    expect(text(out)).toContain("Vote 10–2 · Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps)");
+    expect(out).toContain("View as table");
+  });
+
+  it("is never blank on a failed read", () => {
+    expect(text(panel(OCT, null))).toContain("Couldn't load this panel. Try again.");
   });
 });
 

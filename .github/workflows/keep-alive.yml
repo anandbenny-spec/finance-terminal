@@ -8,7 +8,7 @@
 # The workflow's own name is in the list: if the repo went quiet, this job would otherwise be switched off with the rest.
 #
 # GitHub doesn't document what counts as "activity", so this follows the route #142 prescribes; check once, after the
-# first quiet 60 days, that the three scheduled workflows are still enabled (Actions tab).
+# first quiet 60 days, that the scheduled workflows are still enabled (Actions tab).
 name: keep-alive
 on:
   schedule:
@@ -35,7 +35,7 @@ jobs:
       - name: Enable the scheduled workflows again
         run: |
           failed=0
-          for wf in keep-alive.yml daily.yml weekly.yml watch.yml; do
+          for wf in keep-alive.yml daily.yml weekly.yml watch.yml keepalive-db.yml; do
             if ! state=$(gh api "repos/${GH_REPO}/actions/workflows/${wf}" --jq .state); then
               echo "::error title=keep-alive::could not read ${wf}"
               failed=1

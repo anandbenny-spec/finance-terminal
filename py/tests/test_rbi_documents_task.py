@@ -450,7 +450,8 @@ def test_backfill_stores_resolutions_rates_votes_projections_and_diffs_and_rerun
     assert state(slugs[0]) == ("held", True, True, True, None)               # the baseline has no diff
     assert [state(s)[4] for s in slugs[1:]] == slugs[:2]
     doc = q("""select d.title, d.published_at, d.source_url, d.extractor_version, d.external_key
-                 from core.document d join core.event e on e.id = d.event_id where e.slug = %s""", slugs[2])[0]
+                 from core.document d join core.event e on e.id = d.event_id
+                where e.slug = %s and d.doc_type = 'mpc_resolution'""", slugs[2])[0]   # the event has 3 documents
     # The title names RBI's press-release number (Brief §6.2: the site names RBI's documents, never links them).
     assert doc == ("MPC resolution, 4 Apr 2012 · Press Release: 2040-2041/123", datetime(2012, 4, 4, 4, 30, tzinfo=UTC),
                    PR + "81201",

@@ -326,6 +326,26 @@ def test_rbi_meetings_rules():
     assert [m.slug for m in ms if m.from_schedule] == ["mpc-2027-04-07"]
 
 
+def test_the_calendar_publishes_upcoming_scheduled_meetings_and_a_held_special_one_only():
+    """Launch check #87: RBI's special meeting no. 39 is held from the start and has no decision document to publish it
+    later, so the calendar publishes it itself; every other past meeting still waits for its document (B5, B6)."""
+    from ft.jobs.tasks.calendar import publishes_at_once
+
+    def meeting(kind: str, status: str, on: date, rate: bool = True) -> meetings.Meeting:
+        return meetings.Meeting(bank="rbi", decision_date=on, starts_on=on, kind=kind, is_rate_decision=rate, status=status,
+                                occurs_at=None, minutes_due_on=None, has_press_conference=None, source_url="test")
+
+    today = date(2026, 10, 31)
+    assert publishes_at_once(meeting("scheduled", "scheduled", date(2026, 12, 4)), today)
+    assert publishes_at_once(meeting("scheduled", "scheduled", today), today)
+    assert not publishes_at_once(meeting("scheduled", "scheduled", date(2026, 10, 7)), today)     # overdue: not by itself
+    assert not publishes_at_once(meeting("scheduled", "held", date(2026, 10, 7)), today)          # waits for its document
+    assert not publishes_at_once(meeting("unscheduled", "held", date(2020, 3, 27)), today)
+    assert not publishes_at_once(meeting("scheduled", "cancelled", date(2026, 12, 4)), today)
+    assert publishes_at_once(meeting("special", "held", date(2022, 11, 3), rate=False), today)
+    assert not publishes_at_once(meeting("special", "cancelled", date(2022, 11, 3), rate=False), today)
+
+
 def test_rbi_special_meeting_and_numbering():
     # The curated special meeting joins the resolutions; numbers count from the anchor (Dec 2018 = 14), so 3 Nov 2022
     # is no. 39. Expected numbers: Data Audit 01's test R2 read them from the minutes.

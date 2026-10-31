@@ -1,0 +1,35 @@
+# Valuation engine settings (Spec 02A §5; started by 2A-12, which needs only the tax rate; 2A-13 adds the rest).
+#
+# india_marginal_tax_rate: the rate that relevers Damodaran's unlevered industry beta at a company's market debt to
+# equity (Spec 02A §5.8): beta = unlevered x (1 + (1 - rate) x D/E). 25.168% is the new-regime corporate rate of 22%
+# plus the 10% surcharge and 4% cess (22 x 1.10 x 1.04 = 25.168%). Brief §6.3; Data Audit 02 E8.
+india_marginal_tax_rate:
+  rate: 0.25168
+  source: Income-tax Act 2025, section 200 (the 22% rate), with the 10% surcharge and 4% cess; Data Audit 02 E8
+  in_force: 2026-04-01      # the Income-tax Act 2025's commencement (section 115BAA's rate before it); 2A-13
+
+# The DCF engine's settings (Spec 02A §5.7; job 2A-13), read by ft/equity/assemble.py into the engine's Settings. Not
+# market-specific: the engine (ft/equity/valuation/) is market-agnostic, and the EDGAR test runs it with these too.
+# Rates are fractions.
+model:
+  cost_of_debt_spread:
+    spread: 0.06
+    source: >-
+      Spec 02A §5.7 (28 Oct 2026): the pre-tax cost of debt is bounded to [the gross 10-year yield, that + 6 points];
+      Data Audit 02 E7 (interest expense ÷ average debt)
+  default_growth:
+    low: -0.05
+    high: 0.30
+    source: Spec 02A §5.7 (28 Oct 2026), dcf_default at the 3-FY revenue CAGR clamped to -5% to 30%
+  scenario_grid:
+    growth: {from: -0.05, to: 0.30, step: 0.025}
+    margin_steps: [-0.05, -0.025, 0, 0.025, 0.05]
+    wacc_steps: [-0.02, -0.01, 0, 0.01, 0.02]
+    source: >-
+      Spec 02A §5.7 (28 Oct 2026): growth -5% to 30% in 2.5-point steps (15), the EBIT margin at its 3-FY level ± 2.5
+      and ± 5 points (5; a margin ≤ 0 skipped), WACC ± 1 and ± 2 points (5): up to 375 values per company
+  effective_tax:
+    max: 0.50
+    source: >-
+      Spec 02A §5.7 (28 Oct 2026): the 3-FY effective rate gives way to the marginal rate when it's outside 0 to 50%
+      or profit before tax is zero or negative; Brief §6.3 and Data Audit 02 E8 (effective rate to marginal rate)

@@ -16,7 +16,7 @@ import {
   formatReleaseTime,
   type EventZone,
 } from "@/lib/format";
-import { stanceText } from "@/lib/policy/decisions";
+import { stanceText, votedAgainstRate } from "@/lib/policy/decisions";
 import { paragraphAt, type Paragraph } from "@/lib/policy/text";
 import type { DocumentRow, ForecastRow, PolicyMeetingRow, PolicyRateSettingDetailRow, PolicyVoteRow } from "@/lib/queries/api";
 import { POLICY_START, type Bank } from "@/lib/queries/policy";
@@ -202,7 +202,7 @@ export function voteRows(m: PolicyMeetingRow, votes: readonly PolicyVoteRow[]): 
     .map((v) => {
       const why: string[] = [];
       if (v.is_dissent || (decision !== null && v.voted_change_bps !== null && v.voted_change_bps !== decision)) {
-        if (v.voted_change_bps === null) why.push("not on the rate");
+        if (v.voted_change_bps === null) why.push(votedAgainstRate(v) ? "voted against the rate" : "not on the rate");
         else if (v.voted_change_bps !== decision) why.push(v.voted_change_bps === 0 ? "preferred to hold" : `preferred ${formatBpsChange(v.voted_change_bps)}`);
         if (m.bank === "RBI" && v.stance_vote !== null && v.voted_change_bps === decision) {
           why.push(v.stance_vote === "against" ? "voted against the stance" : `stance: voted ${v.stance_vote}`);

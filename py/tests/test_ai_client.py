@@ -13,6 +13,7 @@ from ai_fakes import FakeClaude, FakeVoyage, claude
 
 from ft.ai import client as ai
 from ft.ai.client import (
+    AIUnavailable,
     CallError,
     Embedder,
     Failed,
@@ -379,6 +380,31 @@ def test_the_voyage_endpoint_comes_from_the_key(monkeypatch):
     monkeypatch.delenv("VOYAGE_API_KEY")
     with pytest.raises(CallError, match="NoKey"):
         Embedder()
+
+
+def test_no_key_a_refused_key_and_no_credits_are_ai_unavailable_not_other_call_errors(monkeypatch):
+    """#197: AIUnavailable (a CallError, so older callers still see a refused call) carries why AI can't be used."""
+    for mode, reason, status in (("401", "auth", 401), ("402", "billing", 402)):
+        fake = FakeClaude([mode])
+        with pytest.raises(AIUnavailable) as e:
+            claude(fake).send(req())
+        assert e.value.reason == reason and e.value.status == status and len(fake.requests) == 1   # not retried
+        assert isinstance(e.value, CallError)
+    for mode in ("400", "429", "529"):                                   # everything else keeps its behaviour
+        with pytest.raises(CallError) as e:
+            claude(FakeClaude([mode])).send(req())
+        assert not isinstance(e.value, AIUnavailable)
+    assert ai.unavailable_reason(400, None, "Your credit balance is too low to access the API") == "billing"
+    assert ai.unavailable_reason(400, {"error": {"type": "invalid_request_error"}}, "bad field") is None
+    assert ai.unavailable_reason(403, None, "") == "auth" and ai.unavailable_reason(500, None, "") is None
+    assert ai.unavailable_reason(200, {"error": {"type": "billing_error"}}, "") == "billing"
+    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
+    with pytest.raises(AIUnavailable) as e:
+        Embedder()
+    assert e.value.reason == "no_key" and e.value.kind == "NoKey"
+    with pytest.raises(AIUnavailable) as e:
+        Embedder(client=FakeVoyage(fail=[VoyageAPIError(401, "bad key")])).embed_documents(["a"])
+    assert e.value.reason == "auth"
 
 
 def test_halfvec_literal():
