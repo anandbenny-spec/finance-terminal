@@ -15,7 +15,7 @@ JOB, ADMIN = dsn("job_writer"), dsn("postgres")
 def test_repo_config_loads():
     tasks = config.load()
     assert set(tasks) == {"policy.calendar", "policy.fed_documents", "policy.rbi_documents", "policy.market_series",
-                          "policy.reactions", "policy.ai_batch", "crypto.coingecko_markets", "equity.universe",
+                          "policy.reactions", "policy.ai_batch", "site.quality_summary", "crypto.coingecko_markets", "equity.universe",
                           "equity.valuation_inputs", "equity.prices", "equity.filings", "equity.corporate_actions",
                           "equity.statements", "equity.shareholding", "equity.metrics", "equity.beta"}
     # the due-rule names are kept as tasks.yaml writes them (Prompt 01 A2)
@@ -100,7 +100,7 @@ def test_build_tasks_configures_registered_classes_and_names_the_rest(tmp_path):
                                "equity.universe",
                                "equity.valuation_inputs",
                                "policy.ai_batch", "policy.calendar", "policy.market_series",
-                               "policy.rbi_documents"]
+                               "policy.rbi_documents", "site.quality_summary"]
 
 
 def test_trigger_and_project_ref():

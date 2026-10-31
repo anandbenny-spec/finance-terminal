@@ -233,6 +233,13 @@ class Plan:
         return self.built[-1][0]
 
 
+# The stable phrases this task writes into a status_reason itself, by the accuracy page's category (ft/quality/reasons.py
+# reads this and the two checks' tables): a reply that stopped early, and the reasons that are the task's own doing, not
+# a failed check (counted as `other` without a warning).
+REASON_PHRASES: dict[str, tuple[str, ...]] = {"stopped": (r"the reply stopped with",)}
+KNOWN_OTHER_PHRASES: tuple[str, ...] = (r"^(rejected|retried): the reply couldn't be stored", r"^stale:")
+
+
 @dataclass
 class Call:
     """One request sent (or refused before sending)."""
