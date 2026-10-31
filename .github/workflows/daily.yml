@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '37 6 * * *'
       timezone: 'Asia/Kolkata'
+    # Issue #105: a weekday evening run, after the Indian close at 15:30, so the ticker tape shows the same day's Nifty 50,
+    # Nifty Bank and Sensex closes. Only policy.market_series is due at it (its rule is `every 8 hours`); every other
+    # daily task keeps `every 20 hours` and skips, so policy.ai_batch never runs here and spends nothing.
+    - cron: '37 16 * * 1-5'
+      timezone: 'Asia/Kolkata'
   workflow_dispatch:
     inputs:
       target:
