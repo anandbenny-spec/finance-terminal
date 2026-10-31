@@ -5,14 +5,14 @@
 // a nested list of 28 px rows under it, labels lined up with the item's, never marked current.
 // usePathname suspends on a route with an unknown dynamic param under Cache Components, so the sidebar renders
 // `NavLinks` inside Suspense with a fallback that marks nothing active (Next 16 docs, usePathname).
-import { HeartPulse, House, Info, Landmark, LayoutDashboard, Tags, type LucideIcon } from "lucide-react";
+import { BadgeCheck, HeartPulse, House, Info, Landmark, LayoutDashboard, Tags, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "cn";
 import { useAdmin } from "@/components/shell/admin";
 import { activeHref, visibleGroups, type NavIcon } from "@/lib/shell/nav";
 
-const ICONS: Record<NavIcon, LucideIcon> = { home: House, policy: Landmark, about: Info, admin: LayoutDashboard, health: HeartPulse, labelling: Tags };
+const ICONS: Record<NavIcon, LucideIcon> = { home: House, policy: Landmark, about: Info, admin: LayoutDashboard, health: HeartPulse, labelling: Tags, accuracy: BadgeCheck };
 
 export function NavList({ active, onNavigate }: { active: string | null; onNavigate?: () => void }) {
   const { isAdmin } = useAdmin();

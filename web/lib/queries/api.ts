@@ -214,6 +214,28 @@ export type PolicyRateSettingRow = {
   change_bps: number;
 };
 
+/** api.quality_summary (0021, ACC-1): counts by module and period, no task names, run ids or error text. `value` is a
+ * count, or a share from 0 to 1 for `freshness_on_time_share` (`n` = the task-days it is out of; `label` "derived"). */
+export type QualitySummaryRow = {
+  module: string;
+  period: "30d" | "90d" | "all";
+  measure: string;
+  value: number;
+  n: number | null;
+  label: "derived" | null;
+  as_of: string;
+};
+
+/** api.eval_summary (0004): the passing evaluation runs, site-wide (no module column). */
+export type EvalSummaryRow = {
+  eval_set: string;
+  model: string;
+  metric: string;
+  value: number;
+  n_items: number | null;
+  run_at: string;
+};
+
 /** One column's note on a snapshot row (api.screener `notes`): its label and the reason it is held back, either may be null. */
 export type ScreenerNote = { label: string | null; reason: string | null };
 
@@ -300,6 +322,8 @@ export type ApiDatabase = {
       ai_citations: View<AiCitationRow>;
       field_policy: View<FieldPolicyRow>;
       market_reactions: View<MarketReactionRow>;
+      quality_summary: View<QualitySummaryRow>;
+      eval_summary: View<EvalSummaryRow>;
       screener: View<ScreenerRow>;
       index_members: View<IndexMemberRow>;
     };

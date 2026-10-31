@@ -22,12 +22,12 @@ describe("sidebar", () => {
     expect(visibleGroups(false).map((g) => [g.heading, g.items.map((i) => i.label)])).toEqual([
       ["Overview", ["Start here"]],
       ["Macro and policy", ["Fed vs RBI"]],
-      ["About", ["About and privacy"]],
+      ["About", ["About and privacy", "Accuracy"]],
     ]);
     expect(visibleGroups(true).map((g) => [g.heading, g.items.map((i) => i.label)])).toEqual([
       ["Overview", ["Start here"]],
       ["Macro and policy", ["Fed vs RBI"]],
-      ["About", ["About and privacy"]],
+      ["About", ["About and privacy", "Accuracy"]],
       ["Admin", ["Admin", "Health", "Labelling"]],
     ]);
   });
@@ -54,6 +54,7 @@ describe("sidebar", () => {
       "/policy",
       ...FED_VS_RBI_SECTIONS.map((s) => s.href),
       "/about",
+      "/accuracy",
       "/admin",
       "/admin/health",
       "/admin/labelling",
