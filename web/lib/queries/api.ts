@@ -462,6 +462,44 @@ export type PromoterHoldingRow = {
   nse_pct: Num;
 };
 
+/** api.company_valuation (0024): a company's latest run of each kind. `status` is null while the model fields are hidden; `inputs` is the run's stored inputs. */
+export type CompanyValuationRow = {
+  slug: string;
+  name: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  valuation_family: string | null;
+  kind: "reverse_dcf" | "implied_roe" | "dcf_default";
+  as_of: string;
+  status: "solved" | "no_solution" | "not_applicable" | null;
+  state: "value" | "held" | "not_applicable";
+  reason: string | null;
+  price: Num;
+  result: Num;
+  result_label: string | null;
+  delivered: Num;
+  delivered_reason: string | null;
+  inputs: Record<string, unknown> | null;
+  model_version: string | null;
+  source_key: string;
+};
+
+/** api.valuation_scenarios (0024): one stored cell of the latest default run's grid (growth × EBIT margin × WACC, fractions). */
+export type ValuationScenarioRow = {
+  slug: string;
+  name: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  as_of: string;
+  growth: Num;
+  ebit_margin: Num;
+  wacc: Num;
+  value_per_share: Num;
+  state: "value" | "held" | "not_applicable";
+  reason: string | null;
+  label: string | null;
+};
+
 type View<Row> = { Row: Row; Relationships: [] };
 
 /** The slice of the `api` schema typed so far, for supabase-js: the shell's views (C2), the policy pages' (A1, C3, C4, Pass 1b). */
@@ -497,6 +535,8 @@ export type ApiDatabase = {
       company_financials: View<CompanyFinancialRow>;
       company_corporate_actions: View<CorporateActionRow>;
       company_promoter_holding: View<PromoterHoldingRow>;
+      company_valuation: View<CompanyValuationRow>;
+      valuation_scenarios: View<ValuationScenarioRow>;
     };
     Functions: { [_ in never]: never };
   };

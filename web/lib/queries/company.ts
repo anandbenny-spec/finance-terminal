@@ -15,14 +15,22 @@ import type {
   CompanyMetricRow,
   CompanyPriceRow,
   CompanyRow,
+  CompanyValuationRow,
   CorporateActionRow,
+  FieldPolicyRow,
+  ForecastRow,
   PeerCompRow,
   PromoterHoldingRow,
+  SeriesRow,
+  ValuationScenarioRow,
 } from "@/lib/queries/api";
 import { indexesOf, readIndexMembers } from "@/lib/queries/equity";
+import { readFieldPolicy, readSeriesInfo, type PolicyDb } from "@/lib/queries/policy";
 import { readAll } from "@/lib/queries/read";
 import { publicClient } from "@/lib/supabase/public";
 import type { TabId } from "@/lib/equity/company";
+import { IMF_CPI, IMF_GDP } from "@/lib/equity/valuation";
+import { IN_10Y } from "@/lib/policy/longrates";
 
 export type CompanyDb = SupabaseClient<ApiDatabase, "api">;
 
@@ -92,12 +100,56 @@ export async function readPromoterHolding(db: CompanyDb, slug: string): Promise<
   );
 }
 
+export async function readValuationRuns(db: CompanyDb, slug: string): Promise<CompanyValuationRow[]> {
+  return readAll<CompanyValuationRow>("api.company_valuation", (from, to) =>
+    db.from("company_valuation").select("*", { count: "exact" }).eq("slug", slug).order("kind").range(from, to),
+  );
+}
+
+/** The latest default run's stored grid: at most 375 cells (growth × EBIT margin × WACC). */
+export async function readScenarios(db: CompanyDb, slug: string): Promise<ValuationScenarioRow[]> {
+  return readAll<ValuationScenarioRow>("api.valuation_scenarios", (from, to) =>
+    db
+      .from("valuation_scenarios")
+      .select("*", { count: "exact" })
+      .eq("slug", slug)
+      .order("growth")
+      .order("ebit_margin")
+      .order("wacc")
+      .range(from, to),
+  );
+}
+
+/** The IMF's forecasts of India's real GDP growth and CPI inflation, every edition stored. */
+export async function readImfForecasts(db: CompanyDb): Promise<ForecastRow[]> {
+  return readAll<ForecastRow>("api.forecasts imf", (from, to) =>
+    db
+      .from("forecasts")
+      .select("series_key, series_name, vintage_date, target_label, target_start, target_end, value, value_low, value_high, label, document_id, char_start, char_end", { count: "exact" })
+      .in("series_key", [IMF_GDP, IMF_CPI])
+      .order("series_key")
+      .order("vintage_date")
+      .order("target_label")
+      .range(from, to),
+  );
+}
+
 export type OverviewData = { prices: CompanyPriceRow[]; metrics: CompanyMetricRow[]; peers: PeerCompRow[] };
 export type FinancialsData = {
   financials: CompanyFinancialRow[];
   metrics: CompanyMetricRow[];
   /** Null when the promoter-holding view can't be read (not pushed yet). */
   promoter: PromoterHoldingRow[] | null;
+};
+
+export type ValuationData = {
+  runs: CompanyValuationRow[];
+  scenarios: ValuationScenarioRow[];
+  policies: FieldPolicyRow[];
+  /** Null when the IMF forecasts can't be read; the rest of the tab doesn't depend on them. */
+  imf: ForecastRow[] | null;
+  /** The IMF series' and the India 10-year's source lines; null when they can't be read. */
+  series: SeriesRow[] | null;
 };
 
 export type CompanyPageData =
@@ -111,6 +163,7 @@ export type CompanyPageData =
       tab: TabId;
       overview: OverviewData | null;
       financials: FinancialsData | null;
+      valuation: ValuationData | null;
     }
   | { ok: false; readAt: string };
 
@@ -153,7 +206,23 @@ export async function readCompanyPage(slug: string, tab: TabId): Promise<Company
     const indexNames = Object.fromEntries(indexesOf(members).map((i) => [i.slug, i.name]));
     let overview: OverviewData | null = null;
     let financials: FinancialsData | null = null;
-    if (tab === "overview") {
+    let valuation: ValuationData | null = null;
+    if (tab === "valuation") {
+      const [runs, scenarios, policies, imf, series] = await Promise.all([
+        readValuationRuns(db, slug),
+        readScenarios(db, slug),
+        readFieldPolicy(db as PolicyDb),
+        readImfForecasts(db).catch((error: unknown) => {
+          logFailure(`${slug} IMF forecasts`, error);
+          return null;
+        }),
+        readSeriesInfo(db as PolicyDb, [IMF_GDP, IMF_CPI, IN_10Y]).catch((error: unknown) => {
+          logFailure(`${slug} valuation series`, error);
+          return null;
+        }),
+      ]);
+      valuation = { runs, scenarios, policies, imf, series };
+    } else if (tab === "overview") {
       const [prices, metrics, peers] = await Promise.all([readCompanyPrices(db, slug), readCompanyMetrics(db, slug), readPeers(db, slug)]);
       overview = { prices, metrics, peers };
     } else {
@@ -167,7 +236,7 @@ export async function readCompanyPage(slug: string, tab: TabId): Promise<Company
       ]);
       financials = { financials: rows, metrics, promoter };
     }
-    return { ok: true, readAt, today: dateInZone(readAt, "Asia/Kolkata"), company, actions, indexNames, tab, overview, financials };
+    return { ok: true, readAt, today: dateInZone(readAt, "Asia/Kolkata"), company, actions, indexNames, tab, overview, financials, valuation };
   } catch (error) {
     logFailure(slug, error);
     return { ok: false, readAt };

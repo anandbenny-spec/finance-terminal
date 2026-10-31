@@ -43,10 +43,10 @@ describe("the header", () => {
     expect(t).not.toContain("+1.67%");
     expect(t).toContain("Day's change held back");
   });
-  it("offers only the Overview and Financials tabs, the current one marked", () => {
+  it("offers the Overview, Financials and Valuation tabs, the current one marked, and no Rate decisions tab yet", () => {
     expect(out).toContain('aria-current="page"');
     expect(out).toContain('href="/companies/tcs?tab=financials"');
-    expect(text(out)).not.toContain("Valuation");
+    expect(out).toContain('href="/companies/tcs?tab=valuation"');
     expect(text(out)).not.toContain("Rate decisions");
   });
   it("says Source: NSE and carries no link to module 1's pages", () => {

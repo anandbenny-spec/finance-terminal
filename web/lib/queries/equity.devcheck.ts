@@ -5,7 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 import type { ApiDatabase } from "@/lib/queries/api";
-import { readCompany, readCompanyMetrics, readCompanyPrices, readFinancials, readPeers } from "@/lib/queries/company";
+import { readCompany, readCompanyMetrics, readCompanyPrices, readFinancials, readImfForecasts, readPeers, readScenarios, readValuationRuns } from "@/lib/queries/company";
 import { readIndexMembers, readScreener, type EquityDb } from "@/lib/queries/equity";
 
 function client(): EquityDb {
@@ -69,5 +69,23 @@ describe("the dev project (2A-19, the company page)", () => {
     expect(metrics.length).toBe(await held(db.from("company_metrics").select("slug", { count: "exact", head: true }).eq("slug", slug)));
     expect(peers.length).toBe(await held(db.from("peer_comps").select("company_slug", { count: "exact", head: true }).eq("company_slug", slug)));
     expect(financials.length).toBe(await held(db.from("company_financials").select("slug", { count: "exact", head: true }).eq("slug", slug)));
+  });
+});
+
+describe("the dev project (2A-20, the Valuation tab)", () => {
+  const db = client();
+
+  it("reads a company's valuation runs and its stored grid against their exact counts", async () => {
+    const slug = (await readScreener(db))[0].slug;
+    const [runs, scenarios] = await Promise.all([readValuationRuns(db, slug), readScenarios(db, slug)]);
+    expect(runs.length).toBe(await held(db.from("company_valuation").select("slug", { count: "exact", head: true }).eq("slug", slug)));
+    expect(scenarios.length).toBe(await held(db.from("valuation_scenarios").select("slug", { count: "exact", head: true }).eq("slug", slug)));
+    expect(scenarios.length).toBeLessThanOrEqual(375);
+  });
+
+  it("reads the IMF forecasts of India's growth and inflation whole", async () => {
+    const rows = await readImfForecasts(db);
+    expect(rows.length, "has 2A-05 stored the IMF series on dev?").toBeGreaterThan(0);
+    expect(rows.every((r) => r.series_key.startsWith("imf."))).toBe(true);
   });
 });

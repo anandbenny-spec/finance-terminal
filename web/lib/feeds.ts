@@ -60,6 +60,8 @@ export const PREVIEW_FEEDS = {
   screener: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
   // /companies/[slug] (2A-19): prices, filings, derived metrics and betas; the header and chips come from the universe.
   company: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
+  // The Valuation tab (2A-20): the stored runs and grid, built from the same filings, prices and betas plus the rates inputs.
+  valuation: ["equity.valuation_inputs", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
   accuracy: ["site.quality_summary"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 
