@@ -124,6 +124,32 @@ class CallError(AIError):
         self.kind, self.status = kind, status
 
 
+class AIUnavailable(CallError):
+    """AI can't be used at all right now, so the task skips instead of failing (#197): `reason` is `no_key` (the key
+    is unset or empty), `auth` (401/403: the key is wrong or revoked) or `billing` (402, a billing error, or the
+    credit balance is too low). A CallError, so a caller that doesn't know it still treats it as a refused call.
+    Not billed. The monthly budget switch is not this class: it stops a run through `Fetched.stopped`."""
+
+    def __init__(self, reason: str, kind: str, status: int | None, message: str):
+        super().__init__(kind, status, message)
+        self.reason = reason
+
+
+def unavailable_reason(status: int | None, body=None, message: str = "") -> str | None:
+    """`auth` or `billing` for an API answer that means no AI from now on, else None. The error's type in the body is
+    matched where the API gives one (`billing_error`, `authentication_error`, `permission_error`); a 400 whose message
+    says the credit balance is too low is the API's documented billing refusal."""
+    err = (body or {}).get("error") if isinstance(body, dict) else None
+    etype = err.get("type") if isinstance(err, dict) else None
+    if status == 402 or etype == "billing_error":
+        return "billing"
+    if status == 400 and "credit balance is too low" in (message or "").lower():
+        return "billing"
+    if status in (401, 403) or etype in ("authentication_error", "permission_error"):
+        return "auth"
+    return None
+
+
 class Failed(AIError):
     """The reply didn't end its turn (max_tokens, refusal, ...). Billed: `reply` has the usage and cost."""
 
@@ -453,8 +479,11 @@ class Client:
                 return fn()
             except anthropic.APIStatusError as e:
                 status = e.status_code
+                msg = str(getattr(e, "message", e))
+                if (why := unavailable_reason(status, getattr(e, "body", None), msg)) is not None:
+                    raise AIUnavailable(why, type(e).__name__, status, msg) from None
                 if status not in retry_status or attempt >= self.retries:
-                    raise CallError(type(e).__name__, status, str(getattr(e, "message", e))) from None
+                    raise CallError(type(e).__name__, status, msg) from None
                 wait = _retry_after(getattr(e.response, "headers", None))
             except anthropic.APIConnectionError as e:   # includes timeouts
                 if not retry_lost or attempt >= self.retries:
@@ -627,7 +656,7 @@ class Embedder:
         if client is None:
             key = (api_key or os.environ.get("VOYAGE_API_KEY", "")).strip()
             if not key:
-                raise CallError("NoKey", None, "VOYAGE_API_KEY is not set")
+                raise AIUnavailable("no_key", "NoKey", None, "VOYAGE_API_KEY is not set")
             client = VoyageHTTP(key)
         self._vo, self.sleep, self.retries, self.max_wait = client, sleep, retries, max_wait
 
@@ -646,6 +675,9 @@ class Embedder:
                                       output_dtype="float", output_dimension=DIMENSION)
             except VoyageAPIError as e:
                 if e.status not in RETRY_STATUS or attempt >= self.retries:
+                    if e.status in (401, 402, 403):
+                        raise AIUnavailable("billing" if e.status == 402 else "auth", e.kind, e.status,
+                                            str(e)) from None
                     raise CallError(e.kind, e.status, str(e)) from None
                 wait = _retry_after(e.headers)
             except httpx.TransportError as e:            # timeouts, lost connections

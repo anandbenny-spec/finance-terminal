@@ -6,6 +6,11 @@ nothing records success with 0 rows. The loop ends when no watch task is due any
 is stored and the AI step has run (its rule, after_decision_document, follows the same pattern: Architecture 03
 §1.3), or the meeting's window has closed (due.py: 40 minutes after the Fed's release, 60 after the RBI's). On
 a non-decision day the first pass finds nothing due and the run exits at once.
+
+A window that has already closed is a catch-up (due.py; issue #158): a task due only as a catch-up gets the first pass
+and nothing more, so a run that GitHub started late, or the extra runs after the decision, does one pass, loads the
+decision if it is out, runs the AI step after it, and ends. Such a Due has no `until`, so nothing keeps the loop polling
+for it, and the later polls (which would run it again every 2 minutes while another bank's window is open) leave it out.
 """
 from __future__ import annotations
 
@@ -28,7 +33,8 @@ def watch(job: JobRun, tasks: list[Task], *, sleep: Callable[[float], None] = ti
         poll += 1
         started = job.clock()
         print(f"poll {poll} at {started:%Y-%m-%d %H:%M:%S %Z}")
-        job.run_pass(tasks, record_skips=poll == 1)               # later polls leave no rows for tasks not due
+        # Later polls leave no rows for tasks not due, and run no catch-up: that is the first pass's.
+        job.run_pass(tasks, record_skips=poll == 1, catch_up=poll == 1)
         # Only a decision-day window keeps the loop polling (a task due under any other rule ran in this pass).
         still = [(t, d) for t in tasks if (d := t.due(job.db, "watch", job.clock())).due and d.until is not None]
         if not still:

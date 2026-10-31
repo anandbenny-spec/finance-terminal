@@ -1,0 +1,18 @@
+# Shareholding-pattern files whose promoter figure is outside 0-100 and whose own share counts can't confirm it as a
+# percent filed for a fraction (so `sh.corrected` doesn't apply). Held back by name: no row is stored (the "hold back
+# the field, not the module" rule). Approved by Anand on #116, 1 Nov 2026 (the 15 files of the 2021 window, the 6 Oct
+# 2021 to 18 Jan 2022 filings). Any out-of-range file not listed here still fails the blocking `promoter_range` check.
+# The share-count ratio and NSE's figure for each are in the handoff on #116.
+held:
+  - {file: SHP_160885_523410_06102021085435_WEB.xml, company: "SBIN", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_161426_528869_12102021104457_WEB.xml, company: "AXISBANK", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_161942_533561_14102021063914_WEB.xml, company: "CIPLA", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_161966_533836_14102021100817_WEB.xml, company: "TATACONSUM", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_162639_539128_19102021074023_WEB.xml, company: "HDFCBANK", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_163043_542894_21102021023941_WEB.xml, company: "M&M", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_163182_544379_21102021092856_WEB.xml, company: "RELIANCE", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_163339_571599_18122021033851_WEB.xml, company: "RELIANCE", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_163978_581800_10012022085031_WEB.xml, company: "HDFCBANK", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_164863_590876_17012022091237_WEB.xml, company: "CIPLA", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_164869_590936_18012022020754_WEB.xml, company: "SBIN", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}
+  - {file: SHP_165045_592375_18012022064200_WEB.xml, company: "AXISBANK", reason: "promoter figure outside 0-100; the file's own share counts do not confirm it (approved 1 Nov 2026)"}

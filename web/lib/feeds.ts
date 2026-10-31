@@ -12,6 +12,12 @@ export type TaskKey =
   | "policy.rbi_documents"
   | "policy.ai_batch"
   | "policy.reactions"
+  | "equity.universe"
+  | "equity.valuation_inputs"
+  | "equity.prices"
+  | "equity.statements"
+  | "equity.metrics"
+  | "equity.beta"
   | "site.quality_summary";
 
 /** Live surfaces and their feeding tasks. */
@@ -44,10 +50,15 @@ export function liveTasks(feeds: Record<string, readonly TaskKey[]> = FEEDS): Ta
 }
 
 /**
- * Surfaces that are live but whose task hasn't run on production yet (#135). They are NOT in FEEDS, so the status bar
- * doesn't count a task with no freshness row as stale. Once production's first `site.quality_summary` run has
- * succeeded, move `accuracy` into FEEDS with a one-line pull request.
+ * Module 2's surfaces while they are being built (Spec 02A §8; #124's amendment, 28 Oct 2026). The status bar counts
+ * every task in FEEDS, and a task with no freshness row counts as stale, so a 2A surface in FEEDS would read "sources
+ * stale" on the shared link until 2A-26's production runs. These stay out of FEEDS (so `liveTasks()` ignores them);
+ * a panel's Freshness reads its tasks from here, and 2A-26 moves them into FEEDS.
  */
 export const PREVIEW_FEEDS = {
+  // /screener (2A-18): the latest weekly snapshot, built from the metrics, prices, statements and beta.
+  screener: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
   accuracy: ["site.quality_summary"],
 } as const satisfies Record<string, readonly TaskKey[]>;
+
+export type PreviewSurface = keyof typeof PREVIEW_FEEDS;

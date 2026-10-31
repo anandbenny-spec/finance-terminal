@@ -37,10 +37,15 @@ rows wait (`baseline_change`, W) and the baseline stays unpublished.
 **Minutes and transcripts** store the raw file, the document and its chunks (a transcript's by speaker), published once
 their checks pass. A transcript's text is the PDF's (Spec 01 §1.1).
 
-**Votes:** a named statement (to Apr 2026) gives every member's vote; a tally statement (from Jun 2026) gives none, and
-the minutes do: every name in "Voting for this action" gets the decision, each dissenter the change the statement's
-"Voting against … who preferred …" clause states, verbatim (decided by Anand, 23 Oct 2026). For a named statement the
-minutes are a cross-check (`minutes_votes`, W). The roster is config/members.yaml.
+**Votes:** a named statement (to Apr 2026) gives every member's vote; a tally statement (from Jun 2026) names only its
+dissenters. Their rows are written with the statement (decided by Anand, 29 Oct 2026, #159): each dissenter gets the
+change the statement's "Voting against … who preferred …" clause states, verbatim (decided by Anand, 23 Oct 2026), with
+the statement as its document and the clause's span. The minutes then add the members who voted for the decision
+(every name in "Voting for this action"); the dissenters' rows are the same rows, so the minutes leave them unchanged.
+Until the minutes, a meeting has its dissenters' rows only (a unanimous tally statement, none). A stored tally statement
+whose meeting has no vote rows (stored before this) gets its dissenters from the stored text on the next daily or
+refresh run, with no request. For a named statement the minutes are a cross-check (`minutes_votes`, W). The roster is
+config/members.yaml.
 """
 from __future__ import annotations
 
@@ -98,6 +103,7 @@ class Meeting:
     transcript_raw: int | None = None
     transcript_url: str | None = None    # the PDF's
     has_press_conference: bool | None = None
+    votes: int = 0                       # vote rows stored for the meeting
 
     def released(self, now: datetime) -> bool:
         return self.occurs_at <= now if self.occurs_at else self.decision_date < now.astimezone(NY).date()
@@ -145,6 +151,7 @@ class Outcome:
     how: str | None = None
     votes: int = 0
     dissents: int = 0
+    tally_dissents: int = 0              # a tally statement: the dissenters' rows written from it (the minutes add the rest)
     rates: bool = False
 
 
@@ -212,7 +219,8 @@ class FedDocuments(Task):
         rows = db.execute(
             f"""select e.id, e.slug, coalesce(e.ends_on, e.starts_on), e.occurs_at, e.status, e.is_published,
                        d.id, d.raw_file_id, d.source_url, e.starts_on, mi.id, mi.raw_file_id, mi.source_url,
-                       tr.id, tr.raw_file_id, tr.source_url, m.has_press_conference
+                       tr.id, tr.raw_file_id, tr.source_url, m.has_press_conference,
+                       (select count(*) from policy.vote v where v.meeting_event_id = e.id)
                   from core.event e
                   join core.entity b on b.id = e.entity_id and b.kind = 'central_bank' and b.slug = 'fed'
                   join policy.meeting m on m.event_id = e.id
@@ -224,7 +232,8 @@ class FedDocuments(Task):
                  order by coalesce(e.ends_on, e.starts_on), e.id""").fetchall()
         rows = [r for r in rows if self.scope is None or r[1] in self.scope]
         out = [Meeting(*r[:9], baseline=False, starts_on=r[9], minutes_id=r[10], minutes_raw=r[11], minutes_url=r[12],
-                       transcript_id=r[13], transcript_raw=r[14], transcript_url=r[15], has_press_conference=r[16])
+                       transcript_id=r[13], transcript_raw=r[14], transcript_url=r[15], has_press_conference=r[16],
+                       votes=r[17])
                for r in rows]
         if out and out[0].decision_date < self.first_day:
             out[0] = replace(out[0], baseline=True)
@@ -244,8 +253,10 @@ class FedDocuments(Task):
             targets = [m for m in allm if m.released(now) and m.decision_date <= until
                        and (ctx.since is None or m.decision_date >= ctx.since)]
         else:                                                         # daily, refresh: catch up, and retry a meeting
-            targets = [m for m in allm if (m.statement_id is None or m.status != "held") and m.released(now)
-                       and m.decision_date >= today - CATCH_UP]       # stored only as another's diff base
+            due = self._dissents_due(f, allm, now, today) if wf != "watch" else set()
+            targets = [m for m in allm if (m.statement_id is None or m.status != "held" or m.slug in due)
+                       and m.released(now) and m.decision_date >= today - CATCH_UP]   # held: stored as a diff base only,
+            #                                                                          or its dissenters' rows are due
         # Minutes and transcripts (never in watch): the backfill's range, or the daily run's last 60 days.
         if ctx.meeting is not None or wf == "watch":
             docs: list[Meeting] = []
@@ -321,6 +332,25 @@ class FedDocuments(Task):
         for m in docs:
             self._docs(f, m, fetched, wf, today)
         return fetched
+
+    @staticmethod
+    def _dissents_due(f, allm: list[Meeting], now: datetime, today: date) -> set[str]:
+        """Slugs of stored tally statements that name dissenters while their meeting has no vote rows: the statements
+        stored before the statement path wrote those rows (the 28 Oct 2026 meeting). They are read back from the stored
+        raw file, never fetched, and reloaded like a backfill reloads a stored statement. A meeting is left out if the
+        statement before it isn't stored (the reload would fail on its change, and one meeting mustn't block the run)."""
+        due = set()
+        for i, m in enumerate(allm):
+            if (m.statement_id is None or m.statement_raw is None or m.votes or m.baseline or i == 0
+                    or allm[i - 1].statement_id is None or not m.released(now) or m.decision_date < today - CATCH_UP):
+                continue
+            try:
+                st = fed_statement.parse(f.read(m.statement_raw), m.statement_url)
+            except StatementError:
+                continue                                              # the reload reports an unreadable statement
+            if st.votes is not None and st.votes.format == "tally" and st.votes.dissents:
+                due.add(m.slug)
+        return due
 
     def _again(self, f, url: str, fetched: Fetched) -> Page | None:
         """A stored document's page fetched again (conditional): the page if its bytes changed, else None."""
@@ -504,13 +534,16 @@ class FedDocuments(Task):
                     (m.event_id, instrument, value, chg, doc_id, s, e)).rowcount
             o.rates = True
 
-        # Votes: every member a named statement lists (Spec 01 §2, "Fed votes"); a tally statement's come from the
-        # minutes (_minutes).
+        # Votes: every member a named statement lists (Spec 01 §2, "Fed votes"). A tally statement names only its
+        # dissenters: their rows now (#159), the members voting for come from the minutes (_minutes).
         v = st.votes
         if v.format == "named" and previous is not None:
             rows, nv = self._votes(tx, m, st, previous, change[1], roster, ids, doc_id, checks)
             n += nv
             o.votes, o.dissents = rows, len(v.dissents)
+        elif v.format == "tally" and previous is not None:
+            nv, o.tally_dissents = self._tally_dissents(tx, m, st, previous, change[1], roster, ids, doc_id, checks)
+            n += nv
 
         # The meeting is held; published with its document once its rates are stored.
         publish = change is not None
@@ -603,6 +636,50 @@ class FedDocuments(Task):
         return len(want), self._write_votes(tx, m.event_id, want)
 
     @staticmethod
+    def _dissent_rows(st: Statement, previous: Range, decided_bps: int, roster: members.Roster, ids: dict[str, int],
+                      doc_id: int) -> tuple[dict[int, VoteRow], list[tuple[members.Member, str]], list[str], list[str]]:
+        """The rows a tally statement gives, for its named dissenters only: (rows by member id, the (member, name) of
+        each, names the roster doesn't match, problems with their preferences). A row is what `_tally_votes` writes for
+        the same dissenter once the minutes are out: the preference and clause from the statement, the statement's
+        document, the 'Voting against' sentence's span."""
+        sv = st.votes
+        want: dict[int, VoteRow] = {}
+        who: list[tuple[members.Member, str]] = []
+        unknown, problems = [], []
+        for ds in sv.dissents:
+            mem = roster.match("FED", ds.name)
+            if mem is None:
+                unknown.append(ds.name)
+                continue
+            want[ids[mem.slug]] = VoteRow(FedDocuments._preference(ds, previous, decided_bps, problems), True, ds.text,
+                                          doc_id, sv.against_sentence)
+            who.append((mem, ds.name))
+        return want, who, unknown, problems
+
+    def _tally_dissents(self, tx, m: Meeting, st: Statement, previous: Range, decided_bps: int, roster: members.Roster,
+                        ids: dict[str, int], doc_id: int, checks: list[Check]) -> tuple[int, int]:
+        """A tally statement (from Jun 2026) names only its dissenters, so they are the only members whose vote it
+        states: their rows are written with the statement, and the minutes add the members voting for (Anand, 29 Oct
+        2026, #159). The blocking checks are the minutes path's: every name is on the roster (`voters_on_roster`), and
+        the dissenters named are the tally's 'against' count (`dissents_match`). (rows written, dissenters)."""
+        want, who, unknown, problems = self._dissent_rows(st, previous, decided_bps, roster, ids, doc_id)
+        checks.append(Check("voters_on_roster", not unknown, f"{m.slug}: not in config/members.yaml: "
+                            + ", ".join(unknown) if unknown else f"{m.slug}: {len(want)} dissenters"))
+        if unknown:
+            raise MeetingFailed(checks)
+        against = st.votes.tally[1]
+        ok = not problems and len(want) == against
+        checks.append(Check("dissents_match", ok, f"{m.slug}: " + ("; ".join(problems) if problems else
+                                                                  f"{len(want)} dissenters named, {against} against "
+                                                                  "in the tally")))
+        if not ok:
+            raise MeetingFailed(checks)
+        odd = self._terms(m.decision_date, [(mem, name, any(fed_statement._same(a, name) for a in st.votes.alternates))
+                                            for mem, name in who])
+        checks.append(Check("voter_terms", not odd, f"{m.slug}: " + "; ".join(odd), blocking=False))
+        return self._write_votes(tx, m.event_id, want, only_dissents=True), len(want)
+
+    @staticmethod
     def _preference(ds: fed_statement.Dissent, previous: Range, decided_bps: int, problems: list[str]) -> int | None:
         try:
             pref = ds.preference.change_bps(previous)
@@ -629,10 +706,13 @@ class FedDocuments(Task):
                            + (", but voted as an alternate" if alternate else ""))
         return odd
 
-    def _write_votes(self, tx, event_id: int, want: dict[int, VoteRow]) -> int:
+    def _write_votes(self, tx, event_id: int, want: dict[int, VoteRow], *, only_dissents: bool = False) -> int:
+        """Stores `want` and removes the meeting's other rows. `only_dissents` (a tally statement's rows): only the
+        dissenters' rows are compared, so the members voting for, which the minutes wrote, stay."""
         n = 0
-        stored = {r[0] for r in tx.execute("select member_id from policy.vote where meeting_event_id = %s",
-                                           (event_id,)).fetchall()}
+        stored = {r[0] for r in tx.execute(
+            "select member_id from policy.vote where meeting_event_id = %s" + (" and is_dissent" if only_dissents else ""),
+            (event_id,)).fetchall()}
         for gone in stored - set(want):
             n += tx.execute("delete from policy.vote where meeting_event_id = %s and member_id = %s",
                             (event_id, gone)).rowcount
@@ -889,13 +969,15 @@ class FedDocuments(Task):
             ev_status, ev_pub, doc_pub, chars, chunks, diffs, rates, votes, dissents = row
             expect_rates = 2 if o.rates else 0
             named = o.statement.votes.format == "named"
+            expect_dissents = o.dissents if named else o.tally_dissents
             bad = [what for what, ok in (
                 ("not held", ev_status == "held"), ("text", chars == o.statement.text.char_count), ("chunks", chunks > 0),
                 ("diff", diffs == (0 if baseline else 1)), ("rates", rates == expect_rates),
                 ("published", (ev_pub and doc_pub) if o.rates else not doc_pub),
-                # a tally statement's votes come from the minutes (documents_stored checks those)
+                # a tally statement gives only its dissenters' rows; the rest come from the minutes (documents_stored
+                # checks those), which leave the dissenters' rows as they are
                 ("votes", not named or votes == (o.votes if o.rates else 0)),
-                ("dissents", not named or dissents == (o.dissents if o.rates else 0))) if not ok]
+                ("dissents", dissents == (expect_dissents if o.rates else 0))) if not ok]
             if bad:
                 wrong.append(f"{o.slug}: {', '.join(bad)}")
         out.append(Check("statements_stored", not wrong, "; ".join(wrong) if wrong

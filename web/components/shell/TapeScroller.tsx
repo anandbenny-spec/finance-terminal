@@ -1,6 +1,7 @@
 "use client";
 
-// The tape's sideways scroll (Design 01 §1.7, §4.1): it never moves by itself; when the items overflow, the strip
+// The tape's sideways scroll below lg (Design 01 §1.7, §4.1); from lg the tape wraps instead and nothing overflows
+// (1 Nov 2026, #227). It never moves by itself; when the items overflow, the strip
 // scrolls under touch, trackpad or the keyboard (each item is focusable), and an edge fades where more items lie.
 // The scroller is `relative` so the items' screen-reader text (sr-only, absolutely positioned) stays inside it
 // instead of widening the page.
@@ -28,8 +29,8 @@ export function TapeScroller({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <div className="relative h-full min-w-0 flex-1">
-      <div ref={ref} className="relative h-full overflow-x-auto overflow-y-hidden">
+    <div className="relative min-w-0 flex-1">
+      <div ref={ref} className="relative overflow-x-auto overflow-y-hidden lg:overflow-x-visible lg:overflow-y-visible">
         {children}
       </div>
       {fade.start && (

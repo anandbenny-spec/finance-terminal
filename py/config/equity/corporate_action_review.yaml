@@ -21,4 +21,431 @@
 # Reviews are done with the evidence on the job's issue (#113 for the first ones); Anand reviews them when he chooses
 # and removes what he doesn't accept. An entry that doesn't parse fails the task's run.
 releases: []
-jumps: []
+# The first review (#113, lane O build session, 31 Oct 2026; dev backfill run 41131798236, task_run 76): no factor was
+# held, so no release; all 70 unexplained jumps from 1 Jan 2019 to 30 Oct 2026 are real moves. Each was checked on dev:
+# NSE's record has no split, bonus, consolidation, rights issue, demerger or restructuring for that company within 30
+# days either side (BSE's 2:1 bonus of 21 Mar 2022, applied, is eleven days after its 10 Mar move, and a bonus lowers the
+# price), so none is an unrecorded share-count change. Moves are ln(close / previous close), as the check computes
+# them; "Nifty 50" is the same day's ln move of yf.^NSEI in core.observation. Sources are named where the move is the
+# company's own.
+jumps:
+  - company: tmpv
+    date: 2019-02-08
+    verdict: real move
+    note: "Q3 FY19 results (7 Feb 2019) with a GBP 3.1 billion JLR impairment; Nifty 50 -1.1% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adanient
+    date: 2019-05-20
+    verdict: real move
+    note: "exit polls predicting the NDA's re-election lifted Adani group stocks (Business Standard, 20 May 2019); Nifty 50 +3.6%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: infy
+    date: 2019-10-22
+    verdict: real move
+    note: "whistleblower complaint against the CEO and CFO, made public on 21 Oct 2019; Nifty 50 -0.6%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: tmpv
+    date: 2019-10-27
+    verdict: real move
+    note: "Muhurat session rally after the Q2 FY20 results (Business Standard, 27 Oct 2019: Tata Motors up 16-18%)"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: tmpv
+    date: 2019-10-29
+    verdict: real move
+    note: "second day of the post-results rally; Nifty 50 +1.7%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: ongc
+    date: 2020-03-09
+    verdict: real move
+    note: "oil-price crash on the Saudi-Russia price war; Nifty 50 -5.0%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adanient
+    date: 2020-03-12
+    verdict: real move
+    note: "COVID-19 sell-off; Nifty 50 -8.7%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: shriramfin
+    date: 2020-03-12
+    verdict: real move
+    note: "COVID-19 sell-off; Nifty 50 -8.7%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: coalindia
+    date: 2020-03-19
+    verdict: real move
+    note: "ex-date of the Rs 12 interim dividend (8.3% of the previous close; returns here are price returns) in the COVID-19 sell-off; Nifty 50 -2.5%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: ongc
+    date: 2020-03-20
+    verdict: real move
+    note: "rebound after the oil-price and COVID-19 sell-off; Nifty 50 +5.7%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adaniports
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: apollohosp
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: asianpaint
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: axisbank
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: bajajfinsv
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: bajfinance
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: bel
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: grasim
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: hdfclife
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: hindalco
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: icicibank
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: jswsteel
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: lt
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: maruti
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: ongc
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day, and the ex-date of the Rs 5 interim dividend"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: sbilife
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: shriramfin
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: tataconsum
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: techm
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: tmpv
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: trent
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: ultracemco
+    date: 2020-03-23
+    verdict: real move
+    note: "COVID-19 sell-off before the national lockdown; Nifty 50 -13.9% that day"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: shriramfin
+    date: 2020-03-25
+    verdict: real move
+    note: "COVID-19 rebound; Nifty 50 +6.4%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: shriramfin
+    date: 2020-03-30
+    verdict: real move
+    note: "COVID-19 sell-off in lenders (loan-moratorium worries); Nifty 50 -4.5%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: shriramfin
+    date: 2020-04-03
+    verdict: real move
+    note: "COVID-19 sell-off in lenders (loan-moratorium worries); Nifty 50 -2.1%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: axisbank
+    date: 2020-04-07
+    verdict: real move
+    note: "COVID-19 rebound; Nifty 50 +8.4%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: hindalco
+    date: 2020-04-07
+    verdict: real move
+    note: "COVID-19 rebound; Nifty 50 +8.4%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: m-and-m
+    date: 2020-04-09
+    verdict: real move
+    note: "COVID-19 rebound (Nifty 50 +4.1%), days after its board declined fresh equity for SsangYong (3 Apr 2020)"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: shriramfin
+    date: 2020-04-17
+    verdict: real move
+    note: "RBI's liquidity measures for NBFCs, TLTRO 2.0 among them (17 Apr 2020); Nifty 50 +3.0%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: shriramfin
+    date: 2020-04-20
+    verdict: real move
+    note: "COVID-19-period volatility in NBFC stocks after the 17 Apr rally; Nifty 50 -0.1%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: shriramfin
+    date: 2020-04-21
+    verdict: real move
+    note: "COVID-19-period volatility in NBFC stocks; Nifty 50 -3.1%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: tmpv
+    date: 2020-04-30
+    verdict: real move
+    note: "COVID-19 rebound; Nifty 50 +3.2%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adanient
+    date: 2020-08-25
+    verdict: real move
+    note: "the company's own rally (Nifty 50 +0.1%); up, so not an unrecorded split or bonus, and no consolidation is recorded"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: maxhealth
+    date: 2020-09-11
+    verdict: real move
+    note: "block deals: 5.2% of the equity changed hands as two promoters sold (Business Standard, 11 Sep 2020)"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: shriramfin
+    date: 2021-01-29
+    verdict: real move
+    note: "Q3 FY21 results with better asset quality (Business Standard, 29 Jan 2021)"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: tmpv
+    date: 2021-10-13
+    verdict: real move
+    note: "TPG Rise Climate's Rs 7,500 crore investment in the EV unit, announced 12 Oct 2021"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: eternal
+    date: 2022-01-24
+    verdict: real move
+    note: "new-age tech sell-off: Zomato at a record low, down 30% in five days (Business Standard, 24 Jan 2022); Nifty 50 -2.7%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: bse
+    date: 2022-03-10
+    verdict: real move
+    note: "rally to a record high, up 52% in 10 days (Business Standard, 11 Mar 2022); its 2:1 bonus (ex-date 21 Mar 2022) is applied"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: eternal
+    date: 2022-08-02
+    verdict: real move
+    note: "Q1 FY23 results (1 Aug 2022); Nifty 50 0.0%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adanient
+    date: 2023-01-27
+    verdict: real move
+    note: "Hindenburg Research's report on the Adani group (24 Jan 2023); Nifty 50 -1.6%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adaniports
+    date: 2023-01-27
+    verdict: real move
+    note: "Hindenburg Research's report on the Adani group (24 Jan 2023); Nifty 50 -1.6%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adanient
+    date: 2023-02-01
+    verdict: real move
+    note: "the sell-off after Hindenburg Research's report; Nifty 50 -0.3%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adaniports
+    date: 2023-02-01
+    verdict: real move
+    note: "the sell-off after Hindenburg Research's report; Nifty 50 -0.3%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adanient
+    date: 2023-02-02
+    verdict: real move
+    note: "the follow-on public offer was withdrawn (1 Feb 2023, evening); Nifty 50 0.0%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adanient
+    date: 2023-02-08
+    verdict: real move
+    note: "rebound in the sell-off after Hindenburg Research's report; Nifty 50 +0.8%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adanient
+    date: 2023-03-03
+    verdict: real move
+    note: "GQG Partners bought Adani group shares (2 Mar 2023); Nifty 50 +1.6%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adanient
+    date: 2023-05-22
+    verdict: real move
+    note: "the Supreme Court's expert committee report (19 May 2023); Nifty 50 +0.6%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adanient
+    date: 2023-12-05
+    verdict: real move
+    note: "Adani group rally after the 3 Dec 2023 state election results; Nifty 50 +0.8%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: trent
+    date: 2024-02-07
+    verdict: real move
+    note: "Q3 FY24 results (6 Feb 2024); Nifty 50 0.0%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adanient
+    date: 2024-06-04
+    verdict: real move
+    note: "general election results day; Nifty 50 -6.1%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adaniports
+    date: 2024-06-04
+    verdict: real move
+    note: "general election results day; Nifty 50 -6.1%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: bel
+    date: 2024-06-04
+    verdict: real move
+    note: "general election results day; Nifty 50 -6.1%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: ntpc
+    date: 2024-06-04
+    verdict: real move
+    note: "general election results day; Nifty 50 -6.1%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: ongc
+    date: 2024-06-04
+    verdict: real move
+    note: "general election results day; Nifty 50 -6.1%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: sbin
+    date: 2024-06-04
+    verdict: real move
+    note: "general election results day; Nifty 50 -6.1%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: bse
+    date: 2024-09-16
+    verdict: real move
+    note: "the company's own rally to a record high (Nifty 50 +0.1%); up, so not an unrecorded split or bonus"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: bse
+    date: 2024-09-18
+    verdict: real move
+    note: "the same rally (Nifty 50 -0.2%); up, so not an unrecorded split or bonus"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: adanient
+    date: 2024-11-21
+    verdict: real move
+    note: "the US indictment of Gautam Adani and others (20 Nov 2024); Nifty 50 -0.7%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: bse
+    date: 2025-03-28
+    verdict: real move
+    note: "expiry-day news for its derivatives (The Week, 28 Mar 2025: 'Why did BSE share price shoot up more than 17 per cent?'); Nifty 50 -0.3%"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31
+  - company: trent
+    date: 2025-04-07
+    verdict: real move
+    note: "global tariff sell-off (Nifty 50 -3.3%), after a Q4 FY25 business update with slower growth"
+    reviewer: Claude (Opus, lane O build session, standing delegation)
+    reviewed_on: 2026-10-31

@@ -80,13 +80,15 @@ def test_dispatches_refresh_yml_with_the_request(make):
 
 
 def test_dispatch_inputs_match_refresh_yml():
-    """The inputs sent are exactly the workflow's inputs, and `trigger` / `target` use its choices."""
+    """The inputs sent are exactly the workflow's inputs, and `trigger` / `target` use its choices. The one other input
+    is `ai` (#197): a person's switch for a manual run, default on, so the admin and visitor refreshes don't send it."""
     from pathlib import Path
 
     import yaml
     wf = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/refresh.yml").read_text())
     inputs = wf[True]["workflow_dispatch"]["inputs"]             # PyYAML reads the key `on` as True
-    assert set(inputs) == {"task", "request_id", "trigger", "target"}
+    assert set(inputs) - {"ai"} == {"task", "request_id", "trigger", "target"}
+    assert inputs["ai"]["default"] == "on"
     assert "admin" in inputs["trigger"]["options"] and set(inputs["target"]["options"]) == {"dev", "production"}
 
 

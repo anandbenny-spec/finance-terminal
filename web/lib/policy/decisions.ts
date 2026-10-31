@@ -5,7 +5,10 @@
 //   or a triangle: a policy decision isn't a market move (Design 01 §1.2).
 // - Tally lines (Design 01 §1.14, §4.5; F23): Fed "Vote 11–1 · Dissent: name (preferred −50 bps)"; RBI
 //   "Rate 4–2 · Stance 5–1", the rate and the stance counted separately. A tally is shown only when every voter's
-//   row is there; otherwise the page shows Spec 01 §4.5's copy (RBI) or nothing (absent, not guessed).
+//   row is there; otherwise the page shows Spec 01 §4.5's copy (RBI; a Fed meeting that has a minutes date) or nothing
+//   (absent, not guessed). A Fed tally statement (from Jun 2026) names only its dissenters, so until its minutes a
+//   meeting has their rows alone, or none: the line then shows the dissenters (when there are any) and §4.5's copy,
+//   and no count, since "10–2" isn't a number the database returned (#159, Anand, 29 Oct 2026).
 // - Nothing is inferred that the rows don't state: a stance tally needs every member's stance vote, and the adopted
 //   stance is the one a strict majority of them voted for (the MPC decides by majority).
 import type { PolicyMeetingRow, PolicyVoteRow } from "@/lib/queries/api";
@@ -118,8 +121,12 @@ export function meetingTabHref(bank: Bank, decisionDate: string, tab: TabId, ext
 
 export type Tally =
   | { kind: "tally"; line: string; short: string; dissents: string[] }
-  /** RBI: not every member's vote is stored yet (D4: the minutes are the record); show §4.5's copy. */
-  | { kind: "pending"; note: string }
+  /**
+   * Not every member's vote is stored yet, and the minutes are the record (RBI: D4; Fed: a tally statement names only
+   * its dissenters, #159): show §4.5's copy. `dissents` are the members the statement names, "Name (preferred +25 bps)",
+   * for a Fed meeting that has their rows; the line shows them before the note, with no count.
+   */
+  | { kind: "pending"; note: string; dissents?: string[] }
   /** No rows, or rows that don't add up: say nothing rather than guess. */
   | { kind: "absent" };
 
@@ -128,13 +135,19 @@ function preferred(bps: number): string {
 }
 
 function fedTally(m: PolicyMeetingRow, votes: readonly PolicyVoteRow[]): Tally {
-  if (votes.length === 0) return { kind: "absent" };
   const against = votes.filter((v) => v.is_dissent);
-  const tally = formatTally(votes.length - against.length, against.length);
   const dissents = against.map(
     (v) => `${v.member_name} (${v.voted_change_bps === null ? "dissented, not on the rate" : preferred(v.voted_change_bps)})`,
   );
-  const line = `Vote ${tally}${dissents.length ? ` · Dissent: ${dissents.join(", ")}` : ""}`;
+  // No member's row is a vote for the decision: the statement named only its dissenters (or nobody), and the minutes,
+  // due on a day the calendar gives, name everyone else. A meeting with no minutes date (a 2018 baseline, whose votes
+  // are never stored) has nothing to wait for, so it stays absent.
+  if (votes.length === against.length) {
+    if (against.length > 0) return { kind: "pending", note: minutesNote(m), dissents };
+    return m.minutes_due_on ? { kind: "pending", note: minutesNote(m) } : { kind: "absent" };
+  }
+  const tally = formatTally(votes.length - against.length, against.length);
+  const line = `Vote ${tally}${dissents.length ? ` · ${dissentLine(dissents)}` : ""}`;
   return { kind: "tally", line, short: tally, dissents };
 }
 
@@ -154,9 +167,24 @@ function minutesNote(m: PolicyMeetingRow): string {
     : "Each member's vote is published in the minutes.";
 }
 
+/** A pending tally's dissenters as the line writes them: "Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (…)". */
+export function dissentLine(dissents: readonly string[]): string {
+  return `Dissent: ${dissents.join(", ")}`;
+}
+
+/**
+ * An RBI member the resolution says "voted against the repo rate hike" without saying what they preferred: their row
+ * has no change in bps, and the verbatim clause stored with it (dissent_text) names the rate. Their vote is against
+ * the decision; what they preferred isn't stated, so no bps is shown for them (Launch check #87: 7 Dec 2022 and
+ * 8 Feb 2023). A null change without that clause is a vote not stored yet, not a vote against.
+ */
+export function votedAgainstRate(v: PolicyVoteRow): boolean {
+  return v.voted_change_bps === null && v.is_dissent && /\bvoted against the (?:policy )?(?:repo )?rate\b/i.test(v.dissent_text ?? "");
+}
+
 function rbiTally(m: PolicyMeetingRow, votes: readonly PolicyVoteRow[]): Tally {
   const decision = m.policy_rate_change_bps;
-  if (votes.length < MPC_MEMBERS || votes.some((v) => v.voted_change_bps === null)) {
+  if (votes.length < MPC_MEMBERS || votes.some((v) => v.voted_change_bps === null && !votedAgainstRate(v))) {
     return { kind: "pending", note: minutesNote(m) };
   }
   if (votes.length !== MPC_MEMBERS || decision === null) return { kind: "absent" };
@@ -168,7 +196,8 @@ function rbiTally(m: PolicyMeetingRow, votes: readonly PolicyVoteRow[]): Tally {
   const dissents: string[] = [];
   for (const v of votes) {
     const why: string[] = [];
-    if (v.voted_change_bps !== decision) why.push(preferred(v.voted_change_bps!));
+    if (v.voted_change_bps === null) why.push("voted against the rate");
+    else if (v.voted_change_bps !== decision) why.push(preferred(v.voted_change_bps));
     // A stance dissent: a stance vote other than the adopted one; with the adopted stance unknown (not every
     // member's stance vote is stored), only a stored dissent whose rate vote matched the decision is one.
     const stanceDissent =

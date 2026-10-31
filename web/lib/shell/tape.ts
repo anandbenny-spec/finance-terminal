@@ -97,7 +97,8 @@ export function buildTape(latest: readonly SeriesLatestRow[], series: readonly S
     const figure = [shown.value, shown.change?.spoken, shown.qualifier ? `${shown.qualifier}, ${date}` : date]
       .filter(Boolean)
       .join(", ");
-    const description = [`${item.label} (${meta.name}): ${figure}.`, ...sourceLines.map((l) => `${l}.`)].join(" ");
+    // A line that already ends in a full stop ("© Nasdaq, Inc.") gets no second one: screen readers would say "Inc dot dot".
+    const description = [`${item.label} (${meta.name}): ${figure}.`, ...sourceLines.map((l) => (l.endsWith(".") ? l : `${l}.`))].join(" ");
     items.push({ key: item.key, label: item.label, name: meta.name, ...shown, date, sourceLines, description });
   }
   return items;

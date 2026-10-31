@@ -15,7 +15,7 @@ export function Tabs({ label, items, current }: { label: string; items: readonly
             <Link
               href={t.href}
               aria-current={t.id === current ? "page" : undefined}
-              className="-mb-px inline-block border-b-2 border-transparent py-2 text-ui text-ink-2 no-underline hover:text-ink-1 aria-[current=page]:border-amber aria-[current=page]:text-ink-1"
+              className="-mb-px inline-block border-b-2 border-transparent py-2 text-ui text-ink-2 no-underline hover:text-ink-1 aria-[current=page]:border-highlight aria-[current=page]:text-ink-1"
             >
               {t.label}
             </Link>
