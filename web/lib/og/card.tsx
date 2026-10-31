@@ -17,7 +17,7 @@ export async function renderCard(): Promise<ImageResponse> {
     (
       <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", background: t.canvas, color: t.ink1, padding: 72 }}>
         <div style={{ display: "flex", alignItems: "center" }}>
-          <div style={{ width: 28, height: 28, background: t.amber, marginRight: 20 }} />
+          <div style={{ width: 28, height: 28, background: t.highlight, marginRight: 20 }} />
           <div style={{ fontSize: 40, fontWeight: 500, color: t.ink1 }}>{SITE_NAME}</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column" }}>

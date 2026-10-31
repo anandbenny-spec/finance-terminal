@@ -17,7 +17,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <TooltipProvider>
         <a
           href="#main"
-          className="sr-only z-60 rounded-md bg-amber px-2.5 py-1.5 text-amber-ink focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
+          className="sr-only z-60 rounded-md bg-highlight px-2.5 py-1.5 text-highlight-ink focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
         >
           Skip to content
         </a>

@@ -12,7 +12,7 @@ export function AIBlock({ block, now, dense = true }: { block: AiBlockData; now:
   return (
     <div>
       <div className="flex items-center gap-1.5 text-data font-medium text-ink-1">
-        <Sparkles aria-hidden className="size-3.5 text-amber" />
+        <Sparkles aria-hidden className="size-3.5 text-highlight" />
         {block.label}
         <Tooltip>
           <TooltipTrigger asChild>

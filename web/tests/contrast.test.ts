@@ -35,10 +35,31 @@ function ratio(a: RGBA, b: RGBA): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+/** OKLab (Björn Ottosson): sRGB to linear, to LMS, cube root, to Lab. */
+function oklab([r, g, b]: RGBA): [number, number, number] {
+  const lin = (c: number) => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const [R, G, B] = [lin(r), lin(g), lin(b)];
+  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B);
+  const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B);
+  const sx = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * sx,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * sx,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * sx,
+  ];
+}
+function deltaE100(a: RGBA, b: RGBA): number {
+  const [x, y] = [oklab(a), oklab(b)];
+  return 100 * Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+}
+
 const SURFACES = ["--canvas", "--panel", "--raised", "--active"];
 
 describe("text and mark contrast (Design 01 §8.1)", () => {
-  for (const text of ["--ink-1", "--ink-2", "--ink-3", "--amber", "--up", "--down", "--warn"]) {
+  for (const text of ["--ink-1", "--ink-2", "--ink-3", "--highlight", "--up", "--down", "--warn"]) {
     for (const surface of SURFACES) {
       it(`${text} on ${surface} is at least 4.5:1`, () => {
         expect(ratio(colour(text), colour(surface))).toBeGreaterThanOrEqual(4.5);
@@ -54,12 +75,24 @@ describe("text and mark contrast (Design 01 §8.1)", () => {
     });
   }
 
-  it("--ink-1 on --amber-wash over --panel is at least 4.5:1", () => {
-    expect(ratio(colour("--ink-1"), over(colour("--amber-wash"), colour("--panel")))).toBeGreaterThanOrEqual(4.5);
+  it("--ink-1 on --highlight-wash over --panel is at least 4.5:1", () => {
+    expect(ratio(colour("--ink-1"), over(colour("--highlight-wash"), colour("--panel")))).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("--amber-ink on --amber is at least 4.5:1", () => {
-    expect(ratio(colour("--amber-ink"), colour("--amber"))).toBeGreaterThanOrEqual(4.5);
+  it("--ink-1 on --highlight-wash over --raised is at least 4.5:1", () => {
+    expect(ratio(colour("--ink-1"), over(colour("--highlight-wash"), colour("--raised")))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("the citation chip's [n] (--highlight) on --raised is at least 4.5:1", () => {
+    expect(ratio(colour("--highlight"), colour("--raised"))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("keeps the accent apart from body text: OKLab ΔE × 100 between --highlight and --ink-1 is at least 6.5", () => {
+    expect(deltaE100(colour("--highlight"), colour("--ink-1"))).toBeGreaterThanOrEqual(6.5);
+  });
+
+  it("--highlight-ink on --highlight is at least 4.5:1", () => {
+    expect(ratio(colour("--highlight-ink"), colour("--highlight"))).toBeGreaterThanOrEqual(4.5);
   });
 
   for (const surface of ["--panel", "--raised"]) {
