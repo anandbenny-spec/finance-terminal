@@ -15,7 +15,7 @@ export function Countdowns({ meetings, initial }: { meetings: UpcomingMeeting[];
     <>
       {lines.map((line) => (
         <span key={line.bank} className={cn("inline-flex items-center gap-1.5", line.today && "text-ink-1")}>
-          {line.today && <span aria-hidden className="size-2 shrink-0 rounded-full bg-amber" />}
+          {line.today && <span aria-hidden className="size-2 shrink-0 rounded-full bg-highlight" />}
           {line.text}
         </span>
       ))}
