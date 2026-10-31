@@ -26,7 +26,7 @@ const DAMODARAN = "Source: Aswath Damodaran, NYU Stern";
 export default async function ScreenerPage() {
   const [data, fresh] = await Promise.all([readScreenerPage(), readFreshness()]);
   const freshness = fresh.ok ? fresh.tasks : null;
-  const now = new Date().toISOString();
+  const now = data.readAt;
   const dataTo = data.ok ? (data.rows.map((r) => r.snapshot_date).sort().at(-1) ?? null) : null;
   const pageFresh = panelFreshness(freshness, PREVIEW_FEEDS.screener, dataTo, now);
   const usesBeta = data.ok && data.rows.some((r) => r.beta !== null);

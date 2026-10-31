@@ -33,8 +33,8 @@ export async function readIndexMembers(db: EquityDb): Promise<IndexMemberRow[]> 
 }
 
 export type ScreenerPageData =
-  | { ok: true; rows: ScreenerRow[]; indexes: { slug: string; name: string }[]; policies: FieldPolicyRow[] }
-  | { ok: false };
+  | { ok: true; readAt: string; rows: ScreenerRow[]; indexes: { slug: string; name: string }[]; policies: FieldPolicyRow[] }
+  | { ok: false; readAt: string };
 
 /** The distinct indexes of a member list, by slug. */
 export function indexesOf(members: readonly IndexMemberRow[]): { slug: string; name: string }[] {
@@ -48,16 +48,17 @@ export async function readScreenerPage(): Promise<ScreenerPageData> {
   "use cache";
   cacheLife("minutes");
   cacheTag("equity", "screener");
+  const readAt = new Date().toISOString(); // read inside the cache, as lib/queries/overview.ts does, so a prerender never sees `new Date()`
   const db = publicClient();
   if (!db) {
     console.error("[equity] screener read failed: NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
-    return { ok: false };
+    return { ok: false, readAt };
   }
   try {
     const [rows, members, policies] = await Promise.all([readScreener(db), readIndexMembers(db), readFieldPolicy(db as PolicyDb)]);
-    return { ok: true, rows, indexes: indexesOf(members), policies };
+    return { ok: true, readAt, rows, indexes: indexesOf(members), policies };
   } catch (error) {
     console.error(`[equity] screener read failed: ${error instanceof Error ? error.message : String(error)}`);
-    return { ok: false };
+    return { ok: false, readAt };
   }
 }
