@@ -33,7 +33,7 @@ describe("/methodology", () => {
   });
 
   it("shows no figures: no digit except the allowed constants", () => {
-    const stripped = text.replace(/400 characters|20 June 2025|10-year|Fed vs RBI/g, "");
+    const stripped = text.replace(/400 characters|20 June 2025|10-year|Fed vs RBI|Nifty 50/g, "");
     expect(stripped).not.toMatch(/\d/);
   });
 
@@ -44,5 +44,13 @@ describe("/methodology", () => {
       const dir = fileURLToPath(new URL(`../${h.replace(/^\//, "")}/page.tsx`, import.meta.url));
       expect(existsSync(dir), h).toBe(true);
     }
+  });
+
+  it("carries module 2's shipped limits and the link to /accuracy", () => {
+    expect(text).toContain("Nifty 50 only");
+    expect(text).toContain("excluding lease liabilities");
+    expect(text).toContain("derived from the filed lines");
+    expect(markup).toContain('href="/accuracy"');
+    expect(text).not.toMatch(/earnings call/i);
   });
 });
