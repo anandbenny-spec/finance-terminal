@@ -107,6 +107,18 @@ equity.rate_reactions:
   run_after: [equity.corporate_actions, policy.rate_cycles, policy.market_series]
   overdue_after: 10 days
   uses_nse: false
+equity.valuation:
+  description: Each universe company's valuation runs (reverse DCF and default DCF for operating companies, implied return on equity for lenders, a not-applicable lead run for insurers and mixed companies) and the stored scenario grid
+  workflows: {weekly: every 6 days}
+  run_after: [equity.beta]
+  overdue_after: 10 days
+  uses_nse: false
+equity.snapshot:
+  description: The weekly screener snapshot, one row per universe company with its figures, held-back reasons and labels, kept so multiples' history builds up
+  workflows: {weekly: every 6 days}
+  run_after: [equity.valuation]
+  overdue_after: 10 days
+  uses_nse: false
 equity.call_transcripts:
   description: Earnings-call transcript filings and call intimations of the universe companies over the last two seasons, found in NSE's announcements (BSE as the fallback) and classified, then fetched once each, the PDF classified, a cover letter's links followed, the text read with each page's range, and every processed call written as an unpublished earnings_call row
   workflows: {weekly: every 6 days}
