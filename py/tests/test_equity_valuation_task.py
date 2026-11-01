@@ -431,3 +431,27 @@ def test_a_lenders_row_carries_its_implied_roe():
 
 def test_the_modules_stay_importable_with_their_check_names():
     assert ev.QUARTER == 4 and "round_trip" in ev.__doc__ and "quarter_rule" in ev.__doc__
+
+
+# ---------------------------------------------------------------------------------------------- compute() on stored rows
+def bare(family: str):
+    from ft.equity import assemble
+    from ft.equity import metrics as mx
+    return assemble.Stored(mx.Company(7, f"c-{family}", family, 3), "IN", "INR", [])
+
+
+def test_a_company_with_nothing_stored_still_gets_its_lead_run_with_a_reason():
+    """compute() on a Stored with no filings or prices (the first week on a fresh project): every family writes its lead run,
+    not applicable with the reason, and an operating company's default run and an empty-reason-free grid."""
+    from ft.equity import assemble
+    rule = assemble.load_delivered_roe()
+    for family, kinds in (("operating", ["reverse_dcf", "dcf_default"]), ("lender", ["implied_roe"]),
+                          ("insurer", ["reverse_dcf"]), ("mixed", ["reverse_dcf"])):
+        co = ev.compute(bare(family), DAY, market(), SETTINGS, rule)
+        assert [r.kind for r in co.runs] == kinds and co.eid == 7 and co.slug == f"c-{family}"
+        assert all(r.status == "not_applicable" and r.reason and r.result is None for r in co.runs)
+        assert not banned_words_in(" ".join(r.reason for r in co.runs))
+    got = {c.name: c for c in EquityValuation().checks(
+        None, Fetched(DAY, market(), [ev.compute(bare(f), DAY, market(), SETTINGS, rule)
+                                      for f in ("operating", "lender", "insurer")]), 1)}
+    assert got["lead_runs"].passed and got["quarter_rule"].passed
