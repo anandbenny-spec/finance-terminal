@@ -36,10 +36,15 @@ policy.ai_batch:
   workflows: {daily: every 20 hours or ai_catch_up, watch: after_decision_document}
   run_after: [policy.fed_documents, policy.rbi_documents]
   overdue_after: 3 days
+policy.rate_cycles:
+  description: Each bank's easing and tightening cycles, derived from its stored rate decisions
+  workflows: {daily: every 20 hours}
+  run_after: [policy.fed_documents, policy.rbi_documents]
+  overdue_after: 3 days
 site.quality_summary:
   description: The accuracy page's counts by module and period, projected from the site's own records (AI outputs, loads, freshness, drills, gates, held-back fields)
   workflows: {daily: every 20 hours}
-  run_after: [policy.calendar, policy.fed_documents, policy.rbi_documents, policy.market_series, policy.reactions, policy.ai_batch]
+  run_after: [policy.calendar, policy.fed_documents, policy.rbi_documents, policy.market_series, policy.reactions, policy.rate_cycles, policy.ai_batch]
   overdue_after: 3 days
 crypto.coingecko_markets:
   description: CoinGecko daily market snapshot, top 500 (stored, unpublished)
