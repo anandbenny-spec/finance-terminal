@@ -24,7 +24,8 @@ export const REACTION_SERIES = [
 
 export type ReactionKey = (typeof REACTION_SERIES)[number]["key"];
 
-export const WAITING = "Waiting for the first close after the decision.";
+// "Value fixed", not "close": USD/INR is the Fed's noon New York rate, and yields are daily fixings (Anand, 1 Nov 2026).
+export const WAITING = "Waiting for the first value fixed after the decision.";
 
 /** A cell: the signed change as shown (the header carries the unit), and the two observations behind it. */
 export type ReactionCell =
