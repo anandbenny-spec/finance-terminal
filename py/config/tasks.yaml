@@ -102,7 +102,7 @@ equity.beta:
   overdue_after: 10 days
   uses_nse: false
 equity.call_transcripts:
-  description: Earnings-call transcript filings and call intimations of the universe companies over the last two seasons, found in NSE's announcements (BSE as the fallback) and classified, then fetched once each: the PDF classified, a cover letter's links followed, the text read with each page's range, and every processed call written as an unpublished earnings_call row
+  description: Earnings-call transcript filings and call intimations of the universe companies over the last two seasons, found in NSE's announcements (BSE as the fallback) and classified, then fetched once each, the PDF classified, a cover letter's links followed, the text read with each page's range, and every processed call written as an unpublished earnings_call row
   workflows: {weekly: every 6 days}
   run_after: [equity.universe, equity.filings]
   overdue_after: 10 days

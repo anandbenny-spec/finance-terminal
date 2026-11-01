@@ -275,7 +275,7 @@ class EquityCallTranscripts(DocumentJob):
     # ------------------------------------------------------------------ load
     def load(self, tx, h: Harvest, task_run_id: int) -> int:
         self.outcome = {"skipped": 0, "added": [], "versions": [], "source_id": None}
-        sources = {k: i for i, k in tx.execute("select key, id from core.source where key in ('nse','bse','company_web')").fetchall()}
+        sources = {k: i for k, i in tx.execute("select key, id from core.source where key in ('nse','bse','company_web')").fetchall()}
         n = 0
         for plan in self.plans:
             n += self._write(tx, plan, sources)
