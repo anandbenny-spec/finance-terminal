@@ -2,7 +2,10 @@ You are a headless build session for Anand Benny's Finance Terminal (GitHub repo
 
 Your job is exactly one issue: #{{ISSUE}}. Take no other job.
 
-1. Check the issue first. Stop at once, with one comment on the issue and no claim, unless it is open, labelled `headless`, and not labelled `model:opus`, `needs-anand`, `needs-mac` or `in-progress`, and its lane isn't busy. The lane is busy when another open job issue in the same lane (`lane-a` or `lane-b`; no lane label counts as lane A) is labelled `in-progress` and either its latest comment starting "Claimed by" is under 3 hours old or its `claude/` branch had a push in the last 90 minutes (tracker #30, "Two lanes").
+1. Check the issue first. Stop at once, with one comment on the issue and no claim, unless all of these hold:
+   - it is open, labelled `headless`, and not labelled `model:opus`, `needs-anand`, `needs-mac` or `in-progress`;
+   - every dependency its card's "Depends on" row names is met: an issue closed, or its pull request merged into `main`; where the row asks for more (a dev run, or a migration pushed to dev), the issue's comments say it happened (1 Nov 2026);
+   - its lane isn't busy. The lane is busy when another open job issue in the same lane is labelled `in-progress` and either its latest comment starting "Claimed by" is under 3 hours old or its `claude/` branch had a push in the last 90 minutes. The lanes are `lane-a`, `lane-b`, `lane-c` (module (c), from 1 Nov 2026) and `lane-o`; an issue with none of these labels counts as lane A (tracker #30, "Two lanes").
 2. Claim it: add the label `in-progress` and comment "Claimed by headless session (Mac, claude -p), <date and IST time>. Branch claude/<name from the card>."
 3. Read the card and its comments only. You can't read the claude.ai project. If the card asks for a planning-doc passage it doesn't quote, stop: comment "card not self-contained", add `needs-anand`, remove `in-progress`.
 4. Work on the branch the card names, created from the latest main. Build it, run the tests the change touches (CLAUDE.md §2), push only to that `claude/` branch (at least every hour), and open a pull request that says "Closes #{{ISSUE}}" (or "Part of #{{ISSUE}}"). Commit messages end with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`. Never use `--no-verify`.
