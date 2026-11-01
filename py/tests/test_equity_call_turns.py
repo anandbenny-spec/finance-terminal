@@ -171,6 +171,25 @@ def test_a_first_name_in_the_introduction_names_the_one_speaker_with_that_first_
     assert roles(a)["Dev Patel"] == "analyst"
 
 
+def test_a_person_the_welcome_introduces_with_a_title_is_management_even_if_they_only_answer_in_the_qa():
+    welcome = ("Welcome. With us today are Mr. Ravi Kumar, CEO of Acme and Ms. Sam Lee - Chief Financial Officer. "
+               "Mr. Pat Kim, a guest, is also here. Over to Ravi Kumar.")
+    handover = ("We will now begin the question and answer session. The first question is from Dev Patel. "
+                "Mr. Lou Ray, Head of Research, is on the line.")
+    script = [("Moderator", welcome), ("Ravi Kumar", SPEECH), ("Moderator", handover),
+              ("Dev Patel", "Margins?"), ("Sam Lee", SPEECH), ("Pat Kim", "A comment."), ("Lou Ray", "More.")]
+    _, a = analyse(script)
+    assert roles(a) == {"Moderator": "moderator", "Ravi Kumar": "management", "Dev Patel": "analyst", "Sam Lee": "management",
+                        "Pat Kim": "unknown", "Lou Ray": "unknown"}               # no title / named after the hand-over
+
+
+def test_the_welcome_rule_reads_the_first_moderator_turn_when_no_handover_is_found():
+    script = [("Moderator", "Welcome. Joining us are Mr. Ravi Kumar, MD and CEO."), ("Dev Patel", "Margins?"),
+              ("Ravi Kumar", SPEECH)]
+    _, a = analyse(script)
+    assert roles(a)["Ravi Kumar"] == "management" and not a.handover
+
+
 def test_a_speaker_who_matches_two_roles_is_unknown():
     script = [("Moderator", "Welcome. Over to Anita Rao."), ("Anita Rao", SPEECH),
               ("Moderator", "We will now begin the question and answer session. The first question is from Anita Rao from Acme."),

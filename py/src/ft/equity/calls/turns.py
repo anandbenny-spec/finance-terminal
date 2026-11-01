@@ -11,7 +11,9 @@ canonical text and the speaker label that opens each of its blocks (`text.pdf_te
 - **Roles:** `moderator` for the labels "Moderator" and "Operator"; `analyst` for a speaker the moderator introduces as
   asking ("the next question is from <name> from <firm>") or a participants list puts among analysts; `management` for
   a speaker the participants list puts among management, who speaks in the opening, or whose label carries an executive
-  title; otherwise `unknown`. A speaker who matches two roles is `unknown`.
+  title, or whom the moderator's welcome (before the hand-over) introduces with an honorific and an executive title
+  ("Mr. X, ED and CEO"; added 1 Nov 2026 with Anand's OK after the dev backfill left 7 of 21 calls role-held);
+  otherwise `unknown`. A speaker who matches two roles is `unknown`.
 - **Unknown share:** unknown-role words over all turn words. Above 10% the call is role-held.
 
 Decided by Claude (standing delegation, 1 Nov 2026): words before the first label are in no turn, so they count in
@@ -45,6 +47,7 @@ _INTRO = re.compile(
     rf"(?:the\s+line\s+of\s+|the\s+line\s+|line\s+of\s+|our\s+(?:online\s+)?participants?\s+|the\s+participants?\s+)?)"
     rf"(?P<name>{_NAME_TOKEN}(?:\s+{_NAME_TOKEN}){{0,4}})")
 _MODERATOR_LABEL = re.compile(r"[-\u2013\u2014]\s*(?:the\s+)?(?:moderator|operator)\b", re.IGNORECASE)
+_HONORIFICS = {"mr", "ms", "mrs", "dr", "shri", "smt", "sh", "sri", "prof"}
 _STOP_TOKENS = {"from", "of", "with", "at", "the", "line", "is", "and", "please", "go", "ahead", "over", "sir", "madam"}
 _TITLE = re.compile(
     r"\b(?:ceo|cfo|coo|cto|cio|cmo|chro|md|c\.e\.o|c\.f\.o|chief|managing\s+director|executive\s+director|whole[\s-]*time"
@@ -57,6 +60,9 @@ _HEADER = re.compile(
 _LISTED = re.compile(
     r"(?:Mr|Ms|Mrs|Dr|Shri|Smt|Sh|Sri|Prof)\.?\s+(?P<name>[A-Za-z.'’\-]+(?:\s+[A-Za-z.'’\-]+){0,3}?)"
     r"(?=\s*(?:[-–—,|:(;]|$|\s(?:Mr|Ms|Mrs|Dr|Shri|Smt|Sh|Sri|Prof)\b\.?))", re.IGNORECASE)
+_WELCOME_NAME = re.compile(
+    r"(?:Mr|Ms|Mrs|Dr|Shri|Smt|Sh)\.?\s+(?P<name>[A-Za-z.'\u2019\-]+(?:\s+[A-Za-z.'\u2019\-]+){0,3}?)"
+    r"(?=\s*[,\u2013\u2014(\-]\s*(?P<role>[^.;:\n]{0,70}))", re.IGNORECASE)     # a lookahead: names don't eat each other
 LIST_WINDOW = 1500
 
 
@@ -179,12 +185,27 @@ def participants(preamble: str) -> tuple[list[str], list[str]]:
     return mgmt, analysts
 
 
+def welcomed_management(moderator_texts: list[str]) -> list[str]:
+    """Name keys of people the moderator's welcome introduces with an honorific and an executive title ("Mr. Suresh
+    Manglani, ED and CEO, Adani Total Gas"): the company's own speakers, named before the Q&A."""
+    out = []
+    for text in moderator_texts:
+        for m in _WELCOME_NAME.finditer(text):
+            if _TITLE.search(m.group("role")):
+                out.append(name_key(m.group("name")))
+    return out
+
+
 def introduced_analysts(moderator_texts: list[str]) -> list[str]:
     """Name keys the moderator introduces as asking ("the next question is from <name> from <firm>")."""
     out = []
     for text in moderator_texts:
         for m in _INTRO.finditer(text):
-            toks = m.group("name").split()
+            toks = []
+            for tok in m.group("name").split():
+                toks.append(tok)
+                if tok.endswith(".") and len(tok.rstrip(".")) > 2 and tok.lower().rstrip(".") not in _HONORIFICS:
+                    break                                      # "Dev Patel." ends the sentence; "A." and "Mr." do not
             while toks and toks[-1].lower().strip(".") in _STOP_TOKENS:
                 toks.pop()
             while toks and toks[0].lower().strip(".") in _STOP_TOKENS:
@@ -233,6 +254,9 @@ def analyse(ex: Extracted, labels: list) -> Analysis:
     # roles -------------------------------------------------------------------------------------------------------
     pre_end = turns[0].char_start if turns else len(text)
     listed_mgmt, listed_analysts = participants(text[:pre_end])
+    welcome_end = qa_start if qa_start is not None else next((i for i, m in enumerate(is_mod) if not m), 1)
+    listed_mgmt += welcomed_management([text[turns[i].char_start:turns[i].char_end] for i in range(min(welcome_end, len(turns)))
+                                        if is_mod[i]])
     intro = introduced_analysts([text[t.char_start:t.char_end] for t, m in zip(turns, is_mod, strict=True) if m])
     by_key: dict[str, list[int]] = {}
     for i, t in enumerate(turns):
