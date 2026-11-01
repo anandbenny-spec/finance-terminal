@@ -2,8 +2,9 @@
 // and traced, what the site can't do, and who is accountable, written with SEBI's consultation paper on responsible AI/ML
 // use in mind (human oversight, accountability, source traceability). Static text: it shows no market figures, so the
 // accuracy rule has nothing to check here, and every claim below is one the shipped code backs (the issue's stop rule:
-// a claim that can't be checked leaves the page). It describes module 1 (the Fed vs RBI tracker), the one live module;
-// later modules add their own lines when they ship. RBI is named, never linked (CLAUDE.md §1).
+// a claim that can't be checked leaves the page). It describes module 1 (the Fed vs RBI tracker) and, since the 1 Nov
+// 2026 extension, module 2's shipped pages (the Nifty 50 screener and company pages); the earnings-call lines wait for
+// module 3 to ship. RBI is named, never linked (CLAUDE.md §1).
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -33,10 +34,11 @@ const BLOCKS: Block[] = [
     title: "Where the data comes from",
     paragraphs: [
       <>
-        Today the site covers the Fed vs RBI policy tracker. Its documents come from the Federal Reserve Board and the Reserve Bank of India, its rates
+        The Fed vs RBI policy tracker&apos;s documents come from the Federal Reserve Board and the Reserve Bank of India, its rates
         and exchange rate from the data owners named on each figure, and its index levels from the index owners, each with the source line and copyright
         line its owner asks for. The full list, with the source lines, is on the <Link className="underline" href="/about#sources">About and privacy</Link> page.
       </>,
+      "The Nifty 50 screener and company pages read company filings and exchange data. Each company keeps its own reporting currency and market, and figures are never compared, ranked or summed across currencies.",
       "Every piece of data belongs to its owner, who is named on each figure. Market data is end-of-day only. Raw data from any source is never offered for download or export. The browser never calls a data source: it talks only to this site and to its database.",
       "RBI documents are named, with their date and press-release number, and never linked, so they can be found on the RBI's own website.",
     ],
@@ -78,16 +80,20 @@ const BLOCKS: Block[] = [
     id: "testing",
     title: "Testing and monitoring",
     paragraphs: [
-      "Every change runs through automated tests for the code and the database before it is merged. Data loads run blocking checks: a load that fails them is rolled back, the last good data stays, and the site shows “Update delayed” instead of publishing bad numbers. A health check reports the state of the data jobs.",
+      <>
+        Every change runs through automated tests for the code and the database before it is merged. Data loads run blocking checks: a load that fails them is rolled back, the last good data stays, and the site shows “Update delayed” instead of publishing bad numbers. A health check reports the state of the data jobs. The <Link className="underline" href="/accuracy">Accuracy</Link> page publishes how often the site has held something back and how its checks have done, as counts from its own records.
+      </>,
     ],
   },
   {
     id: "limits",
     title: "Limitations",
     paragraphs: [
-      "The tracker covers the Federal Reserve and the Reserve Bank of India only. Market series are end-of-day, so they lag the market, and the India 10-year yield is monthly and says its month.",
+      "The policy tracker covers the Federal Reserve and the Reserve Bank of India only. Market series are end-of-day, so they lag the market, and the India 10-year yield is monthly and says its month.",
       "Vote and stance information is only as complete as the published minutes and statements, which arrive days or weeks after a decision. Until then the site says the minutes are pending rather than guessing.",
       "AI summaries and extractions can miss or misread a passage even when every number in them matches the source. Read the cited passage for anything that matters.",
+      "The screener and company pages cover the Nifty 50 only. Valuations shown are model-implied and informational, never a verdict, a target or a recommendation.",
+      "Company debt is borrowings only, labelled as excluding lease liabilities because results filings do not report them. Where a company's filed lease payments are material against its operating profit, enterprise-value figures are held back with the reason shown. Operating profit (EBIT) is derived from the filed lines and labelled as derived, and a lender's return on assets is annualised and labelled.",
       "The site makes no claim about future rates or prices.",
     ],
   },
