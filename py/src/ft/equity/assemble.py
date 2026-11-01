@@ -231,6 +231,11 @@ def _frame(s: Stored, as_of: date) -> _Frame:
     return _Frame(book, t, upto, q_end, basis, ttm_rows, ttm_held, years, fy_end)
 
 
+def price_date(s: Stored, as_of: date) -> date | None:
+    """The price date of a company at `as_of`: the newest market capitalisation stored on or before it (2A-15)."""
+    return _frame(s, as_of).t
+
+
 def company_inputs(s: Stored, as_of: date) -> Company:
     """The engine's inputs for one company at the newest price date on or before `as_of`."""
     fr = _frame(s, as_of)
