@@ -166,6 +166,7 @@ def go(web, workflow="backfill", now=NOW):
     http = HttpClient(transport=httpx.MockTransport(web), site_transport=site_transport, sleep=lambda s: None, clock=lambda: now)
     code = run(JOB, workflow, [task()], only=KEY, force=True, http=http, storage=storage, clock=lambda: now)
     tr = q("select status, rows_written, checks, error from ops.task_run where task_key = %s order by id desc limit 1", KEY)[0]
+    assert tr[0] == "success", "RUN FAILED " + (tr[3] or "")[-700:].replace("\n", " | ")      # one line, so CI's annotation shows it
     return code, tr
 
 
