@@ -1,8 +1,10 @@
 // NumbersChanged (Design 01 §1.16 layer 2, §4.5): item · previous (date) · new (date) · change. Unchanged items fold
-// into one text-meta line. Changes carry a sign and no colour: a revision isn't a market move. Values are formatted
+// into one text-meta line. Changes carry a sign and a neutral triangle, no colour: a revision isn't a market move (triangle: Anand, 1 Nov 2026). Values are formatted
 // by lib/policy/numbers.ts (lib/format.ts); the stance carries its "AI-extracted" qualifier.
 import { Qualifier } from "@/components/data/Qualifier";
-import { formatDate } from "@/lib/format";
+import { Delta } from "@/components/data/Delta";
+import { changeOf } from "@/lib/delta";
+import { NOT_AVAILABLE, formatDate } from "@/lib/format";
 import type { NumberItem } from "@/lib/policy/numbers";
 
 export function NumbersChanged({ items, previousDate, newDate }: { items: NumberItem[]; previousDate: string; newDate: string }) {
@@ -35,7 +37,7 @@ export function NumbersChanged({ items, previousDate, newDate }: { items: Number
                   </th>
                   <td className="px-3 text-right whitespace-nowrap">{x.previous}</td>
                   <td className="px-3 text-right whitespace-nowrap">{x.next}</td>
-                  <td className="px-3 text-right whitespace-nowrap">{x.change ?? ""}</td>
+                  <td className="px-3 text-right whitespace-nowrap">{x.change && x.change !== NOT_AVAILABLE ? <Delta change={changeOf(x.change)} tone="neutral" /> : (x.change ?? "")}</td>
                 </tr>
               ))}
             </tbody>

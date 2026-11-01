@@ -1,4 +1,4 @@
--- 0022: rate sensitivity (module 2, release 2A; issue #129, Spec 02A §3.4, §3.5, §5.10, §7).
+-- 0026: rate sensitivity (module 2, release 2A; issue #129, Spec 02A §3.4, §3.5, §5.10, §7).
 -- One core addition, OK'd by Anand on 28 Oct 2026, 00:18 IST (CLAUDE.md §7 is satisfied for exactly this design):
 -- `core.event_reaction`, the general reactions engine's output (one row per event × subject × window). With it the
 -- event type `rate_cycle` and its detail table `policy.rate_cycle`, and the rate-sensitivity views. Nothing else in

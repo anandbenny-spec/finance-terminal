@@ -12,7 +12,7 @@ import { useAdmin } from "@/components/shell/admin";
 import { publicConfig } from "@/lib/supabase/public";
 
 const INPUT =
-  "h-9 w-full rounded-md border border-line-input bg-raised px-2.5 text-ui text-ink-1 placeholder:text-ink-3 focus-visible:outline-2 focus-visible:outline-amber";
+  "h-9 w-full rounded-md border border-line-input bg-raised px-2.5 text-ui text-ink-1 placeholder:text-ink-3 focus-visible:outline-2 focus-visible:outline-highlight";
 
 export function LoginForm({ onSignedIn }: { onSignedIn: () => void }) {
   const [email, setEmail] = useState("");

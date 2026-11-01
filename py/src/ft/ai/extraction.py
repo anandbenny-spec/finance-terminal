@@ -138,6 +138,21 @@ def _locate(text: str, quote: str, mapping: Counter):
     return span
 
 
+# The stable phrases the checks below write into a reason, by the accuracy page's category (ft/quality/reasons.py reads
+# this table; tests run both checks on crafted bad replies). Regexes, case-insensitive; a hold has its own prefix
+# ("other:", "unchecked:", "mismatch:", "conflict:") and is counted as held for review, not here.
+REASON_PHRASES: dict[str, tuple[str, ...]] = {
+    "citation": (r"isn't in the resolution exactly once", r"isn't inside one of the sentences given",
+                 r"the quote doesn't state the stance"),
+    "numbers": (r"doesn't state exactly one figure", r"its quote doesn't state .+ at .+ per cent",
+                r"where the resolution states it, not", r"its sentence states .+ there, not"),
+    "format": (r"isn't the schema's JSON", r"isn't one of the schema's labels", r"projection \d+ isn't an object",
+               r"projection \d+ isn't the schema's object", r"no projection is listed", r"isn't written 'Q2 ",
+               r"runs \d{4}-\d\d-\d\d to \d{4}-\d\d-\d\d, not", r"it needs one value, or a range",
+               r"is listed twice"),
+}
+
+
 def check_stance(answer, text: str, document_id: int, parsed: Parsed) -> Checked:
     c = Checked("stance_extraction", answer if isinstance(answer, dict) else None, [], [], [])
     if not isinstance(answer, dict) or not isinstance(answer.get("stance"), str) or not isinstance(answer.get("quote"),

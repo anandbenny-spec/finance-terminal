@@ -1,0 +1,10 @@
+# What the accuracy page shows (issue #134; Plan 02 §4). `site.quality_summary` reads this file.
+#
+# modules: only these modules get rows in core.quality_summary, so unpublished work (#106's crypto store, module 2 before its
+# launch) never shows. 2A-26 adds `equity` when module 2 launches.
+modules: [policy]
+
+# drills: which module each drill belongs to (ops.drill_run.drill). D3 and D4 drill module 1's FRED series.
+drills:
+  d3_suppression: policy
+  d4_freshness: policy

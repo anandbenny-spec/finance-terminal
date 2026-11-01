@@ -1,12 +1,21 @@
 """Due rules (Architecture 02 §1.3; Prompt 01 A2), as config/tasks.yaml names them.
 
 - `every <interval>`: since the task's last success, in any workflow.
+- `every <interval> or <catch-up>` (daily): that, or the named catch-up below applies. A catch-up that makes a daily
+  task due carries no meeting: the daily runs its normal pass, which already takes any statement or resolution of the
+  last 60 days that isn't stored.
 - `fomc_decision_day` / `mpc_decision_day`: the bank's decision date is today in its own time zone, its decision
   document (the statement or the resolution) isn't stored, and the run is inside that meeting's watch window.
+  **Catch-up** (issue #158): once the window has closed the rule stays due while the document isn't stored, until the
+  end of the next calendar day in the bank's zone, so a `watch` that GitHub started late or never started still loads
+  the decision. A catch-up `Due` carries its meeting, says "catch-up" in its reason and has no `until`: the watch loop
+  does one pass for it and doesn't poll (nothing to poll towards).
 - `after_decision_document`: a decision-day document is stored, the AI step hasn't succeeded in a watch run since it
   was stored, and the meeting's watch window is still open (the AI step polls like the fetch: Architecture 03 §1.3).
-  Only watch runs count: a daily, refresh or backfill run of the AI step sends nothing in real time (B7), so it
-  mustn't stand in for the decision-day step.
+  Only watch runs count there: a daily, refresh or backfill run of the AI step sends nothing in real time (B7), so it
+  mustn't stand in for the decision-day step. **Catch-up:** after the window closes, and until the same end of the next
+  day, it is also due while the AI step hasn't succeeded in **any** run since the document was stored (once per stored
+  document: a run of any kind that succeeded has done it, and an unchanged input is never sent twice: Arch 03 §1.3).
 
 The watch window is anchored to the meeting's release time (core.event.occurs_at, else the bank's usual time),
 not to when the run started, so a run started early isn't cut short and a delayed start still polls. It opens
@@ -19,7 +28,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from ft.jobs.config import every_interval
+from ft.jobs.config import CATCH_UPS, every_interval, split_rule
 
 LEAD = timedelta(minutes=10)
 
@@ -59,16 +68,26 @@ class Meeting:
     def closes_at(self) -> datetime:
         return self.release_at + self.bank.window
 
+    @property
+    def catch_up_ends(self) -> datetime:
+        """The end of the next calendar day after the decision date, in the bank's zone."""
+        return datetime.combine(self.decision_date + timedelta(days=2), time(0), tzinfo=self.bank.tz)
+
     def is_open(self, now: datetime) -> bool:
         return self.opens_at <= now < self.closes_at
+
+    def in_catch_up(self, now: datetime) -> bool:
+        """The watch window has closed, and the end of the next calendar day hasn't come."""
+        return self.closes_at <= now < self.catch_up_ends
 
 
 @dataclass(frozen=True)
 class Due:
     due: bool
     reason: str
-    meeting: Meeting | None = None    # decision-day rules: the meeting being watched
-    until: datetime | None = None     # decision-day rules: when the watch window closes
+    meeting: Meeting | None = None    # decision-day rules: the meeting being watched (or caught up)
+    until: datetime | None = None     # decision-day rules: when the watch window closes (None for a catch-up)
+    catch_up: bool = False            # decision-day rules: the window has closed; one pass, no polling
 
 
 def local(ts: datetime, bank: Bank) -> str:
@@ -112,34 +131,55 @@ def _last_success(db, task_key: str, workflow: str | None = None) -> datetime | 
                       (task_key, workflow)).fetchone()[0]
 
 
+def _catch_up(m: Meeting, what: str) -> Due:
+    return Due(True, f"{m.slug}: catch-up, {what} (the {m.bank.name} watch window closed at {local(m.closes_at, m.bank)}; "
+                     f"catching up until {local(m.catch_up_ends, m.bank)})", meeting=m, catch_up=True)
+
+
+def _recent(db, bank: Bank, now: datetime) -> list[Meeting]:
+    """The bank's decision meetings of today and yesterday in its own zone, today's first: a catch-up reaches into the
+    next calendar day, so yesterday's meeting is still in play."""
+    day = now.astimezone(bank.tz).date()
+    return [m for d in (day, day - timedelta(days=1)) if (m := decision_meeting(db, bank, d)) is not None]
+
+
 def _decision_day(db, bank: Bank, now: datetime) -> Due:
-    m = decision_meeting(db, bank, now.astimezone(bank.tz).date())
-    if m is None:
+    meetings = _recent(db, bank, now)
+    if not meetings:
         return Due(False, f"not an {bank.name} decision day")
-    if m.stored_at is not None:
-        return Due(False, f"{m.slug}: the {bank.decision_doc} is stored")
-    if now < m.opens_at:
-        return Due(False, f"{m.slug}: too early, the watch window opens at {local(m.opens_at, bank)}")
-    if now >= m.closes_at:
-        return Due(False, f"{m.slug}: the watch window closed at {local(m.closes_at, bank)}")
-    return Due(True, f"{m.slug}: {bank.name} decision day, watching until {local(m.closes_at, bank)}",
-               meeting=m, until=m.closes_at)
+    first: Due | None = None
+    for m in meetings:
+        if m.stored_at is not None:
+            d = Due(False, f"{m.slug}: the {bank.decision_doc} is stored")
+        elif now < m.opens_at:
+            d = Due(False, f"{m.slug}: too early, the watch window opens at {local(m.opens_at, bank)}")
+        elif m.is_open(now):
+            return Due(True, f"{m.slug}: {bank.name} decision day, watching until {local(m.closes_at, bank)}",
+                       meeting=m, until=m.closes_at)
+        else:
+            return _catch_up(m, f"the {bank.decision_doc} isn't stored")
+        first = first or d
+    return first
 
 
 def _after_decision_document(db, task_key: str, now: datetime) -> Due:
     reasons = []
     for bank in BANKS.values():
-        m = decision_meeting(db, bank, now.astimezone(bank.tz).date())
-        if m is None:
-            continue
-        if m.stored_at is None:
-            reasons.append(f"{m.slug}: the {bank.decision_doc} isn't stored yet")
-        elif not m.is_open(now):
-            reasons.append(f"{m.slug}: outside the watch window")
-        elif (last := _last_success(db, task_key, "watch")) is not None and last > m.stored_at:
-            reasons.append(f"{m.slug}: already ran after the {bank.decision_doc} was stored")
-        else:
-            return Due(True, f"{m.slug}: the {bank.decision_doc} is stored", meeting=m, until=m.closes_at)
+        for m in _recent(db, bank, now):
+            if m.stored_at is None:
+                reasons.append(f"{m.slug}: the {bank.decision_doc} isn't stored yet")
+            elif m.is_open(now):
+                if (last := _last_success(db, task_key, "watch")) is not None and last > m.stored_at:
+                    reasons.append(f"{m.slug}: already ran after the {bank.decision_doc} was stored")
+                else:
+                    return Due(True, f"{m.slug}: the {bank.decision_doc} is stored", meeting=m, until=m.closes_at)
+            elif m.in_catch_up(now):
+                if (last := _last_success(db, task_key)) is not None and last > m.stored_at:
+                    reasons.append(f"{m.slug}: already ran after the {bank.decision_doc} was stored")
+                else:
+                    return _catch_up(m, f"the {bank.decision_doc} is stored and the AI step hasn't run since")
+            else:
+                reasons.append(f"{m.slug}: outside the watch window")
     return Due(False, "; ".join(reasons) or "not a decision day")
 
 
@@ -148,11 +188,20 @@ def evaluate(db, task_key: str, rule: str, now: datetime) -> Due:
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     if (interval := every_interval(rule)) is not None:
+        _, extra = split_rule(rule)
         last = _last_success(db, task_key)
         if last is None:
             return Due(True, "never succeeded")
         age = now - last
-        return Due(age >= interval, f"last success {age} ago (rule: {rule})")
+        d = Due(age >= interval, f"last success {age} ago (rule: {rule})")
+        if d.due or extra is None:
+            return d
+        # The catch-up of a named rule makes the daily pass due, whatever the interval says. Only a catch-up counts: a
+        # window that is open belongs to the watch. The pass carries no meeting: it is the daily's own, normal pass.
+        c = evaluate(db, task_key, CATCH_UPS[extra], now)
+        if c.due and c.catch_up:
+            return Due(True, c.reason + f" (last success {age} ago)", catch_up=True)
+        return Due(False, f"{d.reason}; {c.reason}")
     if rule in BANKS:
         return _decision_day(db, BANKS[rule], now)
     if rule == "after_decision_document":

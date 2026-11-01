@@ -1,0 +1,166 @@
+{
+  "_comment": "Results XBRL element -> equity.financials column (Spec 02A §5.4; job 2A-09). Ported from the audit kit's config/xbrl_tags.json (Data Audit 02a findings 2-5, 16) and extended to every column of the table; names were checked against the 1,375 saved filings in the fixtures repo (data/fixtures/equity/xbrl, 26 companies, both NSE eras) on 29 Oct 2026. Candidates are in order of preference: the first name with a value in the row's context wins. Unlike the kit, there are no fuzzy patterns (every element behind a value is named here, and recorded in the row's tags), and a value is read only from a context without dimensions (a segment's or an expense line's figure is never taken for the total). Sections: 'ind_as' is the Ind AS and NBFC formats; 'bank' and 'insurer' replace it for those formats. In each, 'duration' columns are read from the quarter and the year-to-date contexts, 'cash_flow' only into the year-to-date row (results filings carry no quarterly cash flow: Reg 33(3)(g); Data Audit 02 C4), 'instant' from the instant at the period end, 'ratios' (banks) only from the standalone filing, and 'tie' names elements the per-filing checks read that aren't stored. 'shares' is shared by every format.",
+  "ind_as": {
+    "duration": {
+      "revenue": ["RevenueFromOperations", "RevenueFromOperationsNet", "TotalRevenueFromOperations", "IncomeFromOperations"],
+      "other_income": ["OtherIncome"],
+      "total_income": ["Income", "TotalIncome", "TotalRevenue"],
+      "employee_cost": ["EmployeeBenefitExpense", "EmployeeBenefitsExpense"],
+      "dna": ["DepreciationDepletionAndAmortisationExpense", "DepreciationAndAmortisationExpense", "DepreciationAmortisationAndImpairmentExpense"],
+      "finance_cost": ["FinanceCosts", "FinanceCost"],
+      "total_expenses": ["Expenses", "TotalExpenses"],
+      "share_of_associates": ["ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod", "ShareOfProfitLossOfAssociates"],
+      "pbt_before_exceptional": ["ProfitBeforeExceptionalItemsAndTax", "ProfitLossBeforeExceptionalItemsAndTax", "ProfitBeforeExceptionalAndExtraordinaryItemsAndTax"],
+      "exceptional": ["ExceptionalItemsBeforeTax", "ExceptionalItems"],
+      "pbt": ["ProfitBeforeTax", "ProfitLossBeforeTax", "ProfitBeforeTaxFromContinuingOperations", "ProfitOrLossBeforeTax"],
+      "tax": ["TaxExpense", "TotalTaxExpense", "IncomeTaxExpenseContinuingOperations"],
+      "pat": ["ProfitLossForPeriod", "ProfitLossForThePeriod", "ProfitLossForPeriodFromContinuingAndDiscontinuedOperations"],
+      "pat_owners": ["ProfitOrLossAttributableToOwnersOfParent", "ProfitLossAttributableToOwnersOfParent", "ProfitLossAttributableToOwnersOfTheParent", "ProfitAttributableToOwnersOfParent"],
+      "pat_nci": ["ProfitOrLossAttributableToNonControllingInterests", "ProfitLossAttributableToNoncontrollingInterests"],
+      "eps_basic": ["BasicEarningsLossPerShareFromContinuingAndDiscontinuedOperations", "BasicEarningsLossPerShareFromContinuingOperations"],
+      "eps_diluted": ["DilutedEarningsLossPerShareFromContinuingAndDiscontinuedOperations", "DilutedEarningsLossPerShareFromContinuingOperations"]
+    },
+    "cash_flow": {
+      "cfo": ["CashFlowsFromUsedInOperatingActivities", "NetCashFlowsFromUsedInOperatingActivities"],
+      "cfi": ["CashFlowsFromUsedInInvestingActivities", "NetCashFlowsFromUsedInInvestingActivities"],
+      "cff": ["CashFlowsFromUsedInFinancingActivities", "NetCashFlowsFromUsedInFinancingActivities"],
+      "capex": ["PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities", "PurchaseOfPropertyPlantAndEquipment", "PaymentsToAcquirePropertyPlantAndEquipment"],
+      "dividends_paid": ["DividendsPaidClassifiedAsFinancingActivities", "DividendsPaid"]
+    },
+    "instant": {
+      "total_assets": ["Assets", "TotalAssets"],
+      "current_assets": ["CurrentAssets"],
+      "cash": ["CashAndCashEquivalents"],
+      "bank_balances_other": ["BankBalanceOtherThanCashAndCashEquivalents", "OtherBankBalances"],
+      "current_investments": ["CurrentInvestments", "InvestmentsCurrent"],
+      "noncurrent_investments": ["NoncurrentInvestments", "InvestmentsNoncurrent"],
+      "trade_receivables": ["TradeReceivablesCurrent", "TradeReceivables"],
+      "inventories": ["Inventories"],
+      "total_equity": ["Equity", "TotalEquity"],
+      "equity_owners": ["EquityAttributableToOwnersOfParent", "EquityAttributableToOwnersOfTheParent"],
+      "share_capital": ["EquityShareCapital", "ShareCapital"],
+      "nci": ["NonControllingInterest", "NoncontrollingInterests", "NonControllingInterests", "MinorityInterest"],
+      "borrowings_current": ["BorrowingsCurrent", "CurrentBorrowings", "ShortTermBorrowings"],
+      "borrowings_noncurrent": ["BorrowingsNoncurrent", "NoncurrentBorrowings", "LongTermBorrowings"],
+      "lease_current": ["LeaseLiabilitiesCurrent", "CurrentLeaseLiabilities"],
+      "lease_noncurrent": ["LeaseLiabilitiesNoncurrent", "NoncurrentLeaseLiabilities"],
+      "trade_payables": ["TradePayablesCurrent", "TradeAndOtherPayablesCurrent", "TradePayables"]
+    },
+    "tie": {
+      "liabilities": ["Liabilities", "TotalLiabilities"],
+      "equity_and_liabilities": ["EquityAndLiabilities", "TotalEquityAndLiabilities"],
+      "pat_continuing": ["ProfitLossForPeriodFromContinuingOperations"],
+      "discontinued": ["ProfitLossFromDiscontinuedOperationsAfterTax", "ProfitLossFromDiscontinuingOperationAfterTax"],
+      "regulatory_deferral": ["NetMovementInRegulatoryDeferralAccountBalancesRelatedToProfitOrLossAndTheRelatedDeferredTaxMovement"]
+    },
+    "minority_layout": {
+      "_comment": "One layout (the pre-Ind AS Schedule III one) files the profit after minority interest as ProfitLossForThePeriod, with the profit before it as ProfitLossForPeriodBeforeMinorityInterest and the minority's share (negative) as ProfitLossOfMinorityInterest, and its balance sheet as ShareholdersFunds and MinorityInterest instead of Equity, and its profit before exceptional items as ProfitBeforeExceptionalAndExtraordinaryItemsAndTax, mapped under 'duration' (added 31 Oct 2026 for #117; LT Q4 FY25 consolidated quarter: ₹7,539 cr + exceptional items ₹475 cr = PBT ₹8,014 cr). LT's first Integrated Filing pair, Q4 FY25, are the only saved files that use this layout. There, when both P&L markers are filed: pat = before minority interest + share of associates (derived), pat_owners = ProfitLossForThePeriod, pat_nci = − ProfitLossOfMinorityInterest; and when Equity isn't filed: equity_owners = ShareholdersFunds, total_equity = ShareholdersFunds + MinorityInterest (derived), nci = MinorityInterest.",
+      "before_minority": ["ProfitLossForPeriodBeforeMinorityInterest"],
+      "minority": ["ProfitLossOfMinorityInterest"],
+      "after_minority": ["ProfitLossForThePeriod"],
+      "shareholders_funds": ["ShareholdersFunds"],
+      "minority_interest": ["MinorityInterest"]
+    }
+  },
+  "nbfc": {
+    "_comment": "NBFCs file in the Ind AS layout ('ind_as' applies) plus the interest they earn and, for deposit-taking ones, the deposits they hold, stored as filed in the bank columns of the same name.",
+    "duration": {
+      "interest_earned": ["InterestEarned"]
+    },
+    "instant": {
+      "deposits": ["Deposits"]
+    }
+  },
+  "bank": {
+    "_comment": "Banks (the banking taxonomy, Data Audit 02a finding 4). Revenue is the filed total income (Income: interest earned plus other income), which is what X1's reference reads for banks (the kit reached it through its fuzzy match on SegmentRevenueFromOperations, equal to Income in every saved bank filing). Total assets = Assets; equity = Capital + ReservesAndSurplus (no equity total is filed). The ratios are fractions as filed; consolidated filings carry them as 0, so they are read only from the standalone filing, and a 0 there is treated as not filed for the NPA ratios, ROA and CET1 (the kit's rule; a bank with no AT1 capital files a true 0 AT1 ratio, which is kept). Total segment assets are as at the quarter end: the instant, or, in files before the integrated format, the quarter's duration context they were filed in.",
+    "duration": {
+      "revenue": ["Income"],
+      "other_income": ["OtherIncome"],
+      "total_income": ["Income"],
+      "employee_cost": ["EmployeesCost"],
+      "share_of_associates": ["ShareOfProfitLossOfAssociates"],
+      "exceptional": ["ExceptionalItems"],
+      "pbt": ["ProfitLossFromOrdinaryActivitiesBeforeTax"],
+      "tax": ["TaxExpense"],
+      "pat": ["ProfitLossForThePeriod", "ProfitLossForPeriod"],
+      "pat_owners": ["ProfitLossAfterTaxesMinorityInterestAndShareOfProfitLossOfAssociates"],
+      "pat_nci": ["ProfitLossOfMinorityInterest"],
+      "eps_basic": ["BasicEarningsPerShareAfterExtraordinaryItems"],
+      "eps_diluted": ["DilutedEarningsPerShareAfterExtraordinaryItems"],
+      "interest_earned": ["InterestEarned"],
+      "interest_expended": ["InterestExpended"],
+      "operating_profit": ["OperatingProfitBeforeProvisionAndContingencies", "OperatingProfitBeforeProvisionsAndContingencies"],
+      "provisions": ["ProvisionsOtherThanTaxAndContingencies"]
+    },
+    "ratios": {
+      "gnpa_ratio": ["PercentageOfGrossNpa"],
+      "nnpa_ratio": ["PercentageOfNpa", "PercentageOfNetNpa"],
+      "roa_filed": ["ReturnOnAssets"],
+      "cet1_ratio": ["CET1Ratio"],
+      "at1_ratio": ["AdditionalTier1Ratio"]
+    },
+    "cash_flow": {
+      "cfo": ["CashFlowsFromUsedInOperatingActivities"],
+      "cfi": ["CashFlowsFromUsedInInvestingActivities"],
+      "cff": ["CashFlowsFromUsedInFinancingActivities"],
+      "capex": ["PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities"],
+      "dividends_paid": ["DividendsPaidClassifiedAsFinancingActivities"]
+    },
+    "instant": {
+      "total_assets": ["Assets"],
+      "cash": ["CashAndBalancesWithReserveBankOfIndia"],
+      "bank_balances_other": ["BalancesWithBanksAndMoneyAtCallAndShortNotice"],
+      "share_capital": ["Capital"],
+      "deposits": ["Deposits"],
+      "advances": ["Advances"],
+      "segment_assets_total": ["SegmentAssets"]
+    },
+    "tie": {
+      "reserves": ["ReservesAndSurplus"],
+      "capital_and_liabilities": ["CapitalAndLiabilities"],
+      "extraordinary": ["ExtraordinaryItems"]
+    },
+    "zero_is_not_filed": ["gnpa_ratio", "nnpa_ratio", "roa_filed", "cet1_ratio"]
+  },
+  "insurer": {
+    "_comment": "IRDAI-format insurers, life (LI) and general (GI) (Data Audit 02a findings 5 and 16). A life insurer's file carries two tax lines: ProvisionForTax is the policyholders' account's, and ProvisionsForTaxes the shareholders' account's, which is the one between its PBT and PAT (HDFCLIFE Q4 FY25: 4,859.4 mn − 105.8 mn = 4,753.6 mn); a general insurer files ProvisionForTax only. The balance sheet is netted: gross total assets = Assets + CurrentLiabilitiesAndProvisions (Assets is stored as assets_net); equity = ShareCapital + ReservesAndSurplus for both (in GI files ShareholdersFunds is the fair-value change account). No face value is filed (EQUITY_L's is used, noted in tags). SolvencyRatio is filed on two scales: a value below 0.5 is multiplied by 100 and flagged. Cash flow: the totals only (the line items look unreliable in the GI file). GI's NumberOfShares is the promoter group's holding and is never mapped. GI's total income is derived (labelled) as OperatingIncome + ShareholdersAccountIncomeFromInvestments + ShareholdersAccountOtherIncome; the bank lines are not read (an insurer's NPA tags are its investments').",
+    "duration": {
+      "total_income": ["Income"],
+      "pbt": ["ProfitLossBeforeTax", "ProfitOrLossBeforeTax"],
+      "tax": ["ProvisionsForTaxes", "ProvisionForTax"],
+      "pat": ["ProfitLossAfterTaxAndExtraordinaryItems", "ProfitLossAfterTax"],
+      "eps_basic": ["BasicAndDilutedEPSAfterExtraordinaryItemsNetOfTaxExpenseForThePeriodNotToBeAnnualized"],
+      "eps_diluted": ["BasicAndDilutedEPSAfterExtraordinaryItemsNetOfTaxExpenseForThePeriodNotToBeAnnualized"],
+      "gross_premium": ["GrossPremiumsWritten", "GrossPremiumIncome"],
+      "net_premium": ["NetPremiumWritten", "NetPremiumIncome"],
+      "solvency_ratio": ["SolvencyRatio"]
+    },
+    "cash_flow": {
+      "cfo": ["CashFlowsFromUsedInOperatingActivities"],
+      "cfi": ["CashFlowsFromUsedInInvestingActivities"],
+      "cff": ["CashFlowsFromUsedInFinancingActivities"]
+    },
+    "instant": {
+      "assets_net": ["Assets", "ApplicationOfFunds"],
+      "current_liabilities_provisions": ["CurrentLiabilitiesAndProvisions"],
+      "share_capital": ["ShareCapital"],
+      "current_assets": ["CurrentAssets"],
+      "cash": ["CashAndBankBalances"]
+    },
+    "tie": {
+      "reserves": ["ReservesAndSurplus"],
+      "current_liabilities": ["CurrentLiabilities"],
+      "provisions": ["Provisions"],
+      "sources_of_funds": ["SourcesOfFunds"],
+      "extraordinary": ["ExtraordinaryItemsNetOfTaxExpenses"],
+      "gi_operating_income": ["OperatingIncome"],
+      "gi_sh_investment_income": ["ShareholdersAccountIncomeFromInvestments"],
+      "gi_sh_other_income": ["ShareholdersAccountOtherIncome"]
+    }
+  },
+  "shares": {
+    "_comment": "Shares outstanding = paid-up equity capital ÷ face value (Data Audit 02 C5): every results filing carries both, except insurers, which file no face value (EQUITY_L's FACE VALUE is used, noted). Read from the row's own context, then the other duration column, the instant at the period end and the quarter's context; a 0 is not filed. Where the file gives no non-zero paid-up capital or face value (30 of the Nifty 50's filings since 2019: HCL Tech 21, Eicher, M&M, IndiGo, Dr Reddy's, Grasim, Titan), the three columns are left blank and the filing keeps its other figures (Anand, 31 Oct 2026, #114).",
+    "paid_up_capital": ["PaidUpValueOfEquityShareCapital", "PaidUpEquityShareCapital", "PaidupValueOfEquityShareCapital", "PaidUpEquityCapital"],
+    "face_value": ["FaceValueOfEquityShareCapital", "FaceValuePerShare", "FaceValueOfEquityShare"]
+  }
+}

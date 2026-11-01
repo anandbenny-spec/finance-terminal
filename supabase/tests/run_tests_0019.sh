@@ -82,12 +82,12 @@ values ('2026-01-05', 'IN', 'Software', 1.1, (select id from core.raw_file where
 SQL
 
 ############################################################ structure and catalogues
-check "E01 all 15 equity tables have RLS on and a job_writer_all policy" \
+check "E01 all 20 equity tables (0019's 15, 0023's 5) have RLS on and a job_writer_all policy" \
   "$(as_pg "select count(*) from pg_tables t where t.schemaname = 'equity' and t.rowsecurity
             and exists (select 1 from pg_policies p where p.schemaname = 'equity' and p.tablename = t.tablename
-                        and p.policyname = 'job_writer_all' and p.roles = '{job_writer}')")" '^15$'
-check "E02 the schema holds exactly those 15 tables and the price_adjusted view" \
-  "$(as_pg "select (select count(*) from pg_tables where schemaname = 'equity')||'/'||(select count(*) from pg_views where schemaname = 'equity')")" '^15/1$'
+                        and p.policyname = 'job_writer_all' and p.roles = '{job_writer}')")" '^20$'
+check "E02 the schema holds exactly those 20 tables and the price_adjusted view" \
+  "$(as_pg "select (select count(*) from pg_tables where schemaname = 'equity')||'/'||(select count(*) from pg_views where schemaname = 'equity')")" '^20/1$'
 check "E03 four sources with the attribution wording of Spec 02A §3.1, none exportable or suppressed" \
   "$(as_pg "select string_agg(key||'='||attribution||'|'||is_official||'|'||allow_raw_export||'|'||is_suppressed, ';' order by key) from core.source where key in ('nse','bse','damodaran','imf')")" \
   '^bse=Source: BSE\|true\|false\|false;damodaran=Source: Aswath Damodaran, NYU Stern\|false\|false\|false;imf=Source: IMF World Economic Outlook\|true\|false\|false;nse=Source: NSE\|true\|false\|false$'
@@ -99,9 +99,9 @@ check "E05 the four Nifty index entities are published (IN, INR)" \
 check "E06 event types and statuses (corporate_action: announced, effective final, withdrawn final; results_filing: filed, superseded final)" \
   "$(as_pg "select string_agg(event_type||'.'||status||'='||is_final, ';' order by event_type, status) from core.event_status where event_type in ('corporate_action','results_filing')")" \
   '^corporate_action\.announced=false;corporate_action\.effective=true;corporate_action\.withdrawn=true;results_filing\.filed=true;results_filing\.superseded=true$'
-check "E07 doc types results_xbrl and shareholding_xbrl (module equity, not diffable)" \
+check "E07 doc types results_xbrl and shareholding_xbrl, and 0023's call_transcript and call_cover_letter (module equity, not diffable)" \
   "$(as_pg "select string_agg(key||'|'||module||'|'||diffable, ';' order by key) from core.doc_type where module = 'equity'")" \
-  '^results_xbrl\|equity\|false;shareholding_xbrl\|equity\|false$'
+  '^call_cover_letter\|equity\|false;call_transcript\|equity\|false;results_xbrl\|equity\|false;shareholding_xbrl\|equity\|false$'
 check "E08 the five valuation-input series: unpublished, percent, no fixing time, right kinds and frequencies" \
   "$(as_pg "select string_agg(key||'|'||kind||'|'||frequency||'|'||unit||'|'||is_published||'|'||coalesce(fixing_time::text,'-'), ';' order by key) from core.series where key like 'damodaran.%' or key like 'imf.%'")" \
   '^damodaran\.ERP_IMPLIED\|observed\|M\|percent\|false\|-;damodaran\.IND_CRP\|observed\|irregular\|percent\|false\|-;damodaran\.IND_DEFAULT_SPREAD\|observed\|irregular\|percent\|false\|-;imf\.NGDP_RPCH\.IND\|forecast\|A\|percent\|false\|-;imf\.PCPIPCH\.IND\|forecast\|A\|percent\|false\|-$'
@@ -114,12 +114,12 @@ check "E11 field policy: four equity fields hidden, six labelled with their labe
   "$(as_pg "select string_agg(field_key||'='||status||':'||label, ';' order by field_key) from core.field_policy where field_key like 'equity.%'")" \
   '^equity\.beta=labelled:derived;equity\.cost_of_debt=labelled:derived;equity\.dcf_scenario=hidden:Model-implied value under selected assumptions;equity\.ebit_derived=labelled:derived;equity\.implied_growth=hidden:model-implied;equity\.implied_roe=hidden:model-implied;equity\.nim_proxy=labelled:proxy, annualised;equity\.peer_group=labelled:curated;equity\.rate_sensitivity=hidden:derived;equity\.roa=labelled:annualised$'
 check "E12 the schema and every table and the view carry a comment" \
-  "$(as_pg "select (select count(*) from pg_namespace n where n.nspname = 'equity' and obj_description(n.oid, 'pg_namespace') is not null)||'/'||count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'equity' and c.relkind in ('r','v') and obj_description(c.oid, 'pg_class') is not null")" '^1/16$'
+  "$(as_pg "select (select count(*) from pg_namespace n where n.nspname = 'equity' and obj_description(n.oid, 'pg_namespace') is not null)||'/'||count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'equity' and c.relkind in ('r','v') and obj_description(c.oid, 'pg_class') is not null")" '^1/21$'
 
 ############################################################ privileges
-check "E13 job_writer deletes only from adjustment_factor, financials, shareholding, metric_value, valuation_scenario" \
+check "E13 job_writer deletes only from adjustment_factor, financials, shareholding, metric_value, valuation_scenario (and 0023's call_turn, guidance, stated_figure)" \
   "$(as_pg "select string_agg(c.relname, ',' order by c.relname) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'equity' and c.relkind = 'r' and has_table_privilege('job_writer', c.oid, 'delete')")" \
-  '^adjustment_factor,financials,metric_value,shareholding,valuation_scenario$'
+  '^adjustment_factor,call_turn,financials,guidance,metric_value,shareholding,stated_figure,valuation_scenario$'
 check "E14 job_writer can't delete from price_daily" \
   "$(as_role job_writer "delete from equity.price_daily where trade_date = '2026-01-01'")" 'permission denied'
 check "E15 job_writer can't delete from filing" \

@@ -1,0 +1,49 @@
+# v1's evaluation gates (issue #134; Brief §11; Architecture 03 §1.9). A gate is passed when core.eval_summary holds a
+# row for its eval set and metric (the evaluation jobs copy passing runs there) whose value meets the rule: `min` means
+# value >= the number, `max` means value < the number. Otherwise it is pending. The page shows only the counts.
+#
+# The metric names are the ones the evaluation jobs must write into core.eval_summary; a job that writes another name
+# leaves its gate pending (never passed by mistake). Each module's own gates are listed under it: 2A-26 adds equity's.
+gates:
+  - key: policy_hawk_dove
+    module: policy
+    eval_set: policy_hawk_dove
+    metric: accuracy
+    rule: {min: 0.80}                   # 3-class accuracy, and no hawkish/dovish reversal (checked by the run)
+    source: Brief §11; Architecture 03 §1.9
+  - key: policy_member_hawk_dove
+    module: policy
+    eval_set: policy_member_hawk_dove
+    metric: accuracy
+    rule: {min: 0.80}
+    source: Brief §11; Architecture 03 §1.9
+  - key: policy_stance
+    module: policy
+    eval_set: policy_stance
+    metric: accuracy
+    rule: {min: 0.90}                   # exact label
+    source: Brief §11; Architecture 03 §1.9
+  - key: citation_integrity
+    module: policy
+    eval_set: citation_integrity
+    metric: rejected_share
+    rule: {max: 0.10}                   # share of outputs rejected for an unverifiable citation
+    source: Brief §11; Architecture 03 §1.9
+  - key: retrieval
+    module: policy                      # module 1's document questions in v1
+    eval_set: retrieval
+    metric: recall_at_8
+    rule: {min: 0.85}
+    source: Brief §11; Architecture 03 §1.9
+  - key: cmdbar_router
+    module: policy
+    eval_set: cmdbar_router
+    metric: route_accuracy
+    rule: {min: 0.90}                   # and no unanswerable question answered (checked by the run)
+    source: Brief §11; Architecture 03 §1.9
+  - key: cmdbar_sql
+    module: policy                      # the 15 module-1 data questions now
+    eval_set: cmdbar_sql
+    metric: result_match
+    rule: {min: 0.85}
+    source: Brief §11; Architecture 03 §1.9

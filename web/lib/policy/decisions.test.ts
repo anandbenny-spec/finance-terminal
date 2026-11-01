@@ -2,7 +2,7 @@
 // Test rows shaped like the views; the names and figures are test data, not a record of real meetings.
 import { describe, expect, it } from "vitest";
 import type { PolicyMeetingRow, PolicyVoteRow } from "@/lib/queries/api";
-import { TABS, changeInWords, decisionLine, historyRows, lastMove, meetingHref, meetingTabHref, tabOf, tally } from "./decisions";
+import { TABS, changeInWords, decisionLine, dissentLine, historyRows, lastMove, meetingHref, meetingTabHref, tabOf, tally, votedAgainstRate } from "./decisions";
 
 function meeting(over: Partial<PolicyMeetingRow>): PolicyMeetingRow {
   return {
@@ -102,9 +102,52 @@ describe("Fed tally (Design 01 §1.14, §4.5)", () => {
     expect(t.kind === "tally" && t.line).toBe("Vote 11–1 · Dissent: Schmid (preferred to hold)");
   });
 
-  it("is absent with no votes, and counts only the meeting's own rows", () => {
-    expect(tally(meeting({}), [])).toEqual({ kind: "absent" });
-    expect(tally(meeting({}), [vote("fomc-2026-07-30", "A", 0)])).toEqual({ kind: "absent" });
+  it("is absent with no votes and no minutes date to wait for, and counts only the meeting's own rows", () => {
+    const baseline = meeting({ minutes_due_on: null });
+    expect(tally(baseline, [])).toEqual({ kind: "absent" });
+    expect(tally(baseline, [vote("fomc-2026-07-30", "A", 0)])).toEqual({ kind: "absent" });
+  });
+});
+
+describe("Fed tally while the minutes are out (#159): a tally statement names only its dissenters", () => {
+  const slug = "fomc-2026-10-28";
+  const oct = meeting({ slug, decision_date: "2026-10-28", minutes_due_on: "2026-11-18", policy_rate_change_bps: 0, dissent_count: 2 });
+  const NOTE = "Each member's vote is published in the minutes, due 18 Nov 2026.";
+  const cook = vote(slug, "Lisa D. Cook", 25, { is_dissent: true });
+  const hammack = vote(slug, "Beth M. Hammack", 25, { is_dissent: true });
+
+  it("shows the dissenters and §4.5's copy, and no count", () => {
+    const t = tally(oct, [cook, hammack]);
+    expect(t).toEqual({ kind: "pending", note: NOTE, dissents: ["Lisa D. Cook (preferred +25 bps)", "Beth M. Hammack (preferred +25 bps)"] });
+    expect(t.kind === "pending" && dissentLine(t.dissents ?? [])).toBe("Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps)");
+    expect(JSON.stringify(t)).not.toMatch(/\d+–\d+/); // "10–2" is not a stored number
+  });
+
+  it("writes a hold preference, and a dissent that isn't about the rate, as the tally line does", () => {
+    const t = tally(oct, [vote(slug, "A", 0, { is_dissent: true }), vote(slug, "B", null, { is_dissent: true })]);
+    expect(t).toMatchObject({ kind: "pending", dissents: ["A (preferred to hold)", "B (dissented, not on the rate)"] });
+  });
+
+  it("shows only the copy for a unanimous tally statement (no rows yet), in place of 'Votes aren't published yet.'", () => {
+    expect(tally(oct, [])).toEqual({ kind: "pending", note: NOTE });
+    expect(tally(meeting({ slug, minutes_due_on: null }), [])).toEqual({ kind: "absent" }); // nothing to wait for: say nothing
+    expect(tally(oct, [vote("fomc-2026-09-16", "Cook", 0, { is_dissent: true })])).toEqual({ kind: "pending", note: NOTE }); // another meeting's rows don't count
+  });
+
+  it("is the tally line again once the minutes add the members who voted for", () => {
+    const forTheDecision = Array.from({ length: 10 }, (_, i) => vote(slug, `Member ${i + 1}`, 0));
+    const t = tally(oct, [...forTheDecision, cook, hammack]);
+    expect(t).toMatchObject({ kind: "tally", short: "10–2", line: "Vote 10–2 · Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps)" });
+  });
+
+  it("leaves a named statement's full set of rows and the RBI's pending copy as they were", () => {
+    expect(tally(meeting({}), [vote("fomc-2026-09-17", "A", -25), vote("fomc-2026-09-17", "B", -50, { is_dissent: true })])).toMatchObject({ kind: "tally", short: "1–1" });
+    expect(tally(rbi({}), [])).toEqual({ kind: "pending", note: "Each member's vote is published in the minutes, due 22 Aug 2024." });
+  });
+
+  it("gives the history table a dash with the copy as its tooltip, and the dissent count from the meeting's row", () => {
+    const rows = historyRows([oct], [cook, hammack]);
+    expect(rows[0]).toMatchObject({ vote: "—", voteNote: NOTE, dissents: 2 });
   });
 });
 
@@ -147,6 +190,56 @@ describe("RBI tally (F23): rate and stance counted separately", () => {
       kind: "pending",
       note: "Each member's vote is published in the minutes, due 22 Aug 2024.",
     });
+  });
+});
+
+describe("RBI tally when a member voted against the rate without a stated alternative (launch check #87)", () => {
+  // The shape of 7 Dec 2022: the resolution says Prof. Varma "voted against the repo rate hike" and names no change, so his
+  // row has no bps but carries the verbatim clause. Test data shaped like the view, not a record of the meeting.
+  const slug = "mpc-2022-12-07";
+  const m = rbi({ slug, decision_date: "2022-12-07", policy_rate_change_bps: 35, policy_rate_pct: 6.25, meeting_no: 40, minutes_due_on: "2022-12-21", dissent_count: 2 });
+  const adopted = { stance_vote: "withdrawal of accommodation" };
+  const votes = [
+    vote(slug, "Bhide", 35, adopted),
+    vote(slug, "Ranjan", 35, adopted),
+    vote(slug, "Patra", 35, adopted),
+    vote(slug, "Das", 35, adopted),
+    vote(slug, "Goyal", 35, { stance_vote: "against", is_dissent: true, dissent_text: "voted against this part of the resolution" }),
+    vote(slug, "Varma", null, {
+      stance_vote: "against",
+      is_dissent: true,
+      dissent_text: "voted against the repo rate hike; voted against this part of the resolution",
+    }),
+  ];
+
+  it("counts that member against the decision and says only what the resolution says", () => {
+    expect(tally(m, votes)).toMatchObject({
+      kind: "tally",
+      short: "5–1 · stance 4–2",
+      line: "Rate 5–1 · Stance 4–2 · Dissent: Goyal (voted against the stance), Varma (voted against the rate; voted against the stance)",
+    });
+  });
+
+  it("recognises the clause in its wordings, and nothing else", () => {
+    const row = (text: string | null, dissent = true) => vote(slug, "Varma", null, { is_dissent: dissent, dissent_text: text });
+    expect(votedAgainstRate(row("voted against the repo rate hike"))).toBe(true);
+    expect(votedAgainstRate(row("Voted against the rate cut"))).toBe(true);
+    expect(votedAgainstRate(row("voted against this part of the resolution"))).toBe(false);
+    expect(votedAgainstRate(row(null))).toBe(false);
+    expect(votedAgainstRate(row("voted against the repo rate hike", false))).toBe(false);
+    expect(votedAgainstRate(vote(slug, "Varma", 25, { is_dissent: true, dissent_text: "voted against the repo rate hike" }))).toBe(false);
+  });
+
+  it("still waits for the minutes when a row has no change and no clause saying so (a vote not stored)", () => {
+    const noClause = votes.map((v) => (v.member_name === "Varma" ? { ...v, dissent_text: null } : v));
+    expect(tally(m, noClause)).toEqual({ kind: "pending", note: "Each member's vote is published in the minutes, due 21 Dec 2022." });
+    const notDissent = votes.map((v) => (v.member_name === "Varma" ? { ...v, is_dissent: false } : v));
+    expect(tally(m, notDissent).kind).toBe("pending");
+  });
+
+  it("gives the history table the tally in place of the dash and the 'due' note", () => {
+    const row = historyRows([m], votes)[0];
+    expect(row).toMatchObject({ vote: "5–1 · stance 4–2", voteNote: null, dissents: 2 });
   });
 });
 

@@ -208,6 +208,19 @@ describe("NumbersChanged", () => {
     expect(out).not.toMatch(/text-up|text-down|bg-up|bg-down/);
   });
 
+  it("gives a signed change a neutral triangle, and none to a null or n/a change", () => {
+    const rows = [
+      { ...items[0], change: "+25 bps" },
+      { ...items[0], key: "pp", change: "−0.3 pp" },
+      { ...items[0], key: "na", change: "—" },
+      { ...items[1] },
+    ];
+    const out = renderToStaticMarkup(<NumbersChanged items={rows} previousDate="2026-08-06" newDate="2026-10-07" />);
+    expect(out.match(/<svg/g)).toHaveLength(2);
+    expect(out).toContain("text-ink-1");
+    expect(out).not.toMatch(/text-up|text-down/);
+  });
+
   it("says so when nothing changed", () => {
     const out = renderToStaticMarkup(<NumbersChanged items={[items[2]]} previousDate="2026-08-06" newDate="2026-10-07" />);
     expect(text(out)).toContain("None of the numbers below changed.");

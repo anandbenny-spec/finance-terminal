@@ -1,0 +1,61 @@
+# The backup to the daily Vercel keep-alive cron (issue #196; Plan 04 §4, survival job S1).
+# Supabase pauses a Free-plan project that gets too little database activity over seven days. The primary is the Vercel
+# cron (`GET /api/cron/keepalive`, once a day, through the Data API). This workflow runs twice a day and reads
+# production's database over a Postgres connection instead, a different path, so one failing leaves the other. It runs
+# one read-only query (`select count(*) from core.series`) as `job_writer`, with the production secret the `daily`
+# workflow uses; the secret reaches the step only through `env:`.
+#
+# Like every scheduled workflow it does nothing on a schedule unless the repository variable PRODUCTION_SCHEDULES is
+# 'on' (issue #69; py/tests/test_workflows.py fails CI for a scheduled workflow without this guard); a manual run is
+# never blocked. keep-alive.yml lists this workflow, so GitHub's 60-day rule can't switch it off.
+#
+# psql is on the ubuntu-24.04 image (PostgreSQL 16's client), so the job needs no checkout, no token and no install.
+# The logs of a public repo are public, so a failure prints the exit code only, never psql's own message: libpq can
+# echo a fragment of a malformed connection string.
+name: keepalive-db
+on:
+  schedule:
+    - cron: '23 1,13 * * *'   # 01:23 and 13:23 UTC = 06:53 and 18:53 IST, twice a day
+  workflow_dispatch: {}
+concurrency:
+  group: keepalive-db
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  ping:
+    if: github.event_name != 'schedule' || vars.PRODUCTION_SCHEDULES == 'on'
+    runs-on: ubuntu-24.04   # pinned like the other workflows: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      JOB_DATABASE_URL: ${{ secrets.JOB_DATABASE_URL }}   # production's, the same secret the daily workflow passes on a scheduled run
+      PGCONNECT_TIMEOUT: '30'
+    steps:
+      - name: Read production's database
+        run: |
+          set -euo pipefail
+          if [ -z "${JOB_DATABASE_URL:-}" ]; then
+            echo "::error title=keepalive-db::JOB_DATABASE_URL is not set"
+            exit 1
+          fi
+          if ! command -v psql >/dev/null; then
+            echo "::error title=keepalive-db::psql is not on this runner image"
+            exit 1
+          fi
+          rc=0
+          count=$(psql "$JOB_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align \
+                       --command "select count(*) from core.series" 2>/dev/null) || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=keepalive-db::the read-only query failed (psql exit ${rc})"
+            exit 1
+          fi
+          case "$count" in
+            ''|*[!0-9]*)
+              echo "::error title=keepalive-db::the query did not return a number"
+              exit 1
+              ;;
+          esac
+          echo "core.series rows: ${count}"
+          if [ "$count" -eq 0 ]; then
+            echo "::warning title=keepalive-db::core.series is empty: is this the right project?"
+          fi

@@ -171,6 +171,45 @@ describe("the front page (/)", () => {
   });
 });
 
+describe("the front page between a tally statement and its minutes (#159)", () => {
+  const OCT: PolicyMeetingRow = {
+    ...FED, slug: "fomc-2026-10-28", decision_date: "2026-10-28", decision_at: "2026-10-28T18:00:00+00:00", minutes_due_on: "2026-11-18",
+    policy_rate_pct: 3.5, policy_rate_change_bps: 0, dissent_count: 2,
+  };
+  const NOTE = "Each member's vote is published in the minutes, due 18 Nov 2026.";
+  const latest = (votes: PolicyVoteRow[], meeting: PolicyMeetingRow = OCT): Partial<PolicyOverview> => ({
+    fed: { ok: true, ...fedLatest, meeting, votes },
+    history: { ok: true, decisions: [meeting, RBI], votes },
+  });
+  const page = (votes: PolicyVoteRow[], meeting?: PolicyMeetingRow) => {
+    const out = html(<FrontView front={front({}, latest(votes, meeting))} />);
+    return { out, t: text(out) };
+  };
+
+  it("shows the dissenters and the minutes copy in both the What changed and the votes panels, with no count", () => {
+    const { out, t } = page([vote(OCT.slug, "Lisa D. Cook", 25, true), vote(OCT.slug, "Beth M. Hammack", 25, true)]);
+    const line = `Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps) · ${NOTE}`;
+    expect(t.split(line)).toHaveLength(3); // twice: the statement panel's Vote row, and "How the members voted"
+    expect(t).not.toContain("Votes aren't published yet.");
+    expect(t).not.toMatch(/Vote \d+–\d+/);
+    expect(out).not.toContain("hollow dot"); // no dot plot for a partial meeting
+  });
+
+  it("shows only the copy when the statement named nobody", () => {
+    const { t } = page([]);
+    expect(t.split(NOTE)).toHaveLength(3);
+    expect(t).not.toContain("Dissent:");
+    expect(t).not.toContain("Votes aren't published yet.");
+  });
+
+  it("is the tally line again, with the dot plot, once the minutes add the members who voted for", () => {
+    const full = [...Array.from({ length: 10 }, (_, i) => vote(OCT.slug, `Member ${i + 1}`, 0)), vote(OCT.slug, "Lisa D. Cook", 25, true), vote(OCT.slug, "Beth M. Hammack", 25, true)];
+    const { t } = page(full);
+    expect(t).toContain("Vote 10–2 · Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps)");
+    expect(t).not.toContain(NOTE); // the minutes are in: nothing left to wait for
+  });
+});
+
 describe("the front page when a read fails", () => {
   it("leaves the other bank's What changed whole when one bank's part failed", () => {
     const t = text(html(<FrontView front={front({ fed: { kind: "error" } })} />));

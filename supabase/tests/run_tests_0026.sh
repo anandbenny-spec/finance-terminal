@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tests for 0022 (rate sensitivity; issue #129, Spec 02A §3.4, §5.10, §7). Run after the other scripts on the same
+# Tests for 0026 (rate sensitivity; issue #129, Spec 02A §3.4, §5.10, §7). Run after the other scripts on the same
 # fresh database. Connection from the environment (run_all.sh sets PGHOST/PGPORT/PGDATABASE).
 # The script creates its own rows (entities, events and documents named r22-*, observations of its own task run),
 # checks through the roles, and removes every row it made.
@@ -31,7 +31,7 @@ NIFTY_WAS=$(as_pg "select is_published from core.series where key = 'yf.^NSEI'")
 ############################################################ the rows the checks use
 psql $H -U postgres -v ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || echo "FAIL  setup of the test rows"
 insert into ops.task (key, module, description, workflows, min_interval, overdue_after, enabled)
-  values ('r22.task', 'test', '0022 test task', '{daily}', '20 hours', '4 days', false);
+  values ('r22.task', 'test', '0026 test task', '{daily}', '20 hours', '4 days', false);
 insert into ops.job_run (workflow, trigger, runner) values ('daily', 'cli', 'local');
 insert into ops.task_run (job_run_id, task_key, status) values ((select max(id) from ops.job_run), 'r22.task', 'success');
 update core.series set is_published = true where key = 'yf.^NSEI';

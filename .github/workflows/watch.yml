@@ -2,9 +2,21 @@
 name: watch
 on:
   schedule:
-    - cron: '7 14 * * *'          # FOMC statements come out at 14:00 New York time
+    # GitHub starts scheduled runs late, and sometimes never (33 minutes late on 27 Oct; the 28 Oct 14:07 FOMC run was
+    # not created, issue #158). So the primary run starts inside the watch window's 10-minute lead (due.py: the window
+    # opens at 13:50 and closes at 14:40 New York time; 09:50 and 11:00 India time), where a start up to about 45
+    # minutes late still polls; two catch-up runs follow on weekdays, each one pass that loads a decision still missing.
+    - cron: '52 13 * * *'         # FOMC statements come out at 14:00 New York time
       timezone: 'America/New_York'
-    - cron: '7 10 * * *'          # MPC resolutions come out at 10:00 India time
+    - cron: '12 15 * * 1-5'       # FOMC catch-up
+      timezone: 'America/New_York'
+    - cron: '42 17 * * 1-5'       # FOMC catch-up
+      timezone: 'America/New_York'
+    - cron: '52 9 * * *'          # MPC resolutions come out at 10:00 India time
+      timezone: 'Asia/Kolkata'
+    - cron: '12 11 * * 1-5'       # MPC catch-up
+      timezone: 'Asia/Kolkata'
+    - cron: '42 13 * * 1-5'       # MPC catch-up
       timezone: 'Asia/Kolkata'
   workflow_dispatch:
     inputs:
@@ -17,6 +29,11 @@ on:
         description: 'Replay a past decision day on dev: YYYY-MM-DD (blank = today; starts at its release time)'
         required: false
         type: string
+      ai:
+        description: 'AI for this run: off leaves the Anthropic and Voyage keys out, so the AI steps skip (a scheduled run is on)'
+        type: choice
+        options: ['on', 'off']
+        default: 'on'
 concurrency:
   group: jobs-watch
   cancel-in-progress: false
@@ -58,5 +75,5 @@ jobs:
           STORAGE_REGION: ${{ secrets.STORAGE_REGION }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ inputs.ai != 'off' && secrets.ANTHROPIC_API_KEY || '' }}
+          VOYAGE_API_KEY: ${{ inputs.ai != 'off' && secrets.VOYAGE_API_KEY || '' }}

@@ -214,6 +214,292 @@ export type PolicyRateSettingRow = {
   change_bps: number;
 };
 
+/** api.quality_summary (0021, ACC-1): counts by module and period, no task names, run ids or error text. `value` is a
+ * count, or a share from 0 to 1 for `freshness_on_time_share` (`n` = the task-days it is out of; `label` "derived"). */
+export type QualitySummaryRow = {
+  module: string;
+  period: "30d" | "90d" | "all";
+  measure: string;
+  value: number;
+  n: number | null;
+  label: "derived" | null;
+  as_of: string;
+};
+
+/** api.eval_summary (0004): the passing evaluation runs, site-wide (no module column). */
+export type EvalSummaryRow = {
+  eval_set: string;
+  model: string;
+  metric: string;
+  value: number;
+  n_items: number | null;
+  run_at: string;
+};
+
+/** One column's note on a snapshot row (api.screener `notes`): its label and the reason it is held back, either may be null. */
+export type ScreenerNote = { label: string | null; reason: string | null };
+
+/** api.screener (0024): one row per company from its latest weekly snapshot. Ratios are fractions; money in full units of `currency`. */
+export type ScreenerRow = {
+  slug: string;
+  name: string;
+  short_name: string | null;
+  nse_symbol: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  peer_group_key: string | null;
+  peer_group_label: string | null;
+  snapshot_date: string;
+  price: number | null;
+  price_date: string | null;
+  market_cap: number | null;
+  shares: number | null;
+  pe_ttm: number | null;
+  pb: number | null;
+  ev: number | null;
+  ev_ebit: number | null;
+  ev_sales: number | null;
+  dividend_yield: number | null;
+  roe: number | null;
+  ebit_margin: number | null;
+  revenue_cagr_3y: number | null;
+  revenue_cagr_5y: number | null;
+  debt_to_equity: number | null;
+  promoter_pct: number | null;
+  beta: number | null;
+  return_1y: number | null;
+  traded_value_median_3m: number | null;
+  implied_growth: number | null;
+  delivered_growth: number | null;
+  growth_gap: number | null;
+  implied_roe: number | null;
+  delivered_roe: number | null;
+  roe_gap: number | null;
+  valuation_family: string | null;
+  notes: Record<string, ScreenerNote> | null;
+  ebit_label: string | null;
+  beta_label: string | null;
+  implied_growth_label: string | null;
+  implied_roe_label: string | null;
+  index_slugs: string[] | null;
+  source_key: string;
+};
+
+/** api.index_members (0024): each index's latest member set. */
+export type IndexMemberRow = {
+  index_slug: string;
+  index_name: string;
+  snapshot_date: string;
+  slug: string;
+  name: string;
+  short_name: string | null;
+  nse_symbol: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+};
+
+type Num = number | null;
+
+/** api.companies (0024): one row per company: its identifiers, peer group, index memberships and the last two closes. */
+export type CompanyRow = {
+  slug: string;
+  name: string;
+  short_name: string | null;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  isin: string | null;
+  nse_symbol: string;
+  bse_code: string | null;
+  nse_industry: string | null;
+  peer_group_key: string | null;
+  peer_group_label: string | null;
+  peer_group_label_kind: string | null;
+  valuation_family: string | null;
+  family_note: string | null;
+  fy_end_month: number | null;
+  price_exchange: string;
+  listed_on: string | null;
+  index_slugs: string[] | null;
+  index_as_of: string | null;
+  last_close: Num;
+  last_close_date: string | null;
+  previous_close: Num;
+  previous_close_date: string | null;
+  price_source_key: string | null;
+};
+
+/** api.company_prices (0024): one row per session; `adj_close` is null while a held corporate action lies after it. */
+export type CompanyPriceRow = {
+  slug: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  trade_date: string;
+  exchange: string;
+  close: number;
+  volume: Num;
+  traded_value: Num;
+  adj_close: Num;
+  adj_held: boolean;
+  source_key: string;
+};
+
+/** api.company_metrics (0024): one row per metric, basis, period kind and period end. `state` tells a held value from a not-applicable one. */
+export type CompanyMetricRow = {
+  slug: string;
+  name: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  metric_key: string;
+  label: string;
+  unit: string | null;
+  basis: string;
+  period_kind: string;
+  period_end: string;
+  as_of: string;
+  value: Num;
+  label_kind: string | null;
+  held_reason: string | null;
+  state: "value" | "held" | "not_applicable";
+  source_key: string;
+};
+
+/** api.peer_comps (0024): a company's peers (row_kind 'peer') and the median of those peers (row_kind 'median'). */
+export type PeerCompRow = {
+  company_slug: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  peer_group_key: string;
+  row_kind: "peer" | "median";
+  peer_slug: string | null;
+  peer_name: string | null;
+  peer_short_name: string | null;
+  peer_nse_symbol: string | null;
+  snapshot_date: string | null;
+  pe_ttm: Num;
+  pb: Num;
+  ev_ebit: Num;
+  ev_sales: Num;
+  roe: Num;
+  ebit_margin: Num;
+  revenue_cagr_3y: Num;
+  peer_count: Num;
+  median_n: Record<string, number> | null;
+  median_note: string | null;
+  source_key: string;
+};
+
+/** The statement lines api.company_financials carries (full units of the reporting currency; ratios as fractions). */
+export const FINANCIAL_LINES = [
+  "revenue", "other_income", "total_income", "employee_cost", "dna", "finance_cost", "total_expenses", "pbt", "tax", "pat",
+  "pat_owners", "eps_basic", "eps_diluted", "total_assets", "cash", "bank_balances_other", "current_investments",
+  "noncurrent_investments", "trade_receivables", "inventories", "total_equity", "equity_owners", "borrowings_current",
+  "borrowings_noncurrent", "trade_payables", "cfo", "cfi", "cff", "capex", "dividends_paid", "interest_earned",
+  "interest_expended", "operating_profit", "provisions", "gnpa_ratio", "nnpa_ratio", "cet1_ratio", "deposits", "advances",
+  "gross_premium", "net_premium", "ebit_derived",
+] as const;
+export type FinancialLine = (typeof FINANCIAL_LINES)[number];
+
+/** api.company_financials (0024): one row per basis, period kind and period end (the latest filing for it). */
+export type CompanyFinancialRow = {
+  slug: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  basis: "consolidated" | "standalone";
+  period_kind: "quarter" | "half_year" | "nine_months" | "year" | "instant";
+  period_start: string | null;
+  period_end: string;
+  ebit_derived_label: string | null;
+  ebit_derived_held_reason: string | null;
+  ebit_derived_state: "value" | "held" | "not_applicable" | null;
+  format: string | null;
+  audited: boolean | null;
+  filed_at: string | null;
+  source_url: string | null;
+  source_key: string;
+  attribution: string | null;
+} & Record<FinancialLine, Num>;
+
+/** api.company_corporate_actions (0024; status from 2A-08b): a company's corporate actions with each price factor's status. */
+export type CorporateActionRow = {
+  slug: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  kind: string;
+  ex_date: string | null;
+  record_date: string | null;
+  subject: string | null;
+  ratio_new: Num;
+  ratio_old: Num;
+  face_value_old: Num;
+  face_value_new: Num;
+  dividend_per_share: Num;
+  rights_price: Num;
+  exchange: string;
+  status: string;
+  title: string | null;
+  source_url: string | null;
+  factor_status: "applied" | "held" | "none";
+  price_factor: Num;
+  factor_reason: string | null;
+  source_key: string;
+  attribution: string | null;
+};
+
+/** api.company_promoter_holding (0025): the latest filed promoter holding per company and quarter. */
+export type PromoterHoldingRow = {
+  slug: string;
+  as_of: string;
+  promoter_pct: Num;
+  promoter_shares: Num;
+  total_shares: Num;
+  filed_at: string | null;
+  source_url: string | null;
+  source_key: string;
+  correction: "percent_for_fraction" | null;
+  label_kind: string | null;
+  filed_pct: Num;
+  share_ratio_pct: Num;
+  nse_pct: Num;
+};
+
+/** api.company_valuation (0024): a company's latest run of each kind. `status` is null while the model fields are hidden; `inputs` is the run's stored inputs. */
+export type CompanyValuationRow = {
+  slug: string;
+  name: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  valuation_family: string | null;
+  kind: "reverse_dcf" | "implied_roe" | "dcf_default";
+  as_of: string;
+  status: "solved" | "no_solution" | "not_applicable" | null;
+  state: "value" | "held" | "not_applicable";
+  reason: string | null;
+  price: Num;
+  result: Num;
+  result_label: string | null;
+  delivered: Num;
+  delivered_reason: string | null;
+  inputs: Record<string, unknown> | null;
+  model_version: string | null;
+  source_key: string;
+};
+
+/** api.valuation_scenarios (0024): one stored cell of the latest default run's grid (growth × EBIT margin × WACC, fractions). */
+export type ValuationScenarioRow = {
+  slug: string;
+  name: string;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  as_of: string;
+  growth: Num;
+  ebit_margin: Num;
+  wacc: Num;
+  value_per_share: Num;
+  state: "value" | "held" | "not_applicable";
+  reason: string | null;
+  label: string | null;
+};
+
 type View<Row> = { Row: Row; Relationships: [] };
 
 /** The slice of the `api` schema typed so far, for supabase-js: the shell's views (C2), the policy pages' (A1, C3, C4, Pass 1b). */
@@ -238,6 +524,19 @@ export type ApiDatabase = {
       ai_citations: View<AiCitationRow>;
       field_policy: View<FieldPolicyRow>;
       market_reactions: View<MarketReactionRow>;
+      quality_summary: View<QualitySummaryRow>;
+      eval_summary: View<EvalSummaryRow>;
+      screener: View<ScreenerRow>;
+      index_members: View<IndexMemberRow>;
+      companies: View<CompanyRow>;
+      company_prices: View<CompanyPriceRow>;
+      company_metrics: View<CompanyMetricRow>;
+      peer_comps: View<PeerCompRow>;
+      company_financials: View<CompanyFinancialRow>;
+      company_corporate_actions: View<CorporateActionRow>;
+      company_promoter_holding: View<PromoterHoldingRow>;
+      company_valuation: View<CompanyValuationRow>;
+      valuation_scenarios: View<ValuationScenarioRow>;
     };
     Functions: { [_ in never]: never };
   };
