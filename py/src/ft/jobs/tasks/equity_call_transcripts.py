@@ -412,26 +412,6 @@ class EquityCallTranscripts(DocumentJob):
         return out
 
 
-def _latest(tx, document_id: int, fallback: Stored) -> Stored:
-    """The latest stored version of the document's key (a second revision supersedes the first)."""
-    row = tx.execute(
-        """select d.id, d.version_no, f.sha256 from core.document d join core.document k on k.source_id = d.source_id
-                  and k.external_key = d.external_key left join core.raw_file f on f.id = d.raw_file_id
-            where k.id = %s order by d.version_no desc limit 1""", (document_id,)).fetchone()
-    return Stored(row[0], row[1], bytes(row[2]) if row[2] else None) if row else fallback
-
-
-def _error_class(message: str) -> str:
-    """The class of a fetch failure from its message: certificate, connection, timeout, redirect or oversize."""
-    m = message.lower()
-    if "ssl" in m or "certificate" in m or "tls" in m:
-        return "certificate"
-    if "timeout" in m:
-        return "timeout"
-    if "redirect" in m:
-        return "redirect"
-    return "connection"
-
     # ------------------------------------------------------------------ discovery checks
     def _discovery_checks(self, tx, h: Harvest, task_run_id: int) -> list[Check]:
         n = h.notes
@@ -483,3 +463,24 @@ def _error_class(message: str) -> str:
         self.result = {"answered": answered, "transcripts": sum(v[0] for v in seasons.values()),
                        "intimations": sum(v[1] for v in seasons.values()), "unreadable_rows": n["unreadable"]}
         return out
+
+
+def _latest(tx, document_id: int, fallback: Stored) -> Stored:
+    """The latest stored version of the document's key (a second revision supersedes the first)."""
+    row = tx.execute(
+        """select d.id, d.version_no, f.sha256 from core.document d join core.document k on k.source_id = d.source_id
+                  and k.external_key = d.external_key left join core.raw_file f on f.id = d.raw_file_id
+            where k.id = %s order by d.version_no desc limit 1""", (document_id,)).fetchone()
+    return Stored(row[0], row[1], bytes(row[2]) if row[2] else None) if row else fallback
+
+
+def _error_class(message: str) -> str:
+    """The class of a fetch failure from its message: certificate, connection, timeout, redirect or oversize."""
+    m = message.lower()
+    if "ssl" in m or "certificate" in m or "tls" in m:
+        return "certificate"
+    if "timeout" in m:
+        return "timeout"
+    if "redirect" in m:
+        return "redirect"
+    return "connection"
