@@ -516,7 +516,7 @@ def test_nse_listing_one_decimal_less_still_agrees_with_the_correction():
 def test_the_approved_list_is_well_formed():
     held = sh.held_files()
     assert all(k.endswith(".xml") and v for k, v in held.items())
-    assert len(held) == 76 and "SHP_168310_646925_21042022103052_WEB.xml" not in held
+    assert len(held) == 102 and "SHP_168310_646925_21042022103052_WEB.xml" not in held
 
 
 @pytest.mark.db
