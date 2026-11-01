@@ -16,6 +16,7 @@ Starting values, like the differ's: checked on the backfill (Architecture 03 §1
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ft.engines.document.text import Block, Extracted, rbi_transcript_speaker, sentence_spans, transcript_speaker
@@ -79,7 +80,8 @@ def _pieces(text: str, start: int, end: int, target: int, max_chars: int) -> lis
     return out
 
 
-def _units(doc: Extracted, root: str | None, speakers: str | None, target: int, max_chars: int) -> list[_Unit]:
+def _units(doc: Extracted, root: str | None, speakers: str | None, target: int, max_chars: int,
+           marks: Sequence[tuple[bool, str | None, str | None]] | None = None) -> list[_Unit]:
     text, units = doc.text, []
     stack: list[tuple[int, str]] = []
     speaker, speaker_level, after_heading = None, None, False
@@ -88,8 +90,13 @@ def _units(doc: Extracted, root: str | None, speakers: str | None, target: int, 
         p = " > ".join(h for _, h in stack)
         return (f"{root} > {p}" if p else root) if root else (p or None)
 
-    for b in doc.blocks:
+    for bi, b in enumerate(doc.blocks):
         body = text[b.start:b.end]
+        if speakers == "call":
+            starts, who, where = marks[bi]
+            for k, (s, e) in enumerate(_pieces(text, b.start, b.end, target, max_chars)):
+                units.append(_Unit(s, e, starts and k == 0, False, where, who))
+            continue
         if speakers == "minutes" and b.kind != "heading" and _plain_statement_heading(body):
             b = Block(b.start, b.end, "heading", 7)             # the RBI's minutes: "Statement by …" in plain type
         if b.kind == "heading":
@@ -115,16 +122,20 @@ def _units(doc: Extracted, root: str | None, speakers: str | None, target: int, 
 
 
 def chunk_text(doc: Extracted, *, root: str | None = None, speakers: str | None = None, target: int = TARGET,
-               max_chars: int = MAX_CHARS, min_tail: int = MIN_TAIL) -> list[Chunk]:
+               max_chars: int = MAX_CHARS, min_tail: int = MIN_TAIL,
+               marks: Sequence[tuple[bool, str | None, str | None]] | None = None) -> list[Chunk]:
     """speakers: None, "minutes" (from "Statement by …" headings), "transcript" (the Fed's speaker labels: "CHAIR
-    POWELL.") or "rbi_transcript" (the RBI's: "Shaktikanta Das:")."""
-    if speakers not in (None, "minutes", "transcript", "rbi_transcript"):
-        raise ValueError(f"speakers must be None, 'minutes', 'transcript' or 'rbi_transcript', not {speakers!r}")
+    POWELL.") or "rbi_transcript" (the RBI's: "Shaktikanta Das:") or "call" (an earnings call: `marks`, one
+    (starts a turn, speaker, section) per block of `doc`; every chunk then lies inside one turn)."""
+    if speakers not in (None, "minutes", "transcript", "rbi_transcript", "call"):
+        raise ValueError(f"speakers must be None, 'minutes', 'transcript', 'rbi_transcript' or 'call', not {speakers!r}")
+    if speakers == "call" and (marks is None or len(marks) != len(doc.blocks)):
+        raise ValueError("speakers='call' needs one mark per block of the text")
     text = doc.text
     if not text:
         return []
     groups: list[list[_Unit]] = []
-    for u in _units(doc, root, speakers, target, max_chars):
+    for u in _units(doc, root, speakers, target, max_chars, marks):
         cur = groups[-1] if groups else None
         if cur is None or u.brk or (not all(x.heading for x in cur) and u.end - cur[0].start > target):
             groups.append([u])
