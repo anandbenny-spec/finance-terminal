@@ -14,6 +14,7 @@ import { Suspense } from "react";
 import { CompanyError, CompanyView } from "@/components/company/CompanyView";
 import { StateNote } from "@/components/data/StateNote";
 import { basisOf, tabOf } from "@/lib/equity/company";
+import { windowOf } from "@/lib/equity/rate";
 import { readCompanyExists, readCompanyPage } from "@/lib/queries/company";
 import { readFreshness } from "@/lib/queries/shell";
 
@@ -34,7 +35,7 @@ async function Company({ slug, searchParams }: { slug: string; searchParams: Pro
   const query = await searchParams;
   const [data, fresh] = await Promise.all([readCompanyPage(slug, tabOf(query.tab)), readFreshness()]);
   if (!data.ok) return <CompanyError />;
-  return <CompanyView data={data} basis={basisOf(query.basis)} freshness={fresh.ok ? fresh.tasks : null} />;
+  return <CompanyView data={data} basis={basisOf(query.basis)} window={windowOf(query.window)} freshness={fresh.ok ? fresh.tasks : null} />;
 }
 
 export default async function Page({ params, searchParams }: Props) {

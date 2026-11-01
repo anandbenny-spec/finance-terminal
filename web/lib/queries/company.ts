@@ -26,6 +26,7 @@ import type {
 } from "@/lib/queries/api";
 import { indexesOf, readIndexMembers } from "@/lib/queries/equity";
 import { readFieldPolicy, readSeriesInfo, type PolicyDb } from "@/lib/queries/policy";
+import { readRateTab, type RateTabData } from "@/lib/queries/rate";
 import { readAll } from "@/lib/queries/read";
 import { publicClient } from "@/lib/supabase/public";
 import type { TabId } from "@/lib/equity/company";
@@ -164,6 +165,7 @@ export type CompanyPageData =
       overview: OverviewData | null;
       financials: FinancialsData | null;
       valuation: ValuationData | null;
+      rates: RateTabData | null;
     }
   | { ok: false; readAt: string };
 
@@ -207,7 +209,10 @@ export async function readCompanyPage(slug: string, tab: TabId): Promise<Company
     let overview: OverviewData | null = null;
     let financials: FinancialsData | null = null;
     let valuation: ValuationData | null = null;
-    if (tab === "valuation") {
+    let rates: RateTabData | null = null;
+    if (tab === "rate-decisions") {
+      rates = await readRateTab(db, slug);
+    } else if (tab === "valuation") {
       const [runs, scenarios, policies, imf, series] = await Promise.all([
         readValuationRuns(db, slug),
         readScenarios(db, slug),
@@ -236,7 +241,7 @@ export async function readCompanyPage(slug: string, tab: TabId): Promise<Company
       ]);
       financials = { financials: rows, metrics, promoter };
     }
-    return { ok: true, readAt, today: dateInZone(readAt, "Asia/Kolkata"), company, actions, indexNames, tab, overview, financials, valuation };
+    return { ok: true, readAt, today: dateInZone(readAt, "Asia/Kolkata"), company, actions, indexNames, tab, overview, financials, valuation, rates };
   } catch (error) {
     logFailure(slug, error);
     return { ok: false, readAt };

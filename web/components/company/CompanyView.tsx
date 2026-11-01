@@ -1,6 +1,6 @@
 // CompanyView (2A-19; Spec 02A §8): the company page's header, tabs and the tab shown, from one cached read
 // (lib/queries/company.ts). The tab and the basis are in the URL (?tab=financials&basis=standalone), so every view can be
-// linked. Overview, Financials and Valuation (2A-20) exist; Rate decisions (2A-25) adds its tab with its page. Each panel carries its source line and freshness; a figure with no value says why. Server-rendered.
+// linked. Overview, Financials, Valuation (2A-20) and Rate decisions (2A-25) exist. Each panel carries its source line and freshness; a figure with no value says why. Server-rendered.
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ActionsPanel } from "@/components/company/ActionsPanel";
@@ -8,6 +8,7 @@ import { CompanyHeader } from "@/components/company/CompanyHeader";
 import { KeyFigures } from "@/components/company/KeyFigures";
 import { PeersPanel } from "@/components/company/PeersPanel";
 import { PriceChartPanel } from "@/components/company/PriceChartPanel";
+import { RateDecisionsTab } from "@/components/company/RateDecisionsTab";
 import { PromoterPanel } from "@/components/company/PromoterPanel";
 import { StatementTable } from "@/components/company/StatementTable";
 import { ValuationTab } from "@/components/company/valuation/ValuationTab";
@@ -39,6 +40,7 @@ import {
   type LineSpec,
   type TabId,
 } from "@/lib/equity/company";
+import type { WindowKey } from "@/lib/equity/rate";
 import { PREVIEW_FEEDS } from "@/lib/feeds";
 import { formatDate } from "@/lib/format";
 import type { CompanyPageData } from "@/lib/queries/company";
@@ -252,10 +254,13 @@ function Financials({ data, basis: asked, freshness }: { data: Ok; basis: Basis;
 export function CompanyView({
   data,
   basis,
+  window = "d1",
   freshness,
 }: {
   data: Ok;
   basis: Basis;
+  /** The rate-decision window in the URL (?window=); one day by default. */
+  window?: WindowKey;
   freshness: TaskFreshnessRow[] | null;
 }) {
   const { company, tab } = data;
@@ -285,6 +290,8 @@ export function CompanyView({
         <Overview data={data} freshness={freshness} />
       ) : tab === "financials" ? (
         <Financials data={data} basis={basis} freshness={freshness} />
+      ) : tab === "rate-decisions" ? (
+        <RateDecisionsTab data={data} window={window} freshness={freshness} />
       ) : (
         <ValuationTab data={data} freshness={freshness} />
       )}

@@ -18,6 +18,8 @@ export type TaskKey =
   | "equity.statements"
   | "equity.metrics"
   | "equity.beta"
+  | "equity.rate_reactions"
+  | "policy.rate_cycles"
   | "site.quality_summary";
 
 /** Live surfaces and their feeding tasks. */
@@ -64,6 +66,8 @@ export const PREVIEW_FEEDS = {
   company: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
   // The Valuation tab (2A-20): the stored runs and grid, built from the same filings, prices and betas plus the rates inputs.
   valuation: ["equity.valuation_inputs", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
+  // The Rate decisions tab and the sector view (2A-25): decision-day moves and rate cycles, from the stored reactions.
+  rateSensitivity: ["equity.rate_reactions", "policy.rate_cycles"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 
 export type PreviewSurface = keyof typeof PREVIEW_FEEDS;
