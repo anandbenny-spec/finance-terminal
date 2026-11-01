@@ -101,3 +101,9 @@ equity.beta:
   run_after: [equity.metrics, equity.valuation_inputs, policy.market_series]
   overdue_after: 10 days
   uses_nse: false
+equity.call_transcripts:
+  description: Earnings-call transcript filings and call intimations of the universe companies over the last two seasons, found in NSE's announcements (BSE as the fallback) and classified; the fetch half follows in part 2
+  workflows: {weekly: every 6 days}
+  run_after: [equity.universe, equity.filings]
+  overdue_after: 10 days
+  uses_nse: true
