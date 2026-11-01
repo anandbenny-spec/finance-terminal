@@ -128,7 +128,10 @@ def test_a_stored_call_gets_turns_and_chunks_and_is_published_with_its_text_priv
     assert chunks and chunks[0][0] == 0 and chunks[-1][1] == n_chars
     for s, e, speaker, section in chunks:                                   # no chunk crosses a turn
         owner = [t for t in turns if t[1] <= s < t[2]]
-        assert owner and e <= owner[0][2] and speaker == owner[0][3]
+        if not owner:                                                       # the text before the first label
+            assert e <= turns[0][1] and speaker is None and section is None
+            continue
+        assert e <= owner[0][2] and speaker == owner[0][3]
         assert section == {"opening": "Opening remarks", "qa": "Q&A", "closing": "Closing remarks"}[owner[0][5]]
     assert q("select count(*) from core.chunk where document_id = %s and body is not null", doc)[0][0] == len(chunks)
     # the text stays private: anon reads the document row and its page rows, never a chunk or a turn
