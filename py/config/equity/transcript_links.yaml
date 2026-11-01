@@ -1,0 +1,13 @@
+# Curated links to earnings-call transcripts the companies host themselves (Spec 02B §5.2, D13; job 2B-07 reads this file, job
+# 2B-08 adds the rows). One row per company and fiscal quarter, used when a cover letter links only to a web page or its linked
+# file is dead. Each file must pass the same three tests as a linked one (a full transcript, naming the company and the
+# quarter on its first two pages); a row that fails is named by the run and not used. Labelled "curated" wherever shown.
+#
+# links:
+#   - company: apollo-hospitals        # core.entity slug
+#     fiscal_label: Q1 FY27
+#     url: https://www.example.com/transcript.pdf   # the company's own file
+#     found_by: <who found it>
+#     found_on: 2026-11-12
+#     note: <where on the company's site>
+links: []

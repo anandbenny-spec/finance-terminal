@@ -21,6 +21,7 @@ import hashlib
 import io
 import re
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 
 HTML_VERSION = "html-1"
@@ -385,6 +386,131 @@ def rbi_transcript_speaker(paragraph: str) -> str | None:
     return m["name"]
 
 
+# Earnings-call transcripts (Spec 02B §5.3; ported from the audit kit's `kit/concalls.py`, V2's two runs, Data Audit 05
+# §6.2): the third speaker-label set, beside the Fed's and the RBI's. The forms seen in the 21 Oct 2026 run:
+#   "Name:" and "Moderator:"; "Mr./Ms. Name:"; "- Mr. Name - MD & CEO, Company:" (a bullet with honorific and role);
+#   "Name hh:mm - hh:mm (Company)" (a name with time stamps); "Name - Company" alone on its line; a name alone on its
+#   line (Infosys, Hindalco); and the two-column "Name  text" (Mphasis, flattened by the text layer).
+# A name alone on a line is a label only if that name stands alone at least twice in the document and isn't a running
+# header or footer (at a page's first or last two lines on half the pages or more): a participants list names each
+# person once. Running headers are never labels.
+_CALL_BULLET = re.compile(r"^[\s\-\u2212\u2013\u2014\u2022\u00b7*\u25cf\u25aa]+")
+_CALL_HON = r"(?:Mr|Ms|Mrs|Dr|Shri|Smt|Sh|Sri|Prof|Mr\s*&\s*Mrs)\.?"
+_CALL_TOKEN = r"(?:[A-Z][A-Za-z.'\u2019\-]*|[A-Z]\.?)"
+_CALL_NAME = rf"{_CALL_TOKEN}(?:\s+{_CALL_TOKEN}){{0,4}}"
+_CALL_DASH = r"[-\u2013\u2014]"
+_CALL_LABEL = re.compile(rf"^({_CALL_HON}\s+)?({_CALL_NAME})\s*(\([^)]{{0,80}}\))?\s*({_CALL_DASH}\s*[^:\n]{{1,120}}?)?\s*[:\uff1a](?:\s|$)")
+_CALL_ALONE = re.compile(
+    rf"^({_CALL_HON}\s+)?({_CALL_NAME})\s*(\d{{1,2}}:\d{{2}}(?::\d{{2}})?\s*{_CALL_DASH}\s*\d{{1,2}}:\d{{2}}(?::\d{{2}})?)?\s*"
+    rf"(\([^)]{{0,60}}\))?\s*({_CALL_DASH}\s*[A-Z][^:\n]{{0,60}})?\s*$")
+_CALL_GAP = re.compile(r"^((?:Mr|Ms|Mrs|Dr|Shri|Smt|Sh|Sri|Prof)\.?\s+)?([A-Z][a-z][A-Za-z.'\u2019\-]*(?:\s[A-Z][a-z][A-Za-z.'\u2019\-]*){1,3})\s{2,}\S")
+_CALL_STOP = {
+    "date", "dated", "subject", "sub", "to", "ref", "reference", "dear", "encl", "enclosure", "enclosures", "note", "website", "web",
+    "email", "e-mail", "mail", "tel", "telephone", "phone", "fax", "mobile", "cin", "address", "scrip code", "scrip", "symbol", "time",
+    "venue", "disclaimer", "page", "regd office", "registered office", "corporate office", "place", "for", "yours", "annexure",
+    "link", "url", "dial", "conference id", "isin", "series", "attention", "kind attn", "kind attention", "attn", "re", "copy to",
+    "nse symbol", "bse scrip code", "bse code", "nse code", "company secretary", "transcript", "audio", "video", "duration",
+    "location", "participants", "management", "speakers", "moderator for the call", "q", "a", "ans", "question", "answer",
+    "call participants", "presentation link", "meeting video", "weblink", "web link", "registered office address", "compere"}
+_CALL_NOT_NAME = {
+    "limited", "ltd", "ltd.", "bank", "india", "page", "transcript", "call", "calls", "earnings", "earning", "conference", "quarter",
+    "results", "result", "financial", "financials", "highlights", "performance", "revenue", "business", "overview", "agenda",
+    "disclaimer", "management", "participants", "participant", "question", "questions", "answer", "answers", "session", "thank",
+    "thanks", "slide", "presentation", "update", "updates", "segment", "outlook", "key", "summary", "group", "company",
+    "corporation", "industries", "services", "securities", "capital", "private", "analyst", "analysts", "investor", "investors",
+    "opening", "remarks", "closing", "statement", "statements", "review", "fy", "q1", "q2", "q3", "q4", "h1", "h2", "the", "and",
+    "annexure", "notes", "note", "contents", "table", "total", "growth", "strategy", "operations", "operational", "market",
+    "markets", "portfolio", "outcome", "board", "meeting", "director", "directors", "secretary", "office", "regd", "registered",
+    "website", "email", "tel", "fax", "cin", "news", "times", "standard", "express", "mint", "hindu", "reuters", "bloomberg",
+    "moneycontrol", "businessline", "economic", "plc", "inc", "llp", "pvt", "co", "co.", "energy", "power", "motors", "steel",
+    "copyright", "reserved", "rights", "confidential", "final", "draft", "edited", "unedited", "verbatim", "moderated"}
+
+
+def _call_label(raw: str) -> tuple[str, str] | None:
+    """(form, key) of a speaker label opening `raw`, or None. `form` names the pattern (as the audit kit counted them);
+    for a name alone on its line the key is the lower-cased name and the label counts only if it repeats."""
+    bullet = bool(_CALL_BULLET.match(raw)) and not raw[:1].isalpha()
+    line = _CALL_BULLET.sub("", raw).strip()
+    if not line:
+        return None
+    m = _CALL_LABEL.match(line)
+    if m:
+        lab = m.group(2).strip()
+        if lab.lower() in _CALL_STOP or len(lab) < 2 or all(w.lower().strip(".") in _CALL_NOT_NAME for w in lab.split()):
+            return None
+        if lab.lower() in ("moderator", "operator"):
+            return lab.capitalize() + ":", lab.lower()
+        return (("- " if bullet else "") + ("Mr./Ms. " if m.group(1) else "") + "Name" + (" (Company)" if m.group(3) else "")
+                + (" - Role/Company" if m.group(4) else "") + ":"), lab.lower()
+    m = _CALL_ALONE.match(line)
+    gap = None if m else _CALL_GAP.match(_CALL_BULLET.sub("", raw).rstrip())
+    if not (m or gap):
+        return None
+    m = m or gap
+    name = m.group(2).strip()
+    toks, low = name.split(), name.lower()
+    if low in ("moderator", "operator"):
+        form = "Moderator (own line)"
+    elif 2 <= len(toks) <= 4 and not any(t.lower().strip(".") in _CALL_NOT_NAME for t in toks) \
+            and any(len(t.strip(".")) > 1 for t in toks):
+        form = ("Name  text (two-column line)" if gap else "Name hh:mm - hh:mm (own line)" if m.group(3)
+                else "Name - Role/Company (own line)" if m.group(5) else "Mr./Ms. Name (own line)" if m.group(1)
+                else "Name (own line)")
+    else:
+        return None
+    return form, "alone:" + low
+
+
+@dataclass(frozen=True)
+class CallSpeakers:
+    """The speaker-label lines of one transcript: how many, in which forms, and a reader for `pdf_text_pages`."""
+    count: int
+    patterns: dict[str, int]
+    names: frozenset[str]            # the lower-cased names that stand alone on their lines at least twice
+
+    def label(self, line: str) -> str | None:
+        """The speaker label opening `line` ("Name:" forms always; a name alone on its line if it repeats), or None."""
+        found = _call_label(line)
+        if not found:
+            return None
+        _, key = found
+        return key.removeprefix("alone:") if (not key.startswith("alone:") or key[6:] in self.names) else None
+
+
+def call_speakers(pages: list[str]) -> CallSpeakers:
+    """Count a transcript's speaker-label lines over its page texts (the audit kit's V2 count)."""
+    n, forms, patterns = 0, {}, Counter()
+    where: dict[str, list[int]] = {}
+    edge: Counter = Counter()
+    for pi, page in enumerate(pages):
+        plines = [x for x in page.splitlines() if x.strip()]
+        edges = {_CALL_BULLET.sub("", x).strip().lower() for x in plines[:2] + plines[-2:]}
+        for raw in page.splitlines():
+            found = _call_label(raw)
+            if not found:
+                continue
+            form, key = found
+            if not key.startswith("alone:"):
+                n += 1
+                patterns[form] += 1
+                continue
+            where.setdefault(key, []).append(pi)
+            forms[key] = form
+            if _CALL_BULLET.sub("", raw).strip().lower() in edges:
+                edge[key] += 1
+    total = max(1, len(pages))
+    names = set()
+    for key, hits in where.items():
+        if len(hits) < 2:
+            continue
+        if total >= 3 and edge[key] >= max(3, 0.5 * total):
+            continue                                     # a running header or footer
+        n += len(hits)
+        patterns[forms[key]] += len(hits)
+        names.add(key[6:])
+    return CallSpeakers(n, dict(patterns), frozenset(names))
+
+
 def _furniture(pages: list[list[str]]) -> set[str]:
     """Lines that open or close at least 60% of the pages (three or more): running headers and footers. Digits are
     masked, so "Page 3 of 25" and a dated header match across pages."""
@@ -397,15 +523,32 @@ def _furniture(pages: list[list[str]]) -> set[str]:
     return {k for k, n in seen.items() if n >= max(3, 0.6 * len(pages))}
 
 
-def pdf_text(pages: list[str]) -> Extracted:
+@dataclass(frozen=True)
+class PageSpan:
+    """The code points of the canonical text that belong to one physical PDF page (Spec 02B §13.4): from the page's
+    first kept line to the next kept page's first line (the last page: to the end of the text)."""
+    pdf_page: int          # 1-based physical page number
+    char_start: int
+    char_end: int
+
+
+def pdf_text_pages(pages: list[str], numbers: list[int] | None = None,
+                   speaker=None) -> tuple[Extracted, list[PageSpan]]:
     """Canonical text from a PDF's page texts: page furniture dropped (running headers and footers, page numbers),
-    lines joined into paragraphs. A paragraph ends at a blank line and a new one starts at a speaker label; a line
-    ending in "-" before a lower-case letter joins without a space (the hyphen is kept)."""
+    lines joined into paragraphs. A paragraph ends at a blank line and a new one starts at a speaker label (`speaker`,
+    a function line -> label or None; the Fed's reader by default); a line ending in "-" before a lower-case letter
+    joins without a space (the hyphen is kept).
+
+    `numbers` gives each page's physical number (default 1, 2, ...), for callers that drop whole pages first (repeated
+    pages). The second result has one span per page that keeps at least one line, ordered by page; a paragraph that
+    crosses a page break belongs, from its continuation line on, to the page where that line is."""
+    speaker = speaker or transcript_speaker
+    numbers = list(range(1, len(pages) + 1)) if numbers is None else numbers
     norm = [[ln for ln in normalize(p).split("\n")] for p in pages]
     furniture = _furniture([[ln for ln in p if ln] for p in norm])
-    paras: list[list[str]] = []
-    cur: list[str] = []
-    for lines in norm:
+    paras: list[list[tuple[int, str]]] = []         # each line with the physical page it came from
+    cur: list[tuple[int, str]] = []
+    for number, lines in zip(numbers, norm, strict=True):
         nonblank = [i for i, ln in enumerate(lines) if ln]
         edge = set(nonblank[:2] + nonblank[-2:])
         for i, ln in enumerate(lines):
@@ -416,19 +559,35 @@ def pdf_text(pages: list[str]) -> Extracted:
                 continue
             if i in edge and (_PAGE_NO.match(ln) or re.sub(r"\d", "#", ln) in furniture):
                 continue
-            if cur and transcript_speaker(ln):
+            if cur and speaker(ln):
                 paras.append(cur)
                 cur = []
-            cur.append(ln)
+            cur.append((number, ln))
     if cur:
         paras.append(cur)
-    blocks = []
+    blocks, line_at = [], []                        # line_at: (page, offset of the line inside its paragraph's text)
     for para in paras:
-        text = para[0]
-        for ln in para[1:]:
-            text += ln if text.endswith("-") and ln[:1].islower() else " " + ln
+        text, offsets = para[0][1], [(para[0][0], 0)]
+        for number, ln in para[1:]:
+            glue = "" if text.endswith("-") and ln[:1].islower() else " "
+            text += glue + ln
+            offsets.append((number, len(text) - len(ln)))
         blocks.append(("para", 0, [text]))
-    return _assemble(blocks, PDF_VERSION)
+        line_at.append(offsets)
+    ex = _assemble(blocks, PDF_VERSION)
+    first: dict[int, int] = {}
+    for block, offsets in zip(ex.blocks, line_at, strict=True):
+        for number, off in offsets:
+            first.setdefault(number, block.start + off)
+    starts = sorted(first.items(), key=lambda kv: kv[1])
+    spans = [PageSpan(number, start, starts[i + 1][1] if i + 1 < len(starts) else len(ex.text))
+             for i, (number, start) in enumerate(starts)]
+    return ex, spans
+
+
+def pdf_text(pages: list[str]) -> Extracted:
+    """Canonical text from a PDF's page texts (see `pdf_text_pages`, whose text this is)."""
+    return pdf_text_pages(pages)[0]
 
 
 def extract_pdf(data: bytes) -> Extracted:
