@@ -23,6 +23,7 @@ here, and every body it downloads reaches the storage function and `core.raw_fil
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import random
 import time
 from collections import Counter
@@ -49,10 +50,23 @@ class Site:
     gap: float                     # seconds from the end of one request to the start of the next
     jitter: float = 0.0            # plus up to this many seconds, at random
     impersonate: str | None = None  # a curl_cffi browser target ("chrome"): this site's requests go through curl_cffi
+    any_host: bool = False          # matches any public host, paced per host (company websites: `company_web`)
 
     def matches(self, host: str) -> bool:
         host = host.lower().rstrip(".")
+        if self.any_host:
+            return is_public_host(host)
         return any(host == d or host.endswith("." + d) for d in self.domains)
+
+
+def is_public_host(host: str) -> bool:
+    """A name on the public internet: not an IP address, "localhost" or a single-label or internal name."""
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+        return False
+    except ValueError:
+        pass
+    return "." in host and not host.endswith((".local", ".localhost", ".internal", ".lan", ".home", ".corp"))
 
 
 # Architecture 02 §1.5. Module 2 adds NSE (about 1 s, browser impersonation through curl_cffi), BSE and SEC (under
@@ -76,6 +90,11 @@ SITES: tuple[Site, ...] = (
     Site("damodaran", ("pages.stern.nyu.edu",), 2.0),
     Site("imf", ("imf.org",), 1.5, impersonate="chrome"),
 )
+
+# Earnings-call transcripts the companies host themselves, reached only from a link in their own exchange filing or a
+# curated row (Spec 02B §3.1, §5.2; Data Audit 05 D12, D13). Any public host, paced 2 s apart per host. Not in SITES: a
+# fetch reaches it only when its caller passes it as `extra_sites`, so every other task still refuses an unlisted host.
+COMPANY_WEB = Site("company_web", (), 2.0, 1.0, any_host=True)
 
 RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 REDIRECT_STATUS = frozenset({301, 302, 303, 307, 308})
@@ -196,9 +215,11 @@ class HttpClient:
         """`site_transport` gives each impersonating site its transport; by default curl_cffi's, unless `transport`
         is given (a test's mock then answers every site, impersonating or not)."""
         self.sites, self._mono, self._sleep, self._rand, self._clock = sites, monotonic, sleep, rand, clock
-        self._last: dict[str, float] = {}           # site key -> when its last request ended (monotonic)
+        self._last: dict[str, float] = {}           # site key (per host for an any-host site) -> end of its last request
         if site_transport is None and transport is None:
             site_transport = curl_transport
+        self._chrome_factory = site_transport       # None under a mock transport: the retry then uses the mock
+        self._chrome: httpx.Client | None = None
         mounts: dict[str, httpx.BaseTransport] = {}
         for s in sites:
             if s.impersonate and site_transport is not None:
@@ -211,9 +232,25 @@ class HttpClient:
 
     def close(self) -> None:
         self._http.close()
+        if self._chrome is not None:
+            self._chrome.close()
 
-    def _pace(self, site: Site) -> None:
-        last = self._last.get(site.key)
+    def _client(self, chrome: bool) -> httpx.Client:
+        """The client for a request: the default one, or (chrome=True) one sending through curl_cffi with Chrome's TLS
+        fingerprint, opened on first use."""
+        if not chrome or self._chrome_factory is None:
+            return self._http
+        if self._chrome is None:
+            self._chrome = httpx.Client(transport=self._chrome_factory(Site("chrome", (), 0.0, impersonate="chrome")),
+                                        timeout=TIMEOUT, follow_redirects=False, headers=dict(self._http.headers))
+        return self._chrome
+
+    @staticmethod
+    def _pace_key(site: Site, url: str) -> str:
+        return f"{site.key}:{(urlsplit(url).hostname or '').lower()}" if site.any_host else site.key
+
+    def _pace(self, site: Site, key: str | None = None) -> None:
+        last = self._last.get(key or site.key)
         if last is not None:
             wait = last + site.gap + site.jitter * self._rand() - self._mono()
             if wait > 0:
@@ -223,15 +260,15 @@ class HttpClient:
         return BACKOFF * 2 ** attempt + BACKOFF * self._rand()
 
     def _once(self, url: str, record: str, params, headers, data=None,
-              follow: bool = True) -> tuple[int, httpx.Headers, bytes]:
+              follow: bool = True, chrome: bool = False, sites: tuple[Site, ...] = ()) -> tuple[int, httpx.Headers, bytes]:
         """One attempt. Redirects are followed here (unless `follow` is False), each hop checked first, so an
         unlisted host is never contacted. A form post (`data`) that redirects continues as a GET, as browsers do."""
         method = "POST" if data is not None else "GET"
         for _ in range(MAX_REDIRECTS + 1):
-            with self._http.stream(method, url, params=params, headers=headers, data=data) as r:
+            with self._client(chrome).stream(method, url, params=params, headers=headers, data=data) as r:
                 if follow and r.status_code in REDIRECT_STATUS and (location := r.headers.get("location")):
                     nxt = r.url.join(location)
-                    if nxt.scheme not in ("http", "https") or not any(s.matches(nxt.host) for s in self.sites):
+                    if nxt.scheme not in ("http", "https") or not any(s.matches(nxt.host) for s in sites):
                         raise FetchError(record, f"redirected to {nxt.host or nxt.scheme}, which isn't a listed source")
                     url, params = str(nxt), None
                     if r.status_code in (301, 302, 303):
@@ -248,27 +285,31 @@ class HttpClient:
 
     def get(self, url: str, *, record_url: str | None = None, params: Mapping[str, str] | None = None,
             headers: Mapping[str, str] | None = None, stats: Counter | None = None,
-            data: Mapping[str, str] | None = None, follow_redirects: bool = True) -> Response:
+            data: Mapping[str, str] | None = None, follow_redirects: bool = True, chrome: bool = False,
+            extra_sites: tuple[Site, ...] = ()) -> Response:
         """GET, or a form post with `data`, with pacing and retries. Returns the last response whatever its status
         (the caller decides what a 404 means); raises FetchError for an unlisted host, an oversized body, a
         Retry-After beyond MAX_WAIT or a network error that outlasts the retries. follow_redirects=False returns a
-        redirect as it is (a request made only for the cookie it sets)."""
+        redirect as it is (a request made only for the cookie it sets). chrome=True sends through curl_cffi with Chrome's
+        TLS fingerprint, whatever the site: the one retry for a company host that refuses scripts."""
         record = record_url or url
-        site = site_for(url, self.sites)
+        sites = (*self.sites, *extra_sites)
+        site = site_for(url, sites)
+        pace = self._pace_key(site, url)
         stats = Counter() if stats is None else stats
         for attempt in range(RETRIES + 1):
-            self._pace(site)
+            self._pace(site, pace)
             try:
-                status, hdrs, body = self._once(url, record, params, headers, data, follow_redirects)
+                status, hdrs, body = self._once(url, record, params, headers, data, follow_redirects, chrome, sites)
             except httpx.TransportError as e:        # DNS, TLS, timeouts, resets: never str(e), which may hold the URL
-                self._last[site.key] = self._mono()
+                self._last[pace] = self._mono()
                 stats["errors"] += 1
                 if attempt == RETRIES:
                     raise FetchError(record, f"{type(e).__name__} on each of {attempt + 1} attempts") from None
                 stats["retries"] += 1
                 self._sleep(self._backoff(attempt))
                 continue
-            self._last[site.key] = self._mono()
+            self._last[pace] = self._mono()
             stats[str(status)] += 1
             if status in RETRY_STATUS and attempt < RETRIES:
                 wait = self._backoff(attempt)
@@ -368,7 +409,8 @@ class Fetcher:
     def get(self, url: str, *, source: str, params: Mapping[str, str] | None = None,
             secret_params: Mapping[str, str] | None = None, headers: Mapping[str, str] | None = None,
             conditional: bool = True, media_type: str | None = None, ext: str | None = None,
-            content_date: date | None = None, allow: Iterable[int] = ()) -> Fetched:
+            content_date: date | None = None, allow: Iterable[int] = (), chrome: bool = False,
+            extra_sites: tuple[Site, ...] = ()) -> Fetched:
         """Fetch `url` for the source `source` (a core.source key). A 200 is stored and registered before this
         returns; a 304 returns the stored copy's raw file; a status in `allow` returns without a file; anything
         else raises FetchError. conditional=False skips the validators (to download a page again on purpose)."""
@@ -384,7 +426,8 @@ class Fetcher:
                 h["If-None-Match"] = cached.etag
             if cached.last_modified:
                 h["If-Modified-Since"] = cached.last_modified
-        r = self.http.get(url, record_url=record, params=send, headers=h, stats=self.counts)
+        r = self.http.get(url, record_url=record, params=send, headers=h, stats=self.counts, chrome=chrome,
+                          extra_sites=extra_sites)
         if r.status == 304:
             if "If-None-Match" not in h and "If-Modified-Since" not in h:
                 raise FetchError(record, "HTTP 304 to a request that sent no validators", 304)

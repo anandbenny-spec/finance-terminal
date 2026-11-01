@@ -582,3 +582,53 @@ def test_the_curl_transport_impersonates_chrome_on_the_wire():
     assert "Chrome/" in ua and "FinanceTerminal" not in ua
     first, second = ({k.lower(): v for k, v in h.items()} for h in seen)
     assert "cookie" not in first and second.get("cookie") == "A3=wire"
+
+
+# ------------------------------------------------------------------ company websites (Spec 02B §5.2; job 2B-07)
+COMPANY = "https://www.apollohospitals.com/files/q1.pdf"
+OTHER_CO = "https://investor.cipla.com/q1.pdf"
+
+
+def test_a_company_host_is_refused_unless_the_caller_passes_company_web_and_never_an_ip_or_internal_name():
+    h = replies(httpx.Response(200, text="pdf"))
+    c, _ = client(h)
+    with pytest.raises(FetchError, match="isn't a listed source"):
+        c.get(COMPANY)                                                # no other task reaches a company host
+    assert h.seen == []
+    assert c.get(COMPANY, extra_sites=(fetch.COMPANY_WEB,)).body == b"pdf"
+    for url in ("http://127.0.0.1/x", "http://10.0.0.5/x", "http://localhost/x", "http://intranet/x", "http://db.internal/x",
+                "http://[::1]/x"):
+        with pytest.raises(FetchError, match="isn't a listed source"):
+            c.get(url, extra_sites=(fetch.COMPANY_WEB,))
+    assert len(h.seen) == 1
+
+
+def test_company_hosts_are_paced_per_host_and_a_redirect_to_a_private_name_is_refused():
+    ft = FakeTime()
+    h = replies(*[httpx.Response(200, text="a")] * 4)
+    c = HttpClient(transport=httpx.MockTransport(h), monotonic=ft.monotonic, sleep=ft.sleep, rand=lambda: 0.0, clock=ft.clock)
+    c.get(COMPANY, extra_sites=(fetch.COMPANY_WEB,))
+    c.get(OTHER_CO, extra_sites=(fetch.COMPANY_WEB,))                  # another host: no wait
+    assert ft.sleeps == []
+    c.get(COMPANY + "?x=1", extra_sites=(fetch.COMPANY_WEB,))          # the same host again: 2 s from the last request's end
+    assert ft.sleeps == [2.0]
+    h2 = replies(httpx.Response(302, headers={"Location": "http://169.254.169.254/latest"}), httpx.Response(200))
+    c2, _ = client(h2)
+    with pytest.raises(FetchError, match="redirected to 169.254.169.254"):
+        c2.get(COMPANY, extra_sites=(fetch.COMPANY_WEB,))
+    assert len(h2.seen) == 1
+
+
+def test_chrome_true_sends_through_the_impersonating_client_once_and_closes_it():
+    plain, chrome = replies(httpx.Response(403)), replies(httpx.Response(200, text="pdf"))
+    opened = []
+
+    def site_transport(site):
+        opened.append(site.impersonate)
+        return httpx.MockTransport(chrome)
+    c = HttpClient(transport=httpx.MockTransport(plain), site_transport=site_transport, sleep=lambda s: None)
+    assert c.get(COMPANY, extra_sites=(fetch.COMPANY_WEB,)).status == 403
+    assert c.get(COMPANY, extra_sites=(fetch.COMPANY_WEB,), chrome=True).body == b"pdf"
+    assert len(plain.seen) == 1 and len(chrome.seen) == 1
+    assert opened.count("chrome") >= 1
+    c.close()
