@@ -217,6 +217,21 @@ export function tally(m: PolicyMeetingRow, votes: readonly PolicyVoteRow[]): Tal
   return m.bank === "Fed" ? fedTally(m, own) : rbiTally(m, own);
 }
 
+/**
+ * The vote as the RSS feed words it (#252): the rate vote only. A Fed line is the tally as `tally` writes it (the
+ * Fed has no stance vote); an RBI line is "Rate 4–2" without the stance count or the dissent clauses, since a feed
+ * carries no stance (the stance is AI-extracted behind a field policy). A pending tally returns its note (and a Fed
+ * statement's named dissenters); an absent one returns null: absent, not guessed.
+ */
+export function rateVoteLine(m: PolicyMeetingRow, votes: readonly PolicyVoteRow[]): string | null {
+  const t = tally(m, votes);
+  if (t.kind === "absent") return null;
+  if (t.kind === "pending") return t.dissents?.length ? `${dissentLine(t.dissents)}. ${t.note}` : t.note;
+  if (m.bank === "Fed") return t.line;
+  const rate = /^Rate \d+\u2013\d+/.exec(t.line);
+  return rate ? rate[0] : null;
+}
+
 // ------------------------------------------------------------------ History table rows
 
 const KIND: Record<string, string> = { scheduled: "Scheduled", unscheduled: "Unscheduled", special: "Special" };

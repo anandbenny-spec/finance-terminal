@@ -2,7 +2,7 @@
 // Test rows shaped like the views; the names and figures are test data, not a record of real meetings.
 import { describe, expect, it } from "vitest";
 import type { PolicyMeetingRow, PolicyVoteRow } from "@/lib/queries/api";
-import { TABS, changeInWords, decisionLine, dissentLine, historyRows, lastMove, meetingHref, meetingTabHref, tabOf, tally, votedAgainstRate } from "./decisions";
+import { TABS, changeInWords, decisionLine, dissentLine, historyRows, lastMove, meetingHref, meetingTabHref, rateVoteLine, tabOf, tally, votedAgainstRate } from "./decisions";
 
 function meeting(over: Partial<PolicyMeetingRow>): PolicyMeetingRow {
   return {
@@ -252,5 +252,19 @@ describe("historyRows", () => {
     expect(rows[0]).toMatchObject({ bank: "Fed", decision: "Cut", rateAfter: "3.25–3.50", change: "−25", direction: "cut", stance: null, vote: "—", href: "/policy/fed/2026-09-17", year: "2026" });
     expect(rows[1]).toMatchObject({ bank: "RBI", decision: "Hold", rateAfter: "6.50", change: "0", stance: "Neutral", dissents: 2 });
     expect(rows[1].voteNote).toBe("Each member's vote is published in the minutes, due 22 Aug 2024.");
+  });
+});
+
+describe("rateVoteLine (the RSS feed's vote line, #252)", () => {
+  it("is the Fed tally, and the RBI's rate count without its stance", () => {
+    const fed = [vote("fomc-2026-09-17", "A", -25), vote("fomc-2026-09-17", "B", -25)];
+    expect(rateVoteLine(meeting({}), fed)).toBe("Vote 2–0");
+    const six = ["A", "B", "C", "D", "E", "F"].map((n) => vote("mpc-2024-08-08", n, 0, { stance_vote: "neutral" }));
+    expect(rateVoteLine(rbi({}), six)).toBe("Rate 6–0");
+  });
+
+  it("returns the pending note, and null when nothing is stored (absent, not guessed)", () => {
+    expect(rateVoteLine(rbi({}), [])).toBe("Each member's vote is published in the minutes, due 22 Aug 2024.");
+    expect(rateVoteLine(meeting({ minutes_due_on: null }), [])).toBeNull();
   });
 });
