@@ -12,6 +12,7 @@ export const metadata: Metadata = {
   description: SITE_DESCRIPTION,
   openGraph: { type: "website", siteName: SITE_NAME, title: SITE_NAME, description: SITE_DESCRIPTION },
   twitter: { card: "summary_large_image", title: SITE_NAME, description: SITE_DESCRIPTION },
+  alternates: { types: { "application/rss+xml": [{ url: "/feed.xml", title: SITE_NAME }] } },
 };
 
 // Fonts: Design 01 §2.7 (fonts.ts). `dark`: the site is dark only, and globals.css keeps shadcn's class-based
