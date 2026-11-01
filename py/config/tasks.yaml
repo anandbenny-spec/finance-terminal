@@ -107,3 +107,9 @@ equity.call_transcripts:
   run_after: [equity.universe, equity.filings]
   overdue_after: 10 days
   uses_nse: true
+equity.call_text:
+  description: Turns, sections and speaker roles of each stored earnings-call transcript by rules with no AI, then its chunks, and the publication of the call (the transcript document's metadata only, its text stays private)
+  workflows: {weekly: every 6 days}
+  run_after: [equity.call_transcripts, equity.filings]
+  overdue_after: 10 days
+  uses_nse: false

@@ -176,6 +176,7 @@ class CallText:
     spans: list[PageSpan]
     page_map_ok: bool
     failed_pages: list[int]                 # physical pages whose range failed the check
+    labels: list = field(default_factory=list)   # per block of the text: the speaker label opening it, or None
 
     @property
     def page_rows(self) -> list[PageSpan]:
@@ -187,10 +188,12 @@ def call_text(info: PdfInfo) -> CallText:
     """The canonical text of a call PDF with its page map and the check on it."""
     numbers = info.kept
     texts = [info.page_texts[n - 1] for n in numbers]
-    ex, spans = pdf_text_pages(texts, numbers, speaker=info.speakers.label)
+    labels: list = []
+    ex, spans = pdf_text_pages(texts, numbers, speaker=info.speakers.label, labels=labels,
+                               label_raw=True)
     ex = Extracted(ex.text, ex.blocks, f"{ex.extractor_version}/{PARSER_VERSION}")
     failed = check_page_map(ex.text, spans, info.page_texts)
-    return CallText(ex, spans, not failed, failed)
+    return CallText(ex, spans, not failed, failed, labels)
 
 
 _JOIN = re.compile(r"[\s\-]+")
