@@ -1,7 +1,8 @@
 """policy.reactions: market reactions around each policy decision (Prompt 01 §5 item 4; Spec 01 §2, the "Reactions
 (1b)" row, and §3.1; Architecture 02 §2, the `policy.reactions` row and "Reaction series").
 
-Database only: it fetches nothing. For every held rate-decision meeting × its bank's reaction series it stores one
+Database only: it fetches nothing. The computation is the reactions engine's (`ft/engines/reactions.py`, 2A-22): this task is
+its first caller (its series as subjects, its meetings as decision anchors, window `d1`) and writes `policy.market_reaction`. For every held rate-decision meeting × its bank's reaction series it stores one
 `policy.market_reaction` row:
 - Fed meetings: `fred.DGS2` (the surprise measure), `fred.DGS10`, `yf.^GSPC`, `fred.DEXINUS`, `yf.^NSEI`,
   `yf.^NSEBANK`; RBI meetings: `yf.^NSEI`, `yf.^NSEBANK`, `fred.DEXINUS`. The India 10-year is monthly, so it isn't
@@ -40,6 +41,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from types import MappingProxyType
 
+from ft.engines.reactions import D1, Anchor, change_of, load_series_subject, react  # noqa: F401  (change_of: the tests import it from here)
 from ft.jobs.runner import Check, Context, Task
 from ft.jobs.tasks import register
 
@@ -48,7 +50,6 @@ FED_SERIES = ("fred.DGS2", "fred.DGS10", "yf.^GSPC", "fred.DEXINUS", "yf.^NSEI",
 RBI_SERIES = ("yf.^NSEI", "yf.^NSEBANK", "fred.DEXINUS")
 SURPRISE_MAX_BPS = Decimal(100)
 SEARCH_DAYS = 31                            # how far either side of the release an observation is looked for
-PCT_PLACES = Decimal("0.0001")
 # Spec 01 §2: a missing post value waits for the series' expected lag before warning. DEXINUS is a daily series
 # published weekly (H.10; Data Audit 01 #24), as in policy.market_series.
 WEEKLY_PUBLISHED = frozenset({"DEXINUS"})
@@ -77,44 +78,6 @@ class Row:
         return self.meeting_event_id, self.series_id
 
 
-def change_of(unit: str, pre: Decimal, post: Decimal) -> tuple[Decimal, str]:
-    """Yields in basis points ((post − pre) × 100); everything else in percent ((post ÷ pre − 1) × 100, 4 places)."""
-    if unit == "percent":
-        return (post - pre) * 100, "bps"
-    return ((post / pre - 1) * 100).quantize(PCT_PLACES), "pct"
-
-
-# One statement: every meeting × series pair with the observation fixed last before the release and first after it.
-# The local date bounds keep each lookup on the observation primary key (series_id, obs_date).
-PAIRS_SQL = """
-with pairs as (
-  select * from unnest(%(events)s::bigint[], %(series)s::integer[], %(surprise)s::boolean[])
-           as p(event_id, series_id, is_surprise)
-)
-select p.event_id, p.series_id, p.is_surprise, e.occurs_at, s.key, src.key, s.source_code, s.unit,
-       pre.obs_date, pre.value, post.obs_date, post.value
-  from pairs p
-  join core.event e on e.id = p.event_id
-  join core.series s on s.id = p.series_id
-  join core.source src on src.id = s.source_id
-  left join lateral (
-    select o.obs_date, o.value from core.observation o
-     where o.series_id = s.id
-       and o.obs_date between (e.occurs_at at time zone s.fixing_tz)::date - %(days)s
-                          and (e.occurs_at at time zone s.fixing_tz)::date
-       and ((o.obs_date + s.fixing_time) at time zone s.fixing_tz) < e.occurs_at
-     order by o.obs_date desc limit 1) pre on true
-  left join lateral (
-    select o.obs_date, o.value from core.observation o
-     where o.series_id = s.id
-       and o.obs_date between (e.occurs_at at time zone s.fixing_tz)::date
-                          and (e.occurs_at at time zone s.fixing_tz)::date + %(days)s
-       and ((o.obs_date + s.fixing_time) at time zone s.fixing_tz) > e.occurs_at
-     order by o.obs_date asc limit 1) post on true
- order by e.occurs_at, p.event_id, s.key
-"""
-
-
 @register
 class Reactions(Task):
     key = "policy.reactions"
@@ -141,9 +104,14 @@ class Reactions(Task):
                 problems.append(f"{k} has no fixing time and zone")
         return {k: v[0] for k, v in found.items()}, problems
 
-    def _meetings(self, tx) -> list[tuple[int, str]]:
+    def _series_info(self, tx, ids: dict[str, int]) -> list[tuple[str, int, str, str]]:
         return tx.execute(
-            """select e.id, b.slug from core.event e
+            """select s.key, s.id, src.key, s.source_code from core.series s join core.source src on src.id = s.source_id
+                where s.id = any(%s)""", (list(ids.values()),)).fetchall()
+
+    def _meetings(self, tx) -> list[tuple[int, str, datetime]]:
+        return tx.execute(
+            """select e.id, b.slug, e.occurs_at from core.event e
                  join policy.meeting m on m.event_id = e.id
                  join core.entity b on b.id = e.entity_id
                 where e.status = 'held' and m.is_rate_decision and e.occurs_at is not null and b.slug = any(%s)
@@ -155,28 +123,33 @@ class Reactions(Task):
         r.update(problems=problems, rows=[], waiting=[], no_pre=[], counts={})
         if problems:
             return 0                                 # the `series` check blocks the load
-        events, series, surprise = [], [], []
-        for event_id, bank in self._meetings(tx):
+        meetings = self._meetings(tx)
+        if meetings:
+            lo = min(at for _, _, at in meetings).date() - timedelta(days=SEARCH_DAYS + 2)
+            hi = max(at for _, _, at in meetings).date() + timedelta(days=SEARCH_DAYS + 2)
+        info = {sid: (key, source, code) for key, sid, source, code in self._series_info(tx, ids)}
+        subjects = {sid: load_series_subject(tx, sid, lo, hi) for sid in {ids[k] for k in ids}} if meetings else {}
+        pairs = []                                   # the pairs as the old statement ordered them: release, event, series key
+        for event_id, bank, occurs_at in meetings:
             for k in self.series_by_bank[bank]:
-                events.append(event_id)
-                series.append(ids[k])
-                surprise.append((bank, k) == self.surprise)
-        found = tx.execute(PAIRS_SQL, {"events": events, "series": series, "surprise": surprise,
-                                       "days": SEARCH_DAYS}).fetchall()
+                pairs.append((occurs_at, event_id, k, (bank, k) == self.surprise))
+        pairs.sort(key=lambda p: (p[0], p[1], p[2]))
         wanted: dict[tuple[int, int], Row] = {}
-        for (event_id, series_id, is_surprise, occurs_at, key, source, code, unit,
-             pre_date, pre_value, post_date, post_value) in found:
-            if pre_date is None:
+        for occurs_at, event_id, key, is_surprise in pairs:
+            series_id = ids[key]
+            _, source, code = info[series_id]
+            out = react(subjects[series_id], Anchor.decision(event_id, occurs_at), D1, search_days=SEARCH_DAYS)
+            if out.missing == "no_pre":
                 r["no_pre"].append((occurs_at, key))
                 continue
-            if post_date is None:
+            if out.reaction is None:                 # no_post: waits for the series' expected lag, then warns
                 lag = LAG["weekly" if source == "fred" and code in WEEKLY_PUBLISHED else "daily"]
                 if clock.now - occurs_at > lag:
                     r["waiting"].append((occurs_at, key, lag.days))
                 continue
-            change, change_unit = change_of(unit, pre_value, post_value)
-            row = Row(event_id, series_id, pre_date, post_date, pre_value, post_value, change, change_unit,
-                      is_surprise)
+            x = out.reaction
+            row = Row(event_id, series_id, x.pre_date, x.post_date, x.pre_value, x.post_value, x.change,
+                      x.change_unit, is_surprise)
             wanted[row.key()] = row
         r["rows"] = list(wanted.values())
 
