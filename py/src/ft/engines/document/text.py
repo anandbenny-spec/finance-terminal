@@ -81,6 +81,13 @@ def normalize(s: str) -> str:
     return "\n".join(_SPACES.sub(" ", line).strip() for line in s.split("\n"))
 
 
+def normalize_keeping_spaces(s: str) -> str:
+    """`normalize` without collapsing a line's inner spaces: the same lines, one for one (two-column speaker lines)."""
+    s = _CONTROL.sub("", s.replace("\r\n", "\n").translate(_TABLE))
+    s = unicodedata.normalize("NFC", s)
+    return "\n".join(line.strip() for line in s.split("\n"))
+
+
 def normalize_inline(s: str) -> str:
     """Normalise HTML text: any whitespace, line breaks included, is one space (the browser's rule)."""
     return " ".join(normalize(s).split())
@@ -533,7 +540,8 @@ class PageSpan:
 
 
 def pdf_text_pages(pages: list[str], numbers: list[int] | None = None,
-                   speaker=None) -> tuple[Extracted, list[PageSpan]]:
+                   speaker=None, labels: list | None = None,
+                   label_raw: bool = False) -> tuple[Extracted, list[PageSpan]]:
     """Canonical text from a PDF's page texts: page furniture dropped (running headers and footers, page numbers),
     lines joined into paragraphs. A paragraph ends at a blank line and a new one starts at a speaker label (`speaker`,
     a function line -> label or None; the Fed's reader by default); a line ending in "-" before a lower-case letter
@@ -541,14 +549,23 @@ def pdf_text_pages(pages: list[str], numbers: list[int] | None = None,
 
     `numbers` gives each page's physical number (default 1, 2, ...), for callers that drop whole pages first (repeated
     pages). The second result has one span per page that keeps at least one line, ordered by page; a paragraph that
-    crosses a page break belongs, from its continuation line on, to the page where that line is."""
+    crosses a page break belongs, from its continuation line on, to the page where that line is.
+
+    `labels`, if given a list, is filled with one entry per block of the text: the speaker label that opens the block's
+    first line (what `speaker` returns for it), or None. Turns and chunks read it, so they agree with the text's own
+    paragraph breaks (a paragraph that starts at a label).
+
+    `label_raw` hands `speaker` each line with its inner spaces kept (the lines are the same, one for one): a transcript
+    whose text layer sets speaker and speech in two columns ("Name  text") is read by its double space, which the text
+    itself collapses."""
     speaker = speaker or transcript_speaker
     numbers = list(range(1, len(pages) + 1)) if numbers is None else numbers
     norm = [[ln for ln in normalize(p).split("\n")] for p in pages]
+    raw = [normalize_keeping_spaces(p).split("\n") for p in pages] if label_raw else norm
     furniture = _furniture([[ln for ln in p if ln] for p in norm])
-    paras: list[list[tuple[int, str]]] = []         # each line with the physical page it came from
-    cur: list[tuple[int, str]] = []
-    for number, lines in zip(numbers, norm, strict=True):
+    paras: list[list[tuple[int, str, str]]] = []    # each line with the physical page it came from, and as the reader sees it
+    cur: list[tuple[int, str, str]] = []
+    for number, lines, raw_lines in zip(numbers, norm, raw, strict=True):
         nonblank = [i for i, ln in enumerate(lines) if ln]
         edge = set(nonblank[:2] + nonblank[-2:])
         for i, ln in enumerate(lines):
@@ -559,22 +576,24 @@ def pdf_text_pages(pages: list[str], numbers: list[int] | None = None,
                 continue
             if i in edge and (_PAGE_NO.match(ln) or re.sub(r"\d", "#", ln) in furniture):
                 continue
-            if cur and speaker(ln):
+            if cur and speaker(raw_lines[i]):
                 paras.append(cur)
                 cur = []
-            cur.append((number, ln))
+            cur.append((number, ln, raw_lines[i]))
     if cur:
         paras.append(cur)
     blocks, line_at = [], []                        # line_at: (page, offset of the line inside its paragraph's text)
     for para in paras:
         text, offsets = para[0][1], [(para[0][0], 0)]
-        for number, ln in para[1:]:
+        for number, ln, _ in para[1:]:
             glue = "" if text.endswith("-") and ln[:1].islower() else " "
             text += glue + ln
             offsets.append((number, len(text) - len(ln)))
         blocks.append(("para", 0, [text]))
         line_at.append(offsets)
     ex = _assemble(blocks, PDF_VERSION)
+    if labels is not None:
+        labels[:] = [speaker(para[0][2]) for para in paras]
     first: dict[int, int] = {}
     for block, offsets in zip(ex.blocks, line_at, strict=True):
         for number, off in offsets:
