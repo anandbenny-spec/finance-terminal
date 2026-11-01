@@ -516,7 +516,7 @@ def test_nse_listing_one_decimal_less_still_agrees_with_the_correction():
 def test_the_approved_list_is_well_formed():
     held = sh.held_files()
     assert all(k.endswith(".xml") and v for k, v in held.items())
-    assert len(held) == 45 and "SHP_168310_646925_21042022103052_WEB.xml" not in held
+    assert len(held) == 76 and "SHP_168310_646925_21042022103052_WEB.xml" not in held
 
 
 @pytest.mark.db
@@ -590,3 +590,12 @@ def test_the_weekly_window_is_the_last_400_days_of_quarter_ends(s3):
     make_companies(["TCS"])
     code, tr = go(Nse(), since=D(2026, 7, 1), until=D(2026, 9, 30))
     assert tr[1] == 1 and [r[1] for r in rows()] == [D(2026, 9, 30)]
+
+
+@needs_fixtures
+def test_a_range_error_says_whether_the_file_has_share_counts():
+    """Option A (#116) holds a file by name only when it has share counts; the error carries that fact."""
+    body = unzipped(latest("TCS")[1]).replace(b">0.7177<", b">1.7177<")
+    with pytest.raises(sh.ShareholdingError) as e:
+        sh.parse_pattern(body)
+    assert e.value.kind == "range" and e.value.detail == {"counts": True}

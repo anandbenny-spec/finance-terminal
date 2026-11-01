@@ -141,7 +141,9 @@ class EquityShareholding(DocumentJob):
                     raise
                 pattern = sh.corrected(e, c.meta["nse_pct"])
         except sh.ShareholdingError as e:
-            held = sh.held_files().get(c.external_key) if e.kind == "range" else None
+            # Held by name only where the file has share counts that don't confirm the figure (Anand's option A,
+            # #116, 1 Nov 2026, comment 6553998380); a file with no share counts still fails `promoter_range`.
+            held = sh.held_files().get(c.external_key) if e.kind == "range" and e.detail.get("counts") else None
             if held:
                 raise FetchError(c.url, f"held: {e} ({held})") from None
             raise FetchError(c.url, f"{e.kind}: {e}") from None
