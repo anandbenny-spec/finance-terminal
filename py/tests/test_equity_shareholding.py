@@ -502,9 +502,21 @@ def test_corrected_needs_nse_to_agree_where_it_lists_a_figure():
     assert bad.value.kind == "range" and "NSE lists 50" in str(bad.value)
 
 
+def test_nse_listing_one_decimal_less_still_agrees_with_the_correction():
+    """BAJAJFINSV, 21 Apr 2022: filed 6077.00, ratio 60.77, NSE lists 60.8 (rounded). Regression for the 0.05 NSE gap."""
+    err = sh.ShareholdingError("x", "unit_suspect", {
+        "as_of": date(2022, 3, 31), "filed": Decimal("6077.00"), "divided": Decimal("60.77"),
+        "ratio": Decimal("60.77"), "p_shares": 1, "t_shares": 2, "found_by": "f"})
+    p = sh.corrected(err, Decimal("60.8"))
+    assert p.promoter_pct == Decimal("60.77") and p.nse_pct == Decimal("60.8") and p.correction == sh.CORRECTION
+    with pytest.raises(sh.ShareholdingError):
+        sh.corrected(err, Decimal("60.9"))
+
+
 def test_the_approved_list_is_well_formed():
     held = sh.held_files()
     assert all(k.endswith(".xml") and v for k, v in held.items())
+    assert len(held) == 45 and "SHP_168310_646925_21042022103052_WEB.xml" not in held
 
 
 @pytest.mark.db
