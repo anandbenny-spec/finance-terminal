@@ -208,3 +208,22 @@ def test_chunks_that_cross_a_turn_fail_the_run_and_nothing_is_published(s3, monk
     doc = call(HUL)[3]
     assert call(HUL)[2] is False and q("select count(*) from core.chunk where document_id = %s", doc)[0][0] == 0
     assert q("select count(*) from equity.call_turn where document_id = %s", doc)[0][0] == 0
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_published_call_whose_stored_roles_differ_from_the_rules_gets_them_rewritten_and_its_chunks_kept(s3):
+    setup_hul()
+    go_text()
+    doc = call(HUL)[3]
+    want = q("select turn_no, role from equity.call_turn where document_id = %s order by turn_no", doc)
+    chunks = q("select chunk_no, char_start, char_end, section, speaker from core.chunk where document_id = %s order by chunk_no", doc)
+    x("update equity.call_turn set role = 'unknown' where document_id = %s", doc)
+    x("update equity.earnings_call set unknown_role_share = 1 where transcript_document_id = %s", doc)
+    _, tr = go_text()
+    assert tr[1] > 0
+    assert q("select turn_no, role from equity.call_turn where document_id = %s order by turn_no", doc) == want
+    assert q("select unknown_role_share from equity.earnings_call where transcript_document_id = %s", doc)[0][0] < 1
+    assert q("select chunk_no, char_start, char_end, section, speaker from core.chunk where document_id = %s order by chunk_no", doc) == chunks
+    _, tr = go_text()
+    assert tr[1] == 0                                                         # and now a second run writes nothing

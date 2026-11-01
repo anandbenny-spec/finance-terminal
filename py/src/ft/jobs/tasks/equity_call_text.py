@@ -15,9 +15,11 @@ with no quarter stays as it is: not analysed, not published):
   (`doc_type.text_public = false`, 2B-05): anon reads its row and its `transcript_page` rows, never a chunk. A call that is
   `on_company_website` or `unreadable` has its event published once its row exists.
 
+A call whose document already has chunks is re-read each run and rewritten only if the rules now give other turns or roles
+(its chunks only if their speakers or sections changed), so a new role rule reaches calls already published.
+
 Only the document a call row points at is analysed: a revised version 2B-07 registered (a later version of the same key)
-gets no turns and no chunks before 18 Nov (§13.3). A call whose document already has chunks is skipped, so a second run
-writes nothing.
+gets no turns and no chunks before 18 Nov (§13.3). A second run with the same rules writes nothing.
 
 Checks, B blocking, W warning:
 - (B) `text_matches`: each transcript's text, re-derived from its stored file, has the stored hash;
@@ -56,6 +58,9 @@ class Call:
     analysis: turns.Analysis | None = None
     chunks: list[Chunk] = field(default_factory=list)
     problem: str | None = None            # why it couldn't be analysed: text_mismatch | chunks | turns | unreadable
+    refresh: bool = False                 # already chunked and published: only its roles (or turns) changed under newer rules
+    unchanged: bool = False               # ... and the rules still give exactly what is stored: nothing to write
+    rechunk: bool = False                 # ... and its chunks' speakers or sections changed too
 
 
 @dataclass
@@ -109,9 +114,9 @@ class EquityCallText(Task):
                 if not ev_pub:
                     out.publish_events.append(event_id)               # on_company_website / unreadable: the label or link
                 continue
-            if chunked is not None:
-                continue                                              # already done: a second run writes nothing
             call = Call(event_id, slug, doc_id)
+            if chunked is not None:
+                call.refresh = True                                   # done before: rewritten only if the rules now say otherwise
             out.calls.append(call)
             try:
                 if raw_id is None or sha is None:
@@ -133,6 +138,19 @@ class EquityCallText(Task):
                 continue
             if not inside_one_turn(call.chunks, call.analysis):
                 call.problem = "chunks"
+            if call.refresh and call.problem is None:
+                same_turns = [tuple(r) for r in db.execute(
+                    """select turn_no, char_start, char_end, speaker, role, section, words from equity.call_turn
+                        where document_id = %s order by turn_no""", (doc_id,)).fetchall()] == [
+                    (t.turn_no, t.char_start, t.char_end, t.speaker, t.role, t.section, t.words) for t in call.analysis.turns]
+                same_chunks = [tuple(r) for r in db.execute(
+                    """select chunk_no, char_start, char_end, section, speaker from core.chunk where document_id = %s
+                        order by chunk_no""", (doc_id,)).fetchall()] == [
+                    (c.chunk_no, c.char_start, c.char_end, c.section, c.speaker) for c in call.chunks]
+                if same_turns and same_chunks:
+                    call.unchanged = True                             # a second run writes nothing
+                else:
+                    call.rechunk = not same_chunks
         return out
 
     # ------------------------------------------------------------------ load
@@ -140,10 +158,11 @@ class EquityCallText(Task):
         self.done = []
         n = 0
         for call in h.calls:
-            if call.problem or call.analysis is None:
+            if call.problem or call.analysis is None or call.unchanged:
                 continue                                              # a blocking check fails the run: nothing is kept
             an, doc = call.analysis, call.document_id
-            save_chunks(tx, doc, call.text, call.chunks)
+            if not call.refresh or call.rechunk:
+                save_chunks(tx, doc, call.text, call.chunks)
             tx.execute("delete from equity.call_turn where document_id = %s", (doc,))
             with tx.cursor() as cur:
                 cur.executemany(
@@ -157,7 +176,7 @@ class EquityCallText(Task):
             tx.execute("update core.event set is_published = true, updated_at = now() where id = %s and not is_published",
                        (call.event_id,))
             self.done.append(call)
-            n += 1 + len(an.turns) + len(call.chunks)
+            n += 1 + len(an.turns) + (len(call.chunks) if not call.refresh or call.rechunk else 0)
         for event_id in h.publish_events:
             n += tx.execute("update core.event set is_published = true, updated_at = now() where id = %s and not is_published",
                             (event_id,)).rowcount
