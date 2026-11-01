@@ -124,7 +124,7 @@ def compute(s: assemble.Stored, as_of: date, market: Market, settings: Settings,
             rule: assemble.DeliveredRoe) -> CompanyRuns:
     """One company's runs and grid at the newest price date on or before `as_of` (pure, no database)."""
     t = assemble.price_date(s, as_of) or as_of
-    out = CompanyRuns(s.company.eid, s.company.slug, s.company.family, t)
+    out = CompanyRuns(s.company.entity_id, s.company.slug, s.company.family, t)
     if s.company.family == "lender":
         lender = assemble.lender_inputs(s, as_of, rule)
         out.lender = lender
