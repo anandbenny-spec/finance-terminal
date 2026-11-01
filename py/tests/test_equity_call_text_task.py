@@ -85,7 +85,7 @@ def checks(tr):
 
 def x(sql, *a):
     with psycopg.connect(ADMIN, autocommit=True) as c:
-        c.execute(sql, a)
+        c.execute(sql, a or None)
 
 
 def as_anon(sql, *a):
