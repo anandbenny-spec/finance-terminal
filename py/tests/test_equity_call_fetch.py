@@ -255,7 +255,7 @@ def test_a_dead_company_link_is_logged_by_host_then_a_later_run_upgrades_the_cal
     [a] = calls("zf-apollohosp")
     assert a[1] == "on_company_website" and a[6] == "none" and a[8] is None
     c = checks(tr)
-    assert not c["company_hosts"]["passed"] and "www.apollohospitals.com HTTP 404" in c["company_hosts"]["detail"]
+    assert not c["company_hosts"]["passed"] and "apollohospitals.com HTTP 404" in c["company_hosts"]["detail"]
     assert not c["unresolved_letters"]["passed"]
     events = q("select id from core.event where slug = %s", "zf-apollohosp-call-q1-fy27")
     code, tr = go(Web())                                     # the file is there now (or a curated row names it)
