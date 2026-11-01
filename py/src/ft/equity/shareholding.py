@@ -177,7 +177,8 @@ def parse_pattern(body: bytes) -> Pattern:
                     f"file's own share counts ({ratio:.2f}%)", "unit_suspect",
                     {"as_of": as_of, "filed": pct, "divided": pct / 100, "ratio": ratio, "p_shares": p_shares,
                      "t_shares": t_shares, "found_by": found_by})
-        raise ShareholdingError(f"promoter holding {pct:f}% is outside 0–100", "range")
+        raise ShareholdingError(f"promoter holding {pct:f}% is outside 0–100", "range",
+                                {"counts": p_shares is not None and bool(t_shares)})
     return Pattern(as_of, pct, p_shares, t_shares, found_by)
 
 
