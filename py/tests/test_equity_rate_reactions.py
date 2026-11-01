@@ -26,6 +26,33 @@ def q(sql, *a):
         return cur.fetchall() if cur.description else []
 
 
+def wipe():
+    """Remove everything this module made (companies are universe members to other tests: the universe and shareholding
+    tests count every equity.company row), leaving the task runs, which other rows of the run history point at."""
+    ev = "(select id from core.event where slug like 'rr%x%-%')"
+    co = "(select id from core.entity where slug like 'rr%x%-%')"
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        c.execute(f"delete from core.event_reaction where event_id in {ev} or entity_id in {co}")
+        c.execute(f"delete from equity.adjustment_factor where entity_id in {co}")
+        c.execute(f"delete from equity.corporate_action where event_id in {ev}")
+        c.execute(f"delete from policy.rate_cycle where event_id in {ev}")
+        c.execute(f"delete from policy.meeting where event_id in {ev}")
+        c.execute("delete from core.event where slug like 'rr%x%-%'")
+        c.execute(f"delete from equity.price_daily where entity_id in {co}")
+        c.execute(f"delete from equity.company where entity_id in {co}")
+        c.execute("delete from core.entity where slug like 'rr%x%-%'")
+        c.execute("delete from core.observation where series_id in (select id from core.series where key like 'rr%x%.%')")
+        c.execute("delete from core.series where key like 'rr%x%.%'")
+        c.execute("delete from core.raw_file where object_key like 'test/rr%x%-prices'")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def clean_up():
+    wipe()
+    yield
+    wipe()
+
+
 def weekdays(start: date, end: date):
     d = start
     while d <= end:
