@@ -325,10 +325,10 @@ never rebuild a rule from memory.
 | Arch 02 / 02a | Architecture - 02 Refresh jobs · 02a Job runner prototype | workflows, task contract, checks, refresh button |
 | Arch 03 / 03a | Architecture - 03 AI layer · 03a AI layer prototypes | wrapper, citations, guard, retrieval, evaluation |
 | Arch 04 / 04a | Architecture - 04 Storage, repo layout, Python and lock file · 04a Repo skeleton | storage, CI, one-time setup, secrets |
-| Design 01 | Design - 01 Design system | tokens, formatting, components, layouts |
+| Design 01 / 01b | Design - 01 Design system · 01b Changes of 1 Nov 2026 (tape, white accent, favicon, neutral triangle) | tokens, formatting, components, layouts; read 01b with 01, and 01b holds where they differ (Anand, 1 Nov 2026) |
 | Spec NN | Spec - 01 Fed vs RBI policy tracker · 02A Equity screener and valuation (Nifty 50) · 02B Earnings calls and guidance (Nifty 50) | inputs, rules, outputs, UI, done when; from module 2 on, the build prompt (§9) |
 | Prompt NN | Prompt - 01 Fed vs RBI sub-prompt (one per module; from module 2 on, the build prompt is part of the spec: Spec 02A, 02B) | the module's build order and stop conditions |
-| Plan NN | Plan - 01 Pass 2 ECB and BoE · 02 Module 2 scope, releases and reuse · 03 Module 1 longer history · 04 Ship by 18 Nov | later work's scope, order and reuse; 04: the 18 Nov plan |
+| Plan NN | Plan - 01 Pass 2 ECB and BoE · 02 Module 2 scope, releases and reuse · 03 Module 1 longer history · 04 Ship by 18 Nov · 04a Changes of 1 Nov 2026 (lane C, renumbered migration, week 3) | later work's scope, order and reuse; 04: the 18 Nov plan, with 04a's changes |
 | Setup NN | Setup - 01 Supabase projects · Setup - 02 Cloud environment | one-time setup steps |
 | Review 01 | Review - 01 Argon external review triage | the 22 Oct fixes and why |
 | Data Audit NN | Data Audit - 00 Process and status · 01 … 08 | source evidence; closed audit docs are frozen records |
