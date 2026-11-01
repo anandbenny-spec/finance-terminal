@@ -60,6 +60,6 @@ type Ok = Extract<CompanyPageData, { ok: true }>;
 export function page(over: Partial<Ok> = {}): Ok {
   return {
     ok: true, readAt: "2026-10-31T09:00:00.000Z", today: "2026-10-31", company: company(), actions: [], indexNames: { "nifty-50": "Nifty 50" },
-    tab: "overview", overview: { prices: [], metrics: [], peers: [] }, financials: null, valuation: null, ...over,
+    tab: "overview", overview: { prices: [], metrics: [], peers: [] }, financials: null, valuation: null, rates: null, ...over,
   };
 }

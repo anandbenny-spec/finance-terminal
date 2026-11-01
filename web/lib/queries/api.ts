@@ -500,6 +500,77 @@ export type ValuationScenarioRow = {
   label: string | null;
 };
 
+/** api.rate_decision_stats (0026): per company or peer group, bank, decision class and window: the excess-move statistics. Every figure is null while the field `equity.rate_sensitivity` is hidden; the statistics are null where n < 5 (the moves are listed instead). Excess moves are in percentage points of price change, excluding dividends. */
+export type RateDecisionStatRow = {
+  subject_kind: "company" | "peer_group";
+  subject_key: string;
+  subject_name: string;
+  bank: "fed" | "rbi";
+  decision: "cut" | "hold" | "hike";
+  window_key: "d1" | "d5";
+  n: number | null;
+  mean_excess_pct: Num;
+  median_excess_pct: Num;
+  p25_excess_pct: Num;
+  p75_excess_pct: Num;
+  /** A fraction, 0 to 1. */
+  share_positive: Num;
+  attribution: string | null;
+};
+
+/** api.rate_decision_moves (0026): one move per company (or peer group) and rate decision since 1 Jan 2019, per window. Percent, excluding dividends. */
+export type RateDecisionMoveRow = {
+  subject_kind: "company" | "peer_group";
+  subject_key: string;
+  subject_name: string;
+  currency: "INR" | "USD" | null;
+  bank: "fed" | "rbi";
+  event_slug: string;
+  meeting_date: string;
+  decision: "cut" | "hold" | "hike";
+  policy_change_bps: number | null;
+  window_key: "d1" | "d5";
+  pre_date: string | null;
+  post_date: string | null;
+  own_change_pct: Num;
+  nifty_change_pct: Num;
+  excess_pct: Num;
+  members: number | null;
+  attribution: string | null;
+};
+
+/** api.rate_cycles (0026): each bank's rate cycles (two or more moves in one direction). */
+export type RateCycleRow = {
+  bank: "fed" | "rbi";
+  bank_name: string;
+  cycle_slug: string;
+  direction: "easing" | "tightening" | null;
+  first_decision_on: string | null;
+  last_decision_on: string | null;
+  status: string | null;
+  moves: number | null;
+  total_change_bps: number | null;
+  rule_version: number | null;
+};
+
+/** api.company_rate_cycles (0026): a company's move over each rate cycle's span, the Nifty 50's and the excess (percent). */
+export type CompanyRateCycleRow = {
+  company_slug: string;
+  company_name: string;
+  currency: "INR" | "USD";
+  bank: "fed" | "rbi";
+  cycle_slug: string;
+  direction: "easing" | "tightening" | null;
+  status: string | null;
+  is_ongoing: boolean | null;
+  pre_date: string | null;
+  post_date: string | null;
+  own_change_pct: Num;
+  nifty_change_pct: Num;
+  excess_pct: Num;
+  attribution: string | null;
+};
+
 type View<Row> = { Row: Row; Relationships: [] };
 
 /** The slice of the `api` schema typed so far, for supabase-js: the shell's views (C2), the policy pages' (A1, C3, C4, Pass 1b). */
@@ -537,6 +608,10 @@ export type ApiDatabase = {
       company_promoter_holding: View<PromoterHoldingRow>;
       company_valuation: View<CompanyValuationRow>;
       valuation_scenarios: View<ValuationScenarioRow>;
+      rate_decision_stats: View<RateDecisionStatRow>;
+      rate_decision_moves: View<RateDecisionMoveRow>;
+      rate_cycles: View<RateCycleRow>;
+      company_rate_cycles: View<CompanyRateCycleRow>;
     };
     Functions: { [_ in never]: never };
   };
