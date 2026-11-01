@@ -1,0 +1,31 @@
+# Classifier of exchange announcements for module 2B (Spec 02B §5.1; job 2B-06). Ported from the audit kit's
+# config/concalls_config.json ("classification", V1.2, rules fixed 21 Oct 2026) with the same keywords.
+#
+# Rule: an announcement is a TRANSCRIPT when its subject or its file name says "transcript" and it is not an
+# audio/video notice or an intimation. For the audio/video and intimation tests only, future-tense mentions ("the
+# transcript will be uploaded") are ignored. The word "Intimation" in a file name alone is not used (companies title
+# most Regulation 30 letters that way, transcripts included). Otherwise: an INTIMATION or OTHER.
+transcript_terms: [transcript, transcription]
+future_transcript_patterns:
+  - 'transcript[^.;]{0,60}\b(?:will|shall|would) be'
+  - 'transcript[^.;]{0,40}\bin due course'
+  - 'transcript[^.;]{0,30}\bto follow'
+audio_video_terms: [audio, video, recording, webcast, replay, youtube]
+intimation_patterns:
+  - 'intimation (?:of|about|regarding|for) (?:the )?(?:schedule|analyst|investor|institutional|earnings|conference|con\.? ?call|concall|meet|call)'
+  - 'schedule of (?:the )?(?:analyst|investor|institutional|earnings|conference|con\.? ?call|concall|meet|call)'
+  - '\b(?:will|shall) be held\b'
+  - '\bto be held\b'
+  - '\bis scheduled\b'
+  - '\bscheduled (?:on|for)\b'
+  - '\binvitation\b'
+  - '\binvite\b'
+  - '\bupcoming\b'
+  - '\bwill (?:be )?host(?:ing)?\b'
+  - '\bwould be hosting\b'
+  - '\bto host\b'
+  - '\bwill participate\b'
+  - '\bwill be participating\b'
+  - '\bmeet - intimation\b'
+# A file name that names a schedule or an invitation is an intimation when the subject says nothing.
+file_intimation_pattern: '\bschedule\b|\binvite\b|\binvitation\b'

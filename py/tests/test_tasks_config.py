@@ -17,7 +17,8 @@ def test_repo_config_loads():
     assert set(tasks) == {"policy.calendar", "policy.fed_documents", "policy.rbi_documents", "policy.market_series",
                           "policy.reactions", "policy.rate_cycles", "policy.ai_batch", "site.quality_summary", "crypto.coingecko_markets", "equity.universe",
                           "equity.valuation_inputs", "equity.prices", "equity.filings", "equity.corporate_actions",
-                          "equity.statements", "equity.shareholding", "equity.metrics", "equity.beta"}
+                          "equity.statements", "equity.shareholding", "equity.metrics", "equity.beta",
+                          "equity.call_transcripts"}
     # the due-rule names are kept as tasks.yaml writes them (Prompt 01 A2)
     # a daily rule may add the decision-day catch-up (#158: `every 20 hours or fomc_catch_up`; test_catch_up_rules.py)
     assert tasks["policy.fed_documents"].rules == {"daily": "every 20 hours or fomc_catch_up", "watch": "fomc_decision_day"}
@@ -95,7 +96,8 @@ def test_build_tasks_configures_registered_classes_and_names_the_rest(tmp_path):
     fed = tasks[0]
     assert fed.workflows == ("daily", "watch") and fed.rules["watch"] == "fomc_decision_day"
     assert fed.run_after == ("policy.calendar",) and fed.min_interval == timedelta(hours=20)
-    assert sorted(missing) == ["crypto.coingecko_markets", "equity.beta", "equity.corporate_actions", "equity.filings",
+    assert sorted(missing) == ["crypto.coingecko_markets", "equity.beta", "equity.call_transcripts", "equity.corporate_actions",
+                               "equity.filings",
                                "equity.metrics", "equity.prices", "equity.shareholding", "equity.statements",
                                "equity.universe",
                                "equity.valuation_inputs",
