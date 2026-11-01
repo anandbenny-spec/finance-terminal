@@ -73,6 +73,7 @@ describe("feeds", () => {
       "policy.market_series",
       "policy.rbi_documents",
       "policy.reactions",
+      "site.quality_summary",
     ]);
     expect(liveTasks({ a: ["policy.ai_batch", "policy.calendar"], b: ["policy.calendar"] })).toEqual(["policy.ai_batch", "policy.calendar"]);
   });

@@ -40,6 +40,8 @@ export const FEEDS = {
   // The meeting pages (C4; Spec 01 §4.3): each bank's documents and their AI outputs.
   meetingFed: ["policy.fed_documents", "policy.ai_batch"],
   meetingRbi: ["policy.rbi_documents", "policy.ai_batch"],
+  // /accuracy (ACC-3, #135): the site's own run and check records, projected daily by site.quality_summary.
+  accuracy: ["site.quality_summary"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 
 export type Surface = keyof typeof FEEDS;
@@ -62,7 +64,6 @@ export const PREVIEW_FEEDS = {
   company: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
   // The Valuation tab (2A-20): the stored runs and grid, built from the same filings, prices and betas plus the rates inputs.
   valuation: ["equity.valuation_inputs", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
-  accuracy: ["site.quality_summary"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 
 export type PreviewSurface = keyof typeof PREVIEW_FEEDS;

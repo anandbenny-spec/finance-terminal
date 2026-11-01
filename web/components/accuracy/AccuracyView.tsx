@@ -25,7 +25,7 @@ import {
   type ModuleSection,
   type Period,
 } from "@/lib/accuracy/summary";
-import { PREVIEW_FEEDS } from "@/lib/feeds";
+import { FEEDS } from "@/lib/feeds";
 import { formatTableDate } from "@/lib/format";
 import type { EvalSummaryRow, QualitySummaryRow, TaskFreshnessRow } from "@/lib/queries/api";
 import { panelFreshness } from "@/lib/shell/freshness";
@@ -45,7 +45,7 @@ function Footer({ data, to }: { data: AccuracyData; to: string | null }) {
   return (
     <>
       <SourceLine lines={[OWN_RECORDS]} />
-      <Freshness freshness={panelFreshness(data.freshness, PREVIEW_FEEDS.accuracy, to, data.now)} />
+      <Freshness freshness={panelFreshness(data.freshness, FEEDS.accuracy, to, data.now)} />
     </>
   );
 }
