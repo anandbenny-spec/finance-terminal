@@ -54,7 +54,7 @@ CI runs all five on Node 24 (`.github/workflows/ci.yml`, job `web`).
   palette or a literal colour fails it). Add a primitive with `shadcn add` and the test checks it too.
 - Noticed while checking §10.3, left for the components that use them: Nova's button sizes its text with `text-sm`,
   `text-xs` and `text-[0.8rem]` (14, 12 and 12.8 px: nothing below 12 px, but not the role names of §2.4), and shows
-  focus as a 3 px `ring-ring/50` instead of the base 2 px amber outline. Both are amber/size choices inside the
+  focus as a 3 px `ring-ring/50` instead of the base 2 px accent outline. Both are accent/size choices inside the
   primitive, not colour edits; C2 decides when it first uses a button.
 
 ## Shell (C2, 24 Oct 2026)

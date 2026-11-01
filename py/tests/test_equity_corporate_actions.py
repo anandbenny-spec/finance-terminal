@@ -17,6 +17,7 @@ import boto3
 import httpx
 import psycopg
 import pytest
+import yaml
 from conftest import dsn
 from moto.server import ThreadedMotoServer
 
@@ -45,10 +46,11 @@ def reply(symbol: str) -> list[dict]:
     return json.loads((REPLIES / f"nse_corpactions_{symbol}.json").read_text())
 
 
-def nse_row(symbol: str, ex: str, subject: str, face_value: str = "10", rec: str = "-") -> dict:
+def nse_row(symbol: str, ex: str, subject: str, face_value: str = "10", rec: str = "-",
+            isin: str = "INE000000000") -> dict:
     """A row in NSE's shape (the saved replies' keys)."""
     return {"bcEndDate": "-", "bcStartDate": "-", "caBroadcastDate": None, "comp": f"{symbol} test", "exDate": ex,
-            "faceVal": face_value, "ind": "-", "isin": "INE000000000", "ndEndDate": "-", "ndStartDate": "-",
+            "faceVal": face_value, "ind": "-", "isin": isin, "ndEndDate": "-", "ndStartDate": "-",
             "recDate": rec, "series": "EQ", "subject": subject, "symbol": symbol}
 
 
@@ -186,6 +188,15 @@ def test_the_shipped_review_file_loads():
     assert isinstance(r.releases, dict) and isinstance(r.jumps, dict)
 
 
+def test_every_shipped_review_names_a_curated_company():
+    """A review keyed on a mistyped slug would never match its jump (the warning would go on naming it), so every
+    shipped entry names a company in companies.yaml and an event of one (#113's first review, 31 Oct 2026)."""
+    curated = set(yaml.safe_load((ac.CONFIG_DIR / "companies.yaml").read_text()))
+    r = ac.load_reviews()
+    assert {c for c, _ in r.jumps} <= curated
+    assert all(any(slug.startswith(f"{c}-") for c in curated) for slug in r.releases)
+
+
 def test_a_release_and_a_jump_review_load_and_malformed_entries_fail(tmp_path):
     ok = write(tmp_path, """
 releases:
@@ -234,6 +245,10 @@ class Exchanges:
         self.nse: dict[str, list[dict] | str] = {}
         self.bse: dict[str, list[dict]] = {}
         self.asked: list[str] = []
+        self.up: dict[str, list[dict]] = {}         # the undated reply (job 2A-08b), by symbol; none by default
+        self.up_market: str | None = None           # a page, in place of the market-wide reply
+        self.up_symbol: dict[str, str] = {}         # a page, in place of one company's undated reply
+        self.today = NOW.date()         # NSE's date: a to_date after it gets a page, not JSON (#113, 30 Oct 2026)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         u = urlsplit(str(request.url))
@@ -241,11 +256,19 @@ class Exchanges:
         self.asked.append(f"{u.netloc}{u.path}?{u.query}")
         if u.netloc == "www.nseindia.com" and u.path == "/":
             return httpx.Response(200, text="<html>home</html>")
+        if u.path == "/api/corporates-corporateActions" and "from_date" not in q:
+            page = httpx.Response(200, text="<html>Access Denied</html>", headers={"content-type": "text/html"})
+            if "symbol" in q:
+                return page if q["symbol"] in self.up_symbol else httpx.Response(200, json=self.up.get(q["symbol"], []))
+            return page if self.up_market is not None else httpx.Response(
+                200, json=[r for rows in self.up.values() for r in rows])
         if u.path == "/api/corporates-corporateActions":
             got = self.nse.get(q["symbol"], [])
             if isinstance(got, str):
                 return httpx.Response(200, text=got, headers={"content-type": "text/html"})
             lo, hi = (datetime.strptime(q[k], "%d-%m-%Y").date() for k in ("from_date", "to_date"))
+            if hi > self.today:
+                return httpx.Response(200, text="<html>" + " " * 22000 + "</html>", headers={"content-type": "text/html"})
             rows = [r for r in got if lo <= eca.parse_day(r["exDate"]) <= hi]
             return httpx.Response(200, json=rows)
         if u.netloc == "api.bseindia.com":
@@ -575,27 +598,148 @@ def test_a_scheme_of_arrangement_is_held_for_a_reviewed_method_and_an_unknown_en
 
 
 @pytest.mark.db
-def test_announced_actions_become_effective_on_their_ex_date_and_withdrawn_when_dropped(s3):
+def test_the_window_ends_today_because_nse_refuses_later_ex_dates(s3):
+    """NSE answers a to_date after today with a page, not JSON (#113's first dev backfill, 30 Oct 2026, failed on
+    every company), so a weekly run, and a backfill with no --until or a later one, asks up to today only. An action
+    is stored once its ex-date has come, as effective (replaces the 28 Oct test of a window 90 days ahead)."""
     company("ZSOON", "ZSOON")
     ex = Exchanges()
     ex.nse = {"ZSOON": [nse_row("ZSOON", "16-Nov-2026", "Bonus 1:1"),
                         nse_row("ZSOON", "20-Nov-2026", "Dividend - Rs 5 Per Share")]}
     code, tr = go(ex, workflow="weekly")
-    assert code == 0 and tr[0] == "success"
-    evs = events()
-    assert evs["zc-zsoon-bonus-2026-11-16"][0] == "announced" and evs["zc-zsoon-dividend-2026-11-20"][0] == "announced"
-    assert factors() == {}                           # no factor before the ex-date's prices exist
-    # three weeks on: the bonus is listed and its ex-date has passed; the dividend was dropped by the exchange
+    assert code == 0 and tr[0] == "success", tr
+    assert events() == {} and factors() == {}
+    asked = [a for a in ex.asked if "from_date" in a][-1]
+    assert "from_date=23-09-2025" in asked and "to_date=28-10-2026" in asked     # 400 days back, to today
+    # three weeks on: the bonus's ex-date has come; the dividend's hasn't
     later = datetime(2026, 11, 18, 6, 0, tzinfo=UTC)
-    ex.nse["ZSOON"] = [nse_row("ZSOON", "16-Nov-2026", "Bonus 1:1")]
+    ex.today = later.date()
     code, tr = go(ex, now=later, workflow="weekly")
-    assert code == 0 and tr[0] == "success"
+    assert code == 0 and tr[0] == "success", tr
     evs = events()
-    assert evs["zc-zsoon-bonus-2026-11-16"][0] == "effective" and evs["zc-zsoon-dividend-2026-11-20"][0] == "withdrawn"
+    assert evs["zc-zsoon-bonus-2026-11-16"][0] == "effective" and "zc-zsoon-dividend-2026-11-20" not in evs
     assert "waiting for the ex-date's prices: zc-zsoon-bonus-2026-11-16" in checks(tr)["not_applied"]["detail"]
-    # a weekly window: 400 days back to 90 ahead
-    asked = [a for a in ex.asked if "corporateActions" in a][-1]
-    assert "from_date=14-10-2025" in asked and "to_date=16-02-2027" in asked
+    asked = [a for a in ex.asked if "from_date" in a][-1]
+    assert "from_date=14-10-2025" in asked and "to_date=18-11-2026" in asked
+    # a backfill with no --until, or one past today, stops at today too
+    for until in (None, D(2027, 1, 29)):
+        code, tr = go(ex, since=D(2026, 1, 1), until=until, now=later)
+        assert code == 0 and tr[0] == "success", tr
+        assert "to_date=18-11-2026" in [a for a in ex.asked if "from_date" in a][-1]
+
+
+def isin_of(eid: int) -> str:
+    return q("select isin from equity.company where entity_id = %s", eid)[0][0]
+
+
+def asked_upcoming(ex) -> list[str]:
+    return [a for a in ex.asked if "corporateActions" in a and "from_date" not in a]
+
+
+@pytest.mark.db
+def test_an_announced_action_is_stored_before_its_ex_date_then_turns_effective_on_it(s3):
+    """Job 2A-08b: the undated read stores an action as announced; on its ex-date the dated read matches the same
+    event and it turns effective. No factor is written either way, and a re-run writes nothing."""
+    eid = company("ZUP", "ZUP")
+    row = nse_row("ZUP", "16-Nov-2026", "Bonus 1:1", isin=isin_of(eid))
+    ex = Exchanges()
+    ex.up = {"ZUP": [row]}
+    code, tr = go(ex, workflow="weekly")
+    assert code == 0 and tr[0] == "success", tr
+    ev = events()["zc-zup-bonus-2026-11-16"]
+    assert (ev[0], ev[2], ev[3], ev[4], ev[5], ev[7]) == ("announced", D(2026, 11, 16), True, "nse", "bonus", "NSE")
+    assert factors() == {}
+    c = checks(tr)["upcoming_read"]
+    assert c["passed"] and not c["blocking"], c
+    assert "route market-wide" in c["detail"] and "(bonus 1)" in c["detail"] and "bonus: zc-zup 2026-11-16" in c["detail"]
+    assert len(asked_upcoming(ex)) == 1 and "index=equities" in asked_upcoming(ex)[0]
+    event_id = q("select id from core.event where slug = 'zc-zup-bonus-2026-11-16'")[0][0]
+    before = events()
+    _, tr2 = go(ex, workflow="weekly")                  # nothing new
+    assert tr2[1] == 0 and events() == before
+    # the ex-date has come: the dated read lists it (and the undated one no longer does)
+    later = datetime(2026, 11, 16, 6, 0, tzinfo=UTC)
+    ex.today = later.date()
+    ex.nse = {"ZUP": [row]}
+    ex.up = {}
+    code, tr3 = go(ex, now=later, workflow="weekly")
+    assert code == 0 and tr3[0] == "success", tr3
+    assert events()["zc-zup-bonus-2026-11-16"][0] == "effective"
+    assert q("select id from core.event where slug like 'zc-zup-%'") == [(event_id,)]
+    assert q("select count(*) from equity.corporate_action ca join core.event e on e.id = ca.event_id "
+             "where e.slug like 'zc-zup-%'") == [(1,)]
+    assert factors() == {} and "waiting for the ex-date's prices: zc-zup-bonus-2026-11-16" in \
+        checks(tr3)["not_applied"]["detail"]
+
+
+@pytest.mark.db
+def test_an_action_missing_from_the_undated_reply_is_withdrawn_only_after_its_ex_date(s3):
+    eid = company("ZGONE", "ZGONE")
+    ex = Exchanges()
+    ex.up = {"ZGONE": [nse_row("ZGONE", "16-Nov-2026", "Bonus 1:1", isin=isin_of(eid))]}
+    go(ex, workflow="weekly")
+    assert events()["zc-zgone-bonus-2026-11-16"][0] == "announced"
+    ex.up = {}                                          # NSE no longer lists it; the ex-date is still ahead
+    code, tr = go(ex, workflow="weekly")
+    assert code == 0 and tr[0] == "success", tr
+    assert events()["zc-zgone-bonus-2026-11-16"][0] == "announced"
+    later = datetime(2026, 11, 17, 6, 0, tzinfo=UTC)    # the ex-date has passed, and the dated read doesn't list it
+    ex.today = later.date()
+    code, tr = go(ex, now=later, workflow="weekly")
+    assert code == 0 and tr[0] == "success", tr
+    assert events()["zc-zgone-bonus-2026-11-16"][0] == "withdrawn"
+
+
+@pytest.mark.db
+def test_the_per_company_route_is_used_when_the_market_wide_reply_is_a_page_and_both_failing_only_warns(s3):
+    eid = company("ZPER", "ZPER")
+    ex = Exchanges()
+    ex.nse = {"ZPER": [nse_row("ZPER", "02-Dec-2025", "Dividend - Rs 2 Per Share")]}
+    ex.up = {"ZPER": [nse_row("ZPER", "16-Nov-2026", "Bonus 1:1", isin=isin_of(eid))]}
+    ex.up_market = "<html>Access Denied</html>"
+    code, tr = go(ex, workflow="weekly")
+    assert code == 0 and tr[0] == "success", tr
+    assert events()["zc-zper-bonus-2026-11-16"][0] == "announced"
+    c = checks(tr)["upcoming_read"]
+    assert not c["passed"] and not c["blocking"]
+    assert "route per company" in c["detail"] and "market-wide: the reply isn't a JSON list of actions (" in c["detail"]
+    assert any("symbol=ZPER" in a for a in asked_upcoming(ex))
+    # both routes answer a page: the run still succeeds, the dated rows are stored, and only the warning says so
+    wipe()
+    company("ZPER", "ZPER")
+    ex.up_symbol = {"ZPER": "<html>Access Denied</html>"}
+    code, tr = go(ex, workflow="weekly")
+    assert code == 0 and tr[0] == "success", tr
+    assert set(events()) == {"zc-zper-dividend-2025-12-02"}
+    c = checks(tr)["upcoming_read"]
+    assert not c["passed"] and not c["blocking"] and "no route returned a JSON list" in c["detail"]
+    assert "zc-zper: the reply isn't a JSON list of actions (" in c["detail"]
+    assert checks(tr)["lists_read"]["passed"]
+
+
+@pytest.mark.db
+def test_the_undated_read_ignores_other_symbols_rows_dated_today_or_earlier_and_another_isin(s3):
+    eid = company("ZONLY", "ZONLY")
+    isin = isin_of(eid)
+    ex = Exchanges()
+    ex.up = {"ZONLY": [nse_row("ZONLY", "16-Nov-2026", "Bonus 1:1", isin=isin),
+                       nse_row("ZONLY", "28-Oct-2026", "Dividend - Rs 3 Per Share", isin=isin),     # today
+                       nse_row("ZONLY", "20-Oct-2026", "Dividend - Rs 4 Per Share", isin=isin),     # earlier
+                       nse_row("ZONLY", "17-Nov-2026", "Dividend - Rs 5 Per Share", isin="INE999999999"),
+                       nse_row("ZONLY", "-", "Dividend - Rs 6 Per Share", isin=isin)],              # no ex-date
+             "ZOTHER": [nse_row("ZOTHER", "16-Nov-2026", "Bonus 1:1")]}
+    code, tr = go(ex, workflow="weekly")
+    assert code == 0 and tr[0] == "success", tr
+    assert set(events()) == {"zc-zonly-bonus-2026-11-16"}
+    c = checks(tr)["upcoming_read"]
+    assert not c["passed"] and not c["blocking"]
+    assert "rows with another ISIN left out: zc-zonly 2026-11-17 (INE999999999)" in c["detail"]
+    assert checks(tr)["undated_rows"]["passed"]
+    # a backfill that ends before today doesn't ask the undated route
+    ex.asked.clear()
+    code, tr = go(ex, since=D(2025, 1, 1), until=D(2026, 10, 1))
+    assert code == 0 and asked_upcoming(ex) == []
+    assert checks(tr)["upcoming_read"]["passed"] and "not asked" in checks(tr)["upcoming_read"]["detail"]
 
 
 @pytest.mark.db

@@ -2,7 +2,9 @@
 
 Each run loads it, checks it and upserts it into ops.task (the health page's mirror) before anything runs.
 Due-rule names are kept as tasks.yaml writes them (fomc_decision_day, mpc_decision_day, after_decision_document;
-Prompt 01 A2); due.py evaluates them.
+Prompt 01 A2); due.py evaluates them. A daily rule may add a catch-up after its interval: `every 20 hours or
+fomc_catch_up` is due when 20 hours have passed, or while the FOMC decision document of a recent meeting isn't
+stored (CATCH_UPS names the three; Decision days, issue #158).
 """
 from __future__ import annotations
 
@@ -18,6 +20,11 @@ CONFIG = Path(__file__).resolve().parents[3] / "config" / "tasks.yaml"
 
 WORKFLOWS = ("daily", "watch", "weekly")          # the workflows a task can belong to (ops.task.workflows check)
 NAMED_RULES = ("fomc_decision_day", "mpc_decision_day", "after_decision_document")
+CATCH_UPS = {                                     # `<every rule> or <name>`: the named rule's catch-up, in any workflow
+    "fomc_catch_up": "fomc_decision_day",
+    "mpc_catch_up": "mpc_decision_day",
+    "ai_catch_up": "after_decision_document",
+}
 KEYS = {"description", "workflows", "run_after", "overdue_after", "uses_nse", "visitor_refreshable", "enabled"}
 _KEY = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")    # ops.task.key check
 _INTERVAL = re.compile(r"^(\d+) (minute|hour|day)s?$")
@@ -34,9 +41,16 @@ def parse_interval(text: str) -> timedelta:
     return timedelta(**{m[2] + "s": int(m[1])})
 
 
+def split_rule(rule: str) -> tuple[str, str | None]:
+    """('every 20 hours', 'fomc_catch_up') for 'every 20 hours or fomc_catch_up'; (rule, None) without a catch-up."""
+    base, sep, extra = rule.partition(" or ")
+    return (base.strip(), extra.strip()) if sep else (rule, None)
+
+
 def every_interval(rule: str) -> timedelta | None:
-    """The interval of an `every <interval>` rule, or None for a named rule."""
-    return parse_interval(rule[len("every "):]) if rule.startswith("every ") else None
+    """The interval of an `every <interval>` rule (with or without a catch-up), or None for a named rule."""
+    base, _ = split_rule(rule)
+    return parse_interval(base[len("every "):]) if base.startswith("every ") else None
 
 
 @dataclass(frozen=True)
@@ -80,6 +94,10 @@ def _task(key: str, raw: object) -> TaskConfig:
         if not isinstance(rule, str) or not (rule in NAMED_RULES or rule.startswith("every ")):
             raise ConfigError(f"{key}: unknown due rule {rule!r} in {wf} "
                               f"(every <interval>, or one of {', '.join(NAMED_RULES)})")
+        _, catch_up = split_rule(rule)
+        if catch_up is not None and catch_up not in CATCH_UPS:
+            raise ConfigError(f"{key}: unknown catch-up {catch_up!r} in {wf} "
+                              f"(`every <interval> or` one of {', '.join(CATCH_UPS)})")
         every_interval(rule)
     if not any(every_interval(r) for r in rules.values()):
         raise ConfigError(f"{key}: needs at least one `every <interval>` rule (its minimum interval)")

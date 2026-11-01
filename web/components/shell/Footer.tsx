@@ -11,6 +11,12 @@ export function Footer({ sources }: { sources?: string[] }) {
       <Link href="/about" className="underline">
         About and privacy
       </Link>
+      <Link href="/accuracy" className="underline">
+        Accuracy
+      </Link>
+      <Link href="/methodology" className="underline">
+        Methodology and limitations
+      </Link>
       <a href="https://www.tradingview.com/" className="underline">
         Charts: TradingView Lightweight Charts
       </a>

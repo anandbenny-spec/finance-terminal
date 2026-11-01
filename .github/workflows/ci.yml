@@ -19,12 +19,37 @@ jobs:
     # the same scan as a pre-commit hook; this is the check that can't be skipped.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      web: ${{ steps.changed.outputs.web }}      # 'true' when the web job has something to check (below)
     env:
       GITLEAKS_VERSION: 8.24.2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
         with:
           fetch-depth: 0
+      - name: Does the web job have anything to check?
+        # Anand, 29 Oct 2026: the free 2,000 Actions minutes ran out in 8 days, so the web job (about 1.4 minutes a run)
+        # runs only when something it reads changed. This step sits here, in a job that runs anyway, because a job of its
+        # own would be billed at least a minute per run. Any doubt (a manual run, an unreadable diff) means web runs.
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          WEB_READS: '^(web/|py/config/eval/sets/|vercel\.json$|\.github/workflows/ci\.yml$)'   # web/'s tests read the labelling set
+        run: |
+          case "$EVENT" in
+            pull_request) from="$BASE_SHA" ;;
+            push)         from="$BEFORE_SHA" ;;
+            *)            from="" ;;
+          esac
+          web=true
+          if [ -n "$from" ] && git cat-file -e "$from^{commit}" 2>/dev/null && files=$(git diff --name-only "$from" "$HEAD_SHA"); then
+            echo "$files" | grep -qE "$WEB_READS" || web=false
+          fi
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+          echo "::notice title=web job::$([ "$web" = true ] && echo runs || echo 'skipped: nothing it reads changed')"
       - name: Install gitleaks (release archive, checksum checked)
         run: |
           base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
@@ -111,6 +136,11 @@ jobs:
     # The front end (Architecture 04 §1.6 item 4; added in A0, 23 Oct 2026): lint, typecheck, unit tests and the
     # production build, on the Node version web/package.json's engines field names. setup-node's problem matchers
     # annotate ESLint and tsc errors; the steps below add the failing tests and the counts.
+    # Skipped (a skipped check counts as passed) when nothing it reads changed: web/, the labelling set its tests read,
+    # vercel.json and this file (Anand, 29 Oct 2026; the reason is in the secrets job's first step). It follows
+    # `secrets`, so a failed scan leaves it skipped too.
+    needs: secrets
+    if: needs.secrets.outputs.web == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:

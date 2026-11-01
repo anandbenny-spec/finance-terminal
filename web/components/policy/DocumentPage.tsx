@@ -52,7 +52,7 @@ function Summary({ page, bank }: { page: PageData; bank: Bank }) {
   return (
     <details className="group rounded-md border border-line bg-raised px-3 py-2">
       <summary className="flex cursor-pointer list-none items-center gap-1.5 text-data font-medium text-ink-1 [&::-webkit-details-marker]:hidden">
-        <Sparkles aria-hidden className="size-3.5 text-amber" />
+        <Sparkles aria-hidden className="size-3.5 text-highlight" />
         <span className="group-open:hidden">Show the AI summary</span>
         <span className="hidden group-open:inline">Hide the AI summary</span>
         <span className="font-normal text-ink-3">· {points}</span>

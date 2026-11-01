@@ -1,4 +1,4 @@
-// TickerTape (Spec 01 §4.1; Design 01 §1.7, §4.1): a static end-of-day strip, 32 px, Plex Mono 12. The EOD tag,
+// TickerTape (Spec 01 §4.1; Design 01 §1.7, §4.1): a static end-of-day strip, 32 px a row (below lg one row that scrolls sideways; from lg as many rows as its items need), Plex Mono 12. The EOD tag,
 // then each published series: name (ink-2) · value (ink-1) · Delta, with hairline separators. Hover or focus shows
 // the full name, the date and the source line (with the index owner's copyright line for the four US indices).
 // Values read from api.series_latest (F24); nothing is shown that the database didn't return.
@@ -13,8 +13,9 @@ import { FEEDS } from "@/lib/feeds";
 import { taskState } from "@/lib/shell/freshness";
 import { buildTape, type TapeItem } from "@/lib/shell/tape";
 
-// The focus ring sits inside the cell: the strip clips anything outside its 32 px.
-const CELL = "flex h-full items-center border-r border-line focus-visible:-outline-offset-2";
+// The focus ring sits inside the cell: the strip clips anything outside its rows. One cell is one 32 px row high
+// (--tape-row-h); the cells never wrap inside themselves, the list wraps them from lg (1 Nov 2026, #227).
+const CELL = "flex h-(--tape-row-h) items-center border-r border-line focus-visible:-outline-offset-2";
 
 function Tip({ trigger, children }: { trigger: ReactNode; children: ReactNode }) {
   return (
@@ -29,7 +30,7 @@ function Tip({ trigger, children }: { trigger: ReactNode; children: ReactNode })
 
 function Item({ item }: { item: TapeItem }) {
   return (
-    <li className="h-full">
+    <li className="h-(--tape-row-h)">
       <Tip
         trigger={
           <span tabIndex={0} className={`${CELL} gap-2 px-3.5`}>
@@ -58,34 +59,45 @@ function Item({ item }: { item: TapeItem }) {
 
 /** The strip itself, from already-read data (kept apart from the reads so it can be rendered in tests). */
 export function TapeView({ items, delayed }: { items: TapeItem[] | null; delayed: boolean }) {
+  const eod = (
+    <Tip trigger={<span tabIndex={0} className={`${CELL} px-2.5 text-ink-3`}>EOD</span>}>
+      End-of-day values; each item shows its date
+    </Tip>
+  );
   return (
-    <div className="flex h-(--tape-h) shrink-0 border-b border-line bg-panel font-mono text-meta">
+    <div className="flex min-h-(--tape-row-h) shrink-0 border-b border-line bg-panel font-mono text-meta">
       <TapeScroller>
-        <div className="flex h-full w-max items-center whitespace-nowrap">
-          <Tip trigger={<span tabIndex={0} className={`${CELL} px-2.5 text-ink-3`}>EOD</span>}>
-            End-of-day values; each item shows its date
-          </Tip>
-          {delayed && items && items.length > 0 && (
-            <span className={`${CELL} px-3`}>
-              <StateNote kind="delayed">Update delayed</StateNote>
-            </span>
-          )}
-          {items === null ? (
+        {items !== null && items.length > 0 ? (
+          // One wrapping list: the EOD tag, any "Update delayed" note and the items share the flow, so no column
+          // narrows the rows (a third row only at the narrowest desktop widths).
+          <ul
+            aria-label="End-of-day market values"
+            className="flex h-(--tape-row-h) w-max items-center whitespace-nowrap lg:h-auto lg:w-auto lg:flex-wrap"
+          >
+            <li className="h-(--tape-row-h)">{eod}</li>
+            {delayed && (
+              <li className="h-(--tape-row-h)">
+                <span className={`${CELL} px-3`}>
+                  <StateNote kind="delayed">Update delayed</StateNote>
+                </span>
+              </li>
+            )}
+            {items.map((item) => (
+              <Item key={item.key} item={item} />
+            ))}
+          </ul>
+        ) : (
+          <div className="flex h-(--tape-row-h) w-max items-center whitespace-nowrap">
+            {eod}
             <span className="px-3">
-              <StateNote kind="error">Couldn&apos;t load market values.</StateNote>
+              {items === null ? (
+                <StateNote kind="error">Couldn&apos;t load market values.</StateNote>
+              ) : (
+                <StateNote kind="unavailable">No end-of-day values published yet.</StateNote>
+              )}
             </span>
-          ) : items.length === 0 ? (
-            <span className="px-3">
-              <StateNote kind="unavailable">No end-of-day values published yet.</StateNote>
-            </span>
-          ) : (
-            <ul aria-label="End-of-day market values" className="flex h-full items-center">
-              {items.map((item) => (
-                <Item key={item.key} item={item} />
-              ))}
-            </ul>
-          )}
-        </div>
+          </div>
+        )}
       </TapeScroller>
     </div>
   );

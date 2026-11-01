@@ -8,6 +8,7 @@ import { VoteDotPlot } from "@/components/ai/VoteDotPlot";
 import { VoteGrid } from "@/components/ai/VoteGrid";
 import { Panel, type PanelSpan } from "@/components/data/Panel";
 import { StateNote } from "@/components/data/StateNote";
+import { PendingVote } from "@/components/policy/PendingVote";
 import { tally } from "@/lib/policy/decisions";
 import { meetingTitle, voteRows, votesAbsentNote } from "@/lib/policy/meeting";
 import { dotPlot } from "@/lib/policy/votedots";
@@ -49,7 +50,7 @@ export function VotesPanel({
       {t === null ? (
         <div className="p-3"><StateNote kind="error">{ERROR}</StateNote></div>
       ) : t.kind === "pending" ? (
-        <div className="p-3"><StateNote kind="unavailable">{t.note}</StateNote></div>
+        <div className="p-3"><PendingVote t={t} /></div>
       ) : t.kind === "absent" ? (
         <div className="p-3"><StateNote kind="unavailable">{votesAbsentNote(m)}</StateNote></div>
       ) : (

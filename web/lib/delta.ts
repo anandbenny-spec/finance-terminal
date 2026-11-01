@@ -5,13 +5,15 @@
 export type Change = { text: string; direction: "up" | "down" | "flat"; spoken: string };
 
 /**
+ * `opts.unit` names the unit when the text carries none (a column whose header holds it: "basis points").
  * The change a formatted string shows. format.ts signs every non-zero rounded value ("+0.42%", "−3 bps") and
  * leaves one that rounds to zero unsigned ("0.00%"), so the direction follows what the reader sees: a move too
  * small to show is flat, never a coloured "0.00%".
  */
-export function changeOf(text: string): Change {
+export function changeOf(text: string, opts?: { unit?: string }): Change {
   const direction = text.startsWith("+") ? "up" : text.startsWith("−") ? "down" : "flat";
-  const magnitude = text.replace(/^[+−]/, "").replace(/%$/, " percent").replace(/ bps$/, " basis points");
-  const spoken = direction === "flat" ? `unchanged, ${magnitude}` : `${direction} ${magnitude}`;
+  const magnitude = text.replace(/^[+−]/, "").replace(/%$/, " percent").replace(/ bps$/, " basis points").replace(/ pp$/, " percentage points");
+  const spokenMagnitude = opts?.unit ? `${magnitude} ${opts.unit}` : magnitude;
+  const spoken = direction === "flat" ? `unchanged, ${spokenMagnitude}` : `${direction} ${spokenMagnitude}`;
   return { text, direction, spoken };
 }
