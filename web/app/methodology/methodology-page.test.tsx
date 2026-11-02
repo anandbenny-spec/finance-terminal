@@ -50,6 +50,7 @@ describe("/methodology", () => {
     expect(text).toContain("Nifty 50 only");
     expect(text).toContain("excluding lease liabilities");
     expect(text).toContain("derived from the filed lines");
+    expect(text).toContain("leaves out dividends");
     expect(markup).toContain('href="/accuracy"');
     expect(text).not.toMatch(/earnings call/i);
   });
