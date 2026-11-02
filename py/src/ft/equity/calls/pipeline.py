@@ -3,9 +3,12 @@ task supplies `getter` (the fetch function, which stores every body as a raw fil
 events; this module decides what each filing is, follows cover letters and curated links, and builds the plan the task
 writes.
 
-Per company: the newest season with a transcript filing is processed; the season before it too only if the newest call
-doesn't end `stored` (at most two). Within a season the call is the first filing that yields a stored transcript (else
-the first filing's outcome); the season's other filings are revised versions of it or other meetings (§4).
+Per company: a weekly or refresh run processes the newest season with a transcript filing, and the season before it too
+only if the newest call doesn't end `stored` (at most two). **A backfill processes every season in its window** (Plan 04b
+P2), oldest first, so the first filing linked to a quarter's results is that quarter's call (§4). Within a season the call
+is the first filing that yields a stored transcript (else the first filing's outcome); the season's other filings are
+revised versions of it or other meetings (§4). **First pages are opened only for seasons from `first_pages_from`** (Plan 04b
+P3: `config/equity/calls.yaml`); earlier seasons are classified from the subject and the file name.
 """
 from __future__ import annotations
 
@@ -321,9 +324,11 @@ def subject_line(page_text: str) -> str:
 
 # ---------------------------------------------------------------------------------------------- one company
 def process_company(run: Run, co: CompanyRef, announcements: list[Announcement], results: list[rows.ResultsEvent], *,
-                    weekly: bool, newest_call: str | None) -> list[CallPlan]:
-    """The company's call plans: its newest season with a transcript filing, and the season before it if the newest
-    doesn't end stored (§13.3)."""
+                    weekly: bool, newest_call: str | None, history: bool = False,
+                    first_pages_from: str | None = None) -> list[CallPlan]:
+    """The company's call plans. A weekly or refresh run: its newest season with a transcript filing, and the season before
+    it if the newest doesn't end stored (§13.3). A backfill (`history`, Plan 04b P2): every season with a transcript
+    filing, oldest first. `first_pages_from` (P3): seasons before it are not given first-page checks."""
     mine = [a for a in announcements if a.entity_id == co.entity_id]
     by_season: dict[str, list[Announcement]] = {}
     for a in mine:
@@ -331,20 +336,85 @@ def process_company(run: Run, co: CompanyRef, announcements: list[Announcement],
             by_season.setdefault(a.season, []).append(a)
     recent = sorted({a.season for a in mine}, key=rows.season_order, reverse=True)[:MAX_SEASONS + 1]
     for season in recent:                  # company-seasons whose results are filed but no transcript was found
+        if first_pages_from and rows.season_order(season) < rows.season_order(first_pages_from):
+            continue                       # P3: an older season is classified from the subject and file name only
         if by_season.get(season) or not any(_season_of(r.occurs_at) == season for r in results):
             continue
         found = first_page_transcripts(run, co, season, [a for a in mine if a.season == season])
         if found:
             by_season[season] = found
     plans: list[CallPlan] = []
-    for season in rows.seasons_to_process(by_season, newest_call, weekly):
+    seasons = rows.seasons_to_process(by_season, newest_call, weekly)
+    if history:
+        seasons = sorted(seasons, key=rows.season_order)       # the first filing linked to a quarter's results is its call (§4)
+    for season in seasons:
         filings = sorted(by_season[season], key=lambda a: a.disseminated)
         plan = build_call(run, co, season, filings, [a for a in mine if a.kind == "intimation" and a.season == season], results)
         if plan is not None:
             plans.append(plan)
-            if plan.is_stored or len(plans) >= MAX_SEASONS:
+            if not history and (plan.is_stored or len(plans) >= MAX_SEASONS):
                 break
     return plans
+
+
+# ---------------------------------------------------------------------------------------------- history reporting
+@dataclass(frozen=True)
+class SeasonCoverage:
+    """One season's outcome (Plan 04b P4): companies with a transcript filing, and what became of their calls."""
+    season: str
+    companies: int              # with a transcript filing in the season
+    stored: int                 # call stored, quarter not in doubt
+    on_company_website: int
+    unreadable: int
+    held: int                   # a quarter conflict or no quarter
+    no_call: int                # a transcript filing, but no call (its file couldn't be fetched, or it read as something else)
+
+    @property
+    def share(self) -> int:
+        return round(100 * self.stored / self.companies) if self.companies else 0
+
+
+def coverage_by_season(announcements: list[Announcement], plans: list[CallPlan]) -> list[SeasonCoverage]:
+    """Per season, oldest first: the companies with a transcript filing, and the calls this run built for them by outcome.
+    A season's companies come from the discovered filings (a first-page find counts as a filing through its plan)."""
+    filed: dict[str, set[int]] = {}
+    for a in announcements:
+        if a.is_transcript and a.entity_id is not None:
+            filed.setdefault(a.season, set()).add(a.entity_id)
+    for p in plans:
+        filed.setdefault(p.season, set()).add(p.company.entity_id)
+    out = []
+    for season in sorted(filed, key=rows.season_order):
+        mine = [p for p in plans if p.season == season]
+        held = sum(1 for p in mine if p.status_reason)
+        out.append(SeasonCoverage(
+            season, len(filed[season]),
+            sum(1 for p in mine if p.is_stored),
+            sum(1 for p in mine if not p.status_reason and p.status == "on_company_website"),
+            sum(1 for p in mine if not p.status_reason and p.status == "unreadable"),
+            held, len(filed[season]) - len(mine)))
+    return out
+
+
+def format_coverage(cov: list[SeasonCoverage]) -> str:
+    return "; ".join(
+        f"{c.season}: {c.companies} companies with a transcript filing, {c.stored} stored ({c.share}%), "
+        f"{c.on_company_website} on_company_website, {c.unreadable} unreadable, {c.held} held, {c.no_call} with no call"
+        for c in cov) or "no transcript filings"
+
+
+MB = 1024 * 1024
+
+
+def storage_summary(run_files: int, run_bytes: int, stored_total: int | None, stop_mb: int) -> tuple[bool, str]:
+    """The `raw_storage` check (Plan 04b P5): what this run stored (source sizes) and what the raw bucket holds (stored
+    sizes) against the stop. `stored_total` None when the object store can't be listed."""
+    ran = f"this run stored {run_files} files, {run_bytes / MB:.1f} MB at source size"
+    if stored_total is None:
+        return False, f"{ran}; the raw bucket's size couldn't be read (read Storage in the dashboard; the stop is {stop_mb} MB)"
+    ok = stored_total <= stop_mb * MB
+    return ok, (f"{ran}; the raw bucket holds {stored_total / MB:.1f} MB of stored objects, "
+                f"{'under' if ok else 'OVER'} the {stop_mb} MB stop")
 
 
 def _season_of(occurs_at: datetime) -> str:

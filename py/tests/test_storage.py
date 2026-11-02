@@ -94,3 +94,13 @@ def test_migration_keeps_keys_and_verifies(server):
     for k in dst.iter_keys():
         assert dst.get(k) == src.get(k)
     assert dst.copy_all_to(src) == (0, len(list(src.iter_keys())))  # re-running copies nothing
+
+
+def test_stored_bytes_counts_the_objects_at_their_stored_size(server):
+    server.create_bucket(Bucket="size-raw")
+    st = store("size-raw")
+    assert st.stored_bytes() == (0, 0)
+    a = st.put(HTML, source="fed", media_type="text/html", ext=".html")
+    b = st.put(PDF, source="rbi", media_type="application/pdf", ext=".pdf")
+    st.put(PDF, source="rbi", media_type="application/pdf", ext=".pdf")           # the same bytes are written once
+    assert st.stored_bytes() == (2, a.stored_bytes + b.stored_bytes) and a.stored_bytes < a.bytes

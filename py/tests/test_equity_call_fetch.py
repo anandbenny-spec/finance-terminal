@@ -232,6 +232,27 @@ def test_a_second_run_registers_nothing(s3):
 
 @pytest.mark.db
 @needs_fixtures
+def test_a_backfill_reports_coverage_by_season_and_the_raw_storage(s3):
+    make_company("HINDUNILVR", "Hindustan Unilever Limited")
+    make_company("APOLLOHOSP", "Apollo Hospitals Enterprise Limited")
+    code, tr = go(Web())
+    assert code == 0 and tr[0] == "success", tr
+    c = checks(tr)
+    cov = c["coverage_by_season"]
+    assert cov["passed"] and not cov["blocking"]                                  # history is reported, never stopped on
+    assert ("Q1 FY27: 2 companies with a transcript filing, 2 stored (100%), 0 on_company_website, 0 unreadable, 0 held, "
+            "0 with no call") in cov["detail"]
+    assert "with no call" in cov["detail"] and cov["detail"].index("Q2 FY26") < cov["detail"].index("Q1 FY27")      # oldest first
+    st = c["raw_storage"]
+    files, nbytes = q("""select count(*), coalesce(sum(bytes), 0) from core.raw_file
+                          where task_run_id = (select max(id) from ops.task_run where task_key = %s)""", KEY)[0]
+    assert st["passed"] and not st["blocking"]            # files may be 0: earlier tests stored the same replies and PDFs (once by hash)
+    assert st["detail"].startswith(f"this run stored {files} files, {nbytes / 1048576:.1f} MB at source size; the raw bucket holds ")
+    assert st["detail"].endswith("MB of stored objects, under the 850 MB stop")
+
+
+@pytest.mark.db
+@needs_fixtures
 def test_a_letter_that_links_only_to_a_web_page_is_on_the_company_website_and_is_named(s3):
     make_company("MARUTI", "Maruti Suzuki India Limited")
     code, tr = go(Web())

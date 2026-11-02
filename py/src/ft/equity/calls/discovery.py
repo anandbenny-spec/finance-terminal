@@ -11,8 +11,9 @@ functions, which store every reply as a raw file before anything here reads it.
   "Earnings Call Transcript" and "Analyst / Investor Meet - Outcome", through the same classifier, on the headline.
 - **Seasons** (§4): a filing's season is the season of its dissemination date minus 7 days. Calls held Oct-Dec discuss
   Q2, Jan-Mar Q3, Apr-Jun Q4, Jul-Sep Q1; the fiscal year ends in March and is named for the year it ends in.
-- **Windows** (§13.3): a backfill reads from 1 Jul 2026 to the run's date; a weekly run from the latest stored
-  dissemination time minus 14 days. No window is longer than 12 months.
+- **Windows** (§13.3; Plan 04b P1): a backfill reads from `--since`, else from `history_from` in
+  `config/equity/calls.yaml` (1 Jan 2025), to the run's date; a weekly run from the latest stored dissemination time
+  minus 14 days. No window is longer than 12 months.
 """
 from __future__ import annotations
 
@@ -20,7 +21,10 @@ import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
+
+import yaml
 
 from ft.equity.calls.classify import classify, file_name
 
@@ -63,11 +67,30 @@ def season_of_filing(disseminated: datetime | date) -> str:
     return season_of_call(d - SEASON_LAG)
 
 
-def window_start(since: date | None, latest_stored: datetime | None) -> date:
-    """The first day a run reads: its `--since`; else a weekly run's latest stored dissemination minus 14 days; else the
-    backfill start of 1 Jul 2026."""
+CALLS_CONFIG = Path(__file__).resolve().parents[4] / "config" / "equity" / "calls.yaml"
+
+
+@dataclass(frozen=True)
+class CallsConfig:
+    """`py/config/equity/calls.yaml` (Plan 04b P1, P3, P5): values the history job needs, never literals in code."""
+    history_from: date           # a backfill without --since reads announcements from here
+    first_pages_from: str        # filings of an earlier season are classified without opening their first pages ("Q1 FY27")
+    raw_storage_stop_mb: int     # the stop for a project's stored raw files
+
+
+def load_calls_config(path: Path = CALLS_CONFIG) -> CallsConfig:
+    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return CallsConfig(doc["history_from"], str(doc["first_pages_from"]), int(doc["raw_storage_stop_mb"]))
+
+
+def window_start(since: date | None, latest_stored: datetime | None, *, backfill: bool = False,
+                 history_from: date | None = None) -> date:
+    """The first day a run reads: its `--since`; else, for a backfill, the configured `history_from` (Plan 04b P1); else a
+    weekly run's latest stored dissemination minus 14 days; else the backfill start of 1 Jul 2026."""
     if since is not None:
         return since
+    if backfill and history_from is not None:
+        return history_from
     if latest_stored is not None:
         return max(BACKFILL_START, (latest_stored.astimezone(INDIA) - WEEKLY_OVERLAP).date())
     return BACKFILL_START

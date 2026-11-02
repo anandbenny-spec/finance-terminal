@@ -12,6 +12,7 @@ from test_equity_call_fetch import (
     ADMIN,
     BUCKET,
     ENDPOINT,
+    HUL_FILE,
     JOB,
     NOW,
     PORT,
@@ -19,11 +20,13 @@ from test_equity_call_fetch import (
     go,
     make_company,
     needs_fixtures,
+    nse_rows,
     q,
     storage,
     wipe,
 )
 
+from ft.equity.calls import discovery as dc
 from ft.jobs.fetch import HttpClient
 from ft.jobs.runner import run
 from ft.jobs.tasks import equity_call_text as ect
@@ -142,6 +145,38 @@ def test_a_stored_call_gets_turns_and_chunks_and_is_published_with_its_text_priv
         as_anon("select count(*) from equity.call_turn")
     assert as_anon("select count(*) from equity.earnings_call where entity_id = (select id from core.entity where slug = %s)", HUL)[0][0] == 1
     assert checks(tr)["calls_analysed"]["passed"] and "1 calls analysed" in checks(tr)["calls_analysed"]["detail"]
+
+
+class OldHul(Web):
+    """HUL's saved reply cut to its Q1 FY27 transcript row, re-dated to 3 Feb 2025 (season Q3 FY25): a history call."""
+
+    def handle(self, request, chrome):
+        if request.url.path == dc.NSE_ANN_PATH:
+            row = next(r for r in nse_rows("HINDUNILVR") if str(r.get("attchmntFile", "")).endswith(HUL_FILE))
+            stamp = "03-Feb-2025 17:13:19"
+            return httpx.Response(200, json=[{**row, "exchdisstime": stamp, "an_dt": stamp, "sort_date": stamp, "seq_id": "999000001"}])
+        return super().handle(request, chrome)
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_call_of_a_history_season_gets_turns_roles_chunks_and_publication_like_a_2b_lite_call(s3):
+    make_company("HINDUNILVR", "Hindustan Unilever Limited")
+    go(OldHul())                                            # a backfill with no --since reads from history_from
+    x("update core.entity set is_published = true where slug like 'zf-%'")
+    assert q("""select c.season_key, e.status from equity.earnings_call c join core.event e on e.id = c.event_id
+                 join core.entity en on en.id = c.entity_id where en.slug = %s""", HUL) == [("q3-fy25", "stored")]
+    code, tr = go_text()
+    assert code == 0 and tr[1] > 0
+    c = checks(tr)
+    assert c["text_matches"]["passed"] and c["chunks_reproduce"]["passed"] and c["turns_contiguous"]["passed"] and c["chunks_stored"]["passed"]
+    _, _, published, doc, _, share, _ = call(HUL)
+    assert published is True and 0 <= share <= 1
+    assert q("select is_published, chunked_at is not null from core.document where id = %s", doc)[0] == (True, True)
+    assert q("select count(*) from equity.call_turn where document_id = %s", doc)[0][0] > 30
+    assert q("select count(*) from core.chunk where document_id = %s", doc)[0][0] > 0
+    assert {r[0] for r in q("select distinct role from equity.call_turn where document_id = %s", doc)} >= {"moderator", "management", "analyst"}
+    assert {r[0] for r in q("select distinct section from equity.call_turn where document_id = %s", doc)} <= {"opening", "qa", "closing"}
 
 
 @pytest.mark.db
