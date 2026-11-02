@@ -80,6 +80,15 @@ class Storage:
             Metadata={"sha256": hexd, "media-type": media_type})
         return StoredObject(key, digest, len(data), len(payload), media_type, created=True)
 
+    def stored_bytes(self) -> tuple[int, int]:
+        """(objects, bytes) stored under this storage's prefix, as the object store reports them: compressed text counts at
+        its compressed size, which is what a plan's storage quota counts (`core.raw_file.bytes` holds source sizes)."""
+        n = size = 0
+        for page in self._s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=f"{self.prefix}/"):
+            for o in page.get("Contents", []):
+                n, size = n + 1, size + o["Size"]
+        return n, size
+
     # ------------------------------------------------------------------ read
     def get(self, object_key: str) -> bytes:
         body = self._s3.get_object(Bucket=self.bucket, Key=object_key)["Body"].read()

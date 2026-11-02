@@ -112,6 +112,19 @@ def test_no_window_is_longer_than_twelve_months():
     assert dc.split_range(D(2026, 7, 1), D(2026, 11, 1)) == [(D(2026, 7, 1), D(2026, 11, 1))]
 
 
+def test_a_backfill_without_since_starts_at_history_from_and_an_explicit_since_wins():
+    cfg = dc.load_calls_config()
+    assert (cfg.history_from, cfg.first_pages_from, cfg.raw_storage_stop_mb) == (D(2025, 1, 1), "Q1 FY27", 850)
+    assert dc.window_start(None, None, backfill=True, history_from=cfg.history_from) == D(2025, 1, 1)
+    latest = datetime(2026, 8, 20, tzinfo=dc.INDIA)
+    assert dc.window_start(None, latest, backfill=True, history_from=cfg.history_from) == D(2025, 1, 1)    # a backfill is not a weekly run
+    assert dc.window_start(D(2026, 7, 1), None, backfill=True, history_from=cfg.history_from) == D(2026, 7, 1)
+    assert dc.window_start(None, latest, backfill=False, history_from=cfg.history_from) == D(2026, 8, 6)    # weekly: unchanged
+    assert dc.window_start(None, None, backfill=False, history_from=cfg.history_from) == D(2026, 7, 1)      # refresh: unchanged
+    ws = dc.split_range(cfg.history_from, D(2026, 11, 3))
+    assert len(ws) == 2 and all((b - a).days + 1 <= 365 for a, b in ws)                                    # two windows of 12 months or less
+
+
 # ---------------------------------------------------------------------------------------------- the ISIN join
 def test_the_isin_join_follows_a_rename():
     old = dc.Company(1, "tata-motors", "TATAMOTORS", "INE155A01022", "500570", None,
@@ -438,7 +451,7 @@ def test_a_backfill_stores_every_reply_classifies_the_filings_and_registers_noth
         make_company(s, isin_of(s))
     make_company("NOFILE", "INE000N01010", results_on=D(2026, 8, 12))
     ex = Exchanges()
-    code, tr = go(ex)
+    code, tr = go(ex, since=D(2026, 7, 1))        # #265: a backfill without --since now starts at history_from (2025-01-01)
     assert code == 0 and tr[0] == "success" and tr[1] == 0, tr
     c = checks(tr)
     assert c["nse_answered"]["passed"] and "answered for 4 of 4" in c["nse_answered"]["detail"]
@@ -535,6 +548,17 @@ def test_a_row_that_fits_no_company_stays_unmatched_and_is_named(s3):
     assert not u["passed"] and not u["blocking"] and u["detail"].startswith(f"{len(transcripts)} transcript rows whose ISIN")
     assert "CIPLA/CIPLA ISIN INE059A01026" in u["detail"] and all(f"seq {a.filing_key}" in u["detail"] for a in transcripts)
     assert c["joined_by_earlier_isin"]["detail"].startswith("0 transcript rows")
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_backfill_without_since_reads_nse_from_history_from_in_windows_of_12_months_or_less(s3):
+    make_company("CIPLA", isin_of("CIPLA"))
+    ex = Exchanges()
+    code, tr = go(ex)                                          # no --since
+    assert code == 0 and tr[0] == "success", tr
+    asked = sorted({(r.url.params["from_date"], r.url.params["to_date"]) for r in ex.seen if r.url.path == dc.NSE_ANN_PATH})
+    assert asked == [("01-01-2025", "31-12-2025"), ("01-01-2026", "28-10-2026")]
 
 
 @pytest.mark.db
