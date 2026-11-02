@@ -16,6 +16,7 @@ functions, which store every reply as a raw file before anything here reads it.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -99,6 +100,8 @@ class Announcement:
     why: str
     season: str
     entity_id: int | None = None  # joined by `resolve`; None = matches no universe company
+    queried: str | None = None    # the NSE symbol this row was asked for (NSE rows; a renamed company is asked under each symbol)
+    joined_by: str | None = None  # how it joined: isin | earlier_isin | symbol | scrip | asked (None = not joined)
 
     @property
     def is_transcript(self) -> bool:
@@ -185,30 +188,64 @@ class Company:
     isins: frozenset[str] = frozenset()      # every ISIN it has had
 
 
+ISIN_SHAPE = re.compile(r"IN[A-Z0-9]{9}[0-9]")
+STEM_LENGTH = 9
+
+
+def isin_stem(isin: str | None) -> str | None:
+    """The issuer-and-class part of an Indian ISIN: its first nine characters ('INE090A01' of 'INE090A01021'). The next two
+    digits number the issue and change when a split or bonus brings a new ISIN for the same shares, so an earlier ISIN
+    of a security shares its stem with the current one. None for a value that isn't ISIN-shaped (a placeholder)."""
+    return isin[:STEM_LENGTH] if isin and ISIN_SHAPE.fullmatch(isin) else None
+
+
 class CompanyIndex:
     """Joins announcement rows to universe companies on ISIN and symbol through the identifier history, never on the
-    file name (§5.1). A row's ISIN decides; the symbol decides when the row has no ISIN."""
+    file name or the company's name (§5.1). A row's ISIN decides; the symbol decides when the row has no ISIN.
+
+    NSE's announcement rows can carry an earlier ISIN of the same shares (from before a split or bonus: ICICI Bank's
+    rows say INE090A01013, its universe record INE090A01021), which the identifier history doesn't hold (#264). Such a
+    row joins only when its ISIN shares the company's issuer-and-class stem AND its symbol is one of the company's
+    symbols: two identifiers agree. A stranger ISIN, or a stem that fits no company that holds the symbol, stays
+    unmatched even when the symbol is a company's (a symbol is reused after a demerger)."""
 
     def __init__(self, companies: Iterable[Company]):
         self.by_isin: dict[str, Company] = {}
         self.by_symbol: dict[str, Company] = {}
         self.by_scrip: dict[str, Company] = {}
+        self.by_stem: dict[str, dict[int, Company]] = {}
         for c in companies:
             for i in c.isins | ({c.isin} if c.isin else set()):
                 self.by_isin[i] = c
+                if (stem := isin_stem(i)) is not None:
+                    self.by_stem.setdefault(stem, {})[c.entity_id] = c
             for s in c.symbols | {c.symbol}:
                 self.by_symbol[s] = c
             if c.bse_code:
                 self.by_scrip[c.bse_code] = c
 
-    def resolve(self, a: Announcement) -> int | None:
-        c = None
+    def _earlier_isin(self, a: Announcement) -> Company | None:
+        stem = isin_stem(a.isin)
+        if stem is None or not a.symbol:
+            return None
+        fits = [c for c in self.by_stem.get(stem, {}).values() if a.symbol == c.symbol or a.symbol in c.symbols]
+        return fits[0] if len(fits) == 1 else None
+
+    def match(self, a: Announcement) -> tuple[Company | None, str | None]:
+        """The company a row belongs to and how it was found: isin, earlier_isin, symbol (the row has no ISIN) or scrip."""
         if a.isin:
-            c = self.by_isin.get(a.isin)
-        if c is None and not a.isin and a.symbol:
-            c = self.by_symbol.get(a.symbol)
-        if c is None and a.scrip:
-            c = self.by_scrip.get(a.scrip)
+            if (c := self.by_isin.get(a.isin)) is not None:
+                return c, "isin"
+            if (c := self._earlier_isin(a)) is not None:
+                return c, "earlier_isin"
+        elif a.symbol and (c := self.by_symbol.get(a.symbol)) is not None:
+            return c, "symbol"
+        if a.scrip and (c := self.by_scrip.get(a.scrip)) is not None:
+            return c, "scrip"
+        return None, None
+
+    def resolve(self, a: Announcement) -> int | None:
+        c, _ = self.match(a)
         return c.entity_id if c else None
 
 

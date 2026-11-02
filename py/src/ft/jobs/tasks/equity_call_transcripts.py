@@ -24,7 +24,10 @@ Checks, B blocking, W warning:
 - (W) `refusals`: every 401, 403 and 429, counted;
 - (W) `transcripts_found`: each company-season whose results are filed and at least 45 days old but has no transcript
   filing, named (2B-07 opens first pages for these);
-- (W) `unmatched_isin`: transcript rows whose ISIN matches no universe company, counted;
+- (W) `unmatched_isin`: transcript rows whose ISIN matches no universe company, counted and each one named (symbol
+  asked / row symbol, ISIN as given, season, the exchange's id, subject to 80 characters; #264);
+- (W) `joined_by_earlier_isin`: transcript rows joined on the symbol and the issuer part of an earlier ISIN, named
+  (always passes; #264);
 - (W) `discovery_summary`: transcripts and intimations per season (always passes).
 """
 from __future__ import annotations
@@ -53,6 +56,7 @@ from ft.jobs.runner import Alert, Check, Context
 from ft.jobs.tasks import register
 
 SHOWN = 12
+ROWS_SHOWN = 60                                  # filing rows named in a check (#264)
 NO_TRANSCRIPT_AFTER = timedelta(days=45)         # §5.1: results filed and at least 45 days old
 NSE_HEADERS = {"Referer": dc.NSE_REFERER, "Accept": "application/json, text/plain, */*"}
 BSE_HEADERS = {"Origin": "https://www.bseindia.com", "Referer": "https://www.bseindia.com/",
@@ -62,6 +66,20 @@ ALLOWED_FAILURES = 2                             # of the 50 (§5.1: at least 48
 
 def _names(items: list[str]) -> str:
     return "; ".join(items[:SHOWN]) + (f"; and {len(items) - SHOWN} more" if len(items) > SHOWN else "")
+
+
+def _rows(items: list[str]) -> str:
+    """Filing rows named one by one (#264: every unmatched row is named, so none is lost silently); a long list is cut."""
+    return "; ".join(items[:ROWS_SHOWN]) + (f"; and {len(items) - ROWS_SHOWN} more" if len(items) > ROWS_SHOWN else "")
+
+
+def _row_name(a, company=None) -> str:
+    """One filing row by its identifiers: the symbol asked / the row's symbol, the ISIN as given, season and the exchange's
+    own id, then the subject cut to 80 characters (a filing's subject, never transcript text)."""
+    who = f"{company.slug} " if company is not None else ""
+    now = f" (universe: {company.isin})" if company is not None and company.isin else ""
+    return (f"{who}{a.queried or '-'}/{a.symbol or '-'} ISIN {a.isin or 'none'}{now} {a.season} seq {a.filing_key}: "
+            f"{a.subject[:80]}")
 
 
 @register
@@ -165,24 +183,24 @@ class EquityCallTranscripts(DocumentJob):
         found: list[dc.Announcement] = []
         for co in companies:
             res = dc.CompanyResult(co)
-            rows: list[dict] = []
+            rows: list[tuple[str, dict]] = []                       # (the symbol asked, the row)
             symbols = [co.symbol] + sorted(co.symbols - {co.symbol})
             ok = True
             for sym in symbols:
                 got, logs, sym_ok, refused = dc.nse_symbol(nse, sym, start, end)
-                rows += got
+                rows += [(sym, r) for r in got]
                 res.windows += logs
                 res.refused += refused
                 ok &= sym_ok
                 if not sym_ok:
                     res.errors.append(f"NSE {sym}: " + ", ".join(sorted({str(x.status) for x in logs if not x.answered})))
             res.nse_answered, res.nse_rows = ok, len(rows)
-            for r in rows:
+            for sym, r in rows:
                 a = dc.norm_nse(r)
                 if a is None:
                     notes["unreadable"] += 1
                     continue
-                res.announcements.append(self._join(a, index))
+                res.announcements.append(self._join(replace(a, queried=sym), index))
             filed = self.results_filed(db, co.entity_id)
             if co.bse_code and (not ok or (not rows and dc.results_filed_in((start, end), filed))):
                 res.bse_used = True
@@ -208,8 +226,10 @@ class EquityCallTranscripts(DocumentJob):
 
     @staticmethod
     def _join(a: dc.Announcement, index: dc.CompanyIndex, asked: dc.Company | None = None) -> dc.Announcement:
-        eid = asked.entity_id if (asked and a.exchange == "BSE") else index.resolve(a)
-        return replace(a, entity_id=eid)
+        if asked and a.exchange == "BSE":
+            return replace(a, entity_id=asked.entity_id, joined_by="asked")
+        c, how = index.match(a)
+        return replace(a, entity_id=c.entity_id if c else None, joined_by=how)
 
 
     # ================================================================== part 2 (2B-07): fetch, text, the call rows
@@ -450,9 +470,17 @@ class EquityCallTranscripts(DocumentJob):
                          ("results filed 45 or more days ago, no transcript filing found for: " + _names(sorted(missing)))
                          if missing else "every company-season with results filed 45 or more days ago has a transcript filing",
                          blocking=False))
-        unmatched = sum(1 for a in ann if a.is_transcript and a.entity_id is None)
-        out.append(Check("unmatched_isin", unmatched == 0,
-                         f"{unmatched} transcript rows whose ISIN matches no universe company", blocking=False))
+        by_entity = {r.company.entity_id: r.company for r in results}
+        unmatched = [a for a in ann if a.is_transcript and a.entity_id is None]
+        out.append(Check("unmatched_isin", not unmatched,
+                         f"{len(unmatched)} transcript rows whose ISIN matches no universe company"
+                         + (": " + _rows([_row_name(a) for a in unmatched]) if unmatched else ""), blocking=False))
+        earlier = [a for a in ann if a.is_transcript and a.joined_by == "earlier_isin"]
+        out.append(Check("joined_by_earlier_isin", True,
+                         f"{len(earlier)} transcript rows joined on their symbol and the issuer part of an earlier ISIN "
+                         "(NSE's rows carry the ISIN from before a split or bonus; the universe holds the current one)"
+                         + (": " + _rows([_row_name(a, by_entity.get(a.entity_id)) for a in earlier]) if earlier else ""),
+                         blocking=False))
         seasons: dict[str, list[int]] = {}
         for a in ann:
             if a.kind in ("transcript", "intimation"):
