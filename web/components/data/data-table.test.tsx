@@ -44,9 +44,20 @@ describe("DataTable's scroll option", () => {
     expect(scroller).toContain("overflow-auto");
   });
 
+  it("positions the sideways-only scroller too, so a wide table's sr-only caption can't stretch the page at 320 px", () => {
+    // 3 Nov 2026, found in a browser on /companies/sbin?tab=financials (#132): the same cause as the 28 Oct bug above, in
+    // the variant without `scroll`. The caption is `.sr-only` (absolute) at the table's static position; with no
+    // positioned ancestor it escaped the 286 px scroller and set the page's width (899 px at 320 px). Holds the cause.
+    const out = table();
+    const scroller = out.match(/^<div class="([^"]*)"/)?.[1].split(" ") ?? [];
+    expect(out).toContain('<caption class="sr-only">');
+    expect(scroller).toContain("relative");
+    expect(scroller).toContain("overflow-x-auto");
+  });
+
   it("keeps a table without it at full height, scrolling only sideways, and out of the tab order", () => {
     const out = table();
-    expect(out).toMatch(/^<div class="overflow-x-auto">/);
+    expect(out).toMatch(/^<div class="relative overflow-x-auto">/);
     expect(out).not.toContain("max-h-");
     expect(out).not.toContain('role="region"');
     expect(out).not.toContain("tabindex");
