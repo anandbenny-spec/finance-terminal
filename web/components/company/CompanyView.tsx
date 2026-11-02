@@ -41,7 +41,7 @@ import {
   type TabId,
 } from "@/lib/equity/company";
 import type { WindowKey } from "@/lib/equity/rate";
-import { PREVIEW_FEEDS } from "@/lib/feeds";
+import { FEEDS } from "@/lib/feeds";
 import { formatDate } from "@/lib/format";
 import type { CompanyPageData } from "@/lib/queries/company";
 import type { CompanyFinancialRow, TaskFreshnessRow } from "@/lib/queries/api";
@@ -49,7 +49,7 @@ import { panelFreshness } from "@/lib/shell/freshness";
 
 type Ok = Extract<CompanyPageData, { ok: true }>;
 
-const TASKS = PREVIEW_FEEDS.company;
+const TASKS = FEEDS.company;
 
 const BANK_LINES: LineSpec[] = [
   { id: "gnpa_ratio", label: "Gross NPA ratio", kind: "ratio" },

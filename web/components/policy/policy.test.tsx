@@ -239,6 +239,12 @@ describe("ReactionsPanel (Pass 1b, #70)", () => {
   it("is never blank when no decision is listed", () => {
     expect(text(html(<ReactionsPanel rows={[]} footer="" />))).toContain("No decisions match this filter.");
   });
+
+  it("links to the Nifty 50 sector view of the same decisions (2A-26)", () => {
+    const out = html(<ReactionsPanel rows={[]} footer="" />);
+    expect(out).toContain('href="/screener/rate-decisions"');
+    expect(text(out)).toContain("the sector view");
+  });
 });
 
 describe("LongRatesPanel (Pass 1b, #71)", () => {

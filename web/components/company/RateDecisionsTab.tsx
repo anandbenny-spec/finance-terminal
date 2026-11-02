@@ -21,12 +21,12 @@ import {
   statRows,
   type WindowKey,
 } from "@/lib/equity/rate";
-import { PREVIEW_FEEDS } from "@/lib/feeds";
+import { FEEDS } from "@/lib/feeds";
 import type { TaskFreshnessRow } from "@/lib/queries/api";
 import type { CompanyPageData } from "@/lib/queries/company";
 
 type Ok = Extract<CompanyPageData, { ok: true }>;
-const TASKS = PREVIEW_FEEDS.rateSensitivity;
+const TASKS = FEEDS.rateSensitivity;
 const HELD = "Rate-sensitivity figures are held back until their checks pass.";
 
 const latest = (dates: (string | null | undefined)[]): string | null => dates.filter((d): d is string => Boolean(d)).sort().at(-1) ?? null;

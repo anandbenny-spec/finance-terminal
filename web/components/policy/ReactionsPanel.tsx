@@ -106,6 +106,13 @@ export function ReactionsPanel({ rows, footer, refresh }: { rows: ReactionRow[];
         Derived: each move runs from each market&apos;s last value fixed before the decision&apos;s release to its first value fixed after it. The US 2-year&apos;s
         move is the Fed&apos;s surprise measure. Yields in basis points, the rest in percent.
       </p>
+      <p className="border-b border-line px-3 py-2 text-meta text-ink-2">
+        How the Nifty 50&apos;s companies moved on these decisions:{" "}
+        <Link href="/screener/rate-decisions" className="text-ink-1 underline">
+          the sector view
+        </Link>
+        .
+      </p>
       <DataTable
         columns={columns}
         rows={shown}

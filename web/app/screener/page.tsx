@@ -10,7 +10,7 @@ import { SourceLine } from "@/components/data/SourceLine";
 import { StateNote } from "@/components/data/StateNote";
 import { Foot } from "@/components/policy/PanelFoot";
 import { ScreenerView } from "@/components/screener/ScreenerView";
-import { PREVIEW_FEEDS } from "@/lib/feeds";
+import { FEEDS } from "@/lib/feeds";
 import { readScreenerPage } from "@/lib/queries/equity";
 import { readFreshness } from "@/lib/queries/shell";
 import { panelFreshness } from "@/lib/shell/freshness";
@@ -28,7 +28,7 @@ export default async function ScreenerPage() {
   const freshness = fresh.ok ? fresh.tasks : null;
   const now = data.readAt;
   const dataTo = data.ok ? (data.rows.map((r) => r.snapshot_date).sort().at(-1) ?? null) : null;
-  const pageFresh = panelFreshness(freshness, PREVIEW_FEEDS.screener, dataTo, now);
+  const pageFresh = panelFreshness(freshness, FEEDS.screener, dataTo, now);
   const usesBeta = data.ok && data.rows.some((r) => r.beta !== null);
 
   return (
@@ -47,7 +47,7 @@ export default async function ScreenerPage() {
       <div className="mt-6">
         {data.ok ? (
           data.rows.length === 0 ? (
-            <Panel title="Nifty 50 screener" titleId="screener-table" footer={<Foot sources={[NSE]} tasks={PREVIEW_FEEDS.screener} dataTo={null} freshness={freshness} now={now} />}>
+            <Panel title="Nifty 50 screener" titleId="screener-table" footer={<Foot sources={[NSE]} tasks={FEEDS.screener} dataTo={null} freshness={freshness} now={now} />}>
               <StateNote kind="unavailable">The first weekly snapshot hasn&apos;t been published yet.</StateNote>
             </Panel>
           ) : (
@@ -55,11 +55,11 @@ export default async function ScreenerPage() {
               rows={data.rows}
               indexes={data.indexes}
               policies={data.policies}
-              footer={<Foot sources={[NSE, usesBeta ? DAMODARAN : null]} tasks={PREVIEW_FEEDS.screener} dataTo={dataTo} freshness={freshness} now={now} />}
+              footer={<Foot sources={[NSE, usesBeta ? DAMODARAN : null]} tasks={FEEDS.screener} dataTo={dataTo} freshness={freshness} now={now} />}
             />
           )
         ) : (
-          <Panel title="Nifty 50 screener" titleId="screener-table" footer={<Foot sources={[NSE]} tasks={PREVIEW_FEEDS.screener} dataTo={null} freshness={freshness} now={now} />}>
+          <Panel title="Nifty 50 screener" titleId="screener-table" footer={<Foot sources={[NSE]} tasks={FEEDS.screener} dataTo={null} freshness={freshness} now={now} />}>
             <StateNote kind="error">Couldn&apos;t load this panel. Try again.</StateNote>
           </Panel>
         )}

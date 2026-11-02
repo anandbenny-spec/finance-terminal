@@ -66,11 +66,20 @@ describe("feeds", () => {
     // /policy's panels (C3) bring in the document and AI tasks; the decision-day moves (Pass 1b, #70) bring in
     // policy.reactions, live once enabled in tasks.yaml.
     expect(FEEDS.policyReactions).toEqual(["policy.reactions"]);
+    // Module 2's four surfaces joined FEEDS at 2A-26 (#132): their tasks count, each once, with policy.rate_cycles.
     expect(liveTasks()).toEqual([
+      "equity.beta",
+      "equity.metrics",
+      "equity.prices",
+      "equity.rate_reactions",
+      "equity.statements",
+      "equity.universe",
+      "equity.valuation_inputs",
       "policy.ai_batch",
       "policy.calendar",
       "policy.fed_documents",
       "policy.market_series",
+      "policy.rate_cycles",
       "policy.rbi_documents",
       "policy.reactions",
       "site.quality_summary",
