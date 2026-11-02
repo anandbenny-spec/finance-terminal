@@ -97,7 +97,7 @@ left join lateral (
 where g.ai_ok and x.duplicate_of is null;
 
 ------------------------------------------------------------------ api.guidance_hit_rates
--- One row per company, per peer group and one for the Nifty 50 (the latest snapshot's members), over counted targets
+-- One row per company, per peer group and one for the Nifty 50 (the latest snapshot's members; only once it has a target), over counted targets
 -- scored delivered or missed, each target once, on its earliest stored statement. rate = delivered / n as a fraction,
 -- null when n < 5 (Spec 02B §5.10). The window is data: first_stated_from, periods_to. No rows while
 -- equity.guidance_outcome (or ai.guidance_extraction) is hidden; peer-group rows also need equity.peer_group.
@@ -150,7 +150,8 @@ select 'nifty50', 'nifty-50', 'Nifty 50',
        min(t.vintage_date), max(t.target_end), (select out_label from g)
 from g left join t on t.in_nifty
 where g.ok
-group by g.ok;
+group by g.ok
+having count(t.outcome) > 0;   -- nothing visible (a suppressed source, no counted target yet) leaves no row at all
 
 grant select on api.call_guidance, api.guidance_hit_rates to anon, authenticated, service_role;
 
