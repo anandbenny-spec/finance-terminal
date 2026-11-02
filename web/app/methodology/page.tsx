@@ -94,6 +94,7 @@ const BLOCKS: Block[] = [
       "AI summaries and extractions can miss or misread a passage even when every number in them matches the source. Read the cited passage for anything that matters.",
       "The screener and company pages cover the Nifty 50 only. Valuations shown are model-implied and informational, never a verdict, a target or a recommendation.",
       "Company debt is borrowings only, labelled as excluding lease liabilities because results filings do not report them. Where a company's filed lease payments are material against its operating profit, enterprise-value figures are held back with the reason shown. Operating profit (EBIT) is derived from the filed lines and labelled as derived, and a lender's return on assets is annualised and labelled.",
+      "The one-year price return is a price return: it is adjusted for splits and bonus issues but leaves out dividends.",
       "The site makes no claim about future rates or prices.",
     ],
   },
