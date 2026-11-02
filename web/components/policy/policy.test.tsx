@@ -230,7 +230,9 @@ describe("ReactionsPanel (Pass 1b, #70)", () => {
     expect(t).toContain("up 0.42");
     expect(out).toContain("text-down");
     expect(out).toContain("text-up");
-    expect(t).toContain("Waiting for the first close after the decision.");
+    expect(t).toContain("Waiting for the first value fixed after the decision.");
+    // The US columns are empty on RBI rows by design, and the caption says so (Anand, 1 Nov 2026).
+    expect(t).toContain("The US 2-year, 10-year and S&P 500 are measured for Fed decisions only, so they're empty on RBI rows.");
     expect(t).toContain("2 decisions");
     expect(out).toContain('href="/policy/fed/2026-09-17"');
     expect(out).toMatch(/role="region" aria-label="Market moves around each FOMC and MPC rate decision since 2019" tabindex="0"/);

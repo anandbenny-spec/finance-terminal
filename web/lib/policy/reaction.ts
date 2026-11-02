@@ -100,7 +100,7 @@ export function meetingReaction(input: {
     if (!(spec.banks as readonly Bank[]).includes(bank)) continue;
     const r = reactions.find((x) => x.series_key === spec.key);
     let cell = reactionCell(spec, bank, shown.has(spec.key), r);
-    // Past the waiting period a missing move is not available, not "waiting for the first close".
+    // Past the waiting period a missing move is not available, not "waiting for the first value".
     if (cell.state === "waiting" && stale) cell = { state: "unavailable", text: cell.text, detail: "Not available." };
     const head = { key: spec.key, header: spec.header, title: title(spec, bank, r?.series_name), cell };
     if (!r || cell.state !== "move") {
