@@ -488,7 +488,7 @@ def test_bse_serves_a_company_nse_refuses_and_the_refusals_are_counted(s3):
     make_company("SRF", "INE647A01010", "503806")
     ex = Exchanges()
     ex.nse_status["SRF"] = 403
-    code, tr = go(ex)
+    code, tr = go(ex, since=D(2026, 7, 1))       # #265: the default window is now two windows, so two refusals; one window here
     assert code == 0 and tr[0] == "success", tr
     c = checks(tr)
     assert c["nse_answered"]["passed"] and "BSE fallback served zc-srf" in c["nse_answered"]["detail"]
