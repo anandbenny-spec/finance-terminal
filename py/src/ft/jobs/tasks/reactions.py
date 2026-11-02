@@ -15,8 +15,8 @@ its first caller (its series as subjects, its meetings as decision anchors, wind
   (post ÷ pre − 1) × 100, rounded to 4 decimal places (a derived figure; the page formats it).
 
 Every run recomputes every row from the stored observations, so a revised input (the revision log) or a late
-observation updates its row; a meeting whose post value hasn't arrived has no row yet ("Waiting for the first close
-after the decision", Spec 01 §4.5) and the `waiting` warning names it once the series' expected lag has passed (daily
+observation updates its row; a meeting whose post value hasn't arrived has no row yet ("Waiting for the first value
+fixed after the decision", Spec 01 §4.5) and the `waiting` warning names it once the series' expected lag has passed (daily
 5 days, weekly-published 12: Spec 01 §2). A row whose inputs no longer qualify is deleted (reactions are derived:
 `job_writer` may delete them, never the observations they come from). Suppressing a source hides its reactions
 through RLS (D3's drill); the rows stay.

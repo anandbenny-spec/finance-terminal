@@ -104,7 +104,8 @@ export function ReactionsPanel({ rows, footer, refresh }: { rows: ReactionRow[];
       </div>
       <p className="border-b border-line px-3 py-2 text-meta text-ink-2">
         Derived: each move runs from each market&apos;s last value fixed before the decision&apos;s release to its first value fixed after it. The US 2-year&apos;s
-        move is the Fed&apos;s surprise measure. Yields in basis points, the rest in percent.
+        move is the Fed&apos;s surprise measure. The US 2-year, 10-year and S&amp;P 500 are measured for Fed decisions only, so
+        they&apos;re empty on RBI rows. Yields in basis points, the rest in percent.
       </p>
       <DataTable
         columns={columns}
