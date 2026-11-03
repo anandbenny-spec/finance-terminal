@@ -131,3 +131,9 @@ equity.call_text:
   run_after: [equity.call_transcripts, equity.filings]
   overdue_after: 10 days
   uses_nse: false
+equity.calls_ai:
+  description: The cited summary of each stored earnings call (what management said, what analysts asked about), precomputed through the Batch API; skips with a warning when AI is unavailable (no key, no credit, the budget switch, ai=off) and sends nothing then
+  workflows: {weekly: every 6 days}
+  run_after: [equity.call_text]
+  overdue_after: 10 days
+  uses_nse: false

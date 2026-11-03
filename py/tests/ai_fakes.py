@@ -66,6 +66,18 @@ def good_diff(docs: list[tuple[str, str]]) -> list[dict]:
     return bullets((added[:2] + removed[:1] + added[2:] + removed[1:])[:3])
 
 
+def headed_lists(lists: list[tuple[str, list[tuple[str, list[dict]]]]]) -> list[dict]:
+    """Text blocks as the API returns them for a reply of headed lists: each heading an uncited line, each claim a block
+    (`bullets` per list)."""
+    out: list[dict] = []
+    for k, (heading, items) in enumerate(lists):
+        out.append({"type": "text", "text": ("\n\n" if k else "") + heading + "\n"})
+        for i, (claim, cites) in enumerate(items):
+            out.append({"type": "text", "text": ("\n" if i else "") + "- "})
+            out.append({"type": "text", "text": claim, "citations": cites or None})
+    return out
+
+
 def schema_of(body: dict) -> dict | None:
     """A JSON-route request's schema (output_config.format), or None for the citations route."""
     fmt = (body.get("output_config") or {}).get("format")
@@ -117,8 +129,9 @@ class FakeClaude:
     them too, and `answered` lists (schema's first property, answer) for each."""
 
     def __init__(self, script=("ok",), *, creates=("ok",), ends_after: int | None = 1, truncate: int | None = None,
-                 cut: str = "mid", answer=None):
+                 cut: str = "mid", answer=None, reply=None):
         self.script, self.requests, self.n = list(script), [], 0
+        self.reply = reply                          # citations route: reply(docs, mode) -> text blocks, or None for the default
         self.creates, self.ends_after, self.truncate, self.cut = list(creates), ends_after, truncate, cut
         self.answer, self.answered = answer, []
         self.batches: dict[str, dict] = {}          # id -> {"requests", "reads", "results", "created_at", ...}
@@ -165,8 +178,11 @@ class FakeClaude:
             self.answered.append((kind, got))
             stop = mode if mode in ("max_tokens", "refusal") else "end_turn"
             return json_message(got, stop=stop, mid=f"msg_{self.n}", chars=sum(len(t) for _, t in docs))
-        blocks = good_diff(docs) if len(docs) == 2 else good_summary(docs)
-        if mode == "bad_number":
+        custom = self.reply(docs, mode) if self.reply is not None else None
+        blocks = custom if custom is not None else (good_diff(docs) if len(docs) == 2 else good_summary(docs))
+        if custom is not None:
+            pass                                    # a test's own reply: the modes above are its to read
+        elif mode == "bad_number":
             blocks[1] = {**blocks[1], "text": "The Committee cut the rate by 25 basis points."}
         elif mode == "uncited":
             blocks[1] = {"type": "text", "text": blocks[1]["text"]}

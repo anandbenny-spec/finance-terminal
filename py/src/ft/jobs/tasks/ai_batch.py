@@ -373,8 +373,7 @@ class AiBatch(BatchSteps, Task):
 
     @staticmethod
     def _month_spend(db) -> Decimal:
-        return Decimal(db.execute("""select coalesce(sum(ai_cost_usd), 0) from ops.task_run
-                                      where started_at >= date_trunc('month', now())""").fetchone()[0])
+        return batch.month_spend(db)
 
 
 

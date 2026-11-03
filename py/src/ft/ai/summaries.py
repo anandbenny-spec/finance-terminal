@@ -63,6 +63,7 @@ class Bullet:
     text: str
     citations: list[Cited] = field(default_factory=list)
     problem: str | None = None        # why it's dropped
+    section: str | None = None        # a call summary's list ('management' | 'analysts'); None for module 1's
 
 
 @dataclass
@@ -105,6 +106,9 @@ def _note(note: str | None) -> str | None:
     return ("Your previous answer to this request couldn't be published: " + note
             + "\nAnswer again, following every rule. Cite the passage that states each point, and write numbers "
               "only as the cited passage writes them.")
+
+
+note_block = _note        # the retry's note block, shared with ft/ai/call_summary.py (the second user, #174)
 
 
 def doc_summary_request(doc: Doc, prompt: Prompt, *, note: str | None = None) -> Request:
@@ -157,34 +161,62 @@ def diff_summary_request(new: Doc, old: Doc, segments: dict, prompt: Prompt, *, 
 _LEAD = re.compile(r"^\s*(?:(?:[-*\u2022\u2013\u2014]|\d{1,2}[.)])[ \t]+)?")
 
 
-def split_bullets(parts: list[TextPart]) -> tuple[list[tuple[str, list]], list[str]]:
-    """(the bullets as (text, the API citations credited to it), the non-bullet lines after the first bullet).
-    A text block's citations go to the bullet its text starts in (after any whitespace and list marker), so one
-    block's citation never verifies two bullets."""
+_HEADING_FRAME = re.compile(r"^[\s#*_>]+|[\s*_:]+$")
+
+
+@dataclass
+class Scanned:
+    bullets: list[tuple[int | None, str, list]]   # (the heading it sits under, its text, the API citations credited to it)
+    stray: list[str]                              # the non-bullet lines after the first bullet (or heading)
+    headings: list[int]                           # the headings found, as indexes into the given ones, in reply order
+
+
+def _heading(line: str, headings: tuple[str, ...]) -> int | None:
+    """The index of the heading a line is (case and markdown framing aside: '## What we said:', '**What we said**')."""
+    flat = _HEADING_FRAME.sub("", line).strip().lower()
+    return next((i for i, h in enumerate(headings) if flat == h.lower()), None)
+
+
+def scan(parts: list[TextPart], headings: tuple[str, ...] = ()) -> Scanned:
+    """The reply's bullets, each with the text blocks' citations credited to it. A text block's citations go to the bullet
+    its text starts in (after any whitespace and list marker), so one block's citation never verifies two bullets. With
+    `headings`, a line that is one of them is a heading, not a stray line, and the bullets after it sit under it."""
     text, spans = "", []
     for p in parts:
         lead = _LEAD.match(p.text)
         spans.append((len(text) + (lead.end() if lead else 0), p.citations))
         text += p.text
-    bullets: list[list[int]] = []                 # [region start, text start, text end]
+    bullets: list[list] = []                      # [region start, text start, text end, the heading it sits under]
     stray: list[str] = []
+    seen: list[int] = []
+    under: int | None = None
     pos = 0
     for line in text.split("\n"):
         start, end = pos, pos + len(line)
         pos = end + 1
+        if headings and (h := _heading(line, headings)) is not None:
+            seen.append(h)
+            under = h
+            continue
         m = _MARK.match(line)
         if m:
-            bullets.append([start, start + m.end(), end])
-        elif line.strip() and bullets:
+            bullets.append([start, start + m.end(), end, under])
+        elif line.strip() and (bullets or seen):
             stray.append(line.strip())
     out = []
-    for i, (region, s, e) in enumerate(bullets):
+    for i, (region, s, e, h) in enumerate(bullets):
         nxt = bullets[i + 1][0] if i + 1 < len(bullets) else len(text) + 1
         cites = [c for at, cs in spans if region <= at < nxt for c in cs]
         body = " ".join(text[s:e].split())
         if body:
-            out.append((body, cites))
-    return out, stray
+            out.append((h, body, cites))
+    return Scanned(out, stray, seen)
+
+
+def split_bullets(parts: list[TextPart]) -> tuple[list[tuple[str, list]], list[str]]:
+    """(the bullets as (text, the API citations credited to it), the non-bullet lines after the first bullet)."""
+    found = scan(parts)
+    return [(body, cites) for _, body, cites in found.bullets], found.stray
 
 
 # A figure as written: digits with whatever they're joined to by . , / - (and letters: "Q2", "FY27", "10-year"), with
@@ -232,49 +264,57 @@ REASON_PHRASES: dict[str, tuple[str, ...]] = {
 }
 
 
+def verify_bullet(body: str, cites: list, sources: tuple[Source, ...], mapping: Counter, *,
+                  changed: dict[int, list[tuple[int, int]]] | None = None,
+                  full_text: dict[int, str] | None = None) -> Bullet:
+    """One bullet against our copies of the documents: each citation mapped into them (`citations.map_api_citation`),
+    then the bullet kept only with a verified citation and only figures from its cited passages. `mapping` counts how
+    the citations mapped. `changed`: for statement_diff_summary, each document's changed spans."""
+    b = Bullet(body)
+    seen = set()
+    passages = []
+    for c in cites:
+        if c.kind != "char_location" or c.document_index is None or not 0 <= c.document_index < len(sources):
+            mapping["not_a_passage"] += 1
+            continue
+        if c.start is None or c.end is None or c.end <= c.start or not c.cited_text.strip():
+            mapping["empty"] += 1                        # an empty range quotes nothing
+            continue
+        src = sources[c.document_index]
+        doc_text = (full_text or {}).get(src.document_id, src.text if src.seg_start == 0 else None)
+        if doc_text is None:
+            mapping["failed"] += 1
+            continue
+        span = map_api_citation(doc_text, src.seg_start, c.start, c.end, c.cited_text)
+        if not span.verified:
+            mapping["failed"] += 1
+            continue
+        if changed is not None and not _overlaps(span.start, span.end, changed.get(src.document_id, [])):
+            mapping["unchanged_text"] += 1               # the diff summary cites only what changed
+            continue
+        mapping[span.how] += 1
+        key = (src.document_id, span.start, span.end)
+        if key not in seen:
+            seen.add(key)
+            b.citations.append(Cited(src.document_id, span.start, span.end, span.how))
+            passages.append(doc_text[span.start:span.end])
+    if not b.citations:
+        b.problem = ("no verified citation on a changed sentence" if changed is not None and cites
+                     else "no verified citation")
+    elif extra := unsupported_figures(body, passages):
+        b.problem = "numbers not in its cited passages: " + ", ".join(extra)
+    return b
+
+
 def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
           changed: dict[int, list[tuple[int, int]]] | None = None, full_text: dict[int, str] | None = None) -> Checked:
     """Check a reply against our copies of the documents it was given (`sources`; `full_text` by document id when a
     source is a segment). `changed`: for statement_diff_summary, each document's changed spans."""
     lo, hi = BULLETS[task]
     mapping: Counter = Counter()
-    bullets = []
     found, stray = split_bullets(reply.parts())
-    for body, cites in found:
-        b = Bullet(body)
-        seen = set()
-        passages = []
-        for c in cites:
-            if c.kind != "char_location" or c.document_index is None or not 0 <= c.document_index < len(sources):
-                mapping["not_a_passage"] += 1
-                continue
-            if c.start is None or c.end is None or c.end <= c.start or not c.cited_text.strip():
-                mapping["empty"] += 1                        # an empty range quotes nothing
-                continue
-            src = sources[c.document_index]
-            doc_text = (full_text or {}).get(src.document_id, src.text if src.seg_start == 0 else None)
-            if doc_text is None:
-                mapping["failed"] += 1
-                continue
-            span = map_api_citation(doc_text, src.seg_start, c.start, c.end, c.cited_text)
-            if not span.verified:
-                mapping["failed"] += 1
-                continue
-            if changed is not None and not _overlaps(span.start, span.end, changed.get(src.document_id, [])):
-                mapping["unchanged_text"] += 1               # the diff summary cites only what changed
-                continue
-            mapping[span.how] += 1
-            key = (src.document_id, span.start, span.end)
-            if key not in seen:
-                seen.add(key)
-                b.citations.append(Cited(src.document_id, span.start, span.end, span.how))
-                passages.append(doc_text[span.start:span.end])
-        if not b.citations:
-            b.problem = ("no verified citation on a changed sentence" if changed is not None and cites
-                         else "no verified citation")
-        elif extra := unsupported_figures(body, passages):
-            b.problem = "numbers not in its cited passages: " + ", ".join(extra)
-        bullets.append(b)
+    bullets = [verify_bullet(body, cites, sources, mapping, changed=changed, full_text=full_text)
+               for body, cites in found]
     problems = []
     if stray:
         problems.append("text outside the bullets: " + " / ".join(f'"{x[:120]}"' for x in stray))
@@ -306,7 +346,7 @@ def content(c: Checked, *, attempt: int, reply: Reply) -> tuple[dict, str, list[
         for x in b.citations:
             cites.append((f"/bullets/{i}", x))
             nos.append(len(cites))
-        bullets.append({"text": b.text, "citations": nos})
+        bullets.append({"text": b.text, "citations": nos, **({"list": b.section} if b.section else {})})
     doc = {"bullets": bullets, "attempt": attempt, "stop_reason": reply.stop_reason,
            "citation_mapping": dict(sorted(c.mapping.items()))}
     if not c.ok:
