@@ -10,4 +10,53 @@
 #     found_by: <who found it>
 #     found_on: 2026-11-12
 #     note: <where on the company's site>
-links: []
+#
+# Rows below: 2B-08 (#171), found in the built-in browser on Anand's Mac on 3 Nov 2026, newest quarter first. Each file was
+# opened from the company's own domain and read there (page count, words, speaker lines, company and quarter on its first two
+# pages); Anand checks every row before it merges. A quarter with no file on the company's site has no row (see #171).
+links:
+  # --- Q2 FY27 (calls held Oct 2026) ---
+  - company: kotakbank
+    fiscal_label: Q2 FY27
+    url: "https://www.kotak.bank.in/content/dam/Kotak/investor-relation/Financial-Result/QuarterlyReport/FY-2027/q2/Transcript/Q2FY27-Transcript.pdf"
+    found_by: Claude, daytime session
+    found_on: 2026-11-03
+    note: "kotak.bank.in, Investor Relations > Financial Results > FY-2027 > Quarter II > Transcript; 20 pages, call of 24 Oct 2026"
+  - company: lt
+    fiscal_label: Q2 FY27
+    url: "https://investors.larsentoubro.com/upload/Analysttrans/FY2027AnalysttransL&T%20Q2FY27%20Earnings%20Call%20Transcript.pdf"
+    found_by: Claude, daytime session
+    found_on: 2026-11-03
+    note: "investors.larsentoubro.com, Downloads > Transcripts > FY2027, the entry labelled H1 / Q2FY27 (the page lists the half-year call as H1); 20 pages, call of 27 Oct 2026"
+  - company: maruti
+    fiscal_label: Q2 FY27
+    url: "https://www.marutisuzuki.com/content/dam/arena-eds/corporate/pdf/company-reports/2026-2027/Transcript_earnings_call_Maruti_Suzuki_Q2_FY_27.pdf"
+    found_by: Claude, daytime session
+    found_on: 2026-11-03
+    note: "marutisuzuki.com, the company-reports/2026-2027 folder, named like the Q1 file next to it; the site's Investors pages did not list either file in the browser (their Company Report and Financials links redirected to Company Updates, 'No Results found'), so the address comes from the Q1 file's naming and the file itself was opened from marutisuzuki.com; 13 pages, call of 27 Oct 2026"
+  # --- ONGC's newest call: Q1 FY27 (its Q2 call is not held yet) ---
+  - company: ongc
+    fiscal_label: Q1 FY27
+    url: "https://ongcindia.com/documents/77751/2660534/Transcription-Q1-FY2627.pdf/1e574c9b-4526-25ad-3830-9329862cf9af"
+    found_by: Claude, daytime session
+    found_on: 2026-11-03
+    note: "ongcindia.com, Investors > Transcription, the entry '1st Quarter FY'27 Earnings Call Transcript held on 05-08-2026'; 23 pages. Its cover says Q1 FY’27 and page 2 says Q1 FY26-27, which parse_quarter reads as Q1 FY27 from this PR on"
+  # --- Q1 FY27 (calls held Jul-Aug 2026; older quarters, the company's newest call is Q2 FY27) ---
+  - company: kotakbank
+    fiscal_label: Q1 FY27
+    url: "https://www.kotak.bank.in/content/dam/Kotak/investor-relation/Financial-Result/QuarterlyReport/FY-2027/q1/transcript/Q1FY27-Transcript.pdf"
+    found_by: Claude, daytime session
+    found_on: 2026-11-03
+    note: "kotak.bank.in, Investor Relations > Financial Results > FY-2027 > Quarter I > Transcript (the path says lower-case transcript, unlike Q2); 18 pages, call of 18 Jul 2026"
+  - company: lt
+    fiscal_label: Q1 FY27
+    url: "https://investors.larsentoubro.com/upload/Analysttrans/FY2027AnalysttransL&T-Earnings-Jul28-2026.pdf"
+    found_by: Claude, daytime session
+    found_on: 2026-11-03
+    note: "investors.larsentoubro.com, Downloads > Transcripts > FY2027, the entry labelled Q1 L&T Earnings Call Transcript Q1FY27; 26 pages, call of 28 Jul 2026"
+  - company: maruti
+    fiscal_label: Q1 FY27
+    url: "https://www.marutisuzuki.com/content/dam/arena-eds/corporate/pdf/company-reports/2026-2027/Transcript_earnings_call_Maruti_Suzuki_Q1_FY_27.pdf"
+    found_by: Claude, daytime session
+    found_on: 2026-11-03
+    note: "marutisuzuki.com, the company-reports/2026-2027 folder; found by a search that returned this file on marutisuzuki.com, and opened from there (the site's Investors pages did not list it in the browser); 12 pages, call of 31 Jul 2026"

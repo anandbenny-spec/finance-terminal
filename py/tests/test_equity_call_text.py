@@ -10,8 +10,10 @@ import json
 import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
+import yaml
 
 from ft.engines.document.text import (
     PageSpan,
@@ -294,6 +296,38 @@ def test_a_company_pdf_for_the_wrong_company_or_quarter_is_rejected():
     assert not pl.company_pdf_ok(letter, CO["apollo"], "Q1 FY27")                 # a cover letter isn't the full test
 
 
+@pytest.mark.parametrize("text, expected", [
+    ("Q1 FY27 Earnings Conference Call", "Q1 FY27"),
+    ("Q2 FY2027 Earnings Conference Call Transcript", "Q2 FY27"),
+    ("Larsen & Toubro Limited Q1 FY '27 Earnings Conference Call", "Q1 FY27"),
+    ("Q1 FY\u201927 Earnings Conference Call", "Q1 FY27"),                      # a curly apostrophe (ONGC's cover)
+    ("Q 1 FY \u2019 27", "Q1 FY27"),
+    ("Q1 FY26-27 Earnings Conference Call 05.08.2026", "Q1 FY27"),             # the two calendar years (ONGC's header)
+    ("Q2 FY 2026-27 results", "Q2 FY27"),
+    ("Q4 FY2025-26", "Q4 FY26"),
+    ("Q3 FY26/27", "Q3 FY27"),
+    ("Q1 FY27 - 28 July 2026", "Q1 FY27"),                                      # a date after a spaced dash isn't a year
+    ("Q1 FY27-28 July 2026 call", "Q1 FY27"),                                   # nor one with a month after it
+    ("Q1 FY26 \u2013 27 results", "Q1 FY26"),                                    # only a dash with no spaces joins two years
+    ("Q2 FY26-30 plan", "Q2 FY26"),                                             # and the second year must be the next one
+    ("Q3 FY25 earnings call", "Q3 FY25"),
+    ("quarter ended September 30, 2026", "Q2 FY27"),
+    ("no quarter here", None),
+])
+def test_parse_quarter_reads_the_fiscal_year_forms_companies_use(text, expected):
+    assert pdfs.parse_quarter(text) == expected
+
+
+def test_a_cover_with_a_curly_apostrophe_and_a_two_year_header_names_its_quarter():
+    """ONGC's Q1 FY27 file (3 Nov 2026): the cover says "Q1 FY\u201927", page 2's header "Q1 FY26-27". It read as Q1 FY26 before."""
+    pages = ["Oil and Natural Gas Corporation Limited\nQ1 FY\u201927 Earnings Conference Call\nEvent Date, Time & Venue\n05.08.2026, 03:30 pm",
+             "2\nONGC Limited\nQ1 FY26-27 Earnings Conference Call 05.08.2026\nMr. Manish Kumar\nExploration team"]
+    info = pdfs.PdfInfo(True, page_texts=pages, quarter=pdfs.parse_quarter("\n".join(pages)))
+    assert info.quarter == "Q1 FY27"
+    assert pdfs.names_quarter(info, "Q1 FY27", date(2026, 6, 30)) and not pdfs.names_quarter(info, "Q1 FY26", date(2025, 6, 30))
+    assert pdfs.names_company(info.first_pages, "Oil & Natural Gas Corporation Ltd.", "ONGC")
+
+
 def test_the_quarter_is_named_by_its_label_or_its_period_end():
     info = pdfs.PdfInfo(True, page_texts=["Earnings call for the quarter ended September 30, 2026"], quarter="Q2 FY27")
     assert pdfs.names_quarter(info, "Q2 FY27", date(2026, 9, 30)) and not pdfs.names_quarter(info, "Q1 FY27", date(2026, 6, 30))
@@ -498,8 +532,22 @@ def test_a_curated_link_is_used_when_the_letter_leads_nowhere_and_a_failing_row_
     assert pl.load_curated(tmp_path / "missing.yaml") == {}
 
 
-def test_the_shipped_curated_file_is_empty_until_2b_08():
-    assert pl.load_curated() == {}
+def test_the_shipped_curated_rows_are_well_formed():
+    """2B-08 filled the file: every row names a company in the universe and a real fiscal quarter, links to an https file that
+    isn't an exchange's or RBI's (the exchanges' files come through discovery; RBI's pages are never linked), says who found it
+    and when and where on the site, and no company and quarter appears twice (`load_curated` would keep only the last)."""
+    path = Path(__file__).resolve().parents[1] / "config" / "equity" / "transcript_links.yaml"
+    raw = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("links") or []
+    companies = yaml.safe_load((path.parent / "companies.yaml").read_text(encoding="utf-8"))
+    assert len({(r["company"], r["fiscal_label"]) for r in raw}) == len(raw), "a company and quarter appears twice"
+    assert set(pl.load_curated()) == {(r["company"], r["fiscal_label"]) for r in raw}
+    for r in pl.load_curated().values():
+        assert r.company in companies, r.company
+        assert rows.period_end_of(r.fiscal_label) is not None, r.fiscal_label
+        u = urlparse(r.url)
+        assert u.scheme == "https" and u.netloc, r.url
+        assert not any(h in u.netloc.lower() for h in (*pdfs.EXCHANGE_HOSTS, "rbi.org.in")), r.url
+        assert r.found_by and r.note and date.fromisoformat(r.found_on), (r.company, r.fiscal_label)
 
 
 @needs_fixtures
