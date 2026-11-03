@@ -111,7 +111,8 @@ def test_the_prompt_names_the_three_headings_and_the_role_rules():
     assert "only passages spoken by speakers listed as Management" in p and "never cites the moderator" in p
     assert "never guess a role" in p and "<!--" not in p and p.endswith("\n")
     assert "never a heading with no bullets under it" in p and "Never add, subtract, round, convert" in p
-    assert len({load_prompt("call_summary", v).text for v in ("v1", "v2", "v3")}) == 3  # each version that ran on dev is kept
+    assert "fewest bullets" in p and "Write no digit that isn't in a passage you cite" in p
+    assert len({load_prompt("call_summary", v).text for v in ("v1", "v2", "v3", "v4")}) == 4  # each version that ran is kept
 
 
 # --------------------------------------------------------------------------------------------------- lists and bullets
