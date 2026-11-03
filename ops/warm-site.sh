@@ -12,7 +12,8 @@
 # data is already stored, so a site that can't be reached is a warning. Each load prints its status, Vercel's cache
 # state and the copy's age, which is the record of the two-loads check (the second round should read HIT).
 #
-# Settings (environment): SITE_URL (default: the shared link), WARM_ROUNDS (3), WARM_GAP_SECONDS (20).
+# Settings (environment; the workflows set none, so the defaults apply): SITE_URL (the shared link), WARM_ROUNDS (3),
+# WARM_GAP_SECONDS (20). The tests set them; so can anyone running the script by hand.
 set -u
 
 site="${SITE_URL:-https://finance-terminal-phi.vercel.app}"
