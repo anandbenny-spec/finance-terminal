@@ -57,6 +57,22 @@ export const FEEDS = {
 
 export type Surface = keyof typeof FEEDS;
 
+/**
+ * The live tasks that run in the daily workflow (`workflows: {daily: …}` in py/config/tasks.yaml). The status bar's
+ * "checked" time is the oldest last success among these only (Anand, 3 Nov 2026, #263), so a weekly or longer task
+ * (`policy.calendar` runs every 25 days) can't hold the bar at an old date while the daily data is current. "Delayed"
+ * and "stale" still count every live task, so an overdue weekly task still shows. lib/feeds.test.ts checks this list
+ * against tasks.yaml, so a live task that becomes daily has to be added here.
+ */
+export const DAILY_TASKS = [
+  "policy.market_series",
+  "policy.fed_documents",
+  "policy.rbi_documents",
+  "policy.ai_batch",
+  "policy.reactions",
+  "site.quality_summary",
+] as const satisfies readonly TaskKey[];
+
 /** Every task that feeds something live, each once, in a stable order. */
 export function liveTasks(feeds: Record<string, readonly TaskKey[]> = FEEDS): TaskKey[] {
   return [...new Set(Object.values(feeds).flat())].sort();

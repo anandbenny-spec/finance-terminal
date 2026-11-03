@@ -11,15 +11,20 @@ functions, which store every reply as a raw file before anything here reads it.
   "Earnings Call Transcript" and "Analyst / Investor Meet - Outcome", through the same classifier, on the headline.
 - **Seasons** (§4): a filing's season is the season of its dissemination date minus 7 days. Calls held Oct-Dec discuss
   Q2, Jan-Mar Q3, Apr-Jun Q4, Jul-Sep Q1; the fiscal year ends in March and is named for the year it ends in.
-- **Windows** (§13.3): a backfill reads from 1 Jul 2026 to the run's date; a weekly run from the latest stored
-  dissemination time minus 14 days. No window is longer than 12 months.
+- **Windows** (§13.3; Plan 04b P1): a backfill reads from `--since`, else from `history_from` in
+  `config/equity/calls.yaml` (1 Jan 2025), to the run's date; a weekly run from the latest stored dissemination time
+  minus 14 days. No window is longer than 12 months.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
+
+import yaml
 
 from ft.equity.calls.classify import classify, file_name
 
@@ -62,11 +67,30 @@ def season_of_filing(disseminated: datetime | date) -> str:
     return season_of_call(d - SEASON_LAG)
 
 
-def window_start(since: date | None, latest_stored: datetime | None) -> date:
-    """The first day a run reads: its `--since`; else a weekly run's latest stored dissemination minus 14 days; else the
-    backfill start of 1 Jul 2026."""
+CALLS_CONFIG = Path(__file__).resolve().parents[4] / "config" / "equity" / "calls.yaml"
+
+
+@dataclass(frozen=True)
+class CallsConfig:
+    """`py/config/equity/calls.yaml` (Plan 04b P1, P3, P5): values the history job needs, never literals in code."""
+    history_from: date           # a backfill without --since reads announcements from here
+    first_pages_from: str        # filings of an earlier season are classified without opening their first pages ("Q1 FY27")
+    raw_storage_stop_mb: int     # the stop for a project's stored raw files
+
+
+def load_calls_config(path: Path = CALLS_CONFIG) -> CallsConfig:
+    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return CallsConfig(doc["history_from"], str(doc["first_pages_from"]), int(doc["raw_storage_stop_mb"]))
+
+
+def window_start(since: date | None, latest_stored: datetime | None, *, backfill: bool = False,
+                 history_from: date | None = None) -> date:
+    """The first day a run reads: its `--since`; else, for a backfill, the configured `history_from` (Plan 04b P1); else a
+    weekly run's latest stored dissemination minus 14 days; else the backfill start of 1 Jul 2026."""
     if since is not None:
         return since
+    if backfill and history_from is not None:
+        return history_from
     if latest_stored is not None:
         return max(BACKFILL_START, (latest_stored.astimezone(INDIA) - WEEKLY_OVERLAP).date())
     return BACKFILL_START
@@ -99,6 +123,8 @@ class Announcement:
     why: str
     season: str
     entity_id: int | None = None  # joined by `resolve`; None = matches no universe company
+    queried: str | None = None    # the NSE symbol this row was asked for (NSE rows; a renamed company is asked under each symbol)
+    joined_by: str | None = None  # how it joined: isin | earlier_isin | symbol | scrip | asked (None = not joined)
 
     @property
     def is_transcript(self) -> bool:
@@ -185,30 +211,64 @@ class Company:
     isins: frozenset[str] = frozenset()      # every ISIN it has had
 
 
+ISIN_SHAPE = re.compile(r"IN[A-Z0-9]{9}[0-9]")
+STEM_LENGTH = 9
+
+
+def isin_stem(isin: str | None) -> str | None:
+    """The issuer-and-class part of an Indian ISIN: its first nine characters ('INE090A01' of 'INE090A01021'). The next two
+    digits number the issue and change when a split or bonus brings a new ISIN for the same shares, so an earlier ISIN
+    of a security shares its stem with the current one. None for a value that isn't ISIN-shaped (a placeholder)."""
+    return isin[:STEM_LENGTH] if isin and ISIN_SHAPE.fullmatch(isin) else None
+
+
 class CompanyIndex:
     """Joins announcement rows to universe companies on ISIN and symbol through the identifier history, never on the
-    file name (§5.1). A row's ISIN decides; the symbol decides when the row has no ISIN."""
+    file name or the company's name (§5.1). A row's ISIN decides; the symbol decides when the row has no ISIN.
+
+    NSE's announcement rows can carry an earlier ISIN of the same shares (from before a split or bonus: ICICI Bank's
+    rows say INE090A01013, its universe record INE090A01021), which the identifier history doesn't hold (#264). Such a
+    row joins only when its ISIN shares the company's issuer-and-class stem AND its symbol is one of the company's
+    symbols: two identifiers agree. A stranger ISIN, or a stem that fits no company that holds the symbol, stays
+    unmatched even when the symbol is a company's (a symbol is reused after a demerger)."""
 
     def __init__(self, companies: Iterable[Company]):
         self.by_isin: dict[str, Company] = {}
         self.by_symbol: dict[str, Company] = {}
         self.by_scrip: dict[str, Company] = {}
+        self.by_stem: dict[str, dict[int, Company]] = {}
         for c in companies:
             for i in c.isins | ({c.isin} if c.isin else set()):
                 self.by_isin[i] = c
+                if (stem := isin_stem(i)) is not None:
+                    self.by_stem.setdefault(stem, {})[c.entity_id] = c
             for s in c.symbols | {c.symbol}:
                 self.by_symbol[s] = c
             if c.bse_code:
                 self.by_scrip[c.bse_code] = c
 
-    def resolve(self, a: Announcement) -> int | None:
-        c = None
+    def _earlier_isin(self, a: Announcement) -> Company | None:
+        stem = isin_stem(a.isin)
+        if stem is None or not a.symbol:
+            return None
+        fits = [c for c in self.by_stem.get(stem, {}).values() if a.symbol == c.symbol or a.symbol in c.symbols]
+        return fits[0] if len(fits) == 1 else None
+
+    def match(self, a: Announcement) -> tuple[Company | None, str | None]:
+        """The company a row belongs to and how it was found: isin, earlier_isin, symbol (the row has no ISIN) or scrip."""
         if a.isin:
-            c = self.by_isin.get(a.isin)
-        if c is None and not a.isin and a.symbol:
-            c = self.by_symbol.get(a.symbol)
-        if c is None and a.scrip:
-            c = self.by_scrip.get(a.scrip)
+            if (c := self.by_isin.get(a.isin)) is not None:
+                return c, "isin"
+            if (c := self._earlier_isin(a)) is not None:
+                return c, "earlier_isin"
+        elif a.symbol and (c := self.by_symbol.get(a.symbol)) is not None:
+            return c, "symbol"
+        if a.scrip and (c := self.by_scrip.get(a.scrip)) is not None:
+            return c, "scrip"
+        return None, None
+
+    def resolve(self, a: Announcement) -> int | None:
+        c, _ = self.match(a)
         return c.entity_id if c else None
 
 

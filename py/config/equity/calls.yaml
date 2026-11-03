@@ -1,0 +1,14 @@
+# Earnings-call history (Plan 04b P1, P3 and P5, 2 Nov 2026; Spec 02B §4). Read by equity.call_transcripts.
+
+# P1: a backfill run without --since reads NSE's announcements from this date (Spec 02B §4's eight seasons start with
+# Q3 FY25, calls held Jan-Mar 2025), in windows of 12 months or less per company. An explicit --since still wins.
+# Weekly runs are unchanged (the latest stored dissemination time minus 14 days).
+history_from: 2025-01-01
+
+# P3: filings of a season earlier than this are classified from the subject and the file name only; their first pages
+# aren't opened (on dev, 88 first-page PDFs were about 128 MB of the 158 MB of PDFs that 2B-lite's first run stored).
+first_pages_from: Q1 FY27
+
+# P5: the stop for a project's raw files, in MB of stored objects (85% of the Free plan's 1 GB). The check `raw_storage`
+# reports the bucket's stored size against it; a session reads it between the two halves of a history backfill.
+raw_storage_stop_mb: 850

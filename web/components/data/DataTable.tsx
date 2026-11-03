@@ -12,7 +12,9 @@
 // ring sits inside the edge, since the panel clips anything outside. The scroller is also `relative`: a cell's
 // screen-reader text (sr-only) is absolutely positioned, and without a positioned ancestor it escapes the scroller's
 // clip and sits at its row's offset in the page, so every row scrolled out of view stretched the page with black
-// space below the footer (Anand's report, 28 Oct 2026; the same reason TapeScroller is `relative`).
+// space below the footer (Anand's report, 28 Oct 2026; the same reason TapeScroller is `relative`). The plain,
+// sideways-only scroller is `relative` too (3 Nov 2026, #132): a wide table's sr-only caption sat at the table's
+// width, so SBI's Bank ratios table (1,245 px) stretched /companies/sbin?tab=financials to 899 px at 320 px.
 import {
   flexRender,
   getCoreRowModel,
@@ -83,7 +85,7 @@ export function DataTable<Row>({
 
   return (
     <div
-      className={cn(scroll ? "relative max-h-(--table-max-h) overflow-auto focus-visible:-outline-offset-2" : "overflow-x-auto")}
+      className={cn(scroll ? "relative max-h-(--table-max-h) overflow-auto focus-visible:-outline-offset-2" : "relative overflow-x-auto")}
       {...(scroll && { role: "region", "aria-label": caption, tabIndex: 0 })}
     >
       <table className="w-full border-collapse text-data">

@@ -622,3 +622,113 @@ def test_two_runs_over_the_same_filings_make_the_same_plan():
     assert p1.transcript.text.extracted.sha256 == p2.transcript.text.extracted.sha256
     assert [(s.pdf_page, s.char_start) for s in p1.transcript.text.spans] == [(s.pdf_page, s.char_start) for s in p2.transcript.text.spans]
     assert timedelta(0) == timedelta(0) and os.path.exists(str(CALLS))
+
+
+# ---------------------------------------------------------------------------------------------- the history (Plan 04b, #265)
+HUL_PDF = "HINDUNILVR_04082026171319_SEIntimationTranscriptofEarningsCallSigned.pdf"
+HIST = [("HUL_a.pdf", datetime(2025, 2, 3, 12, 0, tzinfo=UTC), "Q3 FY25"), ("HUL_b.pdf", datetime(2025, 5, 12, 12, 0, tzinfo=UTC), "Q4 FY25"),
+        ("HUL_c.pdf", datetime(2025, 8, 11, 12, 0, tzinfo=UTC), "Q1 FY26")]
+
+
+def history_filings(co):
+    return [filing(co, name, when, key=season) for name, when, season in HIST]
+
+
+@needs_fixtures
+def test_a_backfill_processes_every_season_oldest_first_and_a_refresh_still_stops_at_the_newest_stored():
+    f = Files({name: HUL_PDF for name, _, _ in HIST})
+    plans = pl.process_company(run_for(f), CO["hul"], history_filings(CO["hul"]), [], weekly=False, newest_call=None, history=True)
+    assert [(p.season, p.status) for p in plans] == [(s, "stored") for _, _, s in HIST]               # one call per season, oldest first
+    assert [u.rsplit("/", 1)[-1] for u in f.asked] == [n for n, _, _ in HIST]
+    f = Files({name: HUL_PDF for name, _, _ in HIST})
+    [only] = pl.process_company(run_for(f), CO["hul"], history_filings(CO["hul"]), [], weekly=False, newest_call=None)
+    assert only.season == "Q1 FY26" and len(f.asked) == 1                                              # 2B-lite's rule, unchanged
+
+
+@needs_fixtures
+def test_a_company_with_a_revised_transcript_in_an_old_season_keeps_its_first_version():
+    first = filing(CO["hul"], "HUL_a.pdf", datetime(2025, 2, 3, 12, 0, tzinfo=UTC), key="1")
+    again = filing(CO["hul"], "HUL_a2.pdf", datetime(2025, 2, 5, 12, 0, tzinfo=UTC), key="2")
+    f = Files({"HUL_a.pdf": HUL_PDF, "HUL_a2.pdf": HUL_PDF})
+    [p] = pl.process_company(run_for(f), CO["hul"], [first, again], [], weekly=False, newest_call=None, history=True)
+    assert p.season == "Q3 FY25" and p.filing.filing_key == "1" and p.transcript.external_key == "NSE/HUL_a.pdf"
+    assert [(x.kind, x.filing.filing_key) for x in p.extras] == [("revised", "2")]
+
+
+@needs_fixtures
+def test_first_pages_are_not_opened_before_first_pages_from_and_are_from_it():
+    q4 = ann("other", "Outcome of analyst meet", datetime(2026, 5, 12, 12, 0, tzinfo=UTC), "q4", "Outcome_Q4.pdf", NSE + "Outcome_Q4.pdf",
+             CO["hul"].entity_id)
+    q1 = ann("other", "Outcome of analyst meet", datetime(2026, 8, 4, 11, 43, tzinfo=UTC), "q1", "Outcome_Q1.pdf", NSE + "Outcome_Q1.pdf",
+             CO["hul"].entity_id)
+    results = [res(1, (2026, 5, 10), date(2026, 3, 31)), res(2, (2026, 7, 24), date(2026, 6, 30))]
+    f = Files({"Outcome_Q4.pdf": HUL_PDF, "Outcome_Q1.pdf": HUL_PDF})
+    run = run_for(f)
+    plans = pl.process_company(run, CO["hul"], [q4, q1], results, weekly=False, newest_call=None, history=True, first_pages_from="Q1 FY27")
+    assert [p.season for p in plans] == ["Q1 FY27"] and run.report.first_pages == 1
+    assert [u.rsplit("/", 1)[-1] for u in f.asked] == ["Outcome_Q1.pdf"]                              # nothing opened for Q4 FY26
+    f = Files({"Outcome_Q4.pdf": HUL_PDF, "Outcome_Q1.pdf": HUL_PDF})
+    run = run_for(f)
+    plans = pl.process_company(run, CO["hul"], [q4, q1], results, weekly=False, newest_call=None, history=True)      # no boundary
+    assert [p.season for p in plans] == ["Q4 FY26", "Q1 FY27"] and run.report.first_pages == 2
+
+
+@needs_fixtures
+def test_a_weekly_run_after_a_history_backfill_fetches_nothing_older_than_the_newest_call():
+    filings = history_filings(CO["hul"])
+    f = Files({name: HUL_PDF for name, _, _ in HIST})
+    assert pl.process_company(run_for(f), CO["hul"], filings, [], weekly=True, newest_call="Q1 FY26") == [] and f.asked == []
+    newer = filing(CO["hul"], "HUL_d.pdf", datetime(2025, 11, 4, 12, 0, tzinfo=UTC), key="Q2 FY26")
+    f = Files({"HUL_d.pdf": HUL_PDF, **{name: HUL_PDF for name, _, _ in HIST}})
+    [p] = pl.process_company(run_for(f), CO["hul"], [*filings, newer], [], weekly=True, newest_call="Q1 FY26")
+    assert p.season == "Q2 FY26" and [u.rsplit("/", 1)[-1] for u in f.asked] == ["HUL_d.pdf"]
+
+
+@needs_fixtures
+def test_the_latest_call_is_the_same_with_older_calls_present():
+    f = Files({name: HUL_PDF for name, _, _ in HIST})
+    with_history = pl.process_company(run_for(f), CO["hul"], history_filings(CO["hul"]), [], weekly=False, newest_call=None, history=True)
+    f = Files({name: HUL_PDF for name, _, _ in HIST})
+    [lite] = pl.process_company(run_for(f), CO["hul"], history_filings(CO["hul"]), [], weekly=False, newest_call=None)
+    latest = max((p for p in with_history if p.is_stored), key=lambda p: rows.season_order(p.season))
+    assert (latest.season, latest.filing.filing_key) == (lite.season, lite.filing.filing_key)
+    assert latest.transcript.text.extracted.sha256 == lite.transcript.text.extracted.sha256
+
+
+def _plan(co, season, status, reason=None):
+    a = filing(co, f"{co.slug}-{season}.pdf", datetime(2026, 8, 4, 11, 43, tzinfo=UTC), key=f"{co.slug}{season}")
+    return pl.CallPlan(co, season, a, status, "exchange_pdf" if status == "stored" else "none", rows.Quarter("Q1 FY27", date(2026, 6, 30), "text"),
+                       status_reason=reason)
+
+
+def _filed(co, season):
+    return ann("transcript", "t", datetime(2026, 8, 4, 11, 43, tzinfo=UTC), f"{co.slug}{season}", "t.pdf", NSE + "t.pdf", co.entity_id, season=season)
+
+
+def test_coverage_by_season_counts_each_outcome_oldest_season_first():
+    hul, cipla, maruti, nestle = CO["hul"], CO["cipla"], CO["maruti"], CO["nestle"]
+    filed = [_filed(c, "Q4 FY26") for c in (hul, cipla, maruti, nestle)] + [_filed(c, "Q1 FY27") for c in (hul, cipla)]
+    plans = [_plan(hul, "Q4 FY26", "stored"), _plan(cipla, "Q4 FY26", "on_company_website"), _plan(maruti, "Q4 FY26", "stored", "quarter_conflict"),
+             _plan(hul, "Q1 FY27", "stored"), _plan(cipla, "Q1 FY27", "stored")]
+    cov = pl.coverage_by_season(filed, plans)
+    assert [(c.season, c.companies, c.stored, c.on_company_website, c.unreadable, c.held, c.no_call) for c in cov] == [
+        ("Q4 FY26", 4, 1, 1, 0, 1, 1), ("Q1 FY27", 2, 2, 0, 0, 0, 0)]
+    assert pl.format_coverage(cov) == (
+        "Q4 FY26: 4 companies with a transcript filing, 1 stored (25%), 1 on_company_website, 0 unreadable, 1 held, 1 with no call; "
+        "Q1 FY27: 2 companies with a transcript filing, 2 stored (100%), 0 on_company_website, 0 unreadable, 0 held, 0 with no call")
+    assert pl.format_coverage([]) == "no transcript filings"
+    # a first-page find has no transcript announcement, only its plan: it still counts as a company with a filing
+    [c] = pl.coverage_by_season([], [_plan(hul, "Q3 FY25", "stored")])
+    assert (c.season, c.companies, c.stored, c.no_call) == ("Q3 FY25", 1, 1, 0)
+
+
+def test_the_raw_storage_summary_reports_this_runs_bytes_and_the_buckets_size_against_the_stop():
+    ok, d = pl.storage_summary(120, 155_600_000, 580_200_000, 850)
+    assert ok and d == ("this run stored 120 files, 148.4 MB at source size; the raw bucket holds 553.3 MB of stored objects, "
+                        "under the 850 MB stop")
+    ok, d = pl.storage_summary(10, 0, 851 * 1024 * 1024, 850)
+    assert not ok and "OVER the 850 MB stop" in d
+    ok, d = pl.storage_summary(0, 0, 850 * 1024 * 1024, 850)
+    assert ok and "under the 850 MB stop" in d                                   # exactly at the stop is not over it
+    ok, d = pl.storage_summary(3, 1024, None, 850)
+    assert not ok and "couldn't be read" in d and "850 MB" in d

@@ -63,6 +63,14 @@ jobs:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           ANTHROPIC_API_KEY: ${{ inputs.ai != 'off' && secrets.ANTHROPIC_API_KEY || '' }}
           VOYAGE_API_KEY: ${{ inputs.ai != 'off' && secrets.VOYAGE_API_KEY || '' }}
+      # #263: after a successful production run, load the main pages a few times so the first real visitor gets the data
+      # the run just stored (ops/warm-site.sh). It reads public pages and takes no secret.
+      # It sits before the dead-man check, which stays the last step (py/tests/test_health.py), and can't fail the run:
+      # the data is already stored, and a warm-up that fails must not stop the ping.
+      - name: Warm the site
+        if: success() && env.FT_TARGET == 'production'
+        continue-on-error: true
+        run: bash "$GITHUB_WORKSPACE/ops/warm-site.sh"
       # S3 (#198): the dead-man check. A production run that succeeded pings the monitor, which emails Anand when a
       # day passes without a ping. Skipped with no secret; a manual dev run never pings.
       - name: Ping the dead-man check

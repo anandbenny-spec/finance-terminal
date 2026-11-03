@@ -112,6 +112,19 @@ def test_no_window_is_longer_than_twelve_months():
     assert dc.split_range(D(2026, 7, 1), D(2026, 11, 1)) == [(D(2026, 7, 1), D(2026, 11, 1))]
 
 
+def test_a_backfill_without_since_starts_at_history_from_and_an_explicit_since_wins():
+    cfg = dc.load_calls_config()
+    assert (cfg.history_from, cfg.first_pages_from, cfg.raw_storage_stop_mb) == (D(2025, 1, 1), "Q1 FY27", 850)
+    assert dc.window_start(None, None, backfill=True, history_from=cfg.history_from) == D(2025, 1, 1)
+    latest = datetime(2026, 8, 20, tzinfo=dc.INDIA)
+    assert dc.window_start(None, latest, backfill=True, history_from=cfg.history_from) == D(2025, 1, 1)    # a backfill is not a weekly run
+    assert dc.window_start(D(2026, 7, 1), None, backfill=True, history_from=cfg.history_from) == D(2026, 7, 1)
+    assert dc.window_start(None, latest, backfill=False, history_from=cfg.history_from) == D(2026, 8, 6)    # weekly: unchanged
+    assert dc.window_start(None, None, backfill=False, history_from=cfg.history_from) == D(2026, 7, 1)      # refresh: unchanged
+    ws = dc.split_range(cfg.history_from, D(2026, 11, 3))
+    assert len(ws) == 2 and all((b - a).days + 1 <= 365 for a, b in ws)                                    # two windows of 12 months or less
+
+
 # ---------------------------------------------------------------------------------------------- the ISIN join
 def test_the_isin_join_follows_a_rename():
     old = dc.Company(1, "tata-motors", "TATAMOTORS", "INE155A01022", "500570", None,
@@ -124,6 +137,48 @@ def test_the_isin_join_follows_a_rename():
     assert idx.resolve(dc.norm_nse({**row, "sm_isin": "", "symbol": "TMPV"})) == 1      # no ISIN: the symbol decides
     assert idx.resolve(dc.norm_nse({**row, "sm_isin": "INE000X01010", "symbol": "TATAMOTORS"})) is None   # a stranger ISIN
     assert idx.resolve(dc.norm_nse({**row, "sm_isin": "INE059A01026", "symbol": "TMPV"})) == 2   # the ISIN beats the symbol
+
+
+def _co(i, slug, symbol, isin, symbols=(), isins=()):
+    return dc.Company(i, slug, symbol, isin, None, None, frozenset({symbol, *symbols}), frozenset({isin, *isins}))
+
+
+def _row(isin, symbol, seq="7"):
+    return dc.norm_nse({"seq_id": seq, "exchdisstime": "23-Jul-2026 18:04:00", "attchmntText": "Transcript of call",
+                        "sm_isin": isin, "symbol": symbol,
+                        "attchmntFile": "https://nsearchives.nseindia.com/corporate/x.pdf"})
+
+
+def test_the_issuer_stem_is_the_first_nine_characters_of_an_isin_shaped_value():
+    assert dc.isin_stem("INE090A01021") == "INE090A01" == dc.isin_stem("INE090A01013")
+    for bad in (None, "", "-", "NA", "INE090A0102", "INE090A010213", "ine090a01021", "US0378331005"):
+        assert dc.isin_stem(bad) is None, bad
+
+
+def test_an_earlier_isin_of_the_same_shares_joins_on_the_symbol_and_the_issuer_stem():
+    """#264: NSE's rows carry the ISIN from before a split or bonus; the universe holds the current one."""
+    icici, cipla = _co(1, "icicibank", "ICICIBANK", "INE090A01021"), _co(2, "cipla", "CIPLA", "INE059A01026")
+    idx = dc.CompanyIndex([icici, cipla])
+    assert idx.match(_row("INE090A01013", "ICICIBANK")) == (icici, "earlier_isin")
+    assert idx.resolve(_row("INE090A01013", "ICICIBANK")) == 1
+    assert idx.match(_row("INE090A01021", "ICICIBANK")) == (icici, "isin")          # the current ISIN joins as before
+    assert idx.resolve(_row("INE090A01013", "OTHERSYM")) is None                   # the stem fits, the symbol doesn't
+    assert idx.resolve(_row("INE000X01010", "ICICIBANK")) is None                  # the symbol fits, the ISIN is a stranger's
+    assert idx.resolve(_row("INE059A01026", "ICICIBANK")) == 2                     # an ISIN that names another company wins
+    assert idx.resolve(_row("-", "ICICIBANK")) is None                             # a placeholder is not guessed at
+    assert idx.match(_row("", "ICICIBANK")) == (icici, "symbol")                   # no ISIN: the symbol decides, as before
+
+
+def test_the_earlier_isin_rule_follows_the_symbol_history_but_never_a_reused_symbol():
+    tata = _co(1, "tata-motors", "TMPV", "INE155A01022", symbols={"TATAMOTORS"})
+    idx = dc.CompanyIndex([tata])
+    assert idx.match(_row("INE155A01014", "TATAMOTORS")) == (tata, "earlier_isin")     # old symbol, earlier ISIN, same stem
+    assert idx.resolve(_row("INE000X01010", "TATAMOTORS")) is None                    # the demerged company's own ISIN
+
+
+def test_a_symbol_held_by_two_companies_with_the_same_stem_is_not_guessed():
+    a, b = _co(1, "a", "AAA", "INE111A01011", symbols={"SHARED"}), _co(2, "b", "BBB", "INE111A01029", symbols={"SHARED"})
+    assert dc.CompanyIndex([a, b]).resolve(_row("INE111A01003", "SHARED")) is None
 
 
 # ---------------------------------------------------------------------------------------------- window splitting
@@ -241,6 +296,20 @@ def test_the_saved_replies_join_to_their_companies_on_isin():
     for i, c in enumerate(cos, 1):
         rows = [dc.norm_nse(r) for r in nse_rows(c.symbol)]
         assert all(idx.resolve(a) == i for a in rows if a.isin), c.symbol
+
+
+@needs_fixtures
+def test_the_saved_replies_of_companies_whose_isin_changed_join_through_the_issuer_stem():
+    """#264, on real rows: dev's universe (2 Nov 2026) holds the current ISINs of ICICI Bank, Apollo Hospitals and Asian
+    Paints; NSE's rows (saved 21 Oct 2026) carry earlier ones. Before the fix none of their rows joined."""
+    universe = {"ICICIBANK": "INE090A01021", "APOLLOHOSP": "INE437A01024", "ASIANPAINT": "INE021A01026"}
+    cos = [_co(i, sym.lower(), sym, isin) for i, (sym, isin) in enumerate(universe.items(), 1)]
+    idx = dc.CompanyIndex(cos)
+    for i, sym in enumerate(universe, 1):
+        rows = [dc.norm_nse(r) for r in nse_rows(sym)]
+        assert rows and all(a.isin and a.isin != universe[sym] for a in rows), sym
+        assert {idx.match(a)[1] for a in rows} == {"earlier_isin"}, sym
+        assert {idx.resolve(a) for a in rows} == {i}, sym
 
 
 # ---------------------------------------------------------------------------------------------- through the runner
@@ -382,7 +451,7 @@ def test_a_backfill_stores_every_reply_classifies_the_filings_and_registers_noth
         make_company(s, isin_of(s))
     make_company("NOFILE", "INE000N01010", results_on=D(2026, 8, 12))
     ex = Exchanges()
-    code, tr = go(ex)
+    code, tr = go(ex, since=D(2026, 7, 1))        # #265: a backfill without --since now starts at history_from (2025-01-01)
     assert code == 0 and tr[0] == "success" and tr[1] == 0, tr
     c = checks(tr)
     assert c["nse_answered"]["passed"] and "answered for 4 of 4" in c["nse_answered"]["detail"]
@@ -419,7 +488,7 @@ def test_bse_serves_a_company_nse_refuses_and_the_refusals_are_counted(s3):
     make_company("SRF", "INE647A01010", "503806")
     ex = Exchanges()
     ex.nse_status["SRF"] = 403
-    code, tr = go(ex)
+    code, tr = go(ex, since=D(2026, 7, 1))       # #265: the default window is now two windows, so two refusals; one window here
     assert code == 0 and tr[0] == "success", tr
     c = checks(tr)
     assert c["nse_answered"]["passed"] and "BSE fallback served zc-srf" in c["nse_answered"]["detail"]
@@ -448,6 +517,48 @@ def test_a_company_nse_and_bse_both_fail_for_fails_the_run(s3):
     assert code != 0 and tr[0] == "checks_failed", tr
     c = checks(tr)["nse_answered"]
     assert not c["passed"] and c["blocking"] and "no answer for zc-cipla" in c["detail"]
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_company_whose_universe_isin_differs_from_its_rows_is_joined_and_the_rows_are_named(s3):
+    make_company("ICICIBANK", "INE090A01021")                     # the universe holds the current ISIN; NSE's rows carry INE090A01013
+    code, tr = go(Exchanges())
+    assert code == 0 and tr[0] == "success", tr
+    c = checks(tr)
+    transcripts = [a for a in TASKS[0].announcements if a.is_transcript]
+    assert transcripts and all(a.entity_id is not None and a.joined_by == "earlier_isin" for a in transcripts)
+    assert c["unmatched_isin"]["passed"] and c["unmatched_isin"]["detail"].startswith("0 transcript rows")
+    e = c["joined_by_earlier_isin"]
+    assert e["passed"] and not e["blocking"] and e["detail"].startswith(f"{len(transcripts)} transcript rows joined")
+    assert "zc-icicibank ICICIBANK/ICICIBANK ISIN INE090A01013 (universe: INE090A01021)" in e["detail"]
+    assert all(f"seq {a.filing_key}" in e["detail"] for a in transcripts)
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_row_that_fits_no_company_stays_unmatched_and_is_named(s3):
+    make_company("CIPLA", "INE000Z01010")                         # an ISIN that shares nothing with the rows' INE059A01026
+    code, tr = go(Exchanges())
+    assert code == 0 and tr[0] == "success", tr
+    c = checks(tr)
+    transcripts = [a for a in TASKS[0].announcements if a.is_transcript]
+    assert transcripts and all(a.entity_id is None and a.joined_by is None for a in transcripts)
+    u = c["unmatched_isin"]
+    assert not u["passed"] and not u["blocking"] and u["detail"].startswith(f"{len(transcripts)} transcript rows whose ISIN")
+    assert "CIPLA/CIPLA ISIN INE059A01026" in u["detail"] and all(f"seq {a.filing_key}" in u["detail"] for a in transcripts)
+    assert c["joined_by_earlier_isin"]["detail"].startswith("0 transcript rows")
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_backfill_without_since_reads_nse_from_history_from_in_windows_of_12_months_or_less(s3):
+    make_company("CIPLA", isin_of("CIPLA"))
+    ex = Exchanges()
+    code, tr = go(ex)                                          # no --since
+    assert code == 0 and tr[0] == "success", tr
+    asked = sorted({(r.url.params["from_date"], r.url.params["to_date"]) for r in ex.seen if r.url.path == dc.NSE_ANN_PATH})
+    assert asked == [("01-01-2025", "31-12-2025"), ("01-01-2026", "28-10-2026")]
 
 
 @pytest.mark.db

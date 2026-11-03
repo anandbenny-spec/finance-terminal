@@ -5,8 +5,9 @@
 // - api.task_freshness turns a task "stale" by itself once its runs stop (F17). A task whose last run failed is
 //   "delayed" (the last good data stays: "Update delayed"). A task with no freshness row, or none that ever
 //   succeeded, isn't current either: it counts as stale (fail closed).
-// - "Checked" is the oldest of the counted tasks' last successes, so it never claims the data is fresher than its
-//   least recent part.
+// - "Checked" is the oldest last success among the tasks it is asked to count (the status bar passes the daily
+//   tasks only: Anand, 3 Nov 2026, #263), so it never claims the data is fresher than its least recent counted part.
+//   Delayed and stale always count every task given.
 import type { TaskFreshnessRow } from "@/lib/queries/api";
 import { formatCheckedTime, formatDate, type Instant } from "@/lib/format";
 
@@ -26,8 +27,17 @@ function sources(n: number): string {
   return n === 1 ? "1 source" : `${n} sources`;
 }
 
-/** The summary for `tasks` at `now` (the year of the checked time depends on it). */
-export function summarise(rows: readonly TaskFreshnessRow[], tasks: readonly string[], now: Instant): FreshnessSummary {
+/**
+ * The summary for `tasks` at `now` (the year of the checked time depends on it). `checkedTasks` limits which of them
+ * set the "checked" time (default: all of them); when none of `tasks` is in it, every task in `tasks` counts, so the
+ * time still never claims more than its least recent part.
+ */
+export function summarise(
+  rows: readonly TaskFreshnessRow[],
+  tasks: readonly string[],
+  now: Instant,
+  checkedTasks: readonly string[] = tasks,
+): FreshnessSummary {
   const byKey = new Map(rows.map((r) => [r.task_key, r]));
   const states = tasks.map((t) => taskState(byKey.get(t)));
   const delayed = states.filter((s) => s === "delayed").length;
@@ -37,7 +47,10 @@ export function summarise(rows: readonly TaskFreshnessRow[], tasks: readonly str
     return { state: "behind", text: parts.filter(Boolean).join(", "), delayed, stale };
   }
   if (tasks.length === 0) return { state: "current", text: "All data current", delayed: 0, stale: 0 };
-  const oldest = tasks.map((t) => byKey.get(t)!.last_success_at!).reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b));
+  const counted = tasks.filter((t) => checkedTasks.includes(t));
+  const oldest = (counted.length > 0 ? counted : tasks)
+    .map((t) => byKey.get(t)!.last_success_at!)
+    .reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b));
   return { state: "current", text: `All data current · checked ${formatCheckedTime(oldest, now)}`, delayed: 0, stale: 0 };
 }
 

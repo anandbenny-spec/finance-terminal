@@ -627,3 +627,95 @@ def test_the_database_keep_alive_fails_when_the_secret_is_missing_and_never_call
 def test_the_database_keep_alive_says_so_when_psql_is_missing(tmp_path):
     code, out, argv = _run_keepalive_db(tmp_path, with_psql=False)
     assert code == 1 and "::error title=keepalive-db::psql is not on this runner image" in out and argv is None
+
+
+# ---------------------------------------------------------------- warming the site after a run (#263)
+
+WARM_SCRIPT = Path(__file__).resolve().parents[2] / "ops" / "warm-site.sh"
+WARM_STEP_IF = "success() && env.FT_TARGET == 'production'"
+WARM_PATHS = ["/", "/policy", "/accuracy", "/screener"]
+SHARED_LINK = "https://finance-terminal-phi.vercel.app"
+
+
+def _run_warm(tmp_path, *, codes=None, curl_fails=(), env=None, with_curl=True):
+    """Run ops/warm-site.sh with a stand-in `curl`; returns (exit code, output, the URLs asked for, in order).
+
+    `codes` maps a path to the HTTP codes its successive loads get (the last one repeats; default 200); a path in
+    `curl_fails` makes curl exit 7 with nothing written, as it does when the host can't be reached."""
+    log, state = tmp_path / "curl.log", tmp_path / "curl-state.json"
+    state.write_text(json.dumps({"codes": codes or {}, "fails": list(curl_fails), "seen": {}}))
+    if with_curl:
+        curl = tmp_path / "curl"
+        curl.write_text(f"""#!{sys.executable}
+import json, sys
+args = sys.argv[1:]
+url = args[-1]
+open({str(log)!r}, "a").write(url + "\\n")
+state = json.load(open({str(state)!r}))
+path = "/" + url.split("/", 3)[3] if url.count("/") >= 3 else "/"
+n = state["seen"].get(path, 0)
+state["seen"][path] = n + 1
+json.dump(state, open({str(state)!r}, "w"))
+if path in state["fails"]:
+    sys.exit(7)
+codes = state["codes"].get(path, [200])
+code = codes[min(n, len(codes) - 1)]
+header_file = args[args.index("-D") + 1]
+open(header_file, "w").write(f"HTTP/2 {{code}}\\r\\nAge: 12\\r\\nX-Vercel-Cache: HIT\\r\\n\\r\\n")
+sys.stdout.write(str(code))
+""")
+        curl.chmod(0o755)
+    run_env = {"PATH": f"{tmp_path}{os.pathsep}/usr/bin:/bin", "WARM_GAP_SECONDS": "0", **(env or {})}
+    bash = next(p for p in ("/usr/bin/bash", "/bin/bash") if Path(p).exists())
+    done = subprocess.run([bash, str(WARM_SCRIPT)], check=False, env=run_env, capture_output=True, text=True, timeout=30)
+    urls = log.read_text().split() if log.exists() else []
+    return done.returncode, done.stdout + done.stderr, urls
+
+
+@pytest.mark.parametrize("name", SCHEDULED)
+def test_each_scheduled_job_workflow_warms_the_site_after_its_run_and_only_after_a_successful_production_run(name):
+    steps = load(name)["jobs"]["run"]["steps"]
+    names = [s.get("name") for s in steps]
+    warm = steps[names.index("Warm the site")]
+    assert warm["if"] == WARM_STEP_IF
+    assert warm["run"] == 'bash "$GITHUB_WORKSPACE/ops/warm-site.sh"'
+    assert "env" not in warm and "secrets." not in warm["run"] and "inputs." not in warm["run"]
+    assert warm["continue-on-error"] is True                                       # a failed warm-up never fails the run
+    assert names.index("Run") < names.index("Warm the site")                       # only a stored result is warmed
+    assert WARM_SCRIPT.exists() and os.access(WARM_SCRIPT, os.X_OK)
+
+
+def test_the_daily_workflow_warms_before_the_dead_man_ping_and_keeps_the_ping_last():
+    names = [s.get("name") for s in load("daily")["jobs"]["run"]["steps"]]
+    assert names.index("Warm the site") < names.index("Ping the dead-man check") == len(names) - 1   # test_health.py pins the ping last
+
+
+def test_the_warm_up_loads_every_page_each_round_with_no_query_string_and_no_secret(tmp_path):
+    code, out, urls = _run_warm(tmp_path, env={"SITE_URL": "https://example.test/"})
+    assert code == 0 and "::warning" not in out
+    assert urls == [f"https://example.test{p}" for _ in range(3) for p in WARM_PATHS]       # three rounds, trailing slash dropped
+    assert not any("?" in u for u in urls)                                                     # the cache ignores a query string
+    assert "round 3 /policy 200 x-vercel-cache=HIT age=12" in out                            # the record of the two-loads check
+
+
+def test_the_warm_up_defaults_to_the_shared_link_and_honours_the_round_count(tmp_path):
+    code, _out, urls = _run_warm(tmp_path, env={"WARM_ROUNDS": "2"})
+    assert code == 0 and urls == [f"{SHARED_LINK}{p}" for _ in range(2) for p in WARM_PATHS]
+
+
+def test_the_warm_up_warns_but_succeeds_when_a_page_does_not_answer_in_the_last_round(tmp_path):
+    code, out, _urls = _run_warm(tmp_path, codes={"/policy": [200, 200, 503]}, curl_fails=["/screener"])
+    assert code == 0
+    assert "round 3 /policy 503" in out and "round 3 /screener 000" in out
+    assert "::warning title=warm-site::2 of 4 pages did not answer 200 in the last round" in out
+
+
+def test_the_warm_up_stays_quiet_when_only_an_early_round_failed(tmp_path):
+    code, out, _urls = _run_warm(tmp_path, codes={"/": [503, 200]})
+    assert code == 0 and "round 1 / 503" in out and "::warning" not in out
+
+
+@pytest.mark.parametrize("env", [{"WARM_ROUNDS": "many"}, {"WARM_GAP_SECONDS": "-5"}])
+def test_the_warm_up_loads_nothing_and_warns_when_its_settings_are_not_whole_numbers(tmp_path, env):
+    code, out, urls = _run_warm(tmp_path, env=env)
+    assert code == 0 and urls == [] and "::warning title=warm-site::WARM_ROUNDS and WARM_GAP_SECONDS must be whole numbers" in out

@@ -1,8 +1,10 @@
-"""equity.call_transcripts: earnings-call transcripts over the last two seasons (Spec 02B §5.1, §5.2, §13.3, §13.4).
+"""equity.call_transcripts: earnings-call transcripts, the last two seasons and the history (Spec 02B §5.1, §5.2, §13.3,
+§13.4; Plan 04b P1-P5).
 
 Part 1 (2B-06) is discovery: the transcript filings and call intimations, found and classified. Part 2 (2B-07), at the
 end of this file's `fetch` and `load`, takes those announcements and, per company, picks the newest season with a
-transcript filing (and the season before it only if that call doesn't end `stored`), fetches each filing once, classifies
+transcript filing (and the season before it only if that call doesn't end `stored`; **a backfill takes every season in
+its window**, Plan 04b P2), fetches each filing once, classifies
 the PDF, follows a cover letter's links to the company's own PDF (or the curated table's), reads the text with each
 physical page's code-point range, and writes the call: a `core.event` of type `earnings_call` and its
 `equity.earnings_call` row (every processed call, whatever its status), the `call_transcript` and `call_cover_letter`
@@ -12,8 +14,9 @@ documents and the `equity.transcript_page` rows. Rows are unpublished: 2B-09 pub
 Discovery registers nothing: every reply is stored as a raw file (`ft/storage.py`, through the fetcher), and the
 announcements live in those stored replies, so there is no table for them.
 
-Per company the task asks NSE for `/api/corporate-announcements` over the window (backfill: 1 Jul 2026 to the run's
-date; weekly: the latest stored dissemination time minus 14 days to today), under the current symbol and any symbol the
+Per company the task asks NSE for `/api/corporate-announcements` over the window (backfill: `--since`, else
+`history_from` in `config/equity/calls.yaml`, 1 Jan 2025, to the run's date; weekly: the latest stored dissemination time
+minus 14 days to today), under the current symbol and any symbol the
 company had in the window. BSE is the fallback (D10) when NSE fails for a company, or answers with no rows for a window
 in which the company's results are filed. `ft/equity/calls/discovery.py` holds the logic (window splitting, the stop
 after 10 companies in a row, the classification, seasons); this class supplies the network and the database.
@@ -24,8 +27,16 @@ Checks, B blocking, W warning:
 - (W) `refusals`: every 401, 403 and 429, counted;
 - (W) `transcripts_found`: each company-season whose results are filed and at least 45 days old but has no transcript
   filing, named (2B-07 opens first pages for these);
-- (W) `unmatched_isin`: transcript rows whose ISIN matches no universe company, counted;
-- (W) `discovery_summary`: transcripts and intimations per season (always passes).
+- (W) `unmatched_isin`: transcript rows whose ISIN matches no universe company, counted and each one named (symbol
+  asked / row symbol, ISIN as given, season, the exchange's id, subject to 80 characters; #264);
+- (W) `joined_by_earlier_isin`: transcript rows joined on the symbol and the issuer part of an earlier ISIN, named
+  (always passes; #264);
+- (W) `discovery_summary`: transcripts and intimations per season (always passes);
+- (W) `coverage_by_season` (Plan 04b P4): per season, the companies with a transcript filing and the calls stored,
+  on_company_website, unreadable, held, with no call, and the share stored (always passes: history is reported, not stopped on;
+  §13.3's 90% applies to the latest call only);
+- (W) `raw_storage` (Plan 04b P5): the files and bytes this run stored, and the raw bucket's stored size against the stop
+  in `config/equity/calls.yaml` (850 MB); fails when the bucket is over it or can't be read.
 """
 from __future__ import annotations
 
@@ -53,6 +64,7 @@ from ft.jobs.runner import Alert, Check, Context
 from ft.jobs.tasks import register
 
 SHOWN = 12
+ROWS_SHOWN = 60                                  # filing rows named in a check (#264)
 NO_TRANSCRIPT_AFTER = timedelta(days=45)         # §5.1: results filed and at least 45 days old
 NSE_HEADERS = {"Referer": dc.NSE_REFERER, "Accept": "application/json, text/plain, */*"}
 BSE_HEADERS = {"Origin": "https://www.bseindia.com", "Referer": "https://www.bseindia.com/",
@@ -62,6 +74,20 @@ ALLOWED_FAILURES = 2                             # of the 50 (§5.1: at least 48
 
 def _names(items: list[str]) -> str:
     return "; ".join(items[:SHOWN]) + (f"; and {len(items) - SHOWN} more" if len(items) > SHOWN else "")
+
+
+def _rows(items: list[str]) -> str:
+    """Filing rows named one by one (#264: every unmatched row is named, so none is lost silently); a long list is cut."""
+    return "; ".join(items[:ROWS_SHOWN]) + (f"; and {len(items) - ROWS_SHOWN} more" if len(items) > ROWS_SHOWN else "")
+
+
+def _row_name(a, company=None) -> str:
+    """One filing row by its identifiers: the symbol asked / the row's symbol, the ISIN as given, season and the exchange's
+    own id, then the subject cut to 80 characters (a filing's subject, never transcript text)."""
+    who = f"{company.slug} " if company is not None else ""
+    now = f" (universe: {company.isin})" if company is not None and company.isin else ""
+    return (f"{who}{a.queried or '-'}/{a.symbol or '-'} ISIN {a.isin or 'none'}{now} {a.season} seq {a.filing_key}: "
+            f"{a.subject[:80]}")
 
 
 @register
@@ -77,6 +103,8 @@ class EquityCallTranscripts(DocumentJob):
         self.plans: list[pl.CallPlan] = []                    # the calls to write (part 2)
         self.report = pl.Report()
         self.storage_host = ""
+        self.storage = None                                   # the object store, for the raw_storage check
+        self.cfg: dc.CallsConfig | None = None
         self.conflicts: list[str] = []
 
     def due(self, db, workflow: str, now=None) -> Due:
@@ -154,7 +182,8 @@ class EquityCallTranscripts(DocumentJob):
         db = ctx.fetcher.db
         today = ctx.now.astimezone(dc.INDIA).date()
         latest = db.execute("select max(published_at) from core.document where doc_type = %s", (self.doc_type,)).fetchone()[0]
-        start = dc.window_start(ctx.since, latest)
+        self.cfg = dc.load_calls_config()
+        start = dc.window_start(ctx.since, latest, backfill=ctx.workflow == "backfill", history_from=self.cfg.history_from)
         end = min(ctx.until or today, today)
         companies = self.companies(db, start)
         index = dc.CompanyIndex(companies)
@@ -165,24 +194,24 @@ class EquityCallTranscripts(DocumentJob):
         found: list[dc.Announcement] = []
         for co in companies:
             res = dc.CompanyResult(co)
-            rows: list[dict] = []
+            rows: list[tuple[str, dict]] = []                       # (the symbol asked, the row)
             symbols = [co.symbol] + sorted(co.symbols - {co.symbol})
             ok = True
             for sym in symbols:
                 got, logs, sym_ok, refused = dc.nse_symbol(nse, sym, start, end)
-                rows += got
+                rows += [(sym, r) for r in got]
                 res.windows += logs
                 res.refused += refused
                 ok &= sym_ok
                 if not sym_ok:
                     res.errors.append(f"NSE {sym}: " + ", ".join(sorted({str(x.status) for x in logs if not x.answered})))
             res.nse_answered, res.nse_rows = ok, len(rows)
-            for r in rows:
+            for sym, r in rows:
                 a = dc.norm_nse(r)
                 if a is None:
                     notes["unreadable"] += 1
                     continue
-                res.announcements.append(self._join(a, index))
+                res.announcements.append(self._join(replace(a, queried=sym), index))
             filed = self.results_filed(db, co.entity_id)
             if co.bse_code and (not ok or (not rows and dc.results_filed_in((start, end), filed))):
                 res.bse_used = True
@@ -208,8 +237,10 @@ class EquityCallTranscripts(DocumentJob):
 
     @staticmethod
     def _join(a: dc.Announcement, index: dc.CompanyIndex, asked: dc.Company | None = None) -> dc.Announcement:
-        eid = asked.entity_id if (asked and a.exchange == "BSE") else index.resolve(a)
-        return replace(a, entity_id=eid)
+        if asked and a.exchange == "BSE":
+            return replace(a, entity_id=asked.entity_id, joined_by="asked")
+        c, how = index.match(a)
+        return replace(a, entity_id=c.entity_id if c else None, joined_by=how)
 
 
     # ================================================================== part 2 (2B-07): fetch, text, the call rows
@@ -218,9 +249,10 @@ class EquityCallTranscripts(DocumentJob):
         self.report, self.plans, self.conflicts = pl.Report(), [], []
         db = ctx.fetcher.db
         try:
-            self.storage_host = ctx.fetcher.storage()._s3.meta.endpoint_url or ""
-        except Exception:                                      # noqa: BLE001 - only the "no link to our copy" check uses it
-            self.storage_host = ""
+            self.storage = ctx.fetcher.storage()
+            self.storage_host = self.storage._s3.meta.endpoint_url or ""
+        except Exception:                                      # noqa: BLE001 - only the storage checks use it
+            self.storage, self.storage_host = None, ""
         names = dict(db.execute("select id, name from core.entity where kind = 'company'").fetchall())
         by_entity: dict[int, str] = {}                         # the season of each company's newest call (weekly runs)
         if ctx.workflow == "weekly":
@@ -233,7 +265,8 @@ class EquityCallTranscripts(DocumentJob):
         for co in h.notes["companies"]:
             ref = pl.CompanyRef(co.entity_id, co.slug, names.get(co.entity_id, co.slug), co.symbol)
             self.plans += pl.process_company(run, ref, self.announcements, self.results_events(db, co.entity_id),
-                                             weekly=ctx.workflow == "weekly", newest_call=by_entity.get(co.entity_id))
+                                             weekly=ctx.workflow == "weekly", newest_call=by_entity.get(co.entity_id),
+                                             history=ctx.workflow == "backfill", first_pages_from=self.cfg.first_pages_from)
         return h
 
     @staticmethod
@@ -400,7 +433,23 @@ class EquityCallTranscripts(DocumentJob):
         out.append(Check("calls_written", True,
                          f"{len(self.plans)} calls ({stored} stored; " + ", ".join(f"{n} {s}" for s, n in sorted(by_status.items()))
                          + f"); {revised} revised versions; first pages opened for {rep.first_pages} filings", blocking=False))
+        out.append(Check("coverage_by_season", True,
+                         pl.format_coverage(pl.coverage_by_season(self.announcements, self.plans)), blocking=False))
+        out.append(self._raw_storage_check(tx, task_run_id))
         return out
+
+    def _raw_storage_check(self, tx, task_run_id: int) -> Check:
+        """Plan 04b P5: the bytes this run stored, and the raw bucket's stored size against the stop (850 MB)."""
+        files, nbytes = tx.execute("select count(*), coalesce(sum(bytes), 0) from core.raw_file where task_run_id = %s",
+                                   (task_run_id,)).fetchone()
+        total = None
+        if self.storage is not None:
+            try:
+                total = self.storage.stored_bytes()[1]
+            except Exception:                                  # noqa: BLE001 - reported by the check, never raw
+                total = None
+        ok, detail = pl.storage_summary(files, int(nbytes), total, self.cfg.raw_storage_stop_mb)
+        return Check("raw_storage", ok, detail, blocking=False)
 
     def alerts(self, db) -> list[Alert]:
         out = super().alerts(db)
@@ -450,9 +499,17 @@ class EquityCallTranscripts(DocumentJob):
                          ("results filed 45 or more days ago, no transcript filing found for: " + _names(sorted(missing)))
                          if missing else "every company-season with results filed 45 or more days ago has a transcript filing",
                          blocking=False))
-        unmatched = sum(1 for a in ann if a.is_transcript and a.entity_id is None)
-        out.append(Check("unmatched_isin", unmatched == 0,
-                         f"{unmatched} transcript rows whose ISIN matches no universe company", blocking=False))
+        by_entity = {r.company.entity_id: r.company for r in results}
+        unmatched = [a for a in ann if a.is_transcript and a.entity_id is None]
+        out.append(Check("unmatched_isin", not unmatched,
+                         f"{len(unmatched)} transcript rows whose ISIN matches no universe company"
+                         + (": " + _rows([_row_name(a) for a in unmatched]) if unmatched else ""), blocking=False))
+        earlier = [a for a in ann if a.is_transcript and a.joined_by == "earlier_isin"]
+        out.append(Check("joined_by_earlier_isin", True,
+                         f"{len(earlier)} transcript rows joined on their symbol and the issuer part of an earlier ISIN "
+                         "(NSE's rows carry the ISIN from before a split or bonus; the universe holds the current one)"
+                         + (": " + _rows([_row_name(a, by_entity.get(a.entity_id)) for a in earlier]) if earlier else ""),
+                         blocking=False))
         seasons: dict[str, list[int]] = {}
         for a in ann:
             if a.kind in ("transcript", "intimation"):

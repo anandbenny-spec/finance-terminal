@@ -90,7 +90,7 @@ export type MeetingPage = {
  */
 export async function readMeetingExists(bank: Bank, slug: string): Promise<boolean | null> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("policy", `meeting-${slug}`);
   const db = publicClient();
   if (!db) return null;
@@ -106,7 +106,7 @@ export async function readMeetingExists(bank: Bank, slug: string): Promise<boole
 /** Everything a meeting page shows above its document texts. */
 export async function readMeetingPage(bank: Bank, slug: string, date: string): Promise<MeetingPage> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("policy", `meeting-${slug}`);
   const readAt = new Date().toISOString();
   const today = dateInZone(readAt, bank === "Fed" ? "America/New_York" : "Asia/Kolkata");
@@ -141,7 +141,7 @@ export async function readMeetingPage(bank: Bank, slug: string, date: string): P
 /** A document's chunks (its text, in order), for the Statement, Minutes and Press conference tabs. */
 export async function readDocumentChunks(id: number): Promise<Read<{ chunks: DocumentChunkRow[] }>> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("documents", `document-${id}`);
   const db = publicClient();
   if (!db) return failed(`document ${id}`, UNCONFIGURED);
@@ -153,7 +153,7 @@ export async function readMeetingDiff(
   documentId: number,
 ): Promise<Read<{ diff: DocumentDiffRow | null; base: DocumentRow | null; summary: CitedOutput | null }>> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("documents", `diff-${documentId}`);
   const db = publicClient();
   if (!db) return failed(`diff of ${documentId}`, UNCONFIGURED);
@@ -173,7 +173,7 @@ export async function readNumbersBase(
   slug: string,
 ): Promise<Read<{ meeting: PolicyMeetingRow | null; settings: PolicyRateSettingDetailRow[]; votes: PolicyVoteRow[]; projections: ForecastRow[] }>> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("policy", `meeting-${slug}`);
   const db = publicClient();
   if (!db) return failed(`numbers base ${slug}`, UNCONFIGURED);
@@ -198,7 +198,7 @@ export async function readMeetingReaction(
   slug: string,
 ): Promise<Read<{ reactions: MarketReactionRow[]; series: SeriesRow[]; observations: Record<string, ObservationRow[]> }>> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("policy", `meeting-${slug}`, "reactions");
   const db = publicClient();
   if (!db) return failed(`reactions of ${slug}`, UNCONFIGURED);
