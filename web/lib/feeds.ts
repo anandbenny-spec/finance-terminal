@@ -70,6 +70,7 @@ export const DAILY_TASKS = [
   "policy.rbi_documents",
   "policy.ai_batch",
   "policy.reactions",
+  "policy.rate_cycles",
   "site.quality_summary",
 ] as const satisfies readonly TaskKey[];
 
