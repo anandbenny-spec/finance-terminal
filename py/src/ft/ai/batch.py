@@ -201,6 +201,19 @@ class RunState:
         return o
 
 
+def monthly_budget(db) -> Decimal:
+    """The monthly AI budget in USD (`ops.setting` `ai_monthly_budget_usd`): month-to-date spend at which requests stop
+    (alert `ai_budget:<month>`). Shared by every task that sends requests."""
+    row = db.execute("select value from ops.setting where key = 'ai_monthly_budget_usd'").fetchone()
+    return Decimal(str(row[0])) if row else Decimal(0)
+
+
+def month_spend(db) -> Decimal:
+    """The month's AI spend so far, over every task (`ops.task_run.ai_cost_usd`)."""
+    return Decimal(db.execute("""select coalesce(sum(ai_cost_usd), 0) from ops.task_run
+                                  where started_at >= date_trunc('month', now())""").fetchone()[0])
+
+
 def batches_check(f: RunState):
     """The `batches` check (non-blocking): what a batch-mode run did with the Batch API."""
     b = f.batch

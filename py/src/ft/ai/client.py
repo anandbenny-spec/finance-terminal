@@ -93,12 +93,14 @@ class TaskSpec:
     model: str = HAIKU
 
 
-# Module 1's tasks that run (Architecture 03 §1.4; Spec 01 §3.2). The hawk/dove scorers are Pass 2 and absent.
+# The tasks that run (Architecture 03 §1.4; Spec 01 §3.2). The hawk/dove scorers are Pass 2 and absent.
 TASKS: dict[str, TaskSpec] = {
     "doc_summary": TaskSpec("citations", "low", 8_000),
     "statement_diff_summary": TaskSpec("citations", "low", 8_000),
     "stance_extraction": TaskSpec("json", "low", 4_000),
     "projection_extraction": TaskSpec("json", "low", 4_000),
+    # Module 2's earnings calls (Spec 02B §5.6, §13.3; 2B-11): the summary of one transcript, two cited lists.
+    "call_summary": TaskSpec("citations", "low", 8_000),
 }
 
 
