@@ -1,7 +1,7 @@
 // web/lib/queries/shell.ts: the shell's reads (C2): the ticker tape, the status bar's countdowns and its freshness.
 //
 // Each reads an `api` view with the browser key (lib/supabase/public.ts), whole or not at all (readAll), and is
-// cached for minutes ('use cache', the `minutes` profile: served for up to a minute, then refreshed in the
+// cached for minutes ('use cache', the `minutesNoExpire` profile, set in next.config.ts: served for up to a minute, then refreshed in the
 // background), so the shell is prerendered and a decision stored by `watch` reaches it within a couple of minutes.
 // A failed read returns `{ ok: false }` and the shell shows its error state; the reason goes to the server log only
 // (visitors never see errors: Arch 02). The numbers are the database's; nothing here computes or invents one.
@@ -20,7 +20,7 @@ function failed(what: string, error: unknown): { ok: false } {
 /** The tape's rows: every published series' latest two values, and every published series' source line. */
 export async function readTape(): Promise<Read<{ latest: SeriesLatestRow[]; series: SeriesRow[] }>> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("shell", "series");
   const db = publicClient();
   if (!db) return failed("tape", "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
@@ -46,7 +46,7 @@ export async function readTape(): Promise<Read<{ latest: SeriesLatestRow[]; seri
 /** Every scheduled meeting from today on (the database's date), soonest first. */
 export async function readNextMeetings(): Promise<Read<{ meetings: NextMeetingRow[] }>> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("shell", "meetings");
   const db = publicClient();
   if (!db) return failed("next meetings", "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
@@ -68,7 +68,7 @@ export async function readNextMeetings(): Promise<Read<{ meetings: NextMeetingRo
 /** Every task's freshness row (the view turns a task stale by itself: F17). */
 export async function readFreshness(): Promise<Read<{ tasks: TaskFreshnessRow[]; readAt: string }>> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("shell", "freshness");
   const db = publicClient();
   if (!db) return failed("freshness", "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");

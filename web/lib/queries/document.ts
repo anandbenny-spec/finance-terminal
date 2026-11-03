@@ -66,7 +66,7 @@ export type DocumentPage = {
 /** The document, its text (its chunks), the field policies and its AI summary. */
 export async function readDocumentPage(id: number): Promise<DocumentPage> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("documents", `document-${id}`);
   const readAt = new Date().toISOString();
   const db = publicClient();
@@ -93,7 +93,7 @@ export async function readSpanCitations(
   end: number,
 ): Promise<Read<{ citations: AiCitationRow[]; outputs: AiOutputRow[] }>> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("documents", `document-${id}`);
   const db = publicClient();
   if (!db) return failed(`document ${id} span`, UNCONFIGURED);

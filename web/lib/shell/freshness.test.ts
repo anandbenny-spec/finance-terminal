@@ -2,7 +2,7 @@
 // parts of the site count, "stale" shows (D4's check), and nothing is called current without a success.
 import { describe, expect, it } from "vitest";
 import type { TaskFreshnessRow } from "@/lib/queries/api";
-import { FEEDS, liveTasks } from "@/lib/feeds";
+import { DAILY_TASKS, FEEDS, liveTasks } from "@/lib/feeds";
 import { panelFreshness, summarise, taskState } from "./freshness";
 
 const NOW = "2026-10-24T03:00Z";
@@ -56,6 +56,49 @@ describe("summarise", () => {
 
   it("counts a live task with no freshness row as stale", () => {
     expect(summarise([row("policy.calendar", "ok")], tasks, NOW).text).toBe("1 source stale");
+  });
+
+  // #263 (Anand, 3 Nov 2026, 15:12 IST): the status bar's "checked" time counts the daily tasks only.
+  describe("with the daily tasks as the checked set", () => {
+    const live = ["policy.calendar", ...DAILY_TASKS];
+    const daily = (at: string) => DAILY_TASKS.map((t) => row(t, "ok", at));
+
+    it("lets a weekly task's old success stay out of the checked time", () => {
+      const rows = [row("policy.calendar", "ok", "2026-10-20T01:11Z"), ...daily("2026-10-23T22:40Z")];
+      expect(summarise(rows, live, NOW, DAILY_TASKS)).toEqual({
+        state: "current",
+        text: "All data current · checked 24 Oct, 04:10 IST",
+        delayed: 0,
+        stale: 0,
+      });
+      // without the checked set the old weekly success still sets it (the default, as before)
+      expect(summarise(rows, live, NOW).text).toBe("All data current · checked 20 Oct, 06:41 IST");
+    });
+
+    it("shows the oldest of the daily tasks' last successes", () => {
+      const rows = [
+        row("policy.calendar", "ok", "2026-10-23T22:40Z"),
+        ...DAILY_TASKS.map((t, i) => row(t, "ok", i === 2 ? "2026-10-22T10:00Z" : "2026-10-23T22:40Z")),
+      ];
+      expect(summarise(rows, live, NOW, DAILY_TASKS).text).toBe("All data current · checked 22 Oct, 15:30 IST");
+    });
+
+    it("still counts an overdue weekly task as stale, and a failed daily task as delayed", () => {
+      const stale = [row("policy.calendar", "stale", "2026-09-01T01:11Z"), ...daily("2026-10-23T22:40Z")];
+      expect(summarise(stale, live, NOW, DAILY_TASKS)).toEqual({ state: "behind", text: "1 source stale", delayed: 0, stale: 1 });
+      const failed = [row("policy.calendar", "ok", "2026-10-20T01:11Z"), ...DAILY_TASKS.map((t) => row(t, t === "policy.market_series" ? "failed" : "ok", "2026-10-23T22:40Z"))];
+      expect(summarise(failed, live, NOW, DAILY_TASKS).text).toBe("1 source delayed");
+    });
+
+    it("falls back to every task given when none of them is in the checked set", () => {
+      expect(summarise([row("policy.calendar", "ok", "2026-10-20T01:11Z")], ["policy.calendar"], NOW, DAILY_TASKS).text).toBe(
+        "All data current · checked 20 Oct, 06:41 IST",
+      );
+    });
+
+    it("keeps the no-live-tasks answer", () => {
+      expect(summarise([], [], NOW, DAILY_TASKS).text).toBe("All data current");
+    });
   });
 });
 

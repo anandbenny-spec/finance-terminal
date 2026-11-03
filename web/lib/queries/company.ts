@@ -176,7 +176,7 @@ function logFailure(what: string, error: unknown): void {
 /** Whether a company has this slug: true or false, or null when the read failed (the page then shows its error state, not a 404). */
 export async function readCompanyExists(slug: string): Promise<boolean | null> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);
   const db = publicClient();
   if (!db) {
@@ -194,7 +194,7 @@ export async function readCompanyExists(slug: string): Promise<boolean | null> {
 /** The page's reads for one tab, each whole or not at all (the header's company row and actions are on both tabs). */
 export async function readCompanyPage(slug: string, tab: TabId): Promise<CompanyPageData> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);
   const readAt = new Date().toISOString(); // read inside the cache, as lib/queries/overview.ts does
   const db = publicClient();

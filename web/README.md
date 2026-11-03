@@ -67,9 +67,12 @@ CI runs all five on Node 24 (`.github/workflows/ci.yml`, job `web`).
   not `data`: the root `.gitignore` drops every `data/` folder, so raw data never reaches the repo). Every list
   read goes through `readAll` (`lib/queries/read.ts`): an exact count, then `.range()` pages until every row is in, or
   an error, never a list the Data API's 1,000-row cap cut short (Review 01, N2; A1 brings every page query under it).
-- **Caching:** the reads are `'use cache'` with `cacheLife("minutes")` (served up to a minute, then refreshed in the
-  background), so the shell is prerendered (`○` in the build) and a decision `watch` stores reaches it within a
-  couple of minutes. A failed read is logged on the server and shows the shell's error state; without
+- **Caching:** the reads are `'use cache'` with `cacheLife("minutesNoExpire")` (a profile in `next.config.ts`: served
+  up to a minute, then refreshed in the background, and never expired in a quiet spell: `expire` is a year, since an
+  expired page falls back to the last deploy's build output on Vercel, #263), so the shell is prerendered (`○` in the
+  build) and a decision `watch` stores reaches it within a couple of minutes of the next visit. After a successful
+  production run, `ops/warm-site.sh` loads the main pages a few times, so the first visitor after a run sees the new
+  data. `lib/queries/cache-profiles.test.ts` fails on a read that uses another profile. A failed read is logged on the server and shows the shell's error state; without
   `NEXT_PUBLIC_SUPABASE_*` (CI's build) every read fails that way and the build still passes.
 - **Logic is pure and tested** in `lib/shell/`: the tape's items (`tape.ts`), the countdowns and the decision-day
   switch (`meetings.ts`: days count in each bank's own zone, as `formatCountdown` and `ft/jobs/due.py` do), the
@@ -77,6 +80,8 @@ CI runs all five on Node 24 (`.github/workflows/ci.yml`, job `web`).
   and the status bar to HTML in every state.
 - **Which tasks count** for freshness: `lib/feeds.ts` lists each live part of the site with the tasks that feed it
   (the shell: `policy.market_series`, `policy.calendar`). Each page job adds its panels there when they go live.
+  The status bar's "checked" time counts only `DAILY_TASKS` (the live tasks the daily workflow runs: Anand, 3 Nov
+  2026, #263), so a weekly or monthly task can't hold it at an old date; "delayed" and "stale" count every live task.
 - **The countdown is the browser's:** the server sends each bank's next date ("Next FOMC 28 Oct 2026"); after first
   render `Countdowns` adds "· in 5 days" from the visitor's clock (checked a few times a minute) and switches to
   "FOMC decision today, 14:00 ET (23:30 IST)" at midnight in the bank's zone. Cached HTML never carries a stale count.

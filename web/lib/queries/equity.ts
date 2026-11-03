@@ -46,7 +46,7 @@ export function indexesOf(members: readonly IndexMemberRow[]): { slug: string; n
 /** Everything /screener renders; each read whole or not at all. */
 export async function readScreenerPage(): Promise<ScreenerPageData> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("equity", "screener");
   const readAt = new Date().toISOString(); // read inside the cache, as lib/queries/overview.ts does, so a prerender never sees `new Date()`
   const db = publicClient();

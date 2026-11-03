@@ -1,13 +1,13 @@
 // StatusBar (Design 01 §4.1; Spec 01 §4.1): 28 px, Plex Mono 12, ink-2. Left: the freshness summary (a dot and
 // "All data current", or a clock and "1 source delayed"), from api.task_freshness for the tasks behind live parts of
-// the site (lib/feeds.ts). Middle: "Next FOMC {date} · in {n} days" and "Next MPC …" from api.next_meetings, which
+// the site (lib/feeds.ts); its "checked" time counts the daily tasks only (DAILY_TASKS; #263). Middle: "Next FOMC {date} · in {n} days" and "Next MPC …" from api.next_meetings, which
 // become "FOMC decision today, 14:00 ET (23:30 IST)" on the day (Countdowns). Right: "Not investment advice".
 // Fixed at the bottom from md; in the page flow, last, below md.
 import { Clock } from "lucide-react";
 import { StateNote } from "@/components/data/StateNote";
 import { Countdowns } from "@/components/shell/Countdowns";
 import { readFreshness, readNextMeetings } from "@/lib/queries/shell";
-import { liveTasks } from "@/lib/feeds";
+import { DAILY_TASKS, liveTasks } from "@/lib/feeds";
 import { summarise, type FreshnessSummary } from "@/lib/shell/freshness";
 import { initialLines, toUpcoming, type UpcomingMeeting } from "@/lib/shell/meetings";
 
@@ -48,7 +48,7 @@ export function StatusBarView({
 
 export async function StatusBar() {
   const [freshness, next] = await Promise.all([readFreshness(), readNextMeetings()]);
-  const summary = freshness.ok ? summarise(freshness.tasks, liveTasks(), freshness.readAt) : null;
+  const summary = freshness.ok ? summarise(freshness.tasks, liveTasks(), freshness.readAt, DAILY_TASKS) : null;
   const meetings = next.ok ? toUpcoming(next.meetings) : null;
   return <StatusBarView summary={summary} meetings={meetings} />;
 }

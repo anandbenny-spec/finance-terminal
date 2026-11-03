@@ -41,7 +41,7 @@ export function loadEvalSummary(db: PublicClient): Promise<EvalSummaryRow[]> {
 
 export async function readQualitySummary(): Promise<Read<{ rows: QualitySummaryRow[] }>> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("accuracy");
   const db = publicClient();
   if (!db) return failed("quality summary", "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
@@ -54,7 +54,7 @@ export async function readQualitySummary(): Promise<Read<{ rows: QualitySummaryR
 
 export async function readEvalSummary(): Promise<Read<{ rows: EvalSummaryRow[] }>> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("accuracy");
   const db = publicClient();
   if (!db) return failed("eval summary", "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
