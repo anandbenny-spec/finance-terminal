@@ -278,9 +278,12 @@ class EquityCallTranscripts(DocumentJob):
                   and e.occurs_at is not null group by e.id, e.occurs_at""", (entity_id,)).fetchall()]
 
     def _getter(self, ctx: Context):
-        """The pipeline's fetch function. Every body is stored as a raw file before anything reads it. A company host that
-        refuses (401, 403, 406 or a network error) gets one retry with Chrome's TLS fingerprint; every failure on a company
-        host is logged with its error class (D14)."""
+        """The pipeline's fetch function. Every body is stored as a raw file before anything reads it, except a company
+        host's answer that isn't a PDF (a cover letter's link that leads to a web page): nothing reads it (D12: web pages
+        are never scraped), and such pages differ on every request, so storing them added a raw file to every re-run
+        (#173). The attempt is still named ("host web page") in the unresolved line. A company host that refuses (401, 403,
+        406 or a network error) gets one retry with Chrome's TLS fingerprint; every failure on a company host is logged
+        with its error class (D14)."""
         report = self.report
 
         def get(url: str, kind: str) -> pl.File | None:
@@ -289,14 +292,15 @@ class EquityCallTranscripts(DocumentJob):
             for chrome in ((False, True) if company else (False,)):
                 try:
                     got = ctx.fetcher.get(url, source=source, allow=(404,), chrome=chrome,
-                                          extra_sites=(COMPANY_WEB,) if company else ())
+                                          extra_sites=(COMPANY_WEB,) if company else (),
+                                          keep=pdfs.is_pdf_bytes if company else None)
                 except FetchError as e:
                     if company and not chrome and (e.status in (None, 401, 403, 406)):
                         continue
                     if company:
                         report.host_failures.append((pdfs.host_of(url), f"HTTP {e.status}" if e.status else _error_class(str(e))))
                     return None
-                if got.raw_file_id is None:                    # 404
+                if got.raw_file_id is None and got.body is None:       # 404 (a declined page has its body, and no file)
                     if company:
                         report.host_failures.append((pdfs.host_of(url), f"HTTP {got.status}"))
                     return None
