@@ -4,13 +4,16 @@
 (§5.4) are after 18 Nov.
 
 **What it asks for.** Every published, stored transcript (a call whose event is `stored` and published, not held, with its
-document published and chunked, and neither source suppressed) that lacks a published `call_summary`: the document the call
-row points at, never a revised version registered later (§13.3). A backfill's `--since` and `--until` limit the run to calls
+document published and chunked, and neither source suppressed) that lacks a published `call_summary` from the current prompt
+version: the document the call row points at, never a revised version registered later (§13.3). A new prompt version
+therefore asks again for the calls summarised under the old one, and a published summary of the current version is never
+asked for twice. A backfill's `--since` and `--until` limit the run to calls
 filed in that range (a weekly run has none). Each is one request (`ft/ai/call_summary.py`: the prompt
-`config/prompts/call_summary/v1.md`, the checks, the role rules from the call's stored turns), sent through the shared batch
+`config/prompts/call_summary/v2.md`, the checks, the role rules from the call's stored turns), sent through the shared batch
 steps (`ft/ai/batch.py`: submit, poll for up to 15 minutes, collect, store each billed reply at once, retry once with a note,
-then reject with an alert, never resend an unchanged input). Roles don't gate it: a role-held call's summary runs too (§5.3),
-and its bullets can rest only on turns whose roles are known. One published output per transcript (target: the document;
+then reject with an alert, never resend an unchanged input). Roles don't gate it (Spec 02B.1 C10): every stored call is
+summarised; a role-held call (`unknown_role_share` above `turns.ROLE_HOLD_SHARE`) may leave a list out, and what participants
+whose role couldn't be read said goes in a third list, never attributed to management. One published output per transcript (target: the document;
 scope `''`); a later one supersedes it.
 
 **Limits (§5.5).** A transcript whose request is estimated above 60,000 tokens is skipped with a warning naming it
@@ -52,13 +55,14 @@ from ft.ai.batch import (
 )
 from ft.ai.call_summary import CallDoc, Turn
 from ft.ai.client import Reply, Request, load_prompt
+from ft.equity.calls.turns import ROLE_HOLD_SHARE
 from ft.equity.guard import equity_due
 from ft.jobs.due import Due
 from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TARGETS
 
-PROMPT_VERSION = {cs.TASK: "v1"}
+PROMPT_VERSION = {cs.TASK: "v2"}
 IST = "Asia/Kolkata"
 SHOWN = 12
 
@@ -86,7 +90,7 @@ class Work:
         return cs.call_summary_request(self.call, prompt, note=note)
 
     def check(self, req: Request, reply: Reply) -> summaries.Checked:
-        return cs.check(reply, req.sources, self.call.turns)
+        return cs.check(reply, req.sources, self.call.turns, role_held=self.call.role_held)
 
 
 @dataclass
@@ -125,7 +129,8 @@ class EquityCallsAi(BatchSteps, Task):
         args: list = []
         if lacking:
             where.append("""not exists (select 1 from core.ai_output o where o.task = 'call_summary'
-                                          and o.document_id = d.id and o.status = 'published')""")
+                                          and o.document_id = d.id and o.status = 'published' and o.prompt_version = %s)""")
+            args.append(PROMPT_VERSION[cs.TASK])
         if doc_ids is not None:
             where.append("d.id = any(%s)"); args.append(doc_ids)
         elif self.scope is not None:
@@ -136,7 +141,7 @@ class EquityCallsAi(BatchSteps, Task):
             where.append(f"(ec.filed_at at time zone '{IST}')::date <= %s"); args.append(until)
         rows = db.execute(
             f"""select ec.event_id, ev.slug, ec.fiscal_label, ec.call_date, (ec.filed_at at time zone '{IST}')::date,
-                       d.id, d.char_count, n.name,
+                       d.id, d.char_count, n.name, ec.unknown_role_share,
                        (select string_agg(c.body, '' order by c.chunk_no) from core.chunk c where c.document_id = d.id)
                   from equity.earnings_call ec
                   join core.event ev on ev.id = ec.event_id
@@ -153,12 +158,13 @@ class EquityCallsAi(BatchSteps, Task):
                         where document_id = any(%s) order by document_id, turn_no""", ([r[5] for r in rows],)).fetchall():
                 turns.setdefault(did, []).append(Turn(no, a, b, speaker, role, section))
         out = []
-        for _, slug, label, call_date, filed, did, chars, company, text in rows:
+        for _, slug, label, call_date, filed, did, chars, company, share, text in rows:
             if text is None or len(text) != chars:
                 continue                                       # the database refuses this at commit; never send it
             title = f"{company} · {label or 'earnings call'} transcript"
+            held = share is not None and float(share) > ROLE_HOLD_SHARE         # strictly greater, as the rules and the views
             out.append(Work(cs.TASK, CallDoc(did, text, title, company, label, call_date or filed,
-                                             tuple(turns.get(did, ()))), slug))
+                                             tuple(turns.get(did, ())), held), slug))
         return out
 
     # ------------------------------------------------------------------ fetch (network; outputs stored as they come)

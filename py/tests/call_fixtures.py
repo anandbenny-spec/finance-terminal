@@ -12,6 +12,7 @@ from test_document_chunks import plain
 from ft.ai.call_summary import HEADINGS, CallDoc, Turn
 from ft.ai.client import Reply, Usage
 from ft.engines.document.text import Extracted
+from ft.equity.calls.turns import ROLE_HOLD_SHARE
 
 TITLE = "Acme Limited · Q2 FY27 transcript"
 Line = tuple[str, str, str]           # (speaker, role, the turn's text, label included)
@@ -58,6 +59,16 @@ class Built:
     turns: tuple[Turn, ...]
     extracted: Extracted
 
+    @property
+    def unknown_share(self) -> float:
+        """The unknown-role words over all the turns' words, as equity.call_text stores it."""
+        words = [(t.role, len(self.text[t.char_start:t.char_end].split())) for t in self.turns]
+        return sum(w for r, w in words if r == "unknown") / sum(w for _, w in words)
+
+    @property
+    def role_held(self) -> bool:
+        return self.unknown_share > ROLE_HOLD_SHARE
+
 
 def build(lines: list[Line] = LINES) -> Built:
     """The transcript (one paragraph a turn) and its turns: contiguous, each running to the next one's start."""
@@ -75,7 +86,7 @@ def build(lines: list[Line] = LINES) -> Built:
 
 
 def calldoc(b: Built, document_id: int = 1) -> CallDoc:
-    return CallDoc(document_id, b.text, TITLE, "Acme Limited", "Q2 FY27", date(2026, 10, 16), b.turns)
+    return CallDoc(document_id, b.text, TITLE, "Acme Limited", "Q2 FY27", date(2026, 10, 16), b.turns, b.role_held)
 
 
 def span(text: str, snippet: str) -> tuple[int, int]:
@@ -90,11 +101,12 @@ def c(text: str, snippet: str, title: str = TITLE) -> dict:
     return cite(text, s, e, 0, title)
 
 
-def lists(text: str, management=GOOD_MANAGEMENT, analysts=GOOD_ANALYSTS, title: str = TITLE,
-          headings: tuple[str, str] = HEADINGS) -> list[dict]:
-    """A reply's text blocks: the two headed lists, each claim cited at the snippets given."""
-    return headed_lists([(headings[0], [(claim, [c(text, sn, title) for sn in sns]) for claim, sns in management]),
-                         (headings[1], [(claim, [c(text, sn, title) for sn in sns]) for claim, sns in analysts])])
+def lists(text: str, management=GOOD_MANAGEMENT, analysts=GOOD_ANALYSTS, unknown=(), title: str = TITLE,
+          headings: tuple[str, ...] = HEADINGS) -> list[dict]:
+    """A reply's text blocks: the headed lists that have items (a list given as () is left out), each claim cited at the
+    snippets given."""
+    return headed_lists([(heading, [(claim, [c(text, sn, title) for sn in sns]) for claim, sns in items])
+                         for heading, items in zip(headings, (management, analysts, unknown), strict=False) if items])
 
 
 def reply(blocks: list[dict], stop: str = "end_turn") -> Reply:

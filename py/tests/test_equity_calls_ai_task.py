@@ -13,7 +13,6 @@ import psycopg
 import pytest
 from ai_fakes import FakeClaude, claude
 from call_fixtures import (
-    ANSWER_1B,
     GOOD_ANALYSTS,
     GOOD_MANAGEMENT,
     LINES,
@@ -35,6 +34,13 @@ from ft.jobs.tasks.equity_calls_ai import EquityCallsAi
 JOB, ADMIN = dsn("job_writer"), dsn("postgres")
 KEY = "test.equity_calls_ai"
 QUESTION = "Can you explain the margin outlook for the second half?"
+POOJA = "What is the plan for the dividend and the debt repayment?"
+# when Pooja Menon's turn is unreadable: the analysts' bullets rest on Anil Shah's question and the answers to it
+KNOWN_ANALYSTS = [GOOD_ANALYSTS[0], ("Freight costs were also discussed.", ["Freight costs are also lower than last year."])]
+THIRD = [("A participant asked about the plan for the dividend and the debt repayment.", [POOJA])]
+ALL_THIRD = [(f"A participant said {s}", [s]) for s in (
+    "Revenue from operations grew 12.5 per cent to 4,500 crore in Q2 FY27.", "EBITDA margin was 21.3 per cent.",
+    "Our order book stands at 9,200 crore.")]
 
 
 def q(sql, *a):
@@ -113,22 +119,24 @@ def make_call(*, lines=LINES, role_of=None, filed: date = date(2026, 10, 20), sr
                            len(b.text[t.char_start:t.char_end].split())))
     with psycopg.connect(JOB, autocommit=True) as c:
         c.execute("""insert into equity.earnings_call (event_id, entity_id, fiscal_label, period_end, season_key, quarter_source,
-                          call_date, call_date_source, filed_at, exchange, route, transcript_document_id, words, status_reason)
-                     values (%s, %s, 'Q2 FY27', '2026-09-30', 'q2-fy27', 'text', %s, 'text', %s, 'NSE', %s, %s, %s, %s)""",
+                          call_date, call_date_source, filed_at, exchange, route, transcript_document_id, words, status_reason,
+                          unknown_role_share)
+                     values (%s, %s, 'Q2 FY27', '2026-09-30', 'q2-fy27', 'text', %s, 'text', %s, 'NSE', %s, %s, %s, %s, %s)""",
                   (ev, eid, filed, datetime(filed.year, filed.month, filed.day, 12, tzinfo=UTC),
-                   "exchange_pdf" if with_doc else "none", doc, len(b.text.split()), "quarter_conflict" if held else None))
+                   "exchange_pdf" if with_doc else "none", doc, len(b.text.split()), "quarter_conflict" if held else None,
+                   round(b.unknown_share, 4)))
     return {"slug": slug, "doc": doc, "event": ev, "built": b, "entity": eid, "src": src}
 
 
-def replies(analysts=GOOD_ANALYSTS):
-    """FakeClaude's `reply`: a good two-list reply, or (mode 'role_bad') one whose first management bullet cites an analyst's
-    question."""
+def replies(*, management=GOOD_MANAGEMENT, analysts=GOOD_ANALYSTS, unknown=()):
+    """FakeClaude's `reply`: a good reply with the lists given, or (mode 'role_bad') one whose first management bullet cites an
+    analyst's question."""
     def fn(docs, mode):
         title, text = docs[0]
         if mode == "role_bad":
-            bad = [(f"Management was asked: {QUESTION}", [QUESTION])] + GOOD_MANAGEMENT[1:]
-            return lists(text, management=bad, analysts=analysts, title=title)
-        return lists(text, analysts=analysts, title=title)
+            bad = [(f"Management was asked: {QUESTION}", [QUESTION])] + list(management[1:])
+            return lists(text, management=bad, analysts=analysts, unknown=unknown, title=title)
+        return lists(text, management=management, analysts=analysts, unknown=unknown, title=title)
     return fn
 
 
@@ -205,7 +213,9 @@ def test_a_stored_call_gets_a_cited_two_list_summary_through_the_batch_api():
     doc_block = params["messages"][0]["content"][0]
     assert doc_block["source"]["data"] == c["built"].text and doc_block["citations"] == {"enabled": True}
     (o,) = outputs(c["doc"])
-    assert o[:3] == ("published", "", 5) and o[4] == "v1"
+    assert o[:3] == ("published", "", 5) and o[4] == "v2"
+    asked = params["messages"][0]["content"][1]["text"]
+    assert "- Management: Ravi Rao; Meera Iyer" in asked and "- Analysts: Anil Shah; Pooja Menon" in asked
     content, = q("select content from core.ai_output where document_id = %s and task = 'call_summary'", c["doc"])[0]
     assert [b["list"] for b in content["bullets"]] == ["management"] * 3 + ["analysts"] * 2
     cites = q("""select claim_path, kind, verified, char_end <= (select char_count from core.document where id = %s)
@@ -269,20 +279,52 @@ def test_a_reply_that_fails_the_role_rules_twice_is_rejected_with_an_alert_and_n
 
 
 @pytest.mark.db
-def test_on_a_call_with_unreadable_roles_bullets_rest_on_the_known_turns_or_the_reply_is_rejected():
-    follow = ("Freight costs were also discussed.", ["Freight costs are also lower than last year."])
-    analysts = [GOOD_ANALYSTS[0], follow]
-    partly = make_call(role_of={8: "unknown"})                          # Pooja Menon's turn: 1 speaker of 12
-    none_known = make_call(role_of={i: "unknown" for i in range(len(LINES))})
-    fake = FakeClaude(["ok"], reply=replies(analysts))
-    assert go(task([partly["slug"], none_known["slug"]], fake)) == 0
+def test_a_call_with_one_unreadable_speaker_gets_a_third_list_not_attributed_to_management():
+    c = make_call(role_of={8: "unknown"})                                    # Pooja Menon's turn: about 8% of the words
+    fake = FakeClaude(["ok"], reply=replies(analysts=KNOWN_ANALYSTS, unknown=THIRD))
+    assert go(task([c["slug"]], fake)) == 0
     r = last_run()
     assert r["status"] == "success", r["error"]
-    assert [g[0] for g in outputs(partly["doc"])] == ["published"]
-    assert [g[0] for g in outputs(none_known["doc"])] == ["rejected", "rejected"]      # no bullet can rest on a known turn
-    assert "whose role is unknown" in outputs(none_known["doc"])[1][1]
-    assert alert(f"ai_rejected:call_summary:{none_known['doc']}") and not alert(f"ai_rejected:call_summary:{partly['doc']}")
-    assert ANSWER_1B == 6                                                  # the follow-on answer the second bullet cites
+    asked = next(iter(fake.batches.values()))["requests"][0]["params"]["messages"][0]["content"][1]["text"]
+    assert "- Role couldn't be read: Pooja Menon" in asked and "Said by participants whose role couldn't be read" in asked
+    assert [g[0] for g in outputs(c["doc"])] == ["published"]
+    content, = q("select content from core.ai_output where document_id = %s and task = 'call_summary'", c["doc"])[0]
+    assert [b["list"] for b in content["bullets"]] == ["management"] * 3 + ["analysts"] * 2 + ["unknown"]
+    assert r["checks"]["citation_roles"]["passed"] and none_rejected(r)
+
+
+@pytest.mark.db
+def test_a_role_held_call_with_no_readable_roles_gets_only_the_third_list_and_the_usual_lists_are_rejected():
+    everyone = {i: "unknown" for i in range(len(LINES))}
+    ok, usual = make_call(role_of=everyone), make_call(role_of=everyone)
+    fake = FakeClaude(["ok"], reply=replies(management=(), analysts=(), unknown=ALL_THIRD))
+    assert go(task([ok["slug"]], fake)) == 0
+    assert last_run()["status"] == "success"
+    asked = next(iter(fake.batches.values()))["requests"][0]["params"]["messages"][0]["content"][1]["text"]
+    assert "roles are only partly read" in asked and "- Role couldn't be read: Moderator; Ravi Rao" in asked
+    content, = q("select content from core.ai_output where document_id = %s and task = 'call_summary'", ok["doc"])[0]
+    assert [b["list"] for b in content["bullets"]] == ["unknown"] * 3
+    assert [g[0] for g in outputs(ok["doc"])] == ["published"]
+    # the usual two lists on a call nobody's role is read for: nothing can be attributed, so it is rejected, never guessed
+    bad = FakeClaude(["ok"], reply=replies())
+    assert go(task([usual["slug"]], bad)) == 0
+    assert [g[0] for g in outputs(usual["doc"])] == ["rejected", "rejected"]
+    assert "whose role is unknown" in outputs(usual["doc"])[1][1]
+    assert alert(f"ai_rejected:call_summary:{usual['doc']}") and not alert(f"ai_rejected:call_summary:{ok['doc']}")
+
+
+@pytest.mark.db
+def test_a_new_prompt_version_asks_again_for_the_calls_summarised_under_the_old_one(monkeypatch):
+    c = make_call()
+    fake = FakeClaude(["ok"], reply=replies())
+    monkeypatch.setattr(eca, "PROMPT_VERSION", {cs.TASK: "v1"})
+    assert go(task([c["slug"]], fake)) == 0
+    assert [(g[0], g[4]) for g in outputs(c["doc"])] == [("published", "v1")]
+    assert go(task([c["slug"]], fake)) == 0 and fake.create_calls == 1               # the same version: not asked again
+    monkeypatch.setattr(eca, "PROMPT_VERSION", {cs.TASK: "v2"})
+    assert go(task([c["slug"]], fake)) == 0
+    assert [(g[0], g[4]) for g in outputs(c["doc"])] == [("superseded", "v1"), ("published", "v2")]
+    assert go(task([c["slug"]], fake)) == 0 and fake.create_calls == 2                # v2 is published: nothing more
 
 
 @pytest.mark.db
