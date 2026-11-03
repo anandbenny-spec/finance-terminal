@@ -332,7 +332,7 @@ def rows():
     return q("""select e.slug, s.as_of, s.promoter_pct, s.promoter_shares, s.total_shares, s.filed_at, s.exchange,
                        d.external_key, d.version_no, d.is_published, d.doc_type, s.source_url
                   from equity.shareholding s join core.document d on d.id = s.document_id
-                  join core.entity e on e.id = s.entity_id where e.slug like 'zs-%%' order by 1, 2, 8""")
+                  join core.entity e on e.id = s.entity_id where e.slug like 'zs-%%' order by 1, 2, 8, 9""")   # 9: two versions of one file tie on 1, 2 and 8
 
 
 @pytest.mark.db
