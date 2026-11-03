@@ -16,7 +16,10 @@
 --
 -- PASS when:
 --   block 2: rows 10 to 25 all read 0 (a pair reads "0 · 0"); row 30 reads "<block 1's count> · 0 · 0" (the company
---            list stays, with no price and no index chips); row 31 equals block 1; rows 40 to 49 equal block 1;
+--            list stays, with no price and no index chips); row 31 equals block 1; rows 40 to 49 equal block 1, except
+--            row 46 (documents by attribution: Fed + RBI · NSE · company websites · other), whose second number (the
+--            NSE-sourced documents) reads 0 while the other three equal block 1. In block 1 the first number must be more
+--            than 0 (if the attribution wording ever changes, it moves into "other" and shows);
 --   block 3: every row equals block 1, and row 1 reads false.
 -- Rows 10 to 25 are NSE-derived, and each must read more than 0 in block 1: dev holds data for every one of them.
 -- Dev's totals on 3 Nov 2026, read with RLS bypassed (so block 1, which is what a visitor sees, may read a little less):
@@ -72,7 +75,7 @@ select n, item, result from (
   union all select 43, 'api.observation_steps (Fed band)', (select count(*) filter (where series_key like 'fred.%') || ' · ' || count(*) filter (where series_key like 'yf.%') from api.observation_steps)
   union all select 44, 'api.market_reactions', (select count(*) filter (where series_key like 'fred.%') || ' · ' || count(*) filter (where series_key like 'yf.%') from api.market_reactions)
   union all select 45, 'api.policy_meetings · with both Fed bounds', (select count(*) || ' · ' || count(*) filter (where fed_target_lower_pct is not null and fed_target_upper_pct is not null) from api.policy_meetings)
-  union all select 46, 'api.documents', (select count(*)::text from api.documents)
+  union all select 46, 'api.documents (Fed + RBI · NSE · company websites · other, by attribution)', (select count(*) filter (where attribution in ('Source: Federal Reserve Board', 'Source: Reserve Bank of India')) || ' · ' || count(*) filter (where attribution = 'Source: NSE') || ' · ' || count(*) filter (where attribution like 'Source: the company%') || ' · ' || count(*) filter (where attribution is null or (attribution not in ('Source: Federal Reserve Board', 'Source: Reserve Bank of India', 'Source: NSE') and attribution not like 'Source: the company%')) from api.documents)
   union all select 47, 'api.rate_cycles (policy cycles)', (select count(*)::text from api.rate_cycles)
   union all select 48, 'api.series yf.^NSEI (Yahoo''s Nifty 50 index)', (select count(*)::text from api.series where key = 'yf.^NSEI')
   union all select 49, 'semantic: market_daily · policy_meetings', current_setting('drill.sem_ctl')
@@ -123,7 +126,7 @@ select n, item, result from (
   union all select 43, 'api.observation_steps (Fed band)', (select count(*) filter (where series_key like 'fred.%') || ' · ' || count(*) filter (where series_key like 'yf.%') from api.observation_steps)
   union all select 44, 'api.market_reactions', (select count(*) filter (where series_key like 'fred.%') || ' · ' || count(*) filter (where series_key like 'yf.%') from api.market_reactions)
   union all select 45, 'api.policy_meetings · with both Fed bounds', (select count(*) || ' · ' || count(*) filter (where fed_target_lower_pct is not null and fed_target_upper_pct is not null) from api.policy_meetings)
-  union all select 46, 'api.documents', (select count(*)::text from api.documents)
+  union all select 46, 'api.documents (Fed + RBI · NSE · company websites · other, by attribution)', (select count(*) filter (where attribution in ('Source: Federal Reserve Board', 'Source: Reserve Bank of India')) || ' · ' || count(*) filter (where attribution = 'Source: NSE') || ' · ' || count(*) filter (where attribution like 'Source: the company%') || ' · ' || count(*) filter (where attribution is null or (attribution not in ('Source: Federal Reserve Board', 'Source: Reserve Bank of India', 'Source: NSE') and attribution not like 'Source: the company%')) from api.documents)
   union all select 47, 'api.rate_cycles (policy cycles)', (select count(*)::text from api.rate_cycles)
   union all select 48, 'api.series yf.^NSEI (Yahoo''s Nifty 50 index)', (select count(*)::text from api.series where key = 'yf.^NSEI')
   union all select 49, 'semantic: market_daily · policy_meetings', current_setting('drill.sem_ctl')
@@ -174,7 +177,7 @@ select n, item, result from (
   union all select 43, 'api.observation_steps (Fed band)', (select count(*) filter (where series_key like 'fred.%') || ' · ' || count(*) filter (where series_key like 'yf.%') from api.observation_steps)
   union all select 44, 'api.market_reactions', (select count(*) filter (where series_key like 'fred.%') || ' · ' || count(*) filter (where series_key like 'yf.%') from api.market_reactions)
   union all select 45, 'api.policy_meetings · with both Fed bounds', (select count(*) || ' · ' || count(*) filter (where fed_target_lower_pct is not null and fed_target_upper_pct is not null) from api.policy_meetings)
-  union all select 46, 'api.documents', (select count(*)::text from api.documents)
+  union all select 46, 'api.documents (Fed + RBI · NSE · company websites · other, by attribution)', (select count(*) filter (where attribution in ('Source: Federal Reserve Board', 'Source: Reserve Bank of India')) || ' · ' || count(*) filter (where attribution = 'Source: NSE') || ' · ' || count(*) filter (where attribution like 'Source: the company%') || ' · ' || count(*) filter (where attribution is null or (attribution not in ('Source: Federal Reserve Board', 'Source: Reserve Bank of India', 'Source: NSE') and attribution not like 'Source: the company%')) from api.documents)
   union all select 47, 'api.rate_cycles (policy cycles)', (select count(*)::text from api.rate_cycles)
   union all select 48, 'api.series yf.^NSEI (Yahoo''s Nifty 50 index)', (select count(*)::text from api.series where key = 'yf.^NSEI')
   union all select 49, 'semantic: market_daily · policy_meetings', current_setting('drill.sem_ctl')
