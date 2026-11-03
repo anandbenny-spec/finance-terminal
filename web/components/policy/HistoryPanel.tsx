@@ -15,7 +15,7 @@ import { NOT_AVAILABLE, formatAxisNumber, formatTableDate } from "@/lib/format";
 import type { Direction, HistoryRow } from "@/lib/policy/decisions";
 
 const SELECT =
-  "h-8 rounded-md border border-line-input bg-raised px-2 text-data text-ink-1 hover:border-ink-3";
+  "h-8 rounded-md border border-line-input bg-raised px-2 text-read md:text-data text-ink-1 hover:border-ink-3";
 
 function Filter({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: [string, string][] }) {
   return (

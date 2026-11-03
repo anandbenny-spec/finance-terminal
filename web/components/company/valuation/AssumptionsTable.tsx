@@ -62,6 +62,7 @@ export function AssumptionsTable({ rows, currency, market, caption }: { rows: As
       rowKey={(r) => r.id}
       caption={caption}
       dense
+      focusable
       empty={<StateNote kind="empty">No assumptions are stored for this run.</StateNote>}
     />
   );

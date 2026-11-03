@@ -188,7 +188,7 @@ describe("the front page between a tally statement and its minutes (#159)", () =
 
   it("shows the dissenters and the minutes copy in both the What changed and the votes panels, with no count", () => {
     const { out, t } = page([vote(OCT.slug, "Lisa D. Cook", 25, true), vote(OCT.slug, "Beth M. Hammack", 25, true)]);
-    const line = `Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps) · ${NOTE}`;
+    const line = `Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps) ${NOTE}`;
     expect(t.split(line)).toHaveLength(3); // twice: the statement panel's Vote row, and "How the members voted"
     expect(t).not.toContain("Votes aren't published yet.");
     expect(t).not.toMatch(/Vote \d+–\d+/);

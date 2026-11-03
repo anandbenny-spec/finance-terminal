@@ -10,7 +10,7 @@ const COLOUR = { up: "text-up", down: "text-down", flat: "text-flat" } as const;
 
 export function Delta({ change, tone = "market", className }: { change: Change; tone?: "market" | "neutral"; className?: string }) {
   return (
-    <span className={cn("inline-flex items-center gap-1 whitespace-nowrap", tone === "neutral" ? "text-ink-1" : COLOUR[change.direction], className)}>
+    <span className={cn("relative inline-flex items-center gap-1 whitespace-nowrap", tone === "neutral" ? "text-ink-1" : COLOUR[change.direction], className)}>
       {change.direction !== "flat" && (
         <svg
           viewBox="0 0 8 8"

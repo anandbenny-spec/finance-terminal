@@ -41,7 +41,7 @@ import {
 import type { ScreenerRow } from "@/lib/queries/api";
 
 const INPUT =
-  "h-8 w-24 rounded-sm border border-line-input bg-raised px-2 text-data text-ink-1 placeholder:text-ink-3 focus-visible:outline-2 focus-visible:outline-highlight";
+  "h-8 w-24 rounded-sm border border-line-input bg-raised px-2 text-read md:text-data text-ink-1 placeholder:text-ink-3 focus-visible:outline-2 focus-visible:outline-highlight";
 const CHIP_ON = "bg-highlight-wash text-ink-1";
 const CHIP_OFF = "text-ink-2 hover:bg-active";
 
@@ -204,7 +204,7 @@ export function ScreenerView({
               <select
                 value={filters.peerGroup ?? ""}
                 onChange={(e) => setFilters((f) => ({ ...f, peerGroup: e.target.value || null }))}
-                className="h-8 rounded-sm border border-line-input bg-raised px-2 text-data text-ink-1 focus-visible:outline-2 focus-visible:outline-highlight"
+                className="h-8 rounded-sm border border-line-input bg-raised px-2 text-read md:text-data text-ink-1 focus-visible:outline-2 focus-visible:outline-highlight"
               >
                 <option value="">All peer groups</option>
                 {groups.map((g) => (
