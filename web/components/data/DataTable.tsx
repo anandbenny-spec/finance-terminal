@@ -45,6 +45,7 @@ export function DataTable<Row>({
   initialSort,
   dense = false,
   scroll = false,
+  focusable = false,
   empty,
 }: {
   columns: Column<Row>[];
@@ -56,6 +57,8 @@ export function DataTable<Row>({
   dense?: boolean;
   /** Cap the height at --table-max-h; the other rows scroll inside the panel under the sticky header. */
   scroll?: boolean;
+  /** A sideways-only table wider than a phone: a named, focusable region, so a keyboard can scroll it (WCAG 2.1.1). */
+  focusable?: boolean;
   /** What to show when no row matches (a StateNote). */
   empty: ReactNode;
 }) {
@@ -86,7 +89,7 @@ export function DataTable<Row>({
   return (
     <div
       className={cn(scroll ? "relative max-h-(--table-max-h) overflow-auto focus-visible:-outline-offset-2" : "relative overflow-x-auto")}
-      {...(scroll && { role: "region", "aria-label": caption, tabIndex: 0 })}
+      {...((scroll || focusable) && { role: "region", "aria-label": caption, tabIndex: 0 })}
     >
       <table className="w-full border-collapse text-data">
         <caption className="sr-only">{caption}</caption>
@@ -112,7 +115,7 @@ export function DataTable<Row>({
                       <button
                         type="button"
                         onClick={header.column.getToggleSortingHandler()}
-                        className={cn("inline-flex items-center gap-1 hover:text-ink-1", right && "flex-row-reverse")}
+                        className={cn("inline-flex min-h-6 items-center gap-1 hover:text-ink-1", right && "flex-row-reverse")}
                       >
                         {label}
                         {sorted === "asc" ? (

@@ -25,6 +25,7 @@ export function ImfTable({ years }: { years: ImfYear[] }) {
       rowKey={(r) => r.year}
       caption="The IMF's forecasts of India's real GDP growth and CPI inflation for each of the next five years"
       dense
+      focusable
       empty={<StateNote kind="empty">No forecasts for the coming years are stored.</StateNote>}
     />
   );

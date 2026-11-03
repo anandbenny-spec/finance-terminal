@@ -9,11 +9,8 @@ import { dissentLine, type Tally } from "@/lib/policy/decisions";
 export function PendingVote({ t }: { t: Extract<Tally, { kind: "pending" }> }) {
   if (!t.dissents?.length) return <StateNote kind="unavailable">{t.note}</StateNote>;
   return (
-    <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-data">
+    <span className="flex flex-col gap-y-1 text-data">
       <span className="text-ink-1">{dissentLine(t.dissents)}</span>
-      <span aria-hidden className="text-ink-3">
-        ·
-      </span>
       <StateNote kind="unavailable">{t.note}</StateNote>
     </span>
   );
