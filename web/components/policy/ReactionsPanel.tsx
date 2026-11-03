@@ -16,7 +16,7 @@ import { formatTableDate } from "@/lib/format";
 import { REACTION_SERIES, type ReactionCell, type ReactionRow } from "@/lib/policy/reactions";
 
 const SELECT =
-  "h-8 rounded-md border border-line-input bg-raised px-2 text-data text-ink-1 hover:border-ink-3";
+  "h-8 rounded-md border border-line-input bg-raised px-2 text-read md:text-data text-ink-1 hover:border-ink-3";
 
 function Cell({ c }: { c: ReactionCell }) {
   if (c.state === "none") return null;

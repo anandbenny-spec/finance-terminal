@@ -13,7 +13,7 @@ export function NumbersChanged({ items, previousDate, newDate }: { items: Number
   return (
     <div>
       {changed.length > 0 ? (
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto" role="region" tabIndex={0} aria-label="Numbers that changed against the previous decision">
           <table className="w-full border-collapse text-data">
             <caption className="sr-only">Numbers that changed against the previous decision</caption>
             <thead className="bg-raised">

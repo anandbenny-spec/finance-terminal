@@ -8,10 +8,10 @@ export function Section({ id, title, note, children }: { id: string; title: stri
     <section aria-labelledby={id} className="mt-8 first:mt-5">
       <h2
         id={id}
-        className="mb-3 flex scroll-mt-16 items-center gap-3 text-title font-semibold text-ink-1 after:h-px after:flex-1 after:bg-line-strong"
+        className="mb-3 flex scroll-mt-16 flex-wrap items-center gap-x-3 gap-y-1 text-title font-semibold text-ink-1 after:h-px after:flex-1 after:bg-line-strong"
       >
         {title}
-        {note && <span className="text-meta font-normal text-ink-3">{note}</span>}
+        {note && <span className="order-last basis-full text-meta font-normal text-ink-3 md:order-none md:basis-auto">{note}</span>}
       </h2>
       {children}
     </section>

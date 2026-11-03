@@ -102,7 +102,7 @@ describe("PolicyCard", () => {
   it("shows a tally statement's dissenters before the minutes copy, and no count (#159)", () => {
     const latest = { ...fedLatest, meeting: OCT, votes: [vote(OCT.slug, "Lisa D. Cook", 25, true), vote(OCT.slug, "Beth M. Hammack", 25, true)] };
     const t = text(html(<PolicyCard bank="Fed" latest={latest} policies={POLICIES} now={NOW} footer="" />));
-    expect(t).toContain(`Vote Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps) · ${OCT_NOTE}`);
+    expect(t).toContain(`Vote Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps) ${OCT_NOTE}`);
     expect(t).not.toContain("Votes aren't published yet.");
     expect(t).not.toMatch(/Vote \d+–\d+/);
   });
@@ -158,7 +158,7 @@ describe("VotesPanel while the minutes are out (#159)", () => {
   it("shows the dissenters and the copy, draws no dots and no count", () => {
     const out = panel(OCT, [vote(OCT.slug, "Lisa D. Cook", 25, true), vote(OCT.slug, "Beth M. Hammack", 25, true)]);
     const t = text(out);
-    expect(t).toContain(`Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps) · ${OCT_NOTE}`);
+    expect(t).toContain(`Dissent: Lisa D. Cook (preferred +25 bps), Beth M. Hammack (preferred +25 bps) ${OCT_NOTE}`);
     expect(out).not.toContain("View as table"); // VoteDotPlot is tally-only: a partial meeting is never drawn as a whole vote
     expect(out).not.toContain("hollow dot");
     expect(t).not.toMatch(/\d+–\d+/);

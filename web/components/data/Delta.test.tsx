@@ -4,6 +4,12 @@ import { describe, expect, it } from "vitest";
 import { Delta } from "@/components/data/Delta";
 import { changeOf } from "@/lib/delta";
 
+describe("Delta wrapper", () => {
+  it("is positioned, so its screen-reader span can't escape a scroller and widen the page (#281)", () => {
+    expect(renderToStaticMarkup(<Delta change={changeOf("+3 bps")} />)).toMatch(/^<span class="relative /);
+  });
+});
+
 describe("Delta tone", () => {
   it("market (the default) keeps its green, red and flat colours", () => {
     expect(renderToStaticMarkup(<Delta change={changeOf("+3 bps")} />)).toContain("text-up");

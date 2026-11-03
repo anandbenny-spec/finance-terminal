@@ -208,6 +208,11 @@ describe("NumbersChanged", () => {
     expect(out).not.toMatch(/text-up|text-down|bg-up|bg-down/);
   });
 
+  it("scrolls in a positioned, named, focusable region (#281: sr-only text stays inside; WCAG 2.1.1)", () => {
+    const out = renderToStaticMarkup(<NumbersChanged items={items} previousDate="2026-08-06" newDate="2026-10-07" />);
+    expect(out).toMatch(/<div class="relative overflow-x-auto" role="region" tabindex="0" aria-label="Numbers that changed against the previous decision">/);
+  });
+
   it("gives a signed change a neutral triangle, and none to a null or n/a change", () => {
     const rows = [
       { ...items[0], change: "+25 bps" },
