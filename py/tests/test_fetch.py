@@ -330,6 +330,36 @@ def test_same_bytes_from_a_server_without_validators_store_nothing_new(s3, task_
 
 
 @pytest.mark.db
+def test_a_body_the_caller_declines_is_returned_but_neither_stored_nor_cached(s3, task_run):
+    """A caller that uses only some answers (a company's link that may lead to a web page, not the file) passes `keep`: a
+    body it declines comes back for a look, with no raw file and no cache row, so a page that differs on every request adds
+    nothing to a re-run (#173). A body it keeps is stored as ever."""
+    is_pdf = lambda body: body.startswith(b"%PDF-")
+    page = f"<html><body>Investors {uuid.uuid4().hex}</body></html>".encode()
+    url, site = unique(FED), Site(page, etag=None)
+    f = fetcher(site, task_run)
+    rows, objects = q("select count(*) from core.raw_file")[0][0], s3.list_objects_v2(Bucket=BUCKET)["KeyCount"]
+    got = f.get(url, source="fed", keep=is_pdf)
+    assert (got.status, got.changed, got.body, got.raw_file_id, got.new_file) == (200, True, page, None, False)
+    assert got.sha256 == hashlib.sha256(page).digest() and got.media_type == "text/html" and not got.stored
+    site.body = page + b" revised"                                          # the page differs on the next request
+    f.get(url, source="fed", keep=is_pdf)
+    assert q("select count(*) from core.raw_file")[0][0] == rows
+    assert s3.list_objects_v2(Bucket=BUCKET)["KeyCount"] == objects
+    assert q("select count(*) from ops.http_cache where url=%s", url) == [(0,)]
+    assert f.stats() == {"http": {"200": 2, "403": 0, "429": 0, "new_raw_files": 0}, "files": 0}
+    pdf = b"%PDF-1.4 " + uuid.uuid4().hex.encode()                           # a body it keeps is stored and cached
+    site.body, site.type = pdf, "application/pdf"
+    kept = f.get(url, source="fed", keep=is_pdf)
+    assert kept.new_file and kept.stored and f.read(kept.raw_file_id) == pdf
+    assert q("select count(*) from ops.http_cache where url=%s", url) == [(1,)]
+    site.body, site.type = f"<p>no keep {uuid.uuid4().hex}</p>".encode(), "text/html; charset=utf-8"
+    plain = f.get(unique(FED), source="fed")                                 # without `keep`, every 200 is stored
+    assert plain.stored and plain.new_file
+    f.close()
+
+
+@pytest.mark.db
 def test_secret_params_are_sent_but_never_recorded(s3, task_run):
     seen = []
 

@@ -57,6 +57,8 @@ class Web:
         self.seen: list[httpx.Request] = []
         self.company_pdf_status = 200
         self.refuse_plain = False                      # the company host refuses scripts: only Chrome's fingerprint is served
+        self.vary_pages = False                        # the company's web page carries a new token on every request
+        self.page_no = 0
         self.chrome_seen: list[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -88,7 +90,11 @@ class Web:
             return httpx.Response(200, content=pdf("apollohospitals.com_transcript-of-apollo-hospitals---q1-fy27-earnings-call.pdf"),
                                   headers={"content-type": "application/pdf"})
         if host == "www.marutisuzuki.com":
-            return httpx.Response(200, content=b"<html>company reports</html>", headers={"content-type": "text/html"})
+            page = b"<html>company reports</html>"
+            if self.vary_pages:
+                self.page_no += 1
+                page += f"<!-- {self.page_no} -->".encode()
+            return httpx.Response(200, content=page, headers={"content-type": "text/html"})
         return httpx.Response(404)
 
 
@@ -263,6 +269,28 @@ def test_a_letter_that_links_only_to_a_web_page_is_on_the_company_website_and_is
     assert not c["unresolved_letters"]["passed"] and "zf-maruti" in c["unresolved_letters"]["detail"]
     assert "marutisuzuki.com web page" in c["unresolved_letters"]["detail"]
     assert q("select count(*) from equity.transcript_page where document_id = %s", m[9])[0][0] == 0
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_letters_web_page_is_named_but_never_stored_even_when_it_differs_on_every_request(s3):
+    """#173: a cover letter's link that leads to a web page, not a PDF, is read by nothing (D12), and such pages differ on
+    every request, so storing them added a raw file to every re-run. The attempt is still named; a PDF is stored as ever."""
+    make_company("MARUTI", "Maruti Suzuki India Limited")
+    web_pages = """select count(*) from core.raw_file f join core.source s on s.id = f.source_id
+                    where s.key = 'company_web' and f.media_type = 'text/html'"""
+    pages_before = q(web_pages)[0][0]
+    web = Web()
+    web.vary_pages = True
+    code, tr = go(web)
+    assert code == 0 and tr[0] == "success", tr
+    assert "marutisuzuki.com web page" in checks(tr)["unresolved_letters"]["detail"]          # still named
+    assert web.page_no >= 1 and q(web_pages)[0][0] == pages_before                            # fetched, not stored
+    assert q("select count(*) from ops.http_cache where url like %s", f"{MARUTI_PAGE}%")[0][0] == 0
+    raw = q("select count(*) from core.raw_file")[0][0]
+    code, tr = go(web)
+    assert code == 0 and tr[0] == "success" and tr[1] == 0, tr
+    assert q("select count(*) from core.raw_file")[0][0] == raw and q(web_pages)[0][0] == pages_before
 
 
 @pytest.mark.db

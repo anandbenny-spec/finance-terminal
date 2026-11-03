@@ -331,7 +331,8 @@ class Fetched:
     url: str                      # as recorded (no secrets)
     status: int                   # 200, 304, or a status the caller allowed (a transcript not posted yet: 404)
     changed: bool                 # False on 304, and on a 200 whose bytes are the ones this URL last returned
-    raw_file_id: int | None       # the core.raw_file row holding the bytes (on 304, the stored copy)
+    raw_file_id: int | None       # the core.raw_file row holding the bytes (on 304, the stored copy); None when nothing
+                                  # was stored: an allowed status, or a body the caller's `keep` declined
     sha256: bytes | None
     media_type: str | None
     body: bytes | None            # the downloaded bytes (200 only); Fetcher.read() gets a stored copy back
@@ -410,10 +411,14 @@ class Fetcher:
             secret_params: Mapping[str, str] | None = None, headers: Mapping[str, str] | None = None,
             conditional: bool = True, media_type: str | None = None, ext: str | None = None,
             content_date: date | None = None, allow: Iterable[int] = (), chrome: bool = False,
-            extra_sites: tuple[Site, ...] = ()) -> Fetched:
+            extra_sites: tuple[Site, ...] = (), keep: Callable[[bytes], bool] | None = None) -> Fetched:
         """Fetch `url` for the source `source` (a core.source key). A 200 is stored and registered before this
         returns; a 304 returns the stored copy's raw file; a status in `allow` returns without a file; anything
-        else raises FetchError. conditional=False skips the validators (to download a page again on purpose)."""
+        else raises FetchError. conditional=False skips the validators (to download a page again on purpose).
+        `keep` is for a caller that will use only some answers (a company's link that may lead to a web page, not the
+        file): given a 200's body, it says whether the body is worth keeping. A body it declines comes back for a look
+        (status 200, `body` and `sha256` set, `changed` True, no `raw_file_id`) but is neither stored nor cached, so a
+        page that differs on every request adds no raw file to a re-run. Without `keep`, every 200 is stored."""
         if (params or secret_params) and urlsplit(url).query:
             raise ValueError("pass query parameters either in the URL or as params, not both")
         record = str(httpx.URL(url, params=dict(params))) if params else url
@@ -438,6 +443,9 @@ class Fetcher:
                 (r.fetched_at, self.task_run_id, r.headers.get("etag"), r.headers.get("last-modified"), record))
             return Fetched(record, 304, False, cached.raw_file_id, cached.sha256, cached.media_type, None, r.fetched_at)
         if r.status == 200:
+            if keep is not None and not keep(r.body):
+                return Fetched(r.url, 200, True, None, hashlib.sha256(r.body).digest(),
+                               _media_type(r.headers.get("content-type")), r.body, r.fetched_at)
             return self._store(r, url, source, source_id, cached, media_type, ext, content_date)
         if r.status in set(allow):
             return Fetched(record, r.status, False, None, None, None, None, r.fetched_at)
