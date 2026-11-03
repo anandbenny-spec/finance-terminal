@@ -316,7 +316,7 @@ def test_tasks_yaml_has_the_entry_and_the_task_waits_for_every_policy_task():
     assert t.rules == {"daily": "every 20 hours"} and t.overdue_after == timedelta(days=3) and not t.uses_nse
     assert t.module == "site" and not t.visitor_refreshable
     assert set(t.run_after) == {k for k in config.load() if k.startswith("policy.")}
-    assert QualitySummary.key == "site.quality_summary" and qs.load_settings().modules == ("policy",)
+    assert QualitySummary.key == "site.quality_summary" and qs.load_settings().modules == ("policy", "equity")
 
 
 def test_the_gates_file_loads_and_names_only_listed_modules():

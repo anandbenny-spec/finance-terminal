@@ -107,6 +107,13 @@ export function ReactionsPanel({ rows, footer, refresh }: { rows: ReactionRow[];
         move is the Fed&apos;s surprise measure. The US 2-year, 10-year and S&amp;P 500 are measured for Fed decisions only, so
         they&apos;re empty on RBI rows. Yields in basis points, the rest in percent.
       </p>
+      <p className="border-b border-line px-3 py-2 text-meta text-ink-2">
+        How the Nifty 50&apos;s companies moved on these decisions:{" "}
+        <Link href="/screener/rate-decisions" className="text-ink-1 underline">
+          the sector view
+        </Link>
+        .
+      </p>
       <DataTable
         columns={columns}
         rows={shown}

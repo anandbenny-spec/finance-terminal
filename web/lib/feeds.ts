@@ -44,6 +44,15 @@ export const FEEDS = {
   meetingRbi: ["policy.rbi_documents", "policy.ai_batch"],
   // /accuracy (ACC-3, #135): the site's own run and check records, projected daily by site.quality_summary.
   accuracy: ["site.quality_summary"],
+  // Module 2, release 2A (2A-26, #132; moved in from PREVIEW_FEEDS once production's runs left a freshness row for each task).
+  // /screener (2A-18): the latest weekly snapshot, built from the metrics, prices, statements and beta.
+  screener: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
+  // /companies/[slug] (2A-19): prices, filings, derived metrics and betas; the header and chips come from the universe.
+  company: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
+  // The Valuation tab (2A-20): the stored runs and grid, built from the same filings, prices and betas plus the rates inputs.
+  valuation: ["equity.valuation_inputs", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
+  // The Rate decisions tab and the sector view (2A-25): decision-day moves and rate cycles, from the stored reactions.
+  rateSensitivity: ["equity.rate_reactions", "policy.rate_cycles"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 
 export type Surface = keyof typeof FEEDS;
@@ -61,6 +70,7 @@ export const DAILY_TASKS = [
   "policy.rbi_documents",
   "policy.ai_batch",
   "policy.reactions",
+  "policy.rate_cycles",
   "site.quality_summary",
 ] as const satisfies readonly TaskKey[];
 
@@ -70,20 +80,10 @@ export function liveTasks(feeds: Record<string, readonly TaskKey[]> = FEEDS): Ta
 }
 
 /**
- * Module 2's surfaces while they are being built (Spec 02A §8; #124's amendment, 28 Oct 2026). The status bar counts
- * every task in FEEDS, and a task with no freshness row counts as stale, so a 2A surface in FEEDS would read "sources
- * stale" on the shared link until 2A-26's production runs. These stay out of FEEDS (so `liveTasks()` ignores them);
- * a panel's Freshness reads its tasks from here, and 2A-26 moves them into FEEDS.
+ * Surfaces still being built stay here, out of FEEDS, so the status bar doesn't count a task that has no freshness row
+ * yet (a missing row counts as stale). A job that ships a surface moves it into FEEDS in the pull request that links
+ * it. Empty since 2A-26 (#132) moved module 2's four surfaces into FEEDS.
  */
-export const PREVIEW_FEEDS = {
-  // /screener (2A-18): the latest weekly snapshot, built from the metrics, prices, statements and beta.
-  screener: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
-  // /companies/[slug] (2A-19): prices, filings, derived metrics and betas; the header and chips come from the universe.
-  company: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
-  // The Valuation tab (2A-20): the stored runs and grid, built from the same filings, prices and betas plus the rates inputs.
-  valuation: ["equity.valuation_inputs", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
-  // The Rate decisions tab and the sector view (2A-25): decision-day moves and rate cycles, from the stored reactions.
-  rateSensitivity: ["equity.rate_reactions", "policy.rate_cycles"],
-} as const satisfies Record<string, readonly TaskKey[]>;
+export const PREVIEW_FEEDS = {} as const satisfies Record<string, readonly TaskKey[]>;
 
 export type PreviewSurface = keyof typeof PREVIEW_FEEDS;

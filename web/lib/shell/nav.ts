@@ -5,11 +5,11 @@
 // An item may carry section links (`sections`, #147): indented rows under it, no icon, never marked current. A
 // section link needs a live target like an item does: Fed vs RBI's three are its page's sections
 // (lib/policy/sections.ts, so a rename can't break them) and its two "what changed" links are the /latest routes,
-// which forward to the newest held meeting. Later jobs (#132, #90, #135) add their items in this shape, after
+// which forward to the newest held meeting. Later jobs (#90) add their items in this shape, after
 // merging main, and update nav.test.ts's lists.
 import { POLICY_SECTION_LIST, policySectionHref } from "@/lib/policy/sections";
 
-export type NavIcon = "home" | "policy" | "about" | "admin" | "health" | "labelling" | "accuracy";
+export type NavIcon = "home" | "policy" | "screener" | "about" | "admin" | "health" | "labelling" | "accuracy";
 
 /** A link under an item: a label and a live target, no icon. */
 export type NavSubLink = { href: string; label: string };
@@ -34,6 +34,10 @@ export const NAV: readonly NavGroup[] = [
         ],
       },
     ],
+  },
+  {
+    heading: "Company research",
+    items: [{ href: "/screener", label: "Screener", icon: "screener" }],
   },
   {
     heading: "About",

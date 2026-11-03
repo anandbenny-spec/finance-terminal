@@ -16,7 +16,7 @@ import { SourceLine } from "@/components/data/SourceLine";
 import { StateNote } from "@/components/data/StateNote";
 import { Foot } from "@/components/policy/PanelFoot";
 import { NOT_A_FORECAST, RATE_GATE, WINDOWS, rateSources, statRows, windowOf, type WindowKey } from "@/lib/equity/rate";
-import { PREVIEW_FEEDS } from "@/lib/feeds";
+import { FEEDS } from "@/lib/feeds";
 import { readSectorPage, type SectorPageData } from "@/lib/queries/rate";
 import { readFreshness } from "@/lib/queries/shell";
 import { panelFreshness } from "@/lib/shell/freshness";
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   description: "How each Nifty 50 peer group has moved against the index on RBI and Fed decision days. Informational only, not investment advice.",
 };
 
-const TASKS = PREVIEW_FEEDS.rateSensitivity;
+const TASKS = FEEDS.rateSensitivity;
 const HELD = "Rate-sensitivity figures are held back until their checks pass.";
 
 export function sectorHref(window: WindowKey): string {

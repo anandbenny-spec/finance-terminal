@@ -15,14 +15,14 @@ import { StateNote } from "@/components/data/StateNote";
 import { Foot } from "@/components/policy/PanelFoot";
 import { DAMODARAN, sourceLineFor } from "@/lib/equity/company";
 import { GATE, assumptionRows, gridCentre, gridOptions, imfContext, leadKind, leadOf, runOf, type Lead } from "@/lib/equity/valuation";
-import { PREVIEW_FEEDS } from "@/lib/feeds";
+import { FEEDS } from "@/lib/feeds";
 import { NOT_AVAILABLE, formatCount, formatDate, formatFraction, formatFractionPoints } from "@/lib/format";
 import { IN_10Y } from "@/lib/policy/longrates";
 import type { TaskFreshnessRow } from "@/lib/queries/api";
 import type { CompanyPageData } from "@/lib/queries/company";
 
 type Ok = Extract<CompanyPageData, { ok: true }>;
-const TASKS = PREVIEW_FEEDS.valuation;
+const TASKS = FEEDS.valuation;
 const HELD = "Model-implied figures are held back until their checks pass.";
 
 function LeadBody({ lead, lender }: { lead: Lead; lender: boolean }) {

@@ -22,11 +22,13 @@ describe("sidebar", () => {
     expect(visibleGroups(false).map((g) => [g.heading, g.items.map((i) => i.label)])).toEqual([
       ["Overview", ["Start here"]],
       ["Macro and policy", ["Fed vs RBI"]],
+      ["Company research", ["Screener"]],
       ["About", ["About and privacy", "Accuracy"]],
     ]);
     expect(visibleGroups(true).map((g) => [g.heading, g.items.map((i) => i.label)])).toEqual([
       ["Overview", ["Start here"]],
       ["Macro and policy", ["Fed vs RBI"]],
+      ["Company research", ["Screener"]],
       ["About", ["About and privacy", "Accuracy"]],
       ["Admin", ["Admin", "Health", "Labelling"]],
     ]);
@@ -53,6 +55,7 @@ describe("sidebar", () => {
       "/",
       "/policy",
       ...FED_VS_RBI_SECTIONS.map((s) => s.href),
+      "/screener",
       "/about",
       "/accuracy",
       "/admin",
@@ -94,6 +97,8 @@ describe("sidebar", () => {
     expect(activeHref("/admin")).toBe("/admin");
     expect(activeHref("/admin/labelling")).toBe("/admin/labelling");
     expect(activeHref("/about")).toBe("/about");
+    expect(activeHref("/screener")).toBe("/screener");
+    expect(activeHref("/screener/rate-decisions")).toBe("/screener");
     expect(activeHref("/policyx")).toBeNull();
     // "Start here" is current on the front page only, never as the parent of every path
     expect(activeHref("/")).toBe("/");
