@@ -67,6 +67,32 @@ def task_row():
                      on conflict (key) do nothing""", (KEY,))
 
 
+def wipe() -> None:
+    """Everything these tests made (companies slugged 'cai-%' and what hangs off them): other tests count companies, events and
+    alerts. Published outputs can't be updated, but an admin can delete them (their citations go with them)."""
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        ids = "(select id from core.entity where slug like 'cai-%')"
+        docs = f"(select id from core.document where entity_id in {ids})"
+        c.execute(f"delete from ops.ai_request where document_id in {docs}")
+        c.execute(f"delete from core.ai_output where document_id in {docs}")
+        c.execute(f"delete from equity.call_turn where document_id in {docs}")
+        c.execute(f"delete from equity.earnings_call where entity_id in {ids}")
+        c.execute(f"update core.document set supersedes_id = null where entity_id in {ids}")
+        c.execute(f"delete from core.document where entity_id in {ids}")
+        c.execute(f"delete from core.event where entity_id in {ids}")
+        c.execute("delete from core.entity where slug like 'cai-%'")
+        c.execute("delete from core.source where key like 'cai\\_%' and key like '%suppressed'")
+        c.execute("delete from ops.alert where dedupe_key like 'ai_rejected:call_summary:%' "
+                  "or dedupe_key like 'ai_unavailable:calls:%'")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def clean():
+    wipe()
+    yield
+    wipe()
+
+
 class Ticker:
     """The batch poll's clock: sleeping moves it on at once."""
 
@@ -213,7 +239,7 @@ def test_a_stored_call_gets_a_cited_two_list_summary_through_the_batch_api():
     doc_block = params["messages"][0]["content"][0]
     assert doc_block["source"]["data"] == c["built"].text and doc_block["citations"] == {"enabled": True}
     (o,) = outputs(c["doc"])
-    assert o[:3] == ("published", "", 5) and o[4] == "v2"
+    assert o[:3] == ("published", "", 5) and o[4] == eca.PROMPT_VERSION[cs.TASK]
     asked = params["messages"][0]["content"][1]["text"]
     assert "- Management: Ravi Rao; Meera Iyer" in asked and "- Analysts: Anil Shah; Pooja Menon" in asked
     content, = q("select content from core.ai_output where document_id = %s and task = 'call_summary'", c["doc"])[0]

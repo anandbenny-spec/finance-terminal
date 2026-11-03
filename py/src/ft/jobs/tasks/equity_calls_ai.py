@@ -9,7 +9,7 @@ version: the document the call row points at, never a revised version registered
 therefore asks again for the calls summarised under the old one, and a published summary of the current version is never
 asked for twice. A backfill's `--since` and `--until` limit the run to calls
 filed in that range (a weekly run has none). Each is one request (`ft/ai/call_summary.py`: the prompt
-`config/prompts/call_summary/v2.md`, the checks, the role rules from the call's stored turns), sent through the shared batch
+`config/prompts/call_summary/v3.md`, the checks, the role rules from the call's stored turns), sent through the shared batch
 steps (`ft/ai/batch.py`: submit, poll for up to 15 minutes, collect, store each billed reply at once, retry once with a note,
 then reject with an alert, never resend an unchanged input). Roles don't gate it (Spec 02B.1 C10): every stored call is
 summarised; a role-held call (`unknown_role_share` above `turns.ROLE_HOLD_SHARE`) may leave a list out, and what participants
@@ -62,7 +62,7 @@ from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TARGETS
 
-PROMPT_VERSION = {cs.TASK: "v2"}
+PROMPT_VERSION = {cs.TASK: "v3"}
 IST = "Asia/Kolkata"
 SHOWN = 12
 

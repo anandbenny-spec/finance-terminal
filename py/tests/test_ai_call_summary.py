@@ -23,9 +23,10 @@ from ft.ai import call_summary as cs
 from ft.ai import summaries
 from ft.ai.call_summary import HEADINGS, Turn, answer_turns, check, ranges, roster
 from ft.ai.client import TASKS, load_prompt
+from ft.jobs.tasks.equity_calls_ai import PROMPT_VERSION
 from ft.quality.reasons import categorise
 
-PROMPT = load_prompt("call_summary", "v2")
+PROMPT = load_prompt("call_summary", PROMPT_VERSION[cs.TASK])
 B = build()
 TEXT = B.text
 QUESTION = "Can you explain the margin outlook for the second half?"
@@ -109,7 +110,8 @@ def test_the_prompt_names_the_three_headings_and_the_role_rules():
         assert f'"{h}"' in p
     assert "only passages spoken by speakers listed as Management" in p and "never cites the moderator" in p
     assert "never guess a role" in p and "<!--" not in p and p.endswith("\n")
-    assert load_prompt("call_summary", "v1").text != p                                  # v1 ran on dev's trial: v2 is new
+    assert "never a heading with no bullets under it" in p and "Never add, subtract, round, convert" in p
+    assert len({load_prompt("call_summary", v).text for v in ("v1", "v2", "v3")}) == 3  # each version that ran on dev is kept
 
 
 # --------------------------------------------------------------------------------------------------- lists and bullets
