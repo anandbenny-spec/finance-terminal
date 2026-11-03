@@ -1,7 +1,7 @@
 // web/lib/queries/overview.ts: everything /policy reads (C3; Spec 01 §4.2, the S rows, and Pass 1b's decision-day moves), from `api` views with the
 // browser key only (lib/supabase/public.ts), through lib/queries/policy.ts's guarded reads (N2).
 //
-// Cached for minutes ('use cache', the `minutes` profile), like the shell, so the page is prerendered and a decision
+// Cached for minutes ('use cache', the `minutesNoExpire` profile), like the shell, so the page is prerendered and a decision
 // stored by `watch` reaches it within a couple of minutes. Each panel's data is read on its own: a failed read
 // leaves only that panel in its error state (StateNote), and the reason goes to the server log only (visitors
 // never see errors: Arch 02). Nothing here computes a figure; it returns rows.
@@ -114,7 +114,7 @@ const UNCONFIGURED = "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY 
 
 export async function readPolicyOverview(): Promise<PolicyOverview> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("policy", "policy-overview");
   const readAt = new Date().toISOString();
   const db = publicClient();

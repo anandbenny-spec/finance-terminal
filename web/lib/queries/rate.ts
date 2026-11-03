@@ -113,7 +113,7 @@ export type SectorPageData =
 /** Everything /screener/rate-decisions renders; each read whole or not at all. */
 export async function readSectorPage(): Promise<SectorPageData> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("minutesNoExpire");
   cacheTag("equity", "rate-sensitivity");
   const readAt = new Date().toISOString(); // read inside the cache, as lib/queries/equity.ts does
   const db = publicClient();

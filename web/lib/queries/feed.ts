@@ -18,7 +18,7 @@ function failed(error: unknown): { ok: false } {
 
 export async function readFeedDecisions(): Promise<Read<{ decisions: PolicyMeetingRow[]; votes: PolicyVoteRow[]; readAt: string }>> {
   "use cache";
-  cacheLife("hours");
+  cacheLife("hoursNoExpire");
   cacheTag("policy");
   const db = publicClient();
   if (!db) return failed("NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
