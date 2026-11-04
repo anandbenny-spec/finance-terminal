@@ -287,3 +287,8 @@ def test_saved_transcripts_with_a_moderator_hand_over_and_hand_back_read_their_s
     hul = run("HINDUNILVR")
     assert hul.handover and not hul.handback and not hul.role_held
     assert not run("kavinavora").handover and run("kavinavora").role_held             # no moderator: roles can't be read
+
+
+def test_role_hold_share_is_ten_percent():
+    # api.earnings_calls.roles_partial (migration 0029) hardcodes `unknown_role_share > 0.10`; change both together.
+    assert turns.ROLE_HOLD_SHARE == 0.10
