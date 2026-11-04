@@ -80,7 +80,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
       - name: Saved pages (the private finance-terminal-fixtures, so the saved-page tests run; CLAUDE.md §2)
         # FIXTURES_DEPLOY_KEY: the private half of a read-only deploy key on that one repo (Anand, 4 Nov 2026, #199). It
-        # replaces the fine-grained token FIXTURES_READ_TOKEN, which expired; a deploy key has no end date. If the secret is
+        # replaces the fine-grained token FIXTURES_READ_TOKEN; a deploy key has no end date and belongs to that one repo. If the secret is
         # missing or the key was removed from the fixtures repo, this step fails the job rather than letting those tests skip.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
         with:

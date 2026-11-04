@@ -24,10 +24,10 @@ GitHub's own per-run token (`GITHUB_TOKEN`) is automatic: nothing to set, nothin
 
 ## 2. Every secret and variable
 
-"Expires" means the credential itself carries an end date. **One does: `GITHUB_DISPATCH_TOKEN`** (a fine-grained GitHub token).
-The date at the last renewal is recorded on issue #199, never here; the live date is on the token's own page (GitHub → Settings →
-Developer settings → Fine-grained tokens). CI's read access to the private fixtures repo used to be a second expiring token
-(`FIXTURES_READ_TOKEN`); on 4 Nov 2026 it became a read-only deploy key, which has no end date (section 4).
+"Expires" means the credential carries an end date. **None does.** Both fine-grained GitHub tokens the project has used were
+created with no end date (read on their GitHub pages, 4 Nov 2026), and the one still in use is `GITHUB_DISPATCH_TOKEN`. What can
+still end a fine-grained token is **idle revocation**: GitHub revokes one that goes unused for a year (section 4). CI's read access to
+the private fixtures repo, which used a second token (`FIXTURES_READ_TOKEN`), became a read-only deploy key on 4 Nov 2026.
 
 ### 2.1 GitHub Actions secrets: production
 
@@ -68,7 +68,7 @@ had all succeeded, which also shows `PRODUCTION_SCHEDULES` is `on`.
 | `SUPABASE_SERVICE_ROLE_KEY` | the admin routes' refresh calls. **Only ever in Vercel** (`CLAUDE.md` §4) | no | the admin refresh page fails; visitors are unaffected | create a new secret key in Supabase, update Vercel, redeploy, revoke the old |
 | `SUPABASE_ANON_KEY` | the daily keep-alive read and `/api/health`. The browser key, the same value as `NEXT_PUBLIC_SUPABASE_ANON_KEY`; never the service-role key | no | `/api/health` answers 503; the keep-alive read fails (the backup `keepalive-db` still runs) | public by design; if replaced, update both names in Vercel and redeploy |
 | `CRON_SECRET` | Vercel sends it as `Authorization: Bearer ...` on the daily keep-alive cron | no | with it unset the route answers 503 and the cron's read doesn't happen (the backup still runs) | any new long random value in Vercel, then redeploy |
-| `GITHUB_DISPATCH_TOKEN` | the admin refresh button: starts `refresh.yml` through GitHub's API. Fine-grained, Actions: read and write, this repository only | **yes** | the admin refresh button fails ("GitHub answered 401" in the log). Scheduled runs, visitors and the keep-alives are unaffected (visitor refresh isn't built) | section 4 |
+| `GITHUB_DISPATCH_TOKEN` | the admin refresh button: starts `refresh.yml` through GitHub's API. Fine-grained, Actions: read and write, this repository only | no end date (checked 4 Nov 2026); GitHub revokes it if it goes unused for a year | the admin refresh button fails ("GitHub answered 401" in the log). Scheduled runs, visitors and the keep-alives are unaffected (visitor refresh isn't built) | section 4 |
 | `SQL_READER_DATABASE_URL` | **not read by any code yet** (the command bar is an `after-18-nov` job). Logs in as `sql_reader`, transaction pooler | no | nothing today | reset `sql_reader`'s password when the command bar is built |
 | `VISITOR_HASH_SALT` | **not read by any code yet** (same job) | no | nothing today | a new random value (resets visitor hashes) |
 
@@ -126,23 +126,26 @@ list it here with its renewal date.
 **Testing an alert and resetting it** (done on 1 Nov 2026): open the check's ping URL (from Bitwarden) with `/fail` added at the end:
 the check goes Down and the email arrives. Then open the plain ping URL once to reset it.
 
-## 4. Token expiry
+## 4. Tokens: end dates and idle revocation
 
-One credential still carries an end date: **`GITHUB_DISPATCH_TOKEN`**, a fine-grained personal access token (these must have an
-end date; GitHub has capped them at one year, so use the longest the form offers).
+**No credential carries an end date.** On 4 Nov 2026 both fine-grained tokens showed "no expiration date" on their GitHub pages
+(Settings → Developer settings → Fine-grained tokens): `GITHUB_DISPATCH_TOKEN` ("finance-terminal refresh dispatch") and the one
+CI used for the fixtures repo until the same day (replaced, below). There is nothing to renew on a schedule.
 
-1. **Read its end date** on GitHub (Settings → Developer settings → Fine-grained tokens). The date at the last renewal is
-   recorded on issue #199, never the value.
-2. **Renew it** (it starts workflows, so it can't become a deploy key): fine-grained, this repository only, Actions: read and
-   write, the longest end date the form allows. Replace the value in Vercel, redeploy, and update Bitwarden.
-   If it lapses, only the admin refresh button breaks.
-3. **Put a reminder in a calendar** two weeks before the end date. A lapsed token fails loudly (a 401 in the refresh log) but only when
-   someone looks.
+What can still end one is **idle revocation**. GitHub's page on credential types says a fine-grained token is revoked
+automatically if it goes unused for a year, or if it is ever pushed to a public repository.
+`GITHUB_DISPATCH_TOKEN` is used only when someone clicks the admin refresh button, so once building stops it can sit unused.
 
-**`FIXTURES_READ_TOKEN` is retired** (Anand, 4 Nov 2026, #199): CI now reads the private fixtures repo with the read-only deploy key
-`FIXTURES_DEPLOY_KEY` (section 2.1), so CI no longer has an expiry. To rotate that key: generate a new key pair, add the public
-half to the fixtures repo's Deploy keys (read-only, never "allow write"), update the Actions secret and Bitwarden, and delete the old
-deploy key there.
+1. **Check it** in the monthly check (5.8): the token still appears on that GitHub page, and "Last used" is recent.
+2. **If it was revoked**, only the admin refresh button breaks (a 401 in the refresh log; the site, the scheduled runs and the
+   keep-alives are unaffected). Make a new fine-grained token: this repository only, Actions: read and write. Replace the value in
+   Vercel, redeploy, and update Bitwarden. Using the token within the year avoids this.
+
+**CI's fixtures access was replaced** (Anand, 4 Nov 2026, #199): the `test` job now reads the private fixtures repo with the
+read-only deploy key `FIXTURES_DEPLOY_KEY` (section 2.1) instead of the fine-grained token `FIXTURES_READ_TOKEN`. A deploy key
+belongs to that one repository, has no end date, and GitHub's credential-types page names no idle rule for it. To rotate it:
+generate a new key pair, add the public half to the fixtures repo's Deploy keys (read-only, never "allow write"), update the
+Actions secret and Bitwarden, and delete the old deploy key there.
 
 ## 5. The no-subscription runbook
 
@@ -191,7 +194,7 @@ states instead of errors. To switch AI off deliberately for a manual run, set th
    year is its own term in the file); MPC membership changes when the government appoints. It needs a human edit, with a source note per term.
 3. **An unscheduled FOMC meeting** needs a row in `py/config/meeting_times.yaml` (the calendar task fails without one, by design).
    Scheduled meetings need nothing.
-4. **Token end dates** (section 4): CI and the admin refresh button, not the site.
+4. **A token revoked for sitting unused** (section 4): only the admin refresh button, never the site or the scheduled runs.
 5. **A free-tier limit** (section 3): Supabase size, an expired Anthropic or Atlas payment, CoinGecko's monthly quota.
 6. **A source objects.** Anything an owner objects to is removed at once (`core.source.is_suppressed`), with BSE as the NSE fallback.
 
@@ -229,7 +232,7 @@ gh run list --repo anandbenny-spec/finance-terminal --workflow daily.yml --limit
 - Actions tab: the latest `daily`, `weekly` and `keepalive-db` runs are green, and none of the scheduled workflows shows "disabled".
 - `PRODUCTION_SCHEDULES` is still `on`.
 - Supabase: no pause warning; the Usage page is below the caps. Vercel: the latest production deployment is Ready.
-- Token end dates (section 4): none within 30 days.
+- The admin refresh token (section 4) is still listed on its GitHub page, with a recent "Last used".
 - Credits: the Anthropic Console's balance, if AI outputs are wanted to keep updating.
 - A calendar entry for the next 60-day mark, in case `keep-alive` itself has stopped.
 
