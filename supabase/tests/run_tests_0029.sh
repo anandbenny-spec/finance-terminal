@@ -117,6 +117,8 @@ SQL
 check "G01 the test rows load (three companies, three calls, three outputs, four targets, one stated figure)" \
   "$SETUP_OUT" '^(BEGIN|CREATE FUNCTION|INSERT 0 [0-9]+|UPDATE [0-9]+|COMMIT|[[:space:]]|[|])*$'
 
+SUM=ai.call_summary
+FIG=ai.guidance_extraction
 SHOWN="$(POL $SUM shown); $(POL $FIG labelled)"
 HID="$(POL $SUM hidden); $(POL $FIG hidden)"
 SUMONLY="$(POL $SUM labelled); $(POL $FIG hidden)"
