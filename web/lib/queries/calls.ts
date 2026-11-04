@@ -3,10 +3,12 @@
 // API's 1,000-row cap, CLAUDE.md §6). Nothing here reads a transcript's text: a quote arrives only as a verified citation's
 // (api.ai_citations), at most 400 characters. A failed read leaves the tab in its error state; the reason goes to the log.
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { cacheLife, cacheTag } from "next/cache";
 import { selectCall } from "@/lib/equity/calls";
-import type { AiCitationRow, AiOutputRow, ApiDatabase, CallFigureRow, CitationPageRow, EarningsCallRow, EarningsLatestRow, FieldPolicyRow } from "@/lib/queries/api";
+import type { AiCitationRow, AiOutputRow, ApiDatabase, CallFigureRow, CitationPageRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
 import { readFieldPolicy } from "@/lib/queries/policy";
 import { readAll } from "@/lib/queries/read";
+import { publicClient } from "@/lib/supabase/public";
 
 type Db = SupabaseClient<ApiDatabase, "api">;
 
@@ -114,4 +116,35 @@ export async function readCallsTab(db: Db, slug: string, call: string | undefine
     readOutputPages(db, outputIds),
   ]);
   return { calls, selected, policies, summary, figures, citations, pages, latest: null };
+}
+
+const LIST_COLUMNS =
+  "company_slug, company_name, short_name, call_slug, fiscal_label, call_date, filed_at, exchange, route, status, summary_state, roles_partial, window_from, window_to";
+
+/** Every company's row of api.earnings_latest (about 50), read whole against the exact count (CLAUDE.md §6). */
+export async function readEarningsList(db: Db): Promise<EarningsListRow[]> {
+  return readAll<EarningsListRow>("api.earnings_latest", (from, to) =>
+    db.from("earnings_latest").select(LIST_COLUMNS, { count: "exact" }).order("company_slug").range(from, to),
+  );
+}
+
+export type EarningsListData = { ok: true; readAt: string; rows: EarningsListRow[] } | { ok: false; readAt: string };
+
+/** What /earnings renders: the list whole or not at all; a failed read leaves the page in its error state. */
+export async function readEarningsListPage(): Promise<EarningsListData> {
+  "use cache";
+  cacheLife("minutesNoExpire");
+  cacheTag("equity", "earnings");
+  const readAt = new Date().toISOString();
+  const db = publicClient();
+  if (!db) {
+    console.error("[earnings] list read failed: NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
+    return { ok: false, readAt };
+  }
+  try {
+    return { ok: true, readAt, rows: await readEarningsList(db) };
+  } catch (error) {
+    console.error("[earnings] list read failed: " + (error instanceof Error ? error.message : String(error)));
+    return { ok: false, readAt };
+  }
 }

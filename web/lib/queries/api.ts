@@ -645,6 +645,20 @@ export type EarningsLatestRow = {
   window_to: string | null;
 };
 
+/** api.earnings_latest (0029), the columns /earnings reads: a company's newest published call, or status `none_found` with the window covered. */
+export type EarningsListRow = EarningsLatestRow & {
+  company_name: string;
+  short_name: string | null;
+  call_slug: string | null;
+  fiscal_label: string | null;
+  call_date: string | null;
+  filed_at: string | null;
+  exchange: string | null;
+  route: string | null;
+  summary_state: "available" | "held_back" | "not_generated" | null;
+  roles_partial: boolean | null;
+};
+
 /** api.citation_pages (0029): the PDF page(s) of a verified transcript citation; no row where the document has no page map. */
 export type CitationPageRow = {
   ai_output_id: number;
@@ -695,7 +709,7 @@ export type ApiDatabase = {
       company_rate_cycles: View<CompanyRateCycleRow>;
       earnings_calls: View<EarningsCallRow>;
       call_figures: View<CallFigureRow>;
-      earnings_latest: View<EarningsLatestRow>;
+      earnings_latest: View<EarningsListRow>;
       citation_pages: View<CitationPageRow>;
     };
     Functions: { [_ in never]: never };
