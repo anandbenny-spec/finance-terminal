@@ -1,20 +1,36 @@
-"""equity.calls_ai: the cited summaries of the stored earnings calls, precomputed through the Batch API (Spec 02B §5.5-§5.6,
-§13.3, §13.6; job 2B-11, #174). The one task of module (c) that spends (`CLAUDE.md` §6's AI-run rules apply to its
-`refresh` and `backfill`); the extracted figures (2B-13, #176) join it later, and the embeddings and the rolling window
-(§5.4) are after 18 Nov.
+"""equity.calls_ai: the cited summaries and the extracted figures of the stored earnings calls, precomputed through the Batch API
+(Spec 02B §5.5-§5.6, §5.9, §13.3, §13.5-§13.6; jobs 2B-11, #174, and 2B-13, #176). The one task of module (c) that spends
+(`CLAUDE.md` §6's AI-run rules apply to its `refresh` and `backfill`); the embeddings and the rolling window (§5.4) are after
+18 Nov.
 
-**What it asks for.** Every published, stored transcript (a call whose event is `stored` and published, not held, with its
-document published and chunked, and neither source suppressed) that lacks a published `call_summary` from the current prompt
-version: the document the call row points at, never a revised version registered later (§13.3). A new prompt version
-therefore asks again for the calls summarised under the old one, and a published summary of the current version is never
-asked for twice. A backfill's `--since` and `--until` limit the run to calls
-filed in that range (a weekly run has none). Each is one request (`ft/ai/call_summary.py`: the prompt
-`config/prompts/call_summary/v4.md`, the checks, the role rules from the call's stored turns), sent through the shared batch
-steps (`ft/ai/batch.py`: submit, poll for up to 15 minutes, collect, store each billed reply at once, retry once with a note,
-then reject with an alert, never resend an unchanged input). Roles don't gate it (Spec 02B.1 C10): every stored call is
-summarised; a role-held call (`unknown_role_share` above `turns.ROLE_HOLD_SHARE`) may leave a list out, and what participants
-whose role couldn't be read said goes in a third list, never attributed to management. One published output per transcript (target: the document;
-scope `''`); a later one supersedes it.
+**What it asks for.** Two requests for every published, stored transcript (a call whose event is `stored` and published, not held,
+with its document published and chunked, and neither source suppressed): the document the call row points at, never a revised
+version registered later (§13.3).
+- `call_summary`: for a call that lacks a published summary from the current prompt version. A new prompt version therefore asks
+  again for the calls summarised under the old one, and a published summary of the current version is never asked for twice.
+- `guidance_extraction` (`ft/ai/guidance_extraction.py`, the prompt `config/prompts/guidance_extraction/v1.md`): for a call that
+  has neither a published output of the current prompt version nor a draft one marked `no_targets` (a call on which nothing was
+  found is final for that version). Its call needs the company's fiscal-year end month (`equity.company`), a call date and its
+  stored speaker turns, which every call from 2B-09 has; one without any is named in the `call_guidance` line and not asked for.
+
+A backfill's `--since` and `--until` limit the run to calls filed in that range (a weekly run has none). Each request is sent
+through the shared batch steps (`ft/ai/batch.py`: submit, poll for up to 15 minutes, collect, store each billed reply at once,
+retry once with a note, then reject with an alert, never resend an unchanged input). Roles don't gate either task (Spec 02B.1
+C1, C10): every stored call is summarised and extracted; a role-held call (`unknown_role_share` above `turns.ROLE_HOLD_SHARE`)
+may leave a summary list out, and what participants whose role couldn't be read said goes in a third list (the summary) or in the
+separate guidance list (`equity.guidance.speaker_role = 'unknown'`), never attributed to management and never scored. One
+published output per task and transcript (target: the document; scope `''`); a later one supersedes it.
+
+**Writing the extraction.** A reply that passes the checks and holds at least one item with a verified citation is published
+with its citations, and its rows are written in the same transaction: an `equity.guidance` row per target (every row states its
+`speaker_role`, set from the turn its quote lies in), an `equity.stated_figure` row per stated figure, and
+`equity.earnings_call.guidance_targets` (the management targets shown, duplicates out). A reply with no item in either list (or
+every item dropped) stays a draft with `status_reason = 'no_targets'` (the database refuses to publish an output without a
+verified citation), sets `guidance_targets = 0` unless the call already has a published output, and shows "No measurable targets
+found on this call". Items that fail a check are dropped and counted by reason, never retried; only a reply that isn't the
+schema's JSON is retried. No `core.forecast` row is written (that is #177, after 18 Nov). **The rows of a superseded output stay**
+(store once, never lose): a reader of `equity.guidance` or `equity.stated_figure` joins `core.ai_output` and takes the published
+one, as the `api` views do.
 
 **Limits (§5.5).** A transcript whose request is estimated above 60,000 tokens is skipped with a warning naming it
 (`calls_too_long`); the wrapper itself refuses anything over 100,000.
@@ -25,13 +41,20 @@ AI unavailable", the `ai_available` warning and one alert a month), nothing new 
 published output stays, and the run is green. A call without a summary then shows "Summary not generated yet" (§13.3).
 
 Checks, B blocking, W warning:
-- (B) `outputs_stored`: each output published in this run is on its transcript, has every bullet cited, and each bullet's
+- (B) `outputs_stored`: each summary published in this run is on its transcript, has every bullet cited, and each bullet's
   citations are verified and inside the published text;
 - (B) `citation_roles`: the role rules, run again on what is stored (the output's citations against `equity.call_turn`);
+- (B) `guidance_stored`: each extraction stored in this run has its citations and its rows, one each per item (or, with no item,
+  is a `no_targets` draft with no row), and the call's `guidance_targets` is the count of its management targets shown;
+- (B) `guidance_items`: each stored row again, against the transcript: its span is at most 400 code points and inside one turn
+  whose role is the row's `speaker_role` (a stated figure's: management), a row of the separate list passes the content test,
+  and its figures are in its quote;
+- (W) `guidance_dropped_<reason>`: items dropped, one line per reason (the four of Spec 02B.1 C3 always; the others when
+  there are any);
 - (W) `citation_integrity`: no reply finally rejected in this run, and the month's rejected share under 10% (Arch 03 §1.9);
 - (W) `calls_too_long`: transcripts skipped for their length, named;
 - (W) `ai_spend`, `ai_available`, `batches`: as `policy.ai_batch`'s;
-- (W) `call_summaries`: what the run found and did (counts; always passes).
+- (W) `call_summaries`, `call_guidance`: what the run found and did (counts; always pass).
 """
 from __future__ import annotations
 
@@ -43,6 +66,7 @@ from decimal import Decimal
 
 from ft.ai import batch, summaries
 from ft.ai import call_summary as cs
+from ft.ai import guidance_extraction as ge
 from ft.ai.batch import (
     BATCH_POLL_SECONDS,
     RUN_LIMIT_USD,
@@ -54,7 +78,8 @@ from ft.ai.batch import (
     spend_check,
 )
 from ft.ai.call_summary import CallDoc, Turn
-from ft.ai.client import Reply, Request, load_prompt
+from ft.ai.client import Reply, Request, load_prompt, load_schema
+from ft.ai.guidance_extraction import Metrics
 from ft.equity.calls.turns import ROLE_HOLD_SHARE
 from ft.equity.guard import equity_due
 from ft.jobs.due import Due
@@ -62,7 +87,7 @@ from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TARGETS
 
-PROMPT_VERSION = {cs.TASK: "v4"}
+PROMPT_VERSION = {cs.TASK: "v4", ge.TASK: "v1"}
 IST = "Asia/Kolkata"
 SHOWN = 12
 
@@ -73,10 +98,14 @@ def _names(items: list[str]) -> str:
 
 @dataclass
 class Work:
-    """One target: the summary of one stored call."""
+    """One target: the summary, or the extracted figures, of one stored call."""
     task: str
     call: CallDoc
     slug: str                         # the call's event slug, for the checks' messages
+    event_id: int = 0                 # the call's event and its company: the extraction's rows
+    entity_id: int = 0
+    schema: dict | None = None        # the extraction's JSON schema, and its metric map and switch
+    metrics: Metrics | None = None
 
     @property
     def target(self) -> str:
@@ -87,9 +116,13 @@ class Work:
         return self.call.document_id
 
     def request(self, prompt, note: str | None = None) -> Request:
+        if self.task == ge.TASK:
+            return ge.guidance_request(self.call, prompt, self.schema, note=note)
         return cs.call_summary_request(self.call, prompt, note=note)
 
-    def check(self, req: Request, reply: Reply) -> summaries.Checked:
+    def check(self, req: Request, reply: Reply):
+        if self.task == ge.TASK:
+            return ge.check(ge.answer_of(reply), self.call, self.metrics)
         return cs.check(reply, req.sources, self.call.turns, role_held=self.call.role_held)
 
 
@@ -97,7 +130,16 @@ class Work:
 class Fetched(RunState):
     """The batch steps' run state (`ft.ai.batch.RunState`) and what is this task's own."""
     wanted: int = 0                                          # calls that lacked a published summary at the start
+    wanted_guidance: int = 0                                 # calls that lacked their extraction at the start
+    no_guidance: list[str] = field(default_factory=list)     # calls that can't be extracted (no month, date or turns): slugs
     too_big: list[tuple[Work, int]] = field(default_factory=list)   # skipped for their length: (work, estimated tokens)
+
+
+def state(o) -> str:
+    """An outcome's state for the counts: an extraction that found nothing is `no_targets`, not `published`."""
+    if o.status == "published" and o.work.task == ge.TASK and all(c.checked.empty for c in o.calls if c.ok):
+        return "no_targets"
+    return o.status
 
 
 @register
@@ -120,17 +162,20 @@ class EquityCallsAi(BatchSteps, Task):
                     where e.slug = any(%s)""", [sorted(self.scope)])
 
     # ------------------------------------------------------------------ reading what's there
+    metrics: Metrics | None = None        # tests inject; otherwise config/equity/guidance_metrics.yaml, read at each run
+
     def _calls(self, db, *, doc_ids: list[int] | None = None, lacking: bool = True,
-               since: date | None = None, until: date | None = None) -> list[Work]:
-        """The stored calls as targets. `lacking`: only those without a published summary (what to ask for);
-        otherwise every call that could be asked for (a late result looks its target up so)."""
+               since: date | None = None, until: date | None = None, skipped: list[str] | None = None) -> list[Work]:
+        """The stored calls as targets, a summary and an extraction each. `lacking`: only those without a published summary, or
+        without an extraction (published, or a draft that found nothing) from the current prompt version (what to ask for);
+        otherwise every call that could be asked for (a late result looks its target up so). `skipped` collects the slugs of
+        the calls that can't be extracted."""
         where = ["ev.status = 'stored'", "ev.is_published", "ec.status_reason is null", "d.is_published",
                  "d.chunked_at is not null", "(es.id is null or not es.is_suppressed)", "not ds.is_suppressed"]
-        args: list = []
+        guidance = ge.TASK in PROMPT_VERSION            # a task with no prompt version listed isn't asked for
+        args: list = [PROMPT_VERSION[cs.TASK], PROMPT_VERSION.get(ge.TASK, "")]    # the lateral's two placeholders come first
         if lacking:
-            where.append("""not exists (select 1 from core.ai_output o where o.task = 'call_summary'
-                                          and o.document_id = d.id and o.status = 'published' and o.prompt_version = %s)""")
-            args.append(PROMPT_VERSION[cs.TASK])
+            where.append("not (f.has_summary and f.has_extraction)" if guidance else "not f.has_summary")
         if doc_ids is not None:
             where.append("d.id = any(%s)"); args.append(doc_ids)
         elif self.scope is not None:
@@ -142,13 +187,22 @@ class EquityCallsAi(BatchSteps, Task):
         rows = db.execute(
             f"""select ec.event_id, ev.slug, ec.fiscal_label, ec.call_date, (ec.filed_at at time zone '{IST}')::date,
                        d.id, d.char_count, n.name, ec.unknown_role_share,
-                       (select string_agg(c.body, '' order by c.chunk_no) from core.chunk c where c.document_id = d.id)
+                       (select string_agg(c.body, '' order by c.chunk_no) from core.chunk c where c.document_id = d.id),
+                       ec.entity_id, co.fy_end_month, f.has_summary, f.has_extraction
                   from equity.earnings_call ec
                   join core.event ev on ev.id = ec.event_id
                   join core.document d on d.id = ec.transcript_document_id
                   join core.entity n on n.id = ec.entity_id
+                  left join equity.company co on co.entity_id = ec.entity_id
                   left join core.source es on es.id = ev.source_id
                   join core.source ds on ds.id = d.source_id
+                  cross join lateral (
+                    select exists (select 1 from core.ai_output o where o.task = 'call_summary' and o.document_id = d.id
+                                      and o.status = 'published' and o.prompt_version = %s) as has_summary,
+                           exists (select 1 from core.ai_output o where o.task = 'guidance_extraction' and o.document_id = d.id
+                                      and o.prompt_version = %s
+                                      and (o.status = 'published' or (o.status = 'draft' and o.status_reason = 'no_targets')))
+                             as has_extraction) f
                  where {' and '.join(where)}
                  order by ec.filed_at, ec.event_id""", args).fetchall()
         turns: dict[int, list[Turn]] = {}
@@ -157,14 +211,24 @@ class EquityCallsAi(BatchSteps, Task):
                     """select document_id, turn_no, char_start, char_end, speaker, role, section from equity.call_turn
                         where document_id = any(%s) order by document_id, turn_no""", ([r[5] for r in rows],)).fetchall():
                 turns.setdefault(did, []).append(Turn(no, a, b, speaker, role, section))
+        metrics = self.metrics or ge.load_metrics()
+        schema = load_schema(ge.TASK, PROMPT_VERSION[ge.TASK]) if guidance else None
         out = []
-        for _, slug, label, call_date, filed, did, chars, company, share, text in rows:
+        for event_id, slug, label, call_date, filed, did, chars, company, share, text, entity_id, fy_end, has_s, has_x in rows:
             if text is None or len(text) != chars:
                 continue                                       # the database refuses this at commit; never send it
             title = f"{company} · {label or 'earnings call'} transcript"
             held = share is not None and float(share) > ROLE_HOLD_SHARE         # strictly greater, as the rules and the views
-            out.append(Work(cs.TASK, CallDoc(did, text, title, company, label, call_date or filed,
-                                             tuple(turns.get(did, ())), held), slug))
+            call = CallDoc(did, text, title, company, label, call_date or filed, tuple(turns.get(did, ())), held, fy_end)
+            if not (lacking and has_s):
+                out.append(Work(cs.TASK, call, slug, event_id, entity_id))
+            if not guidance or (lacking and has_x):
+                continue
+            if call.day is None or fy_end is None or not call.turns:
+                if skipped is not None:
+                    skipped.append(slug)
+                continue
+            out.append(Work(ge.TASK, call, slug, event_id, entity_id, schema, metrics))
         return out
 
     # ------------------------------------------------------------------ fetch (network; outputs stored as they come)
@@ -172,8 +236,9 @@ class EquityCallsAi(BatchSteps, Task):
         db = ctx.fetcher.db
         f = Fetched("batch", budget=batch.monthly_budget(db), month_spend=batch.month_spend(db))
         prompts = {t: load_prompt(t, v) for t, v in PROMPT_VERSION.items()}
-        works = self._calls(db, since=ctx.since, until=ctx.until)
-        f.wanted = len(works)
+        works = self._calls(db, since=ctx.since, until=ctx.until, skipped=f.no_guidance)
+        f.wanted = sum(1 for w in works if w.task == cs.TASK)
+        f.wanted_guidance = sum(1 for w in works if w.task == ge.TASK)
         for w in works:
             est = w.request(prompts[w.task]).estimated_tokens()
             if est > cs.MAX_ESTIMATED_TOKENS:
@@ -190,6 +255,8 @@ class EquityCallsAi(BatchSteps, Task):
         """One billed reply: its output, and either its citations and publication (superseding the earlier published
         output: one per task and target, Architecture 01 §1.4) or its rejection; the request's final status."""
         req, reply = call.request, call.reply
+        if req.task == ge.TASK:
+            return self._store_guidance(tx, w, call, task_run_id, retry_note)
         if call.checked is None:                       # the reply didn't end its turn
             content, body, cites = {"attempt": call.attempt, "stop_reason": reply.stop_reason,
                                     "problems": call.reasons(), "bullets": []}, None, []
@@ -225,6 +292,91 @@ class EquityCallsAi(BatchSteps, Task):
         tx.execute("update ops.ai_request set status = %s, ai_output_id = %s, reject_reason = %s where custom_id = %s",
                    (status, out_id, reason, call.custom_id))
 
+    def _store_guidance(self, tx, w: Work, call: Call, task_run_id: int, retry_note: str | None) -> None:
+        """One billed extraction reply: its output; then, if it holds an item, its citations, its rows and its publication
+        (superseding the earlier published output), or, if it holds none, a draft marked `no_targets`; or its rejection."""
+        req, reply, checked = call.request, call.reply, call.checked
+        if checked is None:                            # the reply didn't end its turn
+            content = {"targets": [], "stated_figures": [], "attempt": call.attempt, "stop_reason": reply.stop_reason,
+                       "problems": call.reasons()}
+        else:
+            content = ge.content(checked, attempt=call.attempt, reply=reply, metrics=w.metrics)
+        content["message_id"] = reply.message_id
+        if retry_note:
+            content["retry_note"] = retry_note
+        out_id = tx.execute(
+            """insert into core.ai_output (task, document_id, content, body, status, model, prompt_key, prompt_version,
+                                           input_sha256, input_tokens, output_tokens, cost_usd, task_run_id)
+               values (%s, %s, %s, null, 'draft', %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+            (req.task, w.document_id, json.dumps(content, ensure_ascii=False), reply.model, req.prompt.key,
+             req.prompt.version, req.input_sha256, reply.usage.prompt_tokens, reply.usage.output, reply.cost_usd,
+             task_run_id)).fetchone()[0]
+        call.output_id = out_id
+        reason = None
+        if call.ok and not checked.empty:
+            with tx.cursor() as cur:
+                cur.executemany(
+                    """insert into core.ai_citation (ai_output_id, citation_no, claim_path, kind, document_id,
+                                                     char_start, char_end, verified)
+                       values (%s, %s, %s, 'document_span', %s, %s, %s, true)""",
+                    [(out_id, i + 1, path, c.document_id, c.start, c.end) for i, (path, c) in enumerate(checked.citations)])
+            self._insert_items(tx, w, out_id, checked)
+            tx.execute("""update core.ai_output set status = 'superseded', status_reason = %s
+                           where task = %s and document_id = %s and scope = '' and status = 'published' and id <> %s""",
+                       (f"superseded by output {out_id}", req.task, w.document_id, out_id))
+            tx.execute("update core.ai_output set status = 'published' where id = %s", (out_id,))
+            tx.execute("update equity.earnings_call set guidance_targets = %s where event_id = %s",
+                       (checked.management_targets, w.event_id))
+            status = "succeeded"
+        elif call.ok:                                  # nothing found (or everything dropped): a draft, never published
+            tx.execute("update core.ai_output set status_reason = 'no_targets' where id = %s", (out_id,))
+            tx.execute("""update equity.earnings_call set guidance_targets = 0
+                           where event_id = %s and not exists (select 1 from core.ai_output o where o.task = %s
+                                                                and o.document_id = %s and o.status = 'published')""",
+                       (w.event_id, req.task, w.document_id))
+            status = "succeeded"
+        else:
+            reason = (("retried: " if retry_note else "rejected: ") + "; ".join(call.reasons()))[:1000]
+            tx.execute("update core.ai_output set status = 'rejected', status_reason = %s where id = %s", (reason, out_id))
+            status = "rejected"
+        tx.execute("update ops.ai_request set status = %s, ai_output_id = %s, reject_reason = %s where custom_id = %s",
+                   (status, out_id, reason, call.custom_id))
+
+    @staticmethod
+    def _insert_items(tx, w: Work, out_id: int, checked: ge.Checked) -> None:
+        """The rows of a checked extraction: management targets first, then the separate list, then the stated figures, each in
+        document order, so a duplicate's row refers to a row already written. No `core.forecast` row (#177)."""
+        d, call = (lambda v: None if v is None else Decimal(v)), w.call
+        ids: dict[int, int] = {}
+        for i, t in enumerate(checked.targets):
+            ids[i] = tx.execute(
+                """insert into equity.guidance (call_event_id, entity_id, ai_output_id, citation_no, document_id, char_start,
+                                                char_end, metric, metric_label, metric_text, kind, value, low, high, unit,
+                                                direction, comparison, period_text, period_kind, target_start, target_end,
+                                                basis, growth_basis, scope_text, vintage_date, duplicate_of, not_scored_reason,
+                                                speaker_role)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                           %s, %s, %s) returning id""",
+                (w.event_id, w.entity_id, out_id, t["citation_no"], call.document_id, *t["span"], t["metric"],
+                 t["metric_label"], t["metric_text"], t["kind"], d(t["value"]), d(t["low"]), d(t["high"]), t["unit"],
+                 t["direction"], t["comparison"], t["period_text"], t["period_kind"],
+                 date.fromisoformat(t["target_start"]) if t["target_start"] else None,
+                 date.fromisoformat(t["target_end"]) if t["target_end"] else None, t["basis"], t["growth_basis"],
+                 t["scope_text"], call.day, None if t["duplicate_of"] is None else ids[t["duplicate_of"]],
+                 t["not_scored_reason"], t["speaker_role"])).fetchone()[0]
+        ids = {}
+        for i, s in enumerate(checked.stated):
+            ids[i] = tx.execute(
+                """insert into equity.stated_figure (call_event_id, entity_id, ai_output_id, citation_no, document_id,
+                                                     char_start, char_end, metric, metric_label, metric_text, value, unit,
+                                                     period_text, period_kind, period_start, period_end, basis, growth_basis,
+                                                     scope_text, duplicate_of)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+                (w.event_id, w.entity_id, out_id, s["citation_no"], call.document_id, *s["span"], s["metric"],
+                 s["metric_label"], s["metric_text"], Decimal(s["value"]), s["unit"], s["period_text"], s["period_kind"],
+                 date.fromisoformat(s["period_start"]), date.fromisoformat(s["period_end"]), s["basis"], s["growth_basis"],
+                 s["scope_text"], None if s["duplicate_of"] is None else ids[s["duplicate_of"]])).fetchone()[0]
+
     def _entry(self, db, cid: str, doc_id: int | None, prompts, index: dict):
         """(work, request, attempt) for a stored custom_id, from its call as it is now; None if the request no longer
         matches (a new prompt version, a changed transcript, a call no longer eligible: stale)."""
@@ -243,7 +395,8 @@ class EquityCallsAi(BatchSteps, Task):
         task, doc_id, sha, version = db.execute(
             "select ai_task, document_id, input_sha256, prompt_version from ops.ai_request where custom_id = %s",
             (cid,)).fetchone()
-        content = {"bullets": [], **extra, "stop_reason": reply.stop_reason, "message_id": reply.message_id}
+        empty = {"targets": [], "stated_figures": []} if task == ge.TASK else {"bullets": []}
+        content = {**empty, **extra, "stop_reason": reply.stop_reason, "message_id": reply.message_id}
         if retry_note:
             content["retry_note"] = retry_note
         out_id = db.execute(
@@ -267,7 +420,8 @@ class EquityCallsAi(BatchSteps, Task):
     # ------------------------------------------------------------------ checks (same transaction)
     def checks(self, tx, f: Fetched, task_run_id) -> list[Check]:
         out: list[Check] = []
-        published = [(o.work, c.output_id) for o in f.outcomes if o.status == "published" for c in o.calls if c.ok]
+        published = [(o.work, c.output_id) for o in f.outcomes if o.status == "published" and o.work.task == cs.TASK
+                     for c in o.calls if c.ok]
         wrong, roles = [], []
         for w, out_id in published:
             # A later run may have superseded it already; what matters is that it was published on its transcript with
@@ -300,7 +454,7 @@ class EquityCallsAi(BatchSteps, Task):
         out.append(Check("citation_roles", not roles, "; ".join(roles) or
                          f"{len(published)} published, every citation on a turn its list allows"))
 
-        c = Counter(o.status for o in f.outcomes)
+        c = Counter(o.status for o in f.outcomes if o.work.task == cs.TASK)
         mapping: Counter = Counter()
         for o in f.outcomes:
             for call in o.calls:
@@ -310,8 +464,8 @@ class EquityCallsAi(BatchSteps, Task):
         month = tx.execute(
             """select count(*) filter (where r.status = 'rejected' and r.reject_reason like 'rejected:%%'),
                       count(*) filter (where r.status = 'succeeded' or r.reject_reason like 'rejected:%%')
-                 from ops.ai_request r where r.ai_task = %s and r.created_at >= date_trunc('month', now())""",
-            (cs.TASK,)).fetchone()
+                 from ops.ai_request r where r.ai_task = any(%s) and r.created_at >= date_trunc('month', now())""",
+            ([cs.TASK, ge.TASK],)).fetchone()
         rate = Decimal(month[0]) / Decimal(month[1]) if month[1] else Decimal(0)
         detail = {"run": dict(sorted(c.items())), "citations": dict(sorted(mapping.items())),
                   "month": {"rejected": month[0], "targets": month[1], "rate": f"{rate:.3f}"},
@@ -319,8 +473,16 @@ class EquityCallsAi(BatchSteps, Task):
         out.append(Check("citation_integrity", not rejected and not (month[1] >= INTEGRITY_MIN_TARGETS
                                                                     and rate >= INTEGRITY_LIMIT),
                          json.dumps(detail), blocking=False))
-        too_long = [f"{w.slug} (about {est:,} tokens, over {cs.MAX_ESTIMATED_TOKENS:,}; skipped)" for w, est in f.too_big]
-        too_long += [f"{o.work.slug} ({o.reason})" for o in f.outcomes if o.status == "too_long"]
+        # A call too long for its summary is too long for its extraction too: named once.
+        too_long, named = [], set()
+        for w, est in f.too_big:
+            if w.slug not in named:
+                named.add(w.slug)
+                too_long.append(f"{w.slug} (about {est:,} tokens, over {cs.MAX_ESTIMATED_TOKENS:,}; skipped)")
+        for o in f.outcomes:
+            if o.status == "too_long" and o.work.slug not in named:
+                named.add(o.work.slug)
+                too_long.append(f"{o.work.slug} ({o.reason})")
         out.append(Check("calls_too_long", not too_long, _names(too_long) or "no transcript over the length limit",
                          blocking=False))
         out.append(spend_check(f))
@@ -333,32 +495,114 @@ class EquityCallsAi(BatchSteps, Task):
         out.append(Check("call_summaries", True,
                          f"{f.wanted} calls lacked a published summary at the start; this run: "
                          + (", ".join(f"{n} {s}" for s, n in sorted(c.items())) or "nothing to do"), blocking=False))
+        out += self._guidance_checks(tx, f)
+        return out
+
+    def _guidance_checks(self, tx, f: Fetched) -> list[Check]:
+        """The extraction's checks: what is stored for each reply stored in this run, each stored row again against the
+        transcript, and the drops counted by reason."""
+        out: list[Check] = []
+        done = [(o.work, c) for o in f.outcomes if o.status == "published" and o.work.task == ge.TASK
+                for c in o.calls if c.ok]
+        wrong, bad = [], []
+        for w, call in done:
+            chk, text = call.checked, w.call.text
+            row = tx.execute(
+                """select o.status, o.status_reason,
+                          (select count(*) from core.ai_citation c join core.document d on d.id = c.document_id
+                            where c.ai_output_id = o.id and c.verified and d.is_published and c.char_end <= d.char_count),
+                          (select count(*) from equity.guidance g where g.ai_output_id = o.id),
+                          (select count(*) from equity.stated_figure s where s.ai_output_id = o.id),
+                          (select ec.guidance_targets from equity.earnings_call ec where ec.event_id = %s)
+                     from core.ai_output o where o.id = %s""", (w.event_id, call.output_id)).fetchone()
+            if row is None:
+                wrong.append(f"{w.target}: no output {call.output_id}")
+                continue
+            status, why, cited, n_g, n_s, shown = row
+            if chk.empty:
+                good = (status, why, cited, n_g, n_s) == ("draft", "no_targets", 0, 0, 0)
+            else:
+                good = (status in ("published", "superseded") and cited == n_g + n_s == len(chk.targets) + len(chk.stated)
+                        and n_g == len(chk.targets) and n_s == len(chk.stated)
+                        and (status != "published" or shown == chk.management_targets))
+            if not good:
+                wrong.append(f"{w.target}: {row}")
+                continue
+            turns = [Turn(*r) for r in tx.execute(
+                """select turn_no, char_start, char_end, speaker, role, section from equity.call_turn
+                    where document_id = %s order by turn_no""", (w.document_id,)).fetchall()]
+            rows = [(f"target {i}", r, "target") for i, r in enumerate(tx.execute(
+                """select speaker_role, char_start, char_end, metric, kind, value, low, high from equity.guidance
+                    where ai_output_id = %s order by id""", (call.output_id,)).fetchall())]
+            rows += [(f"stated figure {i}", ("management", a, b, m, "point", v, None, None), "stated") for i, (a, b, m, v)
+                     in enumerate(tx.execute("""select char_start, char_end, metric, value from equity.stated_figure
+                                                 where ai_output_id = %s order by id""", (call.output_id,)).fetchall())]
+            for name, (role, a, b, metric, kind, value, low, high), _ in rows:
+                quote, hit = text[a:b], [t for t in turns if t.char_start < b and a < t.char_end]
+                if b - a > ge.MAX_QUOTE:
+                    problem = f"its quote is {b - a} code points, over {ge.MAX_QUOTE}"
+                elif len(hit) != 1 or a < hit[0].char_start or b > hit[0].char_end or hit[0].role != role:
+                    problem = f"its quote isn't inside one turn whose role is {role}"
+                elif role == "unknown" and not ge.passes_content_test(quote):
+                    problem = "its quote fails the content test of the separate list"
+                elif not ge.figures_ok(quote, metric, kind, value, low, high):
+                    problem = "a figure isn't in its quote"
+                else:
+                    continue
+                bad.append(f"{w.target}: {name} {problem}")
+        out.append(Check("guidance_stored", not wrong,
+                         "; ".join(wrong) or f"{len(done)} stored, each with its citations, its rows and its count"))
+        out.append(Check("guidance_items", not bad,
+                         "; ".join(bad) or f"{len(done)} stored, every row's quote in a turn its list allows, its figures in it"))
+        drops: Counter = Counter()
+        for o in f.outcomes:
+            if o.work.task == ge.TASK:
+                for call in o.calls:
+                    if call.checked is not None:
+                        drops.update(call.checked.drops)
+        always = ("analyst_turn", "moderator_turn", "across_turns", "content_test")      # Spec 02B.1 C3
+        for key, label in ge.DROPS.items():
+            if key in always or drops[key]:
+                out.append(Check(f"guidance_dropped_{key}", True, f"{drops[key]} items dropped: {label}", blocking=False))
+        counts = Counter(state(o) for o in f.outcomes if o.work.task == ge.TASK)
+        skipped = (f"; not requested, no fiscal-year end month, call date or speaker turns: {_names(f.no_guidance)}"
+                   if f.no_guidance else "")
+        out.append(Check("call_guidance", True,
+                         f"{f.wanted_guidance} calls lacked their extraction at the start; this run: "
+                         + (", ".join(f"{n} {s}" for s, n in sorted(counts.items())) or "nothing to do") + skipped,
+                         blocking=False))
         return out
 
     # ------------------------------------------------------------------ alerts (after the load)
     def alerts(self, db) -> list[Alert]:
         """From the stored state, not just this run, for each target: a request finally rejected raises
-        `ai_rejected:call_summary:<document>`; a published summary resolves it."""
+        `ai_rejected:<task>:<document>`; a published output (an extraction that found nothing counts) resolves it."""
         f = self._last
         if f is None:
             return []
         out: list[Alert] = []
-        if ids := sorted({w.document_id for w in f.targets}):
+        for task in (cs.TASK, ge.TASK):
+            targets = [w for w in f.targets if w.task == task]
+            if not targets:
+                continue
+            ids = sorted({w.document_id for w in targets})
             bad = dict(db.execute(
                 """select r.document_id, max(r.reject_reason) from ops.ai_request r
                     where r.document_id = any(%s) and r.ai_task = %s and r.status = 'rejected'
-                      and r.reject_reason like 'rejected:%%' group by r.document_id""", (ids, cs.TASK)).fetchall())
-            for w in f.targets:
-                published = db.execute("""select 1 from core.ai_output where task = %s and document_id = %s
-                                           and status = 'published'""", (cs.TASK, w.document_id)).fetchone() is not None
-                key = f"ai_rejected:{cs.TASK}:{w.document_id}"
-                if published:
+                      and r.reject_reason like 'rejected:%%' group by r.document_id""", (ids, task)).fetchall())
+            for w in targets:
+                done = db.execute("""select 1 from core.ai_output where task = %s and document_id = %s
+                                      and (status = 'published' or (status = 'draft' and status_reason = 'no_targets'))""",
+                                  (task, w.document_id)).fetchone() is not None
+                key = f"ai_rejected:{task}:{w.document_id}"
+                if done:
                     out.append(Alert(key, False))
                 elif w.document_id in bad:
                     out.append(Alert(key, True, "warn", f"{w.target} ({w.call.title}): {bad[w.document_id]}"))
+        if f.targets:
             out += spend_alerts(f, RUN_LIMIT_USD)
         month = datetime.now(UTC).strftime("%Y-%m")
         out.append(Alert(f"ai_unavailable:calls:{month}", f.unavailable is not None, "warn",
-                         f"AI paused ({AI_REASONS.get(f.unavailable, f.unavailable)}): call summaries are skipped; "
+                         f"AI paused ({AI_REASONS.get(f.unavailable, f.unavailable)}): call summaries and extracted figures are skipped; "
                          "published summaries and the data are unchanged"))
         return out

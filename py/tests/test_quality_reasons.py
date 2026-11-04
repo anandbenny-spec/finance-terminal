@@ -1,13 +1,16 @@
 """The reason categoriser (issue #134, Accuracy 2): every category is reached by running the REAL check functions (and the
 batch task's own Call) on crafted bad replies, so a reworded check message fails here instead of drifting into `other`."""
 import re
+from dataclasses import replace
+from datetime import date
 
 import pytest
 from ai_fakes import bullets, cite, good_summary
+from call_fixtures import build, calldoc
 from test_ai_extraction import DISSENT, GOOD, STANCE, TEXT, proj, stance
 from test_ai_summaries import FOMC_B, NEW, reply, sent, summary_request
 
-from ft.ai import extraction, summaries
+from ft.ai import call_summary, extraction, guidance_extraction, summaries
 from ft.ai.summaries import check
 from ft.engines.document.text import sentence_spans
 from ft.jobs.tasks import ai_batch
@@ -96,6 +99,18 @@ def test_projection_list_shape_problems():
     assert category(proj({"projections": [7]}).problems) == "format"
 
 
+# ---------------------------------------------------------------------------------------------- guidance extraction
+def test_a_guidance_reply_that_is_not_the_schemas_object_is_format_and_item_drops_are_never_reasons():
+    call = replace(calldoc(build()), fy_end_month=3, day=date(2026, 10, 16))
+    metrics = guidance_extraction.load_metrics()
+    for bad in (None, "not json", [], {"targets": []}, {"targets": {}, "stated_figures": []}):
+        c = guidance_extraction.check(bad, call, metrics)
+        assert c.reasons() and category(c.reasons()) == "format", bad
+    # an item the checks drop is counted, not a reason: the reply still stands
+    dropped = guidance_extraction.check({"targets": [{"quote": "nowhere in the call"}], "stated_figures": []}, call, metrics)
+    assert dropped.reasons() == [] and dropped.drops["not_found"] == 1
+
+
 # ---------------------------------------------------------------------------------------------- the batch task's own reasons
 def test_a_reply_that_stopped_early_is_stopped():
     call = Call("c", None, 1, failed="max_tokens")
@@ -120,7 +135,8 @@ def test_the_tasks_own_reasons_are_other_and_matched_but_a_new_phrase_is_not():
 
 
 def test_the_phrase_tables_use_only_known_categories_and_compile():
-    for table in (summaries.REASON_PHRASES, extraction.REASON_PHRASES, ai_batch.REASON_PHRASES):
+    for table in (summaries.REASON_PHRASES, extraction.REASON_PHRASES, ai_batch.REASON_PHRASES,
+                  call_summary.REASON_PHRASES, guidance_extraction.REASON_PHRASES):
         assert set(table) <= set(reasons.PRIORITY)
         for patterns in table.values():
             for p in patterns:

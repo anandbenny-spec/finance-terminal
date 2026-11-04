@@ -1,0 +1,31 @@
+# The metric keys of Spec 02B §5.10's map, with their labels, and the switch of Spec 02B.1 C7. Read by
+# ft/ai/guidance_extraction.py (job 2B-13, #176): the keys the extraction may use, and `metric_label` on every
+# equity.guidance and equity.stated_figure row (Spec 02B §13.11 L13: one source for labels, read by the views; the browser
+# never maps keys). `other` is the key for anything the map doesn't hold: a guidance row with no filed figure to be scored
+# against, and never kept as a stated figure (Spec 02B §13.5).
+#
+# Keys and labels only. The filed lines, bases, periods and favourable sides of §5.10's table come with #177 (guidance
+# scoring, after 18 Nov), which adds them to this file as `map_version` 1's other columns; adding them is its job.
+map_version: 1
+
+# Spec 02B.1 C7's fallback. true: a target whose quote lies wholly inside one turn whose speaker's role couldn't be read goes
+# to the separate list (`speaker_role = 'unknown'`; listed, never scored). false: such a target is dropped and counted, as
+# before option C (Anand, 4 Nov 2026). The checks read it each run; the stored replies aren't re-checked by a flip.
+unattributed_targets: true
+
+metrics:
+  revenue: Revenue
+  revenue_growth: Revenue growth
+  ebitda_margin: EBITDA margin
+  ebit_margin: EBIT margin
+  pat: Profit after tax
+  pat_growth: Profit growth
+  capex: Capital expenditure
+  net_debt: Net debt
+  tax_rate: Effective tax rate
+  advances_growth: Loan growth
+  deposits_growth: Deposit growth
+  gnpa: Gross NPA ratio
+  nnpa: Net NPA ratio
+  cet1: CET1 ratio
+  other: Other

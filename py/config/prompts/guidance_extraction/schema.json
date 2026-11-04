@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "properties": {
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "quote": {"type": "string", "description": "A passage of one turn that states the target and its figure, copied exactly"},
+          "metric": {"type": "string", "enum": ["revenue", "revenue_growth", "ebitda_margin", "ebit_margin", "pat", "pat_growth", "capex", "net_debt", "tax_rate", "advances_growth", "deposits_growth", "gnpa", "nnpa", "cet1", "other"]},
+          "metric_text": {"type": "string", "description": "The figure's name as the speaker says it"},
+          "kind": {"type": "string", "enum": ["point", "range", "floor", "ceiling", "direction"]},
+          "value": {"anyOf": [{"type": "number"}, {"type": "null"}], "description": "A point's figure, or a floor's or ceiling's bound, as the quote writes it; else null"},
+          "low": {"anyOf": [{"type": "number"}, {"type": "null"}], "description": "A range's lower figure; else null"},
+          "high": {"anyOf": [{"type": "number"}, {"type": "null"}], "description": "A range's higher figure; else null"},
+          "unit": {"anyOf": [{"type": "string", "enum": ["pct", "inr", "other"]}, {"type": "null"}]},
+          "direction": {"anyOf": [{"type": "string", "enum": ["increase", "decrease", "maintain"]}, {"type": "null"}]},
+          "comparison": {"anyOf": [{"type": "string", "enum": ["previous_period", "year_ago"]}, {"type": "null"}]},
+          "period_text": {"type": "string", "description": "The period as the speaker says it"},
+          "period_kind": {"type": "string", "enum": ["quarter", "half_year", "nine_months", "year", "multi_year", "undated"]},
+          "fiscal_year": {"anyOf": [{"type": "integer"}, {"type": "null"}], "description": "The calendar year the fiscal year ends in (FY27 is 2027); for a multi-year target, the last year; null if undated"},
+          "start_fiscal_year": {"anyOf": [{"type": "integer"}, {"type": "null"}], "description": "A multi-year target's first fiscal year; else null"},
+          "part": {"anyOf": [{"type": "integer"}, {"type": "null"}], "description": "The quarter (1 to 4) or half (1 or 2); else null"},
+          "basis": {"anyOf": [{"type": "string", "enum": ["consolidated", "standalone"]}, {"type": "null"}]},
+          "growth_basis": {"anyOf": [{"type": "string", "enum": ["yoy", "qoq", "cagr", "level"]}, {"type": "null"}]},
+          "scope_text": {"anyOf": [{"type": "string"}, {"type": "null"}], "description": "A segment, subsidiary or region the target is about; else null"}
+        },
+        "required": ["quote", "metric", "metric_text", "kind", "value", "low", "high", "unit", "direction", "comparison", "period_text", "period_kind", "fiscal_year", "start_fiscal_year", "part", "basis", "growth_basis", "scope_text"],
+        "additionalProperties": false
+      }
+    },
+    "stated_figures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "quote": {"type": "string", "description": "A passage of one management turn that states the figure, copied exactly"},
+          "metric": {"type": "string", "enum": ["revenue", "revenue_growth", "ebitda_margin", "ebit_margin", "pat", "pat_growth", "capex", "net_debt", "tax_rate", "advances_growth", "deposits_growth", "gnpa", "nnpa", "cet1"]},
+          "metric_text": {"type": "string", "description": "The figure's name as the speaker says it"},
+          "value": {"type": "number", "description": "The figure as the quote writes it"},
+          "unit": {"type": "string", "enum": ["pct", "inr", "other"]},
+          "period_text": {"type": "string", "description": "The period as the speaker says it"},
+          "period_kind": {"type": "string", "enum": ["quarter", "half_year", "nine_months", "year"]},
+          "fiscal_year": {"type": "integer", "description": "The calendar year the fiscal year ends in (FY27 is 2027)"},
+          "part": {"anyOf": [{"type": "integer"}, {"type": "null"}], "description": "The quarter (1 to 4) or half (1 or 2); null for nine months and a year"},
+          "basis": {"anyOf": [{"type": "string", "enum": ["consolidated", "standalone"]}, {"type": "null"}]},
+          "growth_basis": {"anyOf": [{"type": "string", "enum": ["yoy", "qoq", "level"]}, {"type": "null"}]},
+          "scope_text": {"anyOf": [{"type": "string"}, {"type": "null"}], "description": "A segment, subsidiary or region the figure is about; else null"}
+        },
+        "required": ["quote", "metric", "metric_text", "value", "unit", "period_text", "period_kind", "fiscal_year", "part", "basis", "growth_basis", "scope_text"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["targets", "stated_figures"],
+  "additionalProperties": false
+}
