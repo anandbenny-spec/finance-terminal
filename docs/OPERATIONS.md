@@ -4,8 +4,8 @@ Written 4 Nov 2026 for survival job S4 (issue #199; Plan 04 §4). The site must 
 session, no scheduled Claude task and no API credit. This page lists what it depends on and what to do when something stops.
 
 **This page holds names only.** Never a value, a connection string, a ping URL, a monitor address or an email address. Values
-live in Bitwarden (the master copy), and in the places that use them (section 1). If a value ever shows up in the repo,
-an issue or a chat, rotate it (section 2 says how), then tell the owner.
+live in Bitwarden (the master copy of every credential that can't be read back elsewhere, section 6), and in the places that use
+them (section 1). If a value ever shows up in the repo, an issue or a chat, rotate it (section 2 says how), then tell the owner.
 
 Anything you cannot find here: `CLAUDE.md` (the rules), `.env.example` (the names), `.github/workflows/` (the schedules)
 and `vercel.json` are the sources this page was written from. When they change, change this page in the same pull request.
@@ -14,7 +14,7 @@ and `vercel.json` are the sources this page was written from. When they change, 
 
 | Place | What it holds | Who can read a value |
 |---|---|---|
-| **Bitwarden** | the master copy of every value below, plus each account's recovery codes | the owner |
+| **Bitwarden** | the master copy of every credential that can't be read back elsewhere (section 6 lists the few that are re-read from a dashboard instead), plus each account's recovery codes | the owner |
 | **GitHub Actions secrets** (repository) | what the workflows need; production's and dev's (`DEV_` names) | nobody: write-only after saving |
 | **GitHub Actions variable** `PRODUCTION_SCHEDULES` | the switch for scheduled production runs (not a secret) | anyone with repo access |
 | **Vercel environment variables** (the one project; the `api` service reads the server-side names, the `web` service the `NEXT_PUBLIC_` ones) | what the live site and API need | the owner, in the dashboard |
@@ -94,6 +94,8 @@ the **dev** project and Production's from production, never the other way round,
 ### 2.6 The Mac's `.env`
 
 The names in `.env.example` the owner needs for local runs, plus `UV_SYSTEM_CERTS` and `NODE_EXTRA_CA_CERTS` on the campus Wi-Fi.
+It points at the **dev** project (checked 4 Nov 2026: its `SUPABASE_URL` carries the dev project's reference), so a local run never
+touches production. Production's connection strings are not kept on the Mac.
 The headless runner (`ops/headless/`) takes the Console key from Bitwarden into a Terminal variable each session and never saves
 it. It spends API credit, so it stops being useful when credits end.
 
@@ -114,7 +116,7 @@ manager can't hold its own way back in.
 | **SEC EDGAR** | no account: a declared User-Agent (`SEC_USER_AGENT`) | SEC's fair-access limit (under 10 requests a second) | throttling only |
 | **UptimeRobot** (free) | one **Keyword** monitor on production's `/api/health` (GET; keyword `"status":"ok"`; every 5 minutes; email, no delay, no repeat). Keyword because `/api/health` answers GET only (the free plan locks HEAD) | 50 monitors, 5-minute checks, email alerts, **non-commercial use only** | if the account is closed or the plan changes, there is no outside uptime alert. The dead-man check below still covers the daily load |
 | **Healthchecks.io** (free) | one check, "daily production load": Cron `37 6 * * *`, time zone Asia/Kolkata, grace 9 hours, email on | 20 checks | no ping, so no alert on a missed daily run. The check's ping URL is `HEALTHCHECKS_PING_URL`. To rotate it: make a new check with the same settings (or regenerate the URL if the dashboard offers it), update the secret and Bitwarden |
-| **Bitwarden** | the master copy of every value and recovery code | account-level | keep an emergency way back in (recovery code on paper) |
+| **Bitwarden** | the master copy of the credentials that can't be read back elsewhere, and the recovery codes | account-level | keep an emergency way back in (recovery code on paper) |
 
 No custom domain is in use (the shared link is a `vercel.app` address), so there is no registrar or renewal. If one is added,
 list it here with its renewal date.
@@ -243,6 +245,27 @@ gh run list --repo anandbenny-spec/finance-terminal --workflow daily.yml --limit
 
 ## 6. Bitwarden
 
-Bitwarden holds every name in section 2 that has a value (the `DEV_` ones too), and recovery codes for GitHub (2FA), Supabase,
-Vercel, the Anthropic Console, MongoDB Atlas, UptimeRobot and Healthchecks.io. The check is the owner's: each name in section 2 against its Bitwarden entry,
-and a test sign-in path for each account that doesn't depend on the device that is signed in today.
+**What Bitwarden holds.** Every credential that cannot be read back from somewhere else, plus the recovery codes:
+
+- **Per Supabase project (production and dev):** the `postgres` password, the admin login, and the `job_writer` and `sql_reader`
+  passwords (each entry named for its project and role).
+- **S3 key pairs:** production's `github-jobs`, dev's `github-jobs`, and the Mac's `mac-dev`. Supabase shows an S3 secret once.
+- **Single-value secrets:** `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, `FRED_API_KEY`, `COINGECKO_DEMO_KEY`, `HEALTHCHECKS_PING_URL`,
+  `CRON_SECRET`, `GITHUB_DISPATCH_TOKEN`, and `FIXTURES_DEPLOY_KEY` (the private half of the fixtures deploy key).
+- **One secure note holding the Mac's `.env`** (the dev project's values, section 2.6), which also covers `SEC_USER_AGENT`,
+  `STORAGE_BUCKET` and `STORAGE_REGION`.
+- **Recovery codes** for GitHub (2FA), Supabase, Vercel, the Anthropic Console, MongoDB Atlas, UptimeRobot and Healthchecks.io.
+
+**Not in Bitwarden, on purpose.** These are readable again from the place named, so a copy would only be a second home:
+
+| Value | Where it comes from again |
+|---|---|
+| Production `SUPABASE_SERVICE_ROLE_KEY` (the secret key) | the production project's dashboard (the API Keys page). `CLAUDE.md` §4 keeps it only in Vercel, so no other copy is kept; if it can't be copied again, create a new key and update Vercel |
+| `SUPABASE_ANON_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (the publishable key, public by design) | the same page |
+| `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `STORAGE_ENDPOINT` | public addresses built from the project reference: the dashboard's Data API page and Storage's S3 connection page |
+| `SQL_READER_DATABASE_URL`, `DEV_JOB_DATABASE_URL` | built from the saved role password and the shared pooler host (shown under Connect); the format is in `.env.example`. Dev's URLs are also in the Mac `.env` note |
+| `VISITOR_HASH_SALT` | generated by the setup helper and never shown. Nothing reads it yet; replace it with any new random value in Vercel when the command bar is built |
+| `STORAGE_BUCKET`, `STORAGE_REGION` | not credentials; shared by dev and production and also in the Mac `.env` note |
+
+**The check** is the owner's: each name in section 2 is in one of the entries above or in the table, and each account has a sign-in
+path that doesn't depend on the device that is signed in today. The date of the last check is recorded on issue #199, not here.
