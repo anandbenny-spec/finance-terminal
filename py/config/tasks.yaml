@@ -137,3 +137,9 @@ equity.calls_ai:
   run_after: [equity.call_text]
   overdue_after: 10 days
   uses_nse: false
+equity.guidance_scores:
+  description: Each management guidance target from the earnings calls scored against the company's filed figures (delivered, missed, pending or not scored, with its relation and inputs), and the guidance forecast series, with no AI
+  workflows: {weekly: every 6 days}
+  run_after: [equity.calls_ai, equity.metrics]
+  overdue_after: 10 days
+  uses_nse: false
