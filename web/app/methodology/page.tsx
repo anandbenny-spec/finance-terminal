@@ -3,8 +3,8 @@
 // use in mind (human oversight, accountability, source traceability). Static text: it shows no market figures, so the
 // accuracy rule has nothing to check here, and every claim below is one the shipped code backs (the issue's stop rule:
 // a claim that can't be checked leaves the page). It describes module 1 (the Fed vs RBI tracker) and, since the 1 Nov
-// 2026 extension, module 2's shipped pages (the Nifty 50 screener and company pages); the earnings-call lines wait for
-// module 3 to ship. RBI is named, never linked (CLAUDE.md §1).
+// 2026 extension, module 2's shipped pages (the Nifty 50 screener and company pages) and, since 5 Nov 2026, the earnings-call lines (the calls tab and
+// /earnings); guidance scoring has no page yet, so it has no line. RBI is named, never linked (CLAUDE.md §1).
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -95,6 +95,9 @@ const BLOCKS: Block[] = [
       "The screener and company pages cover the Nifty 50 only. Valuations shown are model-implied and informational, never a verdict, a target or a recommendation.",
       "Company debt is borrowings only, labelled as excluding lease liabilities because results filings do not report them. Where a company's filed lease payments are material against its operating profit, enterprise-value figures are held back with the reason shown. Operating profit (EBIT) is derived from the filed lines and labelled as derived, and a lender's return on assets is annualised and labelled.",
       "The one-year price return is a price return: it is adjusted for splits and bonus issues but leaves out dividends.",
+      "The earnings-calls list shows the latest call of each Nifty 50 company. Its summary, the guidance given and the figures management stated are written by AI from the stored transcript and labelled AI-extracted, and they are held back until they have passed review. They are not scored against what a company later delivered, and no tone or sentiment is read from a call.",
+      "Some calls are not analysed: a transcript that is only a scan, or one that the company keeps on its own website, is named as such and not summarised. What speakers whose role could not be read said is shown apart and is not attributed to management.",
+      "Transcript text stays private. Visitors see only the short quotes of verified citations, each with its page, never a transcript itself.",
       "The site makes no claim about future rates or prices.",
     ],
   },

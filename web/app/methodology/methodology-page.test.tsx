@@ -52,6 +52,9 @@ describe("/methodology", () => {
     expect(text).toContain("derived from the filed lines");
     expect(text).toContain("leaves out dividends");
     expect(markup).toContain('href="/accuracy"');
-    expect(text).not.toMatch(/earnings call/i);
+    expect(text).toContain("labelled AI-extracted");
+    expect(text).toContain("no tone or sentiment is read");
+    expect(text).toContain("Transcript text stays private");
+    expect(text).not.toMatch(/\b(hit rate|delivered on guidance|beat guidance|missed guidance)\b/i);
   });
 });
