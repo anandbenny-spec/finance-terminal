@@ -110,7 +110,8 @@ describe("the figures", () => {
     expect(out).toContain('href="https://example.test/tcs-q2.pdf#page=7"');
     expect(out).toContain('title="Page 7 of the PDF at the source"');
     expect(t).toContain("p. 7 ↗");
-    expect(t).not.toMatch(/outcome|not scored|hit rate/i);
+    // The per-call panels carry no outcome or hit rate (Plan 04b P12); the Guidance record panel after them does (guidance-record.test.tsx).
+    expect(t.slice(0, t.indexOf("Guidance record"))).not.toMatch(/outcome|not scored|hit rate/i);
   });
 
   it("lists the figures management stated, with the line saying so", () => {

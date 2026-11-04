@@ -10,6 +10,7 @@ import { DataTable, type Column } from "@/components/data/DataTable";
 import { StateNote } from "@/components/data/StateNote";
 import { NOT_AVAILABLE } from "@/lib/format";
 import { callDateText, statusText, type FigureRow } from "@/lib/equity/calls";
+import type { GuidanceRow } from "@/lib/equity/guidance";
 import type { EarningsCallRow } from "@/lib/queries/api";
 
 export function callHref(companySlug: string, callSlug: string): string {
@@ -68,4 +69,22 @@ export function FiguresTable({ rows, caption, figureHeader, empty }: { rows: Fig
     { id: "page", header: "Page", cell: (r) => (r.page ? <PageLink page={r.page} /> : <span className="text-ink-3">{NOT_AVAILABLE}</span>) },
   ];
   return <DataTable columns={columns} rows={rows} rowKey={(r) => r.key} caption={caption} focusable empty={<StateNote kind="empty">{empty}</StateNote>} />;
+}
+
+/** The guidance record's table (Spec 02B §8; #267): metric · figure as stated · period · basis · first stated · latest · actual · outcome (words) · in the rate · quote chip · page. */
+export function GuidanceTable({ rows, caption }: { rows: GuidanceRow[]; caption: string }) {
+  const columns: Column<GuidanceRow>[] = [
+    { id: "metric", header: "Metric", cell: (r) => r.metric },
+    { id: "figure", header: "Figure as stated", cell: (r) => r.figure },
+    { id: "period", header: "Period", cell: (r) => r.period },
+    { id: "basis", header: "Basis", cell: (r) => r.basis },
+    { id: "first", header: "First stated", cell: (r) => r.firstStated },
+    { id: "latest", header: "Latest statement", cell: (r) => r.latest },
+    { id: "actual", header: "Actual", cell: (r) => r.actual },
+    { id: "outcome", header: "Outcome", cell: (r) => r.outcome },
+    { id: "rate", header: "In the rate?", cell: (r) => r.inRate },
+    { id: "quote", header: "Quote", cell: (r) => (r.citation ? <CitationChip citation={r.citation} /> : <span className="text-ink-3">{NOT_AVAILABLE}</span>) },
+    { id: "page", header: "Page", cell: (r) => (r.page ? <PageLink page={r.page} /> : <span className="text-ink-3">{NOT_AVAILABLE}</span>) },
+  ];
+  return <DataTable columns={columns} rows={rows} rowKey={(r) => r.key} caption={caption} focusable empty={<StateNote kind="empty">No targets in this group</StateNote>} />;
 }

@@ -6,10 +6,11 @@
 // page: tests/banned-words.ts. The pages are India only, so no market edge. Server-rendered; the tables are client components.
 import type { ReactNode } from "react";
 import { AIBlock } from "@/components/ai/AIBlock";
-import { CallsTable, FiguresTable } from "@/components/company/calls/CallTables";
+import { CallsTable, FiguresTable, GuidanceTable } from "@/components/company/calls/CallTables";
 import { Gated, fieldPolicy } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
 import { Qualifier } from "@/components/data/Qualifier";
+import { Stat } from "@/components/data/Stat";
 import { StateNote } from "@/components/data/StateNote";
 import { Foot } from "@/components/policy/PanelFoot";
 import {
@@ -27,6 +28,7 @@ import {
   partialLine,
   summaryLists,
 } from "@/lib/equity/calls";
+import { GUIDANCE_HELD, guidanceGroups, hitRate, unattributedLine } from "@/lib/equity/guidance";
 import { PREVIEW_FEEDS } from "@/lib/feeds";
 import { dateInZone, formatDate } from "@/lib/format";
 import type { EarningsCallRow, TaskFreshnessRow } from "@/lib/queries/api";
@@ -73,6 +75,50 @@ function Summary({ data, call, now }: { data: NonNullable<Ok["calls"]>; call: Ea
         ))}
       </div>
     </Gated>
+  );
+}
+
+const GUIDANCE_OUTCOME_FIELD = "equity.guidance_outcome";
+
+/** Company › Guidance record (2B-19b, #267; Spec 02B §8): did the company deliver the measurable targets management gave? Words, never colour. */
+function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<Ok["calls"]>; name: string; companyName: string; foot: ReactNode }) {
+  const g = data.guidance;
+  const open = (f: string) => {
+    const p = fieldPolicy(data.policies, f);
+    return p !== null && p.status !== "hidden";
+  };
+  const released = open(FIGURES_FIELD) && open(GUIDANCE_OUTCOME_FIELD);
+  const outcomePolicy = fieldPolicy(data.policies, GUIDANCE_OUTCOME_FIELD);
+  const groups = guidanceGroups(g.rows, g.citations, g.pages);
+  const rate = hitRate(g.rate);
+  const line = unattributedLine(g.unattributed);
+  return (
+    <Panel
+      title="Guidance record"
+      titleId="panel-guidance-record"
+      subtitle={`When ${name}'s management gave measurable targets, did the company deliver them?`}
+      qualifier={released ? <Qualifier>{outcomePolicy?.status === "labelled" && outcomePolicy.label ? `${AI_EXTRACTED}, ${outcomePolicy.label}` : AI_EXTRACTED}</Qualifier> : undefined}
+      variant="flush"
+      footer={foot}
+    >
+      {!released ? (
+        <Note kind="held">{GUIDANCE_HELD}</Note>
+      ) : (
+        <>
+          <div className="p-3">
+            {rate.kind === "rate" ? (
+              <Stat label="Delivered of scored targets" value={rate.value} context={rate.context} asOf={rate.asOf} />
+            ) : (
+              <StateNote kind="empty">{rate.note}</StateNote>
+            )}
+            {line && <p className="mt-3 text-data text-ink-2">{line}</p>}
+          </div>
+          {groups.scored.length > 0 && <GuidanceTable rows={groups.scored} caption={`${companyName}: guidance targets scored as delivered or missed`} />}
+          {groups.other.length > 0 && <GuidanceTable rows={groups.other} caption={`${companyName}: guidance targets pending or not scored`} />}
+          {groups.scored.length === 0 && groups.other.length === 0 && <Note>No guidance targets are published for this company yet.</Note>}
+        </>
+      )}
+    </Panel>
   );
 }
 
@@ -198,6 +244,8 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
           )}
         </>
       )}
+
+      <GuidanceRecord data={calls} name={name} companyName={company.name} foot={foot(call)} />
     </div>
   );
 }
