@@ -4,8 +4,8 @@
 # never maps keys). `other` is the key for anything the map doesn't hold: a guidance row with no filed figure to be scored
 # against, and never kept as a stated figure (Spec 02B §13.5).
 #
-# Keys and labels only. The filed lines, bases, periods and favourable sides of §5.10's table come with #177 (guidance
-# scoring, after 18 Nov), which adds them to this file as `map_version` 1's other columns; adding them is its job.
+# The filed lines, bases, periods and favourable sides of §5.10's table are `lines` below (#177, guidance scoring), read only
+# by ft/equity/calls/scoring.py, so the extraction's reader of `metrics` is unchanged.
 map_version: 1
 
 # Spec 02B.1 C7's fallback. true: a target whose quote lies wholly inside one turn whose speaker's role couldn't be read goes
@@ -29,3 +29,66 @@ metrics:
   nnpa: Net NPA ratio
   cet1: CET1 ratio
   other: Other
+
+# ---------------------------------------------------------------------------------------------------------------------------
+# Spec 02B §5.10's map, map_version 1 (job 2B-14, #177): how each key is scored against 2A's filed figures. Read by
+# ft/equity/calls/scoring.py (the task is equity.guidance_scores); the extraction above reads only `metrics` and the switch.
+# Fixed before any run (§5.10, §9.4): a change to a line, a basis, a period or a favourable side is a new map_version.
+#
+# Each line:
+#   measure     flow (a P&L line: a quarter's row, the year's row, or the sum of the filed quarters of a longer period),
+#               cash_flow (half-year and year rows only; the second half is the year less the first half),
+#               instant (a balance sheet at the period's end), bank_ratio (a ratio filed in the quarter row at the period's end)
+#   formula     amount (₹, compared in crore), ratio (of ÷ over, in per cent), fraction (a filed fraction, in per cent),
+#               growth (of ÷ the same period a year earlier − 1, in per cent; a multi-year target is a CAGR from the year
+#               before its first year)
+#   of, over    the figures, named in scoring.py's FIGURES (each a signed sum of the `columns` below)
+#   unit        the unit a target must be stated in: inr (₹ crore, as the extraction stores it) or pct (per cent or pp)
+#   basis       the map's basis; a statement that says "standalone" is scored standalone (§5.10)
+#   periods     the target periods the line can be scored for; any other is `no_filed_figure`
+#   ends        half_year: the period must end at a half-year or year end (balance sheets are filed only there)
+#   format      bank: only for companies whose filings are in the bank format (NBFCs' loan-book guidance isn't scored)
+#   favourable  higher | lower | none (§5.10's column; decision 8: beating a target on its favourable side delivers it)
+#   label       derived, where §5.10 labels the figure so
+lines:
+  revenue:         {measure: flow, formula: amount, of: revenue, unit: inr, basis: consolidated, periods: [quarter, half_year, nine_months, year], favourable: higher}
+  revenue_growth:  {measure: flow, formula: growth, of: revenue, unit: pct, basis: consolidated, periods: [quarter, half_year, nine_months, year, multi_year], favourable: higher}
+  ebitda_margin:   {measure: flow, formula: ratio, of: ebitda, over: revenue, unit: pct, basis: consolidated, periods: [quarter, half_year, nine_months, year], favourable: higher, label: derived}
+  ebit_margin:     {measure: flow, formula: ratio, of: ebit, over: revenue, unit: pct, basis: consolidated, periods: [quarter, half_year, nine_months, year], favourable: higher, label: derived}
+  pat:             {measure: flow, formula: amount, of: pat_owners, unit: inr, basis: consolidated, periods: [quarter, half_year, nine_months, year], favourable: higher}
+  pat_growth:      {measure: flow, formula: growth, of: pat_owners, unit: pct, basis: consolidated, periods: [quarter, half_year, nine_months, year], favourable: higher}
+  capex:           {measure: cash_flow, formula: amount, of: capex, unit: inr, basis: consolidated, periods: [half_year, year, multi_year], favourable: none}
+  net_debt:        {measure: instant, formula: amount, of: net_debt, unit: inr, basis: consolidated, periods: [quarter, half_year, nine_months, year], ends: half_year, favourable: lower, label: derived}
+  tax_rate:        {measure: flow, formula: ratio, of: tax, over: pbt, unit: pct, basis: consolidated, periods: [quarter, half_year, year], favourable: none}
+  advances_growth: {measure: instant, formula: growth, of: advances, unit: pct, basis: standalone, periods: [quarter, year], format: bank, favourable: higher}
+  deposits_growth: {measure: instant, formula: growth, of: deposits, unit: pct, basis: standalone, periods: [quarter, year], format: bank, favourable: higher}
+  gnpa:            {measure: bank_ratio, formula: fraction, of: gnpa_ratio, unit: pct, basis: standalone, periods: [quarter, year], format: bank, favourable: lower}
+  nnpa:            {measure: bank_ratio, formula: fraction, of: nnpa_ratio, unit: pct, basis: standalone, periods: [quarter, year], format: bank, favourable: lower}
+  cet1:            {measure: bank_ratio, formula: fraction, of: cet1_ratio, unit: pct, basis: standalone, periods: [quarter, year], format: bank, favourable: higher}
+
+# The unit of each filed column the lines read, as equity.financials stores it (ft/equity/statements.py: "as filed, in full
+# rupees (ratios as filed fractions)"). §5.10: "the map records each column's unit; a fixture test pins SBI's". A fraction
+# outside 0 to 1 isn't rescaled: the target is held and named (a filed unit that disagrees with this premise: §9.4).
+columns:
+  revenue: inr
+  pat: inr
+  pat_owners: inr
+  pbt_before_exceptional: inr
+  finance_cost: inr
+  other_income: inr
+  share_of_associates: inr
+  dna: inr
+  tax: inr
+  pbt: inr
+  capex: inr
+  borrowings_current: inr
+  borrowings_noncurrent: inr
+  cash: inr
+  bank_balances_other: inr
+  current_investments: inr
+  noncurrent_investments: inr
+  advances: inr
+  deposits: inr
+  gnpa_ratio: fraction
+  nnpa_ratio: fraction
+  cet1_ratio: fraction
