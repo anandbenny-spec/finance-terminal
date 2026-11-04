@@ -24,9 +24,10 @@ GitHub's own per-run token (`GITHUB_TOKEN`) is automatic: nothing to set, nothin
 
 ## 2. Every secret and variable
 
-"Expires" means the credential itself carries an end date. **Two do: `FIXTURES_READ_TOKEN` and `GITHUB_DISPATCH_TOKEN`**
-(fine-grained GitHub tokens). The date at the last renewal is recorded on issue #199, never here; the live date is on the token's own
-page (GitHub → Settings → Developer settings → Fine-grained tokens).
+"Expires" means the credential itself carries an end date. **One does: `GITHUB_DISPATCH_TOKEN`** (a fine-grained GitHub token).
+The date at the last renewal is recorded on issue #199, never here; the live date is on the token's own page (GitHub → Settings →
+Developer settings → Fine-grained tokens). CI's read access to the private fixtures repo used to be a second expiring token
+(`FIXTURES_READ_TOKEN`); on 4 Nov 2026 it became a read-only deploy key, which has no end date (section 4).
 
 ### 2.1 GitHub Actions secrets: production
 
@@ -41,7 +42,7 @@ page (GitHub → Settings → Developer settings → Fine-grained tokens).
 | `ANTHROPIC_API_KEY` | every AI step (`policy.ai_batch` and the 2B tasks) through `ft/ai/client.py` and the Batch API. Scoped to the Console's Default workspace | no; but it stops working when credits end (18 Nov) | the AI steps skip with a recorded reason, never fail the run (section 5.3) | new key in the Console (Default workspace), update the secret and Bitwarden, then disable the old key |
 | `VOYAGE_API_KEY` | embeddings in the AI steps. A MongoDB Atlas model API key; the client routes it to `ai.mongodb.com/v1` | no | as `ANTHROPIC_API_KEY`: the chunks wait for a key | new key in Atlas, update the secret and Bitwarden |
 | `HEALTHCHECKS_PING_URL` | the last step of `daily.yml` after a successful **production** run; skips quietly with no secret | no | no ping, so the dead-man check goes Down and emails | see section 3 (the monitors) |
-| `FIXTURES_READ_TOKEN` | `ci.yml` only: checks out the private `finance-terminal-fixtures` so the saved-page tests run | **yes** (fine-grained token, contents read-only, that one repo) | CI's `test` job fails at the fixtures step (by design: tests must not silently skip). The live site is unaffected | section 4 |
+| `FIXTURES_DEPLOY_KEY` | `ci.yml` only: the private half of a read-only deploy key on `finance-terminal-fixtures`; the `test` job checks that repo out with it (`ssh-key:`) so the saved-page tests run | no (a deploy key has no end date) | CI's `test` job fails at the fixtures step (by design: tests must not silently skip), if the secret is missing or the key was removed from that repo. The live site is unaffected | make a new key pair, add its public half as a **read-only** deploy key on the fixtures repo, update the secret and Bitwarden, then delete the old deploy key there |
 
 ### 2.2 GitHub Actions secrets: dev (manual dev runs only)
 
@@ -115,20 +116,21 @@ the check goes Down and the email arrives. Then open the plain ping URL once to 
 
 ## 4. Token expiry
 
-Both expiring tokens are fine-grained personal access tokens, which must carry an end date (GitHub has capped them at one year; use the longest the form offers).
+One credential still carries an end date: **`GITHUB_DISPATCH_TOKEN`**, a fine-grained personal access token (these must have an
+end date; GitHub has capped them at one year, so use the longest the form offers).
 
-1. **Read each token's end date** on GitHub (Settings → Developer settings → Fine-grained tokens): `FIXTURES_READ_TOKEN` and
-   `GITHUB_DISPATCH_TOKEN`. Record the dates on issue #199, never the values.
-2. **`GITHUB_DISPATCH_TOKEN`** can't become a deploy key (it starts workflows). Renew it to the longest the form allows:
-   fine-grained, this repository only, Actions: read and write, then replace the value in Vercel, redeploy, and update Bitwarden.
-   If it lapses only the admin refresh button breaks.
-3. **`FIXTURES_READ_TOKEN`** has two routes.
-   - *Renew* to the longest allowed, the same way (contents read-only, the fixtures repo only), then replace the secret.
-   - *Replace it with a read-only deploy key* on `finance-terminal-fixtures`, which has no end date: add the key's public half
-     in that repo's Settings → Deploy keys (read-only), keep the private half as an Actions secret, switch `ci.yml`'s fixtures
-     checkout from `token:` to `ssh-key:`, delete the old token. The deploy-key route removes the only fixed expiry in CI.
-4. **Put a reminder in a calendar** two weeks before each remaining end date. A token that lapses fails loudly (CI red, a 401 in the
-   refresh log) but only when someone looks.
+1. **Read its end date** on GitHub (Settings → Developer settings → Fine-grained tokens). The date at the last renewal is
+   recorded on issue #199, never the value.
+2. **Renew it** (it starts workflows, so it can't become a deploy key): fine-grained, this repository only, Actions: read and
+   write, the longest end date the form allows. Replace the value in Vercel, redeploy, and update Bitwarden.
+   If it lapses, only the admin refresh button breaks.
+3. **Put a reminder in a calendar** two weeks before the end date. A lapsed token fails loudly (a 401 in the refresh log) but only when
+   someone looks.
+
+**`FIXTURES_READ_TOKEN` is retired** (Anand, 4 Nov 2026, #199): CI now reads the private fixtures repo with the read-only deploy key
+`FIXTURES_DEPLOY_KEY` (section 2.1), so CI no longer has an expiry. To rotate that key: generate a new key pair, add the public
+half to the fixtures repo's Deploy keys (read-only, never "allow write"), update the Actions secret and Bitwarden, and delete the old
+deploy key there.
 
 ## 5. The no-subscription runbook
 
