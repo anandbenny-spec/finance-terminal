@@ -76,15 +76,15 @@ check "S02 an unknown row with forecast_series_id set fails (the check)" \
   "$(as_pg "update equity.guidance set forecast_series_id = (select min(id) from core.series) where metric = 'ec28_u'")" \
   'guidance_forecast_management'
 check "S03 a management row may carry a forecast series" \
-  "$(as_pg "begin; update equity.guidance set forecast_series_id = (select min(id) from core.series) where metric = 'ec28_m'; rollback")" \
-  'UPDATE 1'
+  "$(as_pg "begin; with u as (update equity.guidance set forecast_series_id = (select min(id) from core.series) where metric = 'ec28_m' returning 1) select count(*) from u; rollback" | tr '\n' ' ')" \
+  '^1 '
 OI="insert into equity.guidance_outcome (guidance_id, target_key, is_first, revision, outcome, counted, inputs, rule_version"
 check "S04 an outcome row for an unknown guidance row fails (the foreign key)" \
   "$(as_pg "$OI) select id, 'ec28|u', true, 'first', 'delivered', true, jsonb_build_object(), 'r1' from equity.guidance where metric = 'ec28_u'")" \
   'guidance_outcome_management_only'
 check "S05 an outcome row for a management row is accepted" \
-  "$(as_pg "$OI) select id, 'ec28|m', true, 'first', 'delivered', true, jsonb_build_object(), 'r1' from equity.guidance where metric = 'ec28_m'")" \
-  '^INSERT 0 1'
+  "$(as_pg "with i as ($OI) select id, 'ec28|m', true, 'first', 'delivered', true, jsonb_build_object(), 'r1' from equity.guidance where metric = 'ec28_m' returning 1) select count(*) from i")" \
+  '^1$'
 check "S06 an outcome with speaker_role = 'unknown' fails (the check)" \
   "$(as_pg "$OI, speaker_role) select id, 'ec28|u2', true, 'first', 'delivered', true, jsonb_build_object(), 'r1', 'unknown' from equity.guidance where metric = 'ec28_m'")" \
   'guidance_outcome_speaker_role_check'
