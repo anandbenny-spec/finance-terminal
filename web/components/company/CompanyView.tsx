@@ -4,6 +4,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ActionsPanel } from "@/components/company/ActionsPanel";
+import { CallsTab } from "@/components/company/calls/CallsTab";
 import { CompanyHeader } from "@/components/company/CompanyHeader";
 import { KeyFigures } from "@/components/company/KeyFigures";
 import { PeersPanel } from "@/components/company/PeersPanel";
@@ -292,6 +293,8 @@ export function CompanyView({
         <Financials data={data} basis={basis} freshness={freshness} />
       ) : tab === "rate-decisions" ? (
         <RateDecisionsTab data={data} window={window} freshness={freshness} />
+      ) : tab === "calls" ? (
+        <CallsTab data={data} freshness={freshness} />
       ) : (
         <ValuationTab data={data} freshness={freshness} />
       )}

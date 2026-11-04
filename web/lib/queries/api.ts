@@ -195,6 +195,8 @@ export type AiCitationRow = {
   char_start: number | null;
   char_end: number | null;
   quote: string | null;
+  /** False for a transcript (0023): no "Open in document", never the text. Undefined where the read didn't ask for it. */
+  text_public?: boolean | null;
 };
 
 /** api.field_policy (0006): how a gated field shows; no row means hidden (fail closed). */
@@ -573,6 +575,85 @@ export type CompanyRateCycleRow = {
 
 type View<Row> = { Row: Row; Relationships: [] };
 
+/** api.earnings_calls (0029): one row per published earnings call; counts and output ids are null while their field is held back. */
+export type EarningsCallRow = {
+  company_slug: string;
+  company_name: string;
+  short_name: string | null;
+  call_slug: string;
+  fiscal_label: string;
+  period_end: string | null;
+  season_key: string | null;
+  call_date: string | null;
+  call_date_source: string | null;
+  filed_at: string | null;
+  exchange: string | null;
+  route: string | null;
+  status: string;
+  official_url: string | null;
+  transcript_document_id: number | null;
+  summary_output_id: number | null;
+  summary_state: "available" | "held_back" | "not_generated";
+  figures_output_id: number | null;
+  target_count: number | null;
+  stated_figure_count: number | null;
+  unknown_role_share: number | null;
+  roles_partial: boolean | null;
+  unattributed_targets: number | null;
+  is_newest: boolean;
+  is_latest_stored: boolean;
+  is_default: boolean;
+};
+
+/** api.call_figures (0029): a target (kind 'target') or a figure management stated (kind 'stated') on a call, with its quote's page. */
+export type CallFigureRow = {
+  kind: "target" | "stated";
+  company_slug: string;
+  call_slug: string;
+  fiscal_label: string;
+  metric: string;
+  metric_label: string | null;
+  metric_text: string | null;
+  figure_kind: string | null;
+  value: number | null;
+  low: number | null;
+  high: number | null;
+  unit: string | null;
+  direction: string | null;
+  comparison: string | null;
+  period_text: string | null;
+  period_kind: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  basis: string | null;
+  growth_basis: string | null;
+  scope_text: string | null;
+  speaker_role: "management" | "unknown";
+  ai_output_id: number;
+  citation_no: number;
+  page_first: number | null;
+  page_last: number | null;
+  page_url: string | null;
+  extraction_label: string | null;
+};
+
+/** api.earnings_latest (0029), the columns the tab reads: the window the transcript discovery covered, on a `none_found` row. */
+export type EarningsLatestRow = {
+  company_slug: string;
+  status: string;
+  window_from: string | null;
+  window_to: string | null;
+};
+
+/** api.citation_pages (0029): the PDF page(s) of a verified transcript citation; no row where the document has no page map. */
+export type CitationPageRow = {
+  ai_output_id: number;
+  citation_no: number;
+  page_first: number;
+  page_last: number;
+  page_url: string;
+};
+
 /** The slice of the `api` schema typed so far, for supabase-js: the shell's views (C2), the policy pages' (A1, C3, C4, Pass 1b). */
 export type ApiDatabase = {
   api: {
@@ -612,6 +693,10 @@ export type ApiDatabase = {
       rate_decision_moves: View<RateDecisionMoveRow>;
       rate_cycles: View<RateCycleRow>;
       company_rate_cycles: View<CompanyRateCycleRow>;
+      earnings_calls: View<EarningsCallRow>;
+      call_figures: View<CallFigureRow>;
+      earnings_latest: View<EarningsLatestRow>;
+      citation_pages: View<CitationPageRow>;
     };
     Functions: { [_ in never]: never };
   };

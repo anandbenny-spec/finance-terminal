@@ -20,6 +20,9 @@ export type TaskKey =
   | "equity.beta"
   | "equity.rate_reactions"
   | "policy.rate_cycles"
+  | "equity.call_transcripts"
+  | "equity.call_text"
+  | "equity.calls_ai"
   | "site.quality_summary";
 
 /** Live surfaces and their feeding tasks. */
@@ -82,8 +85,12 @@ export function liveTasks(feeds: Record<string, readonly TaskKey[]> = FEEDS): Ta
 /**
  * Surfaces still being built stay here, out of FEEDS, so the status bar doesn't count a task that has no freshness row
  * yet (a missing row counts as stale). A job that ships a surface moves it into FEEDS in the pull request that links
- * it. Empty since 2A-26 (#132) moved module 2's four surfaces into FEEDS.
+ * it. Empty from 2A-26 (#132) until 2B-19 (#182) added the Earnings calls tab's `calls` surface: it moves into FEEDS in 2B-22
+ * (#185), once production's runs have left a freshness row for each of its tasks.
  */
-export const PREVIEW_FEEDS = {} as const satisfies Record<string, readonly TaskKey[]>;
+export const PREVIEW_FEEDS = {
+  // The company page's Earnings calls tab (2B-19): transcripts found, their text and turns, and the AI summary and figures.
+  calls: ["equity.call_transcripts", "equity.call_text", "equity.calls_ai"],
+} as const satisfies Record<string, readonly TaskKey[]>;
 
 export type PreviewSurface = keyof typeof PREVIEW_FEEDS;

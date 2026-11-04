@@ -456,3 +456,24 @@ export function formatPercentLevel(pct: Num, market: Market = "IN", decimals = 2
   if (isMissing(pct)) return NOT_AVAILABLE;
   return `${digits(pct, { decimals, locale: LOCALE[market] })}%`;
 }
+
+/** The PDF page(s) of a cited passage: `7, 7` → `p. 7`, `7, 8` → `pp. 7–8`. */
+export function formatPageRange(first: number, last: number | null | undefined = first): string {
+  const a = digits(integer(first, "a page"), { decimals: 0, grouping: false });
+  if (isMissing(last) || last === first) return `p. ${a}`;
+  return `pp. ${a}${EN_DASH}${digits(integer(last, "a page"), { decimals: 0, grouping: false })}`;
+}
+
+/**
+ * A figure management stated on an earnings call, exactly as the quote writes it (no rounding, no added decimals), Indian
+ * grouping: 12.5 with unit pct → 12.5%; 4500 with unit inr → ₹4,500 cr (stored in crore); 3 with unit other → 3 (unit as spoken).
+ * The value is the AI-extracted figure (Spec 02B §13.6), so its decimals are the ones it carries, at most four.
+ */
+export function formatStatedValue(value: Num, unit: string | null | undefined): string {
+  if (isMissing(value)) return NOT_AVAILABLE;
+  const decimals = Math.min(4, (String(Math.abs(value)).split(".")[1] ?? "").length);
+  const body = digits(value, { decimals, locale: "en-IN" });
+  if (unit === "pct") return `${body}%`;
+  if (unit === "inr") return `${value < 0 ? MINUS : ""}₹${digits(Math.abs(value), { decimals, locale: "en-IN" })} cr`;
+  return `${body} (unit as spoken)`;
+}

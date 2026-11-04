@@ -7,7 +7,8 @@
 //   most 280 characters at a sentence boundary, with "…" (Design 01 §4.5, CitationPopover).
 // - "Official source ↗" links only where the source allows linking: never for the RBI (Anand, 24 Oct 2026; Brief
 //   §6.2), whose documents are named instead.
-import type { AiCitationRow, AiOutputRow } from "@/lib/queries/api";
+import { formatCount, formatPageRange } from "@/lib/format";
+import type { AiCitationRow, AiOutputRow, CitationPageRow } from "@/lib/queries/api";
 
 export const QUOTE_MAX = 280;
 
@@ -19,7 +20,13 @@ export type Citation = {
   href: string | null;
   /** "Official source ↗", or null where the source isn't linked (RBI). */
   officialUrl: string | null;
+  /** False for a private text (a transcript): no "Open in document" (Spec 02B §8). Undefined/true for module 1's documents. */
+  textPublic?: boolean;
+  /** The PDF page of the quote at the source ("p. 7 ↗"), from api.citation_pages; null when the view has no row for it. */
+  page?: CitationPage | null;
 };
+
+export type CitationPage = { label: string; title: string; url: string };
 
 export type SummaryBullet = { text: string; citations: Citation[] };
 
@@ -49,14 +56,28 @@ export function documentHref(c: Pick<AiCitationRow, "document_id" | "char_start"
 }
 
 /** A verified citation as the chip shows it; null if the view returned no quote for it. */
-export function toCitation(c: AiCitationRow, linkOfficial: boolean): Citation | null {
+export function toCitation(c: AiCitationRow, linkOfficial: boolean, page: CitationPageRow | null = null): Citation | null {
   if (!c.quote) return null;
+  const isPublic = c.text_public !== false;
   return {
     no: c.citation_no,
     quote: cutQuote(c.quote),
     documentTitle: c.document_title,
-    href: documentHref(c),
+    href: isPublic ? documentHref(c) : null,
     officialUrl: linkOfficial && c.source_url?.startsWith("https://") ? c.source_url : null,
+    // Only a transcript's citation carries these, so module 1's citations keep their shape.
+    ...(isPublic ? {} : { textPublic: false }),
+    ...(page ? { page: page.page_url.startsWith("https://") ? pageLink(page) : null } : {}),
+  };
+}
+
+/** "p. 7 ↗" as the chip's popover and the tables show it; the title says which page, and of what. */
+export function pageLink(p: Pick<CitationPageRow, "page_first" | "page_last" | "page_url">): CitationPage {
+  const single = p.page_first === p.page_last;
+  return {
+    label: formatPageRange(p.page_first, p.page_last),
+    title: single ? `Page ${formatCount(p.page_first)} of the PDF at the source` : `Pages ${formatCount(p.page_first)} to ${formatCount(p.page_last)} of the PDF at the source`,
+    url: p.page_url,
   };
 }
 

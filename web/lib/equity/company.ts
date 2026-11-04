@@ -11,18 +11,19 @@ import type {
 } from "@/lib/queries/api";
 
 export type Basis = "consolidated" | "standalone";
-export type TabId = "overview" | "financials" | "valuation" | "rate-decisions";
+export type TabId = "overview" | "financials" | "valuation" | "rate-decisions" | "calls";
 
 export const TABS: readonly { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "financials", label: "Financials" },
   { id: "valuation", label: "Valuation" },
   { id: "rate-decisions", label: "Rate decisions" },
+  { id: "calls", label: "Earnings calls" },
 ];
 
 /** The tab in the URL (?tab=…); anything else is the Overview. */
 export function tabOf(value: string | string[] | undefined): TabId {
-  return value === "financials" || value === "valuation" || value === "rate-decisions" ? value : "overview";
+  return value === "financials" || value === "valuation" || value === "rate-decisions" || value === "calls" ? value : "overview";
 }
 
 /** The basis in the URL (?basis=…); consolidated unless standalone is asked for. */

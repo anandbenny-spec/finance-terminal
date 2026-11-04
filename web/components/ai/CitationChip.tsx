@@ -23,7 +23,7 @@ function useCoarsePointer(): boolean {
   return useSyncExternalStore(subscribe, () => window.matchMedia(COARSE).matches, () => false);
 }
 
-function Passage({ citation }: { citation: Citation }) {
+export function Passage({ citation }: { citation: Citation }) {
   return (
     <>
       <blockquote className="mb-2.5 border-l-2 border-highlight pl-2.5 text-ink-1">{citation.quote}</blockquote>
@@ -32,6 +32,11 @@ function Passage({ citation }: { citation: Citation }) {
         {citation.href && (
           <a href={citation.href} className="text-ink-1 underline">
             Open in document
+          </a>
+        )}
+        {citation.page && (
+          <a href={citation.page.url} title={citation.page.title} className="text-ink-1 underline" rel="noreferrer" target="_blank">
+            {citation.page.label} ↗
           </a>
         )}
         {citation.officialUrl && (
