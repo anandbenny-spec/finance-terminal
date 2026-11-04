@@ -5,12 +5,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CompanyView } from "@/components/company/CompanyView";
+import { RateSectorTable } from "@/components/company/RateDecisionTables";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { NOT_A_FORECAST } from "@/lib/equity/rate";
+import { NOT_A_FORECAST, statRows } from "@/lib/equity/rate";
 import type { RateTabData } from "@/lib/queries/rate";
 import { bannedWordsIn } from "@/tests/banned-words";
 import { page } from "@/tests/company-rows";
-import { HIDDEN, cycleMove, rates, stat } from "@/tests/rate-rows";
+import { HIDDEN, cycleMove, move, rates, stat } from "@/tests/rate-rows";
 
 const text = (markup: string) => markup.replace(/<span class="sr-only">[^<]*<\/span>/g, "").replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 const html = (r: RateTabData | null, window: "d1" | "d5" = "d1") =>
@@ -103,6 +104,31 @@ describe("the Rate decisions tab", () => {
   it("shows a company with only a lone cycle row and no dates from the cycle view without crashing", () => {
     const t = text(html(rates({ cycleInfo: [], cycles: [cycleMove()] })));
     expect(t).toContain("6 Feb 2025 to 30 Oct 2026");
+  });
+
+  it("carries no market edge on any company-page panel", () => {
+    const out = html(rates());
+    expect(out).not.toContain("border-t-series-1");
+    expect(out).not.toContain("border-t-series-2");
+  });
+
+  it("says decisions are left out where a dividend went ex inside the window", () => {
+    expect(text(html(rates()))).toContain("left out");
+  });
+
+  it("reads the data-to date from the selected window's moves only", () => {
+    const r = rates({ moves: [move({ window_key: "d1", post_date: "2026-10-30" }), move({ window_key: "d5", post_date: "2026-10-13" })] });
+    expect(text(html(r, "d5"))).toContain("Data to 13 Oct 2026");
+    expect(text(html(r, "d1"))).toContain("Data to 30 Oct 2026");
+  });
+
+  it("puts the sector table's member list on its own line", () => {
+    const rows = statRows([stat({ subject_kind: "peer_group", subject_key: "it", subject_name: "IT services" })], "d1").map((r) => ({
+      ...r,
+      group: { key: "it", label: "IT services", members: [{ slug: "tcs", name: "TCS" }, { slug: "infy", name: "Infosys" }] },
+    }));
+    const out = renderToStaticMarkup(<RateSectorTable rows={rows} caption="Sector" />);
+    expect(out).toMatch(/<span class="[^"]*\bblock\b[^"]*\bwhitespace-normal\b[^"]*">/);
   });
 
   it("keeps the stored statistics out of the page when n is held back", () => {

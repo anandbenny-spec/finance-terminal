@@ -40,7 +40,7 @@ export type ScreenerPageData =
 export function indexesOf(members: readonly IndexMemberRow[]): { slug: string; name: string }[] {
   const seen = new Map<string, string>();
   for (const m of members) if (!seen.has(m.index_slug)) seen.set(m.index_slug, m.index_name);
-  return [...seen].map(([slug, name]) => ({ slug, name })).sort((a, b) => a.slug.localeCompare(b.slug));
+  return [...seen].map(([slug, name]) => ({ slug, name })).sort((a, b) => a.slug.localeCompare(b.slug, "en", { numeric: true }));
 }
 
 /** Everything /screener renders; each read whole or not at all. */

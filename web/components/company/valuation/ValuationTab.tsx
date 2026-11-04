@@ -28,7 +28,7 @@ const HELD = "Model-implied figures are held back until their checks pass.";
 function LeadBody({ lead, lender }: { lead: Lead; lender: boolean }) {
   const explain = lender
     ? "This is the return on equity at which the bank's price to book would be justified, given its cost of equity. It describes what the price implies, not what will happen."
-    : "This is the revenue growth, a year for the first five years, the model needs for its value to equal the latest close, holding every other assumption below. It describes what the price implies, not what will happen.";
+    : "This is the revenue growth a year, over the first five years, that the model needs for its value to equal the latest close, holding every other assumption below. It describes what the price implies, not what will happen.";
   if (lead.status === "not_applicable" || lead.status === "no_solution" || lead.status === null) {
     return (
       <div className="p-3">
@@ -92,7 +92,6 @@ export function ValuationTab({ data, freshness }: { data: Ok; freshness: TaskFre
         title={lender ? "What return on equity does the price imply?" : "What growth does today's price imply?"}
         titleId="panel-implied"
         subtitle={lender ? "Read through the return on equity, the way a bank is valued." : "The reverse DCF: the growth the latest close needs, against the growth delivered."}
-        market={company.market}
         variant="flush"
         footer={foot([nse, DAMODARAN], run?.as_of ?? null)}
       >

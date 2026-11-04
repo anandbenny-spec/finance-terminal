@@ -83,7 +83,6 @@ export function PeersPanel({
           : "How do the multiples compare with the company's peer group?"
       }
       qualifier={peerGroup ? <Qualifier>curated</Qualifier> : undefined}
-      market={market}
       variant="flush"
       footer={footer}
     >

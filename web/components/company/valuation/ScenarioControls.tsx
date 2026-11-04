@@ -67,7 +67,7 @@ export function ScenarioControls({
     context = <StateNote kind={cell.state === "held" ? "held" : "unavailable"}>{cell.reason ?? "No value exists at these assumptions."}</StateNote>;
   } else {
     value = formatPrice(cell.value_per_share, currency);
-    context = cell.label ? <Qualifier>{cell.label}</Qualifier> : undefined;
+    context = cell.label && cell.label !== SCENARIO_LABEL ? <Qualifier>{cell.label}</Qualifier> : undefined;
   }
 
   return (

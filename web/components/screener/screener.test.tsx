@@ -5,7 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ScreenerView } from "@/components/screener/ScreenerView";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { FieldPolicyRow } from "@/lib/queries/api";
+import type { FieldPolicyRow, IndexMemberRow } from "@/lib/queries/api";
+import { indexesOf } from "@/lib/queries/equity";
 import { bannedWordsIn } from "@/tests/banned-words";
 import { row } from "@/tests/screener-rows";
 
@@ -29,6 +30,15 @@ const html = (policies: FieldPolicyRow[], data = rows) =>
   );
 
 describe("ScreenerView", () => {
+  it("orders the index buttons numerically: 50, 100, 200", () => {
+    const members = ["nifty-200", "nifty-100", "nifty-50"].map((slug) => ({ index_slug: slug, index_name: `Nifty ${slug.slice(6)}` }) as IndexMemberRow);
+    const idx = indexesOf(members);
+    expect(idx.map((i) => i.name)).toEqual(["Nifty 50", "Nifty 100", "Nifty 200"]);
+    const t = text(renderToStaticMarkup(<TooltipProvider><ScreenerView rows={rows} indexes={idx} policies={[]} footer={null} /></TooltipProvider>));
+    expect(t.indexOf("Nifty 50")).toBeLessThan(t.indexOf("Nifty 100"));
+    expect(t.indexOf("Nifty 100")).toBeLessThan(t.indexOf("Nifty 200"));
+  });
+
   it("formats each figure by its market: rupees in crore with Indian grouping, true minus, a Delta with a triangle", () => {
     const out = html([]);
     expect(out).toContain("₹12,34,500 cr");
