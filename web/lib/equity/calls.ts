@@ -4,7 +4,7 @@
 // tests/banned-words.ts scans the tab's own text for them.
 import { dateInZone, formatDate, formatFraction, formatStatedValue } from "@/lib/format";
 import { pageLink, toCitation, type Citation, type CitationPage } from "@/lib/policy/ai";
-import type { AiCitationRow, AiOutputRow, CallFigureRow, CitationPageRow, EarningsCallRow } from "@/lib/queries/api";
+import type { AiCitationRow, AiOutputRow, CallFigureRow, CitationPageRow, EarningsCallRow, EarningsListRow } from "@/lib/queries/api";
 
 /** The call the tab shows: the one in the URL (?call=q2-fy27) if it is one of the company's, else the default. */
 export function selectCall(calls: readonly EarningsCallRow[], slug: string | undefined | string[]): EarningsCallRow | null {
@@ -170,4 +170,54 @@ export function figureSets(rows: readonly CallFigureRow[], citations: readonly A
     stated: make((r) => r.kind === "stated"),
     unattributed: make((r) => r.kind === "target" && r.speaker_role === "unknown"),
   };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The /earnings list (2B-20, #183; Spec 02B §13.7; 02B.1 C6)
+
+export const SUMMARY_AND_FIGURES = "Summary and figures";
+const WEBSITE_ROUTES = ["company_link", "curated_link"];
+
+/** A list row's status in words (Spec 02B §13.7), plus " · roles partly read" on a role-held default call. */
+export function listStatusText(r: Pick<EarningsListRow, "status" | "summary_state" | "roles_partial">): string {
+  let text: string;
+  if (r.status === "none_found") return NO_TRANSCRIPT;
+  if (r.status === "on_company_website") text = WEBSITE;
+  else if (r.status === "unreadable") text = SCANNED;
+  else if (r.status !== "stored") text = "Transcript not analysed";
+  else if (r.summary_state === "available") text = SUMMARY_AND_FIGURES;
+  else if (r.summary_state === "held_back") text = SUMMARY_HELD;
+  else text = SUMMARY_NOT_YET;
+  return r.roles_partial ? text + " · roles partly read" : text;
+}
+
+/** For a "No transcript found" row: the window the view returned, never a fixed date. */
+export function noTranscriptNote(r: Pick<EarningsListRow, "status" | "window_from">): string | null {
+  if (r.status !== "none_found" || !r.window_from) return null;
+  return NO_TRANSCRIPT + " among filings since " + formatDate(r.window_from);
+}
+
+/** A list row's call date text; null for a company with no call. */
+export function listDateText(r: Pick<EarningsListRow, "status" | "call_date" | "filed_at">): string | null {
+  if (r.status === "none_found") return null;
+  return callDateText({ call_date: r.call_date, filed_at: r.filed_at });
+}
+
+/** The date column's sort key: the call date, else the day its transcript was filed; null (sorted last) with no call. */
+export function listDateKey(r: Pick<EarningsListRow, "call_date" | "filed_at">): string | null {
+  return r.call_date ?? (r.filed_at ? dateInZone(r.filed_at, "Asia/Kolkata") : null);
+}
+
+/** The page's source lines: "Source: NSE" (BSE where a row's exchange is BSE), plus the company-website line where any row's route is one. */
+export function listSourceLines(rows: readonly Pick<EarningsListRow, "exchange" | "route" | "status" | "call_slug">[]): string[] {
+  const lines = ["Source: NSE"];
+  if (rows.some((r) => r.call_slug && r.exchange?.toUpperCase() === "BSE")) lines.push("Source: BSE");
+  if (rows.some((r) => (r.route !== null && WEBSITE_ROUTES.includes(r.route)) || r.status === "on_company_website"))
+    lines.push("the company's website, linked from its exchange filing");
+  return lines;
+}
+
+/** The latest day any row's call was filed, for "Data to …" (null with none). */
+export function listDataTo(rows: readonly Pick<EarningsListRow, "filed_at">[]): string | null {
+  return rows.map((r) => (r.filed_at ? dateInZone(r.filed_at, "Asia/Kolkata") : null)).filter((d): d is string => d !== null).sort().at(-1) ?? null;
 }

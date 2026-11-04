@@ -9,7 +9,7 @@
 // merging main, and update nav.test.ts's lists.
 import { POLICY_SECTION_LIST, policySectionHref } from "@/lib/policy/sections";
 
-export type NavIcon = "home" | "policy" | "screener" | "about" | "admin" | "health" | "labelling" | "accuracy";
+export type NavIcon = "home" | "policy" | "screener" | "about" | "admin" | "health" | "labelling" | "accuracy" | "earnings";
 
 /** A link under an item: a label and a live target, no icon. */
 export type NavSubLink = { href: string; label: string };
@@ -37,7 +37,10 @@ export const NAV: readonly NavGroup[] = [
   },
   {
     heading: "Company research",
-    items: [{ href: "/screener", label: "Screener", icon: "screener" }],
+    items: [
+      { href: "/screener", label: "Screener", icon: "screener" },
+      { href: "/earnings", label: "Earnings calls", icon: "earnings" },
+    ],
   },
   {
     heading: "About",
