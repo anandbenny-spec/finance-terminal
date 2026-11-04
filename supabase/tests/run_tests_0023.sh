@@ -144,9 +144,9 @@ insert into equity.transcript_page (document_id, pdf_page, char_start, char_end)
 select d.id, p.n, p.s, p.e from core.document d, (values (1, 0, 300), (2, 300, 645)) p(n, s, e) where d.external_key like 'ec23-%';
 insert into equity.guidance (call_event_id, entity_id, ai_output_id, citation_no, document_id, char_start, char_end, metric,
                              metric_label, metric_text, kind, low, high, unit, period_text, period_kind, target_start, target_end,
-                             basis, growth_basis, vintage_date)
+                             basis, growth_basis, vintage_date, speaker_role)
 select c.event_id, c.entity_id, o.id, 1, d.id, 0, 43, 'revenue_growth', 'Revenue growth', 'revenue growth', 'range', 10, 12,
-       'pct', 'FY27', 'year', '2026-04-01', '2027-03-31', 'consolidated', 'yoy', '2026-10-20'
+       'pct', 'FY27', 'year', '2026-04-01', '2027-03-31', 'consolidated', 'yoy', '2026-10-20', 'management'
 from equity.earnings_call c join core.document d on d.id = c.transcript_document_id
 join core.ai_output o on o.document_id = d.id and o.body = 'ec23 figures' where c.fiscal_label = 'Q2 FY27';
 insert into equity.stated_figure (call_event_id, entity_id, ai_output_id, citation_no, document_id, char_start, char_end, metric,
