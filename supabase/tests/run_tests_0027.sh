@@ -92,10 +92,10 @@ insert into ec27_v values
   ('ec27-c', 'ec27_c1', 'delivered',  true,  true,  'first',  'within',  null, 'ec27-c|c1');
 insert into equity.guidance (call_event_id, entity_id, ai_output_id, citation_no, document_id, char_start, char_end, metric,
                              metric_label, metric_text, kind, value, unit, period_text, period_kind, target_start, target_end,
-                             basis, growth_basis, vintage_date, not_scored_reason)
+                             basis, growth_basis, vintage_date, not_scored_reason, speaker_role)
 select ec.event_id, ec.entity_id, o.id, 1, ec.transcript_document_id, 0, 43, v.metric, 'Label ' || v.metric, v.metric,
        'point', 10, 'pct', 'FY27', 'year', '2026-04-01', '2027-03-31', 'consolidated', 'yoy', '2026-10-20',
-       case when v.outcome = 'not_scored' then v.reason end
+       case when v.outcome = 'not_scored' then v.reason end, 'management'
 from ec27_v v join core.entity e on e.slug = v.co join equity.earnings_call ec on ec.entity_id = e.id
 join core.ai_output o on o.document_id = ec.transcript_document_id and o.task = 'guidance_extraction';
 update equity.guidance set duplicate_of = (select id from equity.guidance where metric = 'ec27_a1') where metric = 'ec27_a7';
@@ -188,9 +188,9 @@ check "R02 B at n = 4 has no rate; C (unpublished call) has no row" \
 check "R03 a fifth target for B (written by job_writer) gives n = 5 and a rate of 0.8; the group and the Nifty 50 follow" \
   "$(psql $H -U postgres -c "set role job_writer;
        with g as (insert into equity.guidance (call_event_id, entity_id, ai_output_id, citation_no, document_id, char_start, char_end, metric,
-                                               metric_text, kind, value, unit, period_kind, target_start, target_end, vintage_date)
+                                               metric_text, kind, value, unit, period_kind, target_start, target_end, vintage_date, speaker_role)
                   select ec.event_id, ec.entity_id, o.id, 1, ec.transcript_document_id, 0, 43, 'ec27_b5', 'x', 'point', 10, 'pct', 'year',
-                         '2026-04-01', '2027-03-31', '2026-10-20'
+                         '2026-04-01', '2027-03-31', '2026-10-20', 'management'
                   from equity.earnings_call ec join core.entity e on e.id = ec.entity_id and e.slug = 'ec27-b'
                   join core.ai_output o on o.document_id = ec.transcript_document_id and o.task = 'guidance_extraction' returning id)
        insert into equity.guidance_outcome (guidance_id, target_key, is_first, revision, horizon_share, counted, outcome, relation, actual, inputs, rule_version)
