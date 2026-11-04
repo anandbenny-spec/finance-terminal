@@ -64,6 +64,7 @@ class CallDoc:
     day: date | None                  # the call date, else the day the transcript was filed
     turns: tuple[Turn, ...] = ()
     role_held: bool = False           # more than 10% of the call's words have an unknown role (turns.ROLE_HOLD_SHARE)
+    fy_end_month: int | None = None   # the company's fiscal-year end month (equity.company): the guidance extraction's
 
 
 def _when(d: date | None) -> str:

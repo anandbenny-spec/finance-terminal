@@ -101,6 +101,9 @@ TASKS: dict[str, TaskSpec] = {
     "projection_extraction": TaskSpec("json", "low", 4_000),
     # Module 2's earnings calls (Spec 02B §5.6, §13.3; 2B-11): the summary of one transcript, two cited lists.
     "call_summary": TaskSpec("citations", "low", 8_000),
+    # The targets and stated figures of one transcript (Spec 02B §5.9, §13.5; 2B-13): the json route, effort medium, with
+    # headroom for thinking and up to about 40 items.
+    "guidance_extraction": TaskSpec("json", "medium", 12_000),
 }
 
 

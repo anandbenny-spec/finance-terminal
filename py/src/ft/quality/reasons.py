@@ -10,8 +10,8 @@ From an AI output's `status` and `status_reason`, one category for the accuracy 
     other         anything else
 
 The categories come from the stable phrases the checks write themselves: each check module keeps its table beside the
-check (`REASON_PHRASES` in ft/ai/summaries.py, ft/ai/call_summary.py, ft/ai/extraction.py and
-ft/jobs/tasks/ai_batch.py), and the tests run
+check (`REASON_PHRASES` in ft/ai/summaries.py, ft/ai/call_summary.py, ft/ai/extraction.py,
+ft/ai/guidance_extraction.py and ft/jobs/tasks/ai_batch.py), and the tests run
 the real checks on crafted bad replies and assert each lands in its category, so a reworded message fails a test
 instead of drifting into `other`. No loose text parsing: an unmatched reason is `other`, counted as unmatched so the
 task's warning names the gap and the new phrase gets mapped.
@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 
-from ft.ai import call_summary, extraction, summaries
+from ft.ai import call_summary, extraction, guidance_extraction, summaries
 from ft.jobs.tasks import ai_batch
 
 CATEGORIES = ("citation", "numbers", "format", "stopped", "other")
@@ -31,7 +31,7 @@ PRIORITY = ("stopped", "citation", "numbers", "format")
 HELD_PREFIX = "held:"
 
 _TABLES = (summaries.REASON_PHRASES, extraction.REASON_PHRASES, ai_batch.REASON_PHRASES,
-           call_summary.REASON_PHRASES)
+           call_summary.REASON_PHRASES, guidance_extraction.REASON_PHRASES)
 _PATTERNS = {cat: [re.compile(p, re.IGNORECASE) for t in _TABLES for p in t.get(cat, ())] for cat in PRIORITY}
 _KNOWN_OTHER = [re.compile(p, re.IGNORECASE) for p in ai_batch.KNOWN_OTHER_PHRASES]
 

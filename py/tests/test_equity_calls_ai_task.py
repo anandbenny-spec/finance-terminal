@@ -2,12 +2,18 @@
 job_writer: the cited summary of each stored call, its role rules, the retry, the limits and S2's degrade path. The Messages and
 Message Batches APIs are fakes (tests/ai_fakes.py); the Anthropic SDK itself runs. The calls are synthetic (tests/call_fixtures.py):
 a company, a `stored` earnings-call event, a published transcript document with its chunks and `equity.call_turn` rows. Each test
-makes its own calls (unique slugs) and the task sees only those (`scope`)."""
+makes its own calls (unique slugs) and the task sees only those (`scope`).
+
+The guidance extraction (2B-13, #176) rides the same batch for a call whose company row holds a fiscal-year end month: the tests at
+the end give their calls one (`fy_end=3`), and the older ones, which don't, are summarised only (the extraction names such a call
+in `call_guidance` and skips it)."""
 import json
 import uuid
 from collections import Counter
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from itertools import pairwise
 
 import psycopg
 import pytest
@@ -20,8 +26,10 @@ from call_fixtures import (
     lists,
 )
 from conftest import dsn
+from test_ai_guidance_extraction import S, T
 
 from ft.ai import call_summary as cs
+from ft.ai import guidance_extraction as ge
 from ft.ai import summaries
 from ft.ai.batch import batch_custom_id
 from ft.engines.document.chunk import chunk_text
@@ -74,16 +82,20 @@ def wipe() -> None:
         ids = "(select id from core.entity where slug like 'cai-%')"
         docs = f"(select id from core.document where entity_id in {ids})"
         c.execute(f"delete from ops.ai_request where document_id in {docs}")
+        c.execute(f"delete from equity.transcript_page where document_id in {docs}")
+        c.execute(f"delete from equity.stated_figure where entity_id in {ids}")
+        c.execute(f"delete from equity.guidance where entity_id in {ids}")
         c.execute(f"delete from core.ai_output where document_id in {docs}")
         c.execute(f"delete from equity.call_turn where document_id in {docs}")
         c.execute(f"delete from equity.earnings_call where entity_id in {ids}")
         c.execute(f"update core.document set supersedes_id = null where entity_id in {ids}")
         c.execute(f"delete from core.document where entity_id in {ids}")
         c.execute(f"delete from core.event where entity_id in {ids}")
+        c.execute(f"delete from equity.company where entity_id in {ids}")
         c.execute("delete from core.entity where slug like 'cai-%'")
         c.execute("delete from core.source where key like 'cai\\_%' and key like '%suppressed'")
         c.execute("delete from ops.alert where dedupe_key like 'ai_rejected:call_summary:%' "
-                  "or dedupe_key like 'ai_unavailable:calls:%'")
+                  "or dedupe_key like 'ai_rejected:guidance_extraction:%' or dedupe_key like 'ai_unavailable:calls:%'")
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -114,14 +126,18 @@ def source(key: str, *, suppressed: bool = False) -> int:
 
 
 def make_call(*, lines=LINES, role_of=None, filed: date = date(2026, 10, 20), src_key: str = "nse",
-              held: bool = False, publish_doc: bool = True, status: str = "stored", with_doc: bool = True) -> dict:
-    """A stored call: company, event, transcript document (published, chunked), its turns and the earnings_call row."""
+              held: bool = False, publish_doc: bool = True, status: str = "stored", with_doc: bool = True,
+              fy_end: int | None = None) -> dict:
+    """A stored call: company, event, transcript document (published, chunked), its turns and the earnings_call row.
+    `fy_end`: the company's fiscal-year end month (an `equity.company` row), which the guidance extraction needs."""
     tag = uuid.uuid4().hex[:8]
     lines = [(sp, (role_of or {}).get(i, role), t) for i, (sp, role, t) in enumerate(lines)]
     b = build(lines)
     src = source(src_key, suppressed=src_key.endswith("_suppressed"))
     eid = q("""insert into core.entity (kind, slug, name, short_name, market, currency, is_published)
                values ('company', %s, 'Acme Limited', 'Acme', 'IN', 'INR', true) returning id""", f"cai-{tag}")[0][0]
+    if fy_end is not None:
+        x("insert into equity.company (entity_id, fy_end_month) values (%s, %s)", eid, fy_end)
     slug = f"cai-{tag}-call-q2-fy27"
     ev = q("""insert into core.event (event_type, entity_id, slug, title, starts_on, status, source_id, is_published)
               values ('earnings_call', %s, %s, 'Acme Q2 FY27 call', %s, %s, %s, true) returning id""",
@@ -509,3 +525,392 @@ def test_due_goes_through_the_production_guard():
     # once it has succeeded, the task's own rule decides (this module's KEY has run above)
     ran = task([], FakeClaude()).due(db, "weekly")
     assert not ran.due and ran.reason.startswith("last success") and "every 6 days" in ran.reason
+
+
+# ---------------------------------------------------------------------------------------------- the extraction (2B-13, #176)
+REV = "Revenue from operations grew 12.5 per cent to 4,500 crore in Q2 FY27."
+MARGIN = "EBITDA margin was 21.3 per cent."
+CAPEX = "We plan capital expenditure of 800 crore this year."
+OUTLOOK = "We expect margins to stay near 21 per cent because input costs have eased."
+REPAY = "We will repay 300 crore of debt this year and maintain the dividend payout."
+CAPEX_T = T(CAPEX, metric="capex", metric_text="capital expenditure", value=800, unit="inr", growth_basis="level")
+OUTLOOK_T = T(OUTLOOK, metric="ebitda_margin", metric_text="EBITDA margin", value=21, growth_basis="level",
+              period_kind="half_year", part=2, period_text="the second half")
+ASKED_T = T(QUESTION, metric="ebitda_margin", metric_text="EBITDA margin", kind="direction", value=None, unit=None,
+            direction="increase")                                                  # in Anil Shah's turn: an analyst's
+REPAY_T = T(REPAY, metric="other", metric_text="debt repayment", value=300, unit="inr", growth_basis="level")
+REV_S = S(REV)
+MARGIN_S = S(MARGIN, metric="ebitda_margin", metric_text="EBITDA margin", value=21.3, unit="pct")
+# a participant whose role couldn't be read, and says something in the first person (about 5% of the call's words)
+PARTICIPANT = "We will invest 500 crore in the new plant in FY28."
+WITH_PARTICIPANT = LINES[:10] + [("Participant X", "unknown", f"Participant X: {PARTICIPANT}")] + LINES[10:]
+THIRD_PARTICIPANT = [(f"A participant said {PARTICIPANT}", [PARTICIPANT])]           # the summary's third list
+PARTICIPANT_T = T(PARTICIPANT, metric="capex", metric_text="capital expenditure", value=500, unit="inr", fiscal_year=2028,
+                  growth_basis="level")
+
+
+def answers(targets=(), stated=()):
+    """FakeClaude's `answer`: the extraction's JSON, whatever the transcript."""
+    return lambda body: {"targets": list(targets), "stated_figures": list(stated)}
+
+
+def gx(doc_id: int):
+    """The extraction's outputs of a call: status, reason, prompt version, targets and stated figures in the content."""
+    return q("""select status, coalesce(status_reason, ''), prompt_version, jsonb_array_length(content -> 'targets'),
+                       jsonb_array_length(content -> 'stated_figures')
+                  from core.ai_output where document_id = %s and task = 'guidance_extraction' order by id""", doc_id)
+
+
+def grequests(doc_id: int):
+    return q("""select status, coalesce(reject_reason, ''), ai_output_id is not null
+                  from ops.ai_request where document_id = %s and ai_task = 'guidance_extraction' order by created_at, custom_id""",
+             doc_id)
+
+
+def grows(doc_id: int):
+    return q("""select speaker_role, metric, kind, value, unit, target_start, target_end, duplicate_of is not null,
+                       coalesce(not_scored_reason, ''), vintage_date, citation_no
+                  from equity.guidance where document_id = %s order by id""", doc_id)
+
+
+def srows(doc_id: int):
+    return q("""select metric, value, unit, period_kind, period_start, period_end, duplicate_of is not null, citation_no
+                  from equity.stated_figure where document_id = %s order by id""", doc_id)
+
+
+def shown(event_id: int):
+    return q("select guidance_targets from equity.earnings_call where event_id = %s", event_id)[0][0]
+
+
+def guidance_prompt_v2(monkeypatch) -> None:
+    """A second version of the extraction's prompt (only v1 exists): the same text under another version, so the input hash and
+    the version both change."""
+    real = eca.load_prompt
+    monkeypatch.setattr(eca, "PROMPT_VERSION", {**eca.PROMPT_VERSION, ge.TASK: "v2"})
+    monkeypatch.setattr(eca, "load_prompt", lambda t, v: replace(real(t, "v1"), version="v2") if (t, v) == (ge.TASK, "v2")
+                        else real(t, v))
+
+
+@pytest.mark.db
+def test_the_extraction_rides_the_summary_batch_and_stores_rows_with_verified_citations():
+    c = make_call(fy_end=3)
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers([CAPEX_T, OUTLOOK_T, ASKED_T], [REV_S, MARGIN_S]))
+    assert go(task([c["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    assert fake.create_calls == 1
+    ((_, batch),) = fake.batches.items()
+    stored = q("select custom_id, ai_task from ops.ai_request where document_id = %s order by ai_task", c["doc"])
+    assert [t for _, t in stored] == ["call_summary", "guidance_extraction"]
+    assert stored[1][0].startswith(f"guidance_extraction:doc-{c['doc']}:")
+    assert sorted(x["custom_id"] for x in batch["requests"]) == sorted(batch_custom_id(cid) for cid, _ in stored)
+    sent = next(x for x in batch["requests"] if x["custom_id"] == batch_custom_id(stored[1][0]))["params"]
+    assert sent["output_config"]["effort"] == "medium" and sent["output_config"]["format"]["type"] == "json_schema"
+    block = sent["messages"][0]["content"][0]
+    assert "citations" not in block and block["source"]["data"].startswith("[moderator]\nModerator: Good day")
+    assert "[management · Ravi Rao]\nRavi Rao:" in block["source"]["data"] and "[analyst · Anil Shah]" in block["source"]["data"]
+    assert "fiscal year ends in March" in sent["messages"][0]["content"][1]["text"]
+    # the output: published, with the kept items in its content and nothing of the analyst's turn
+    assert gx(c["doc"]) == [("published", "", "v1", 2, 2)]
+    content, = q("select content from core.ai_output where document_id = %s and task = 'guidance_extraction'", c["doc"])[0]
+    assert content["dropped"] == {"analyst_turn": 1} and content["attempt"] == 1 and "no_targets" not in content
+    assert QUESTION not in json.dumps(content) and all(len(x["quote"]) <= 400 for x in content["targets"] + content["stated_figures"])
+    assert [x["quote"] for x in content["targets"]] == [CAPEX, OUTLOOK] and [x["quote"] for x in content["stated_figures"]] == [REV, MARGIN]
+    # four citations, all verified spans inside the published document, in the order the rows number them
+    cites = q("""select claim_path, kind, verified, char_end <= (select char_count from core.document where id = %s),
+                        citation_no
+                   from core.ai_citation where ai_output_id = (select id from core.ai_output where document_id = %s
+                                                                  and task = 'guidance_extraction')
+                  order by citation_no""", c["doc"], c["doc"])
+    assert [(p, k, v, i, n) for p, k, v, i, n in cites] == [
+        ("/targets/0", "document_span", True, True, 1), ("/targets/1", "document_span", True, True, 2),
+        ("/stated_figures/0", "document_span", True, True, 3), ("/stated_figures/1", "document_span", True, True, 4)]
+    # the rows: management's, dated through the March year end, vintage the call's date, no forecast series
+    assert grows(c["doc"]) == [
+        ("management", "capex", "point", Decimal(800), "inr", date(2026, 4, 1), date(2027, 3, 31), False, "", date(2026, 10, 20), 1),
+        ("management", "ebitda_margin", "point", Decimal(21), "pct", date(2026, 10, 1), date(2027, 3, 31), False, "",
+         date(2026, 10, 20), 2)]
+    assert srows(c["doc"]) == [
+        ("revenue", Decimal(4500), "inr", "quarter", date(2026, 7, 1), date(2026, 9, 30), False, 3),
+        ("ebitda_margin", Decimal("21.3"), "pct", "quarter", date(2026, 7, 1), date(2026, 9, 30), False, 4)]
+    assert q("select count(*) from equity.guidance where document_id = %s and forecast_series_id is not null", c["doc"]) == [(0,)]
+    assert shown(c["event"]) == 2
+    assert grequests(c["doc"]) == [("succeeded", "", True)]
+    # the summary is published beside it, and neither is visible to visitors (held back until their gates pass)
+    assert [g[0] for g in outputs(c["doc"])] == ["published"]
+    assert as_anon("select count(*) from api.ai_outputs where document_id = %s", c["doc"]) == [(0,)]
+    ck = r["checks"]
+    assert all(ck[n]["passed"] for n in ("outputs_stored", "citation_roles", "guidance_stored", "guidance_items", "calls_too_long",
+                                         "ai_available", "batches", "ai_spend")) and none_rejected(r)
+    assert ck["guidance_stored"]["detail"].startswith("1 stored") and ck["guidance_items"]["detail"].startswith("1 stored")
+    assert "1 calls lacked a published summary" in ck["call_summaries"]["detail"]
+    assert "1 calls lacked their extraction at the start; this run: 1 published" in ck["call_guidance"]["detail"]
+    for key in ("analyst_turn", "moderator_turn", "across_turns", "content_test"):          # Spec 02B.1 C3: always reported
+        assert ck[f"guidance_dropped_{key}"]["passed"] and not ck[f"guidance_dropped_{key}"]["blocking"]
+    assert ck["guidance_dropped_analyst_turn"]["detail"].startswith("1 items dropped")
+    assert ck["guidance_dropped_content_test"]["detail"].startswith("0 items dropped")
+    assert "guidance_dropped_not_found" not in ck                                          # the rest only when something dropped
+    assert r["cost"] > 0
+    # run again: both outputs exist, so nothing is asked and nothing is written
+    assert go(task([c["slug"]], fake)) == 0
+    assert fake.create_calls == 1 and last_run()["rows"] == 0
+    assert "0 calls lacked their extraction" in last_run()["checks"]["call_guidance"]["detail"]
+
+
+@pytest.mark.db
+def test_a_call_where_nothing_is_found_keeps_a_no_targets_draft_counts_zero_and_is_not_asked_again():
+    empty, dropped = make_call(fy_end=3), make_call(fy_end=3)
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers())
+    assert go(task([empty["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    assert gx(empty["doc"]) == [("draft", "no_targets", "v1", 0, 0)]
+    content, = q("select content from core.ai_output where document_id = %s and task = 'guidance_extraction'", empty["doc"])[0]
+    assert content["no_targets"] is True and content["dropped"] == {}
+    assert grows(empty["doc"]) == [] and srows(empty["doc"]) == [] and shown(empty["event"]) == 0
+    assert q("select count(*) from core.ai_citation where ai_output_id = (select id from core.ai_output where document_id = %s "
+             "and task = 'guidance_extraction')", empty["doc"]) == [(0,)]
+    assert grequests(empty["doc"]) == [("succeeded", "", True)]
+    ck = r["checks"]
+    assert ck["guidance_stored"]["passed"] and "1 calls lacked their extraction at the start; this run: 1 no_targets" in ck["call_guidance"]["detail"]
+    assert alert(f"ai_rejected:guidance_extraction:{empty['doc']}") == [] and none_rejected(r)
+    assert go(task([empty["slug"]], fake)) == 0 and fake.create_calls == 1               # "none found" is an answer: not asked again
+    # everything the model found was an analyst's: counted, and the call is "none found" too
+    only_analyst = FakeClaude(["ok"], reply=replies(), answer=answers([ASKED_T]))
+    assert go(task([dropped["slug"]], only_analyst)) == 0
+    assert gx(dropped["doc"]) == [("draft", "no_targets", "v1", 0, 0)]
+    content, = q("select content from core.ai_output where document_id = %s and task = 'guidance_extraction'", dropped["doc"])[0]
+    assert content["dropped"] == {"analyst_turn": 1} and shown(dropped["event"]) == 0 and QUESTION not in json.dumps(content)
+    assert last_run()["checks"]["guidance_dropped_analyst_turn"]["detail"].startswith("1 items dropped")
+
+
+@pytest.mark.db
+def test_a_first_person_target_in_a_turn_nobody_could_read_goes_to_the_separate_list_and_is_never_counted_as_management_s():
+    c = make_call(fy_end=3, lines=WITH_PARTICIPANT, role_of={})
+    fake = FakeClaude(["ok"], reply=replies(unknown=THIRD_PARTICIPANT), answer=answers([CAPEX_T, PARTICIPANT_T, REPAY_T]))
+    assert go(task([c["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    assert gx(c["doc"]) == [("published", "", "v1", 3, 0)]
+    assert [(g[0], g[1], g[3]) for g in grows(c["doc"])] == [("management", "capex", Decimal(800)),
+                                                             ("management", "other", Decimal(300)),
+                                                             ("unknown", "capex", Decimal(500))]
+    assert grows(c["doc"])[1][8] == "no_filed_figure"
+    assert shown(c["event"]) == 2                                              # management's two; the separate list isn't counted
+    assert r["checks"]["guidance_items"]["passed"] and r["checks"]["guidance_stored"]["passed"]
+    assert [g[0] for g in outputs(c["doc"])] == ["published"]                           # the summary is published beside it
+
+
+@pytest.mark.db
+def test_with_the_switch_off_the_separate_list_is_dropped_and_counted_and_management_s_targets_stand():
+    c = make_call(fy_end=3, lines=WITH_PARTICIPANT)
+    off = task([c["slug"]], FakeClaude(["ok"], reply=replies(unknown=THIRD_PARTICIPANT), answer=answers([CAPEX_T, PARTICIPANT_T])))
+    off.metrics = replace(ge.load_metrics(), unattributed_targets=False)
+    assert go(off) == 0
+    assert last_run()["status"] == "success"
+    assert [g[0] for g in grows(c["doc"])] == ["management"] and shown(c["event"]) == 1
+    content, = q("select content from core.ai_output where document_id = %s and task = 'guidance_extraction'", c["doc"])[0]
+    assert content["dropped"] == {"unknown_turn_off": 1} and content["unattributed_targets"] is False
+    assert last_run()["checks"]["guidance_dropped_unknown_turn_off"]["detail"].startswith("1 items dropped")
+
+
+@pytest.mark.db
+def test_a_duplicate_keeps_its_row_and_its_citation_and_is_not_counted():
+    again = "We plan capital expenditure of 500 crore in FY28 as well."
+    lines = WITH_PARTICIPANT[:10] + [("Participant X", "unknown", f"Participant X: {PARTICIPANT} {again}")] + WITH_PARTICIPANT[11:]
+    d = make_call(fy_end=3, lines=lines)
+    dup = T(again, metric="capex", metric_text="capital expenditure", value=500, unit="inr", fiscal_year=2028, growth_basis="level")
+    assert go(task([d["slug"]], FakeClaude(["ok"], reply=replies(unknown=THIRD_PARTICIPANT), answer=answers([PARTICIPANT_T, dup])))) == 0
+    rows = grows(d["doc"])
+    assert [(g[0], g[7], g[8]) for g in rows] == [("unknown", False, ""), ("unknown", True, "duplicate")]
+    assert [g[10] for g in rows] == [1, 2] and shown(d["event"]) == 0
+    # a management statement of the same target comes first whatever the transcript's order: the separate list's is the duplicate
+    mgmt = "We plan capital expenditure of 500 crore in FY28 too."
+    lines = WITH_PARTICIPANT[:12] + [("Ravi Rao", "management", f"Ravi Rao: {mgmt}")]
+    e = make_call(fy_end=3, lines=lines)
+    both = [PARTICIPANT_T, T(mgmt, metric="capex", metric_text="capital expenditure", value=500, unit="inr", fiscal_year=2028,
+                             growth_basis="level")]
+    assert go(task([e["slug"]], FakeClaude(["ok"], reply=replies(unknown=THIRD_PARTICIPANT), answer=answers(both)))) == 0
+    assert [(g[0], g[7]) for g in grows(e["doc"])] == [("management", False), ("unknown", True)] and shown(e["event"]) == 1
+
+
+@pytest.mark.db
+def test_a_reply_that_isnt_json_is_retried_with_a_note_then_rejected_with_an_alert_and_never_resent():
+    c = make_call(fy_end=3)
+    fake = FakeClaude(["not_json"], reply=replies())
+    assert go(task([c["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success" and fake.create_calls == 2
+    retry = list(fake.batches.values())[1]["requests"]
+    assert len(retry) == 1                                                             # only the extraction is asked again
+    asked = retry[0]["params"]["messages"][0]["content"]
+    assert asked[-1]["text"].startswith("Your previous answer") and "the reply isn't the schema's JSON" in asked[-1]["text"]
+    got = gx(c["doc"])
+    assert [g[0] for g in got] == ["rejected", "rejected"]
+    assert got[0][1].startswith("retried: the reply isn't the schema's JSON") and got[1][1].startswith("rejected: the reply isn't")
+    assert [g[0] for g in grequests(c["doc"])] == ["rejected", "rejected"]
+    assert grows(c["doc"]) == [] and srows(c["doc"]) == []
+    assert [g[0] for g in outputs(c["doc"])] == ["published"]                            # the summary is unaffected
+    ((sev, msg),) = alert(f"ai_rejected:guidance_extraction:{c['doc']}")
+    assert sev == "warn" and "the reply isn't the schema's JSON" in msg and alert(f"ai_rejected:call_summary:{c['doc']}") == []
+    assert not r["checks"]["citation_integrity"]["passed"]
+    # an unchanged input is never sent twice
+    assert go(task([c["slug"]], fake)) == 0
+    assert fake.create_calls == 2 and len(gx(c["doc"])) == 2 and len(alert(f"ai_rejected:guidance_extraction:{c['doc']}")) == 1
+
+
+@pytest.mark.db
+def test_a_new_prompt_version_asks_again_supersedes_the_old_output_resolves_the_alert_and_keeps_the_old_rows(monkeypatch):
+    c = make_call(fy_end=3)
+    broken = FakeClaude(["not_json"], reply=replies())
+    assert go(task([c["slug"]], broken)) == 0
+    assert alert(f"ai_rejected:guidance_extraction:{c['doc']}")
+    guidance_prompt_v2(monkeypatch)
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers([CAPEX_T], [REV_S]))
+    assert go(task([c["slug"]], fake)) == 0
+    assert [(g[0], g[2]) for g in gx(c["doc"])][-1] == ("published", "v2")
+    assert alert(f"ai_rejected:guidance_extraction:{c['doc']}") == []                  # published: the alert resolves itself
+    assert [g[0] for g in outputs(c["doc"])] == ["published"] and fake.create_calls == 1   # the summary wasn't asked for again
+    # a third version finds more: the second is superseded, its rows stay (every observation is stored once fetched)
+    monkeypatch.setattr(eca, "PROMPT_VERSION", {**eca.PROMPT_VERSION, ge.TASK: "v3"})
+    real = eca.load_prompt
+    monkeypatch.setattr(eca, "load_prompt", lambda t, v: replace(real(t, "v1"), version="v3") if (t, v) == (ge.TASK, "v3")
+                        else real(t, v))
+    more = FakeClaude(["ok"], reply=replies(), answer=answers([CAPEX_T, OUTLOOK_T], [REV_S, MARGIN_S]))
+    assert go(task([c["slug"]], more)) == 0
+    assert [g[0] for g in gx(c["doc"])][-2:] == ["superseded", "published"] and gx(c["doc"])[-1][2] == "v3"
+    assert len(grows(c["doc"])) == 3 and len(srows(c["doc"])) == 3 and shown(c["event"]) == 2
+    published = q("select id from core.ai_output where document_id = %s and task = 'guidance_extraction' and status = 'published'",
+                  c["doc"])
+    assert len(published) == 1
+    assert q("select count(*) from equity.guidance where ai_output_id = %s", published[0][0]) == [(2,)]
+
+
+@pytest.mark.db
+def test_a_call_with_no_fiscal_year_end_month_is_summarised_but_not_extracted_and_named():
+    c = make_call()                                                                    # no equity.company row
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers([CAPEX_T]))
+    assert go(task([c["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success" and len(next(iter(fake.batches.values()))["requests"]) == 1
+    assert [g[0] for g in outputs(c["doc"])] == ["published"] and gx(c["doc"]) == [] and grequests(c["doc"]) == []
+    assert c["slug"] in r["checks"]["call_guidance"]["detail"] and "no fiscal-year end month" in r["checks"]["call_guidance"]["detail"]
+    assert r["checks"]["guidance_stored"]["passed"] and shown(c["event"]) is None
+
+
+@pytest.mark.db
+def test_a_transcript_over_the_length_limit_is_named_once_for_both_tasks():
+    long = LINES[:2] + [("Ravi Rao", "management", "Ravi Rao: " + "We continue to invest in capacity. " * 6_500)] + LINES[2:]
+    big = make_call(lines=long, fy_end=3)
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers())
+    assert go(task([big["slug"]], fake)) == 0
+    r = last_run()
+    assert fake.create_calls == 0 and gx(big["doc"]) == [] and outputs(big["doc"]) == []
+    ck = r["checks"]["calls_too_long"]
+    assert not ck["passed"] and ck["detail"].count(big["slug"]) == 1
+
+
+@pytest.mark.db
+def test_with_no_anthropic_key_neither_task_is_sent_and_both_are_named_as_skipped(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    c = make_call(fy_end=3)
+    t = task([c["slug"]], FakeClaude(["ok"], reply=replies(), answer=answers([CAPEX_T])))
+    t.claude = None
+    assert go(t) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    assert gx(c["doc"]) == [] and outputs(c["doc"]) == [] and grequests(c["doc"]) == []
+    ck = r["checks"]["ai_available"]
+    assert not ck["passed"] and sorted(json.loads(ck["detail"])["skipped_targets"]) == [
+        f"call_summary:doc-{c['doc']}", f"guidance_extraction:doc-{c['doc']}"]
+    assert "call summaries and extracted figures are skipped" in paused()[0][1]
+    assert go(task([c["slug"]], FakeClaude(["ok"], reply=replies(), answer=answers([CAPEX_T])))) == 0   # the key is back
+    assert gx(c["doc"])[0][0] == "published" and paused() == []
+
+
+@pytest.mark.db
+def test_the_independent_check_fails_the_run_if_a_stored_item_lies_in_a_turn_its_list_doesnt_allow(monkeypatch):
+    """Simulates a bug in the reply check (the role rules gone, so any turn counts as management's): the stored rows are read
+    again against the turns in the database, and the blocking `guidance_items` check fails the run."""
+    def lenient(raw, call, c, metrics, *, target):
+        span = ge.locate_quote(call.text, ge.normalize_inline(raw["quote"]))
+        turn = next(t for t in call.turns if t.char_start <= span.start < t.char_end)
+        return ge.Where(span.start, span.end, replace(turn, role="management"), call.text[span.start:span.end])
+    monkeypatch.setattr(ge, "_place", lenient)
+    c = make_call(fy_end=3)
+    asked = T(QUESTION, metric="ebitda_margin", metric_text="EBITDA margin", kind="direction", value=None, unit=None,
+              direction="increase")
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers([asked]))
+    assert go(task([c["slug"]], fake)) != 0 or last_run()["status"] != "success"
+    r = last_run()
+    assert r["status"] == "checks_failed"
+    ck = r["checks"]["guidance_items"]
+    assert not ck["passed"] and "its quote isn't inside one turn whose role is management" in ck["detail"]
+
+
+@pytest.mark.db
+def test_the_independent_check_fails_the_run_if_a_figure_isnt_in_its_stored_quote(monkeypatch):
+    """Simulates a bug in the reply check's figure rule (it accepts the first figure it is shown): the stored value the quote
+    doesn't hold is caught when the stored rows are read again, and the blocking `guidance_items` check fails the run."""
+    real, seen = ge.figures_ok, []
+
+    def lenient_once(*a, **k):
+        seen.append(1)
+        return True if len(seen) == 1 else real(*a, **k)
+    monkeypatch.setattr(ge, "figures_ok", lenient_once)
+    c = make_call(fy_end=3)
+    wrong = {**CAPEX_T, "value": 900}                                            # the quote says 800
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers([wrong]))
+    assert go(task([c["slug"]], fake)) != 0 or last_run()["status"] != "success"
+    r = last_run()
+    assert r["status"] == "checks_failed" and "a figure isn't in its quote" in r["checks"]["guidance_items"]["detail"]
+
+
+def add_pages(c: dict, cuts: list[int]) -> None:
+    """`equity.transcript_page` rows for the call's document: its text split at the offsets given (page 1, 2, ...)."""
+    edges = [0, *cuts, len(c["built"].text)]
+    for n, (a, b) in enumerate(pairwise(edges), start=1):
+        x("insert into equity.transcript_page (document_id, pdf_page, char_start, char_end) values (%s, %s, %s, %s)",
+          c["doc"], n, a, b)
+
+
+@pytest.mark.db
+def test_every_stored_item_starts_inside_a_page_row_of_its_document_when_it_has_them_and_is_stored_when_it_has_none():
+    text = build().text
+    paged, unpaged = make_call(fy_end=3), make_call(fy_end=3)
+    add_pages(paged, [text.index("Anil Shah:"), text.index("Pooja Menon:")])               # three pages, cut between turns
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers([CAPEX_T, OUTLOOK_T], [REV_S, MARGIN_S]))
+    assert go(task([paged["slug"], unpaged["slug"]], fake)) == 0
+    assert last_run()["status"] == "success"
+    for c in (paged, unpaged):
+        assert gx(c["doc"]) == [("published", "", "v1", 2, 2)] and len(grows(c["doc"])) == 2 and len(srows(c["doc"])) == 2
+    for table in ("guidance", "stated_figure"):
+        got = q(f"""select i.char_start, p.pdf_page from equity.{table} i
+                      left join equity.transcript_page p on p.document_id = i.document_id
+                                                         and i.char_start >= p.char_start and i.char_start < p.char_end
+                     where i.document_id = %s order by i.id""", paged["doc"])
+        assert len(got) == 2 and all(page is not None for _, page in got), (table, got)             # every item has its page
+    pages = {t: sorted({p for _, p in q(f"""select i.char_start, p.pdf_page from equity.{t} i
+                                              join equity.transcript_page p on p.document_id = i.document_id
+                                               and i.char_start >= p.char_start and i.char_start < p.char_end
+                                             where i.document_id = %s""", paged["doc"])}) for t in ("guidance", "stated_figure")}
+    assert pages == {"guidance": [1, 2], "stated_figure": [1]}                                       # capex on page 1, the outlook on 2; both stated figures on 1
+    assert q("select count(*) from equity.transcript_page where document_id = %s", unpaged["doc"]) == [(0,)]
+    assert q("select count(*) from core.forecast f join core.series s on s.id = f.series_id "
+             "where s.entity_id = any(%s)", [paged["entity"], unpaged["entity"]]) == [(0,)]       # no forecast row, ever
+
+
+@pytest.mark.db
+def test_a_call_with_only_stated_figures_is_published_with_them_and_counts_zero_targets():
+    c = make_call(fy_end=3)
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers([], [REV_S, MARGIN_S]))
+    assert go(task([c["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    assert gx(c["doc"]) == [("published", "", "v1", 0, 2)] and grows(c["doc"]) == [] and len(srows(c["doc"])) == 2
+    assert shown(c["event"]) == 0
+    assert [p for (p,) in q("select claim_path from core.ai_citation where ai_output_id = (select id from core.ai_output "
+                            "where document_id = %s and task = 'guidance_extraction') order by citation_no", c["doc"])] == [
+        "/stated_figures/0", "/stated_figures/1"]
+    assert r["checks"]["guidance_stored"]["passed"] and r["checks"]["guidance_items"]["passed"]
+    assert "1 published" in r["checks"]["call_guidance"]["detail"]
