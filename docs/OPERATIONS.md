@@ -86,6 +86,11 @@ nothing else is. `SUPABASE_ANON_KEY` and `CRON_SECRET` are Production-only (a pr
 therefore answer 503, which is fine). `GITHUB_DISPATCH_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SQL_READER_DATABASE_URL`,
 `VISITOR_HASH_SALT` and the two `NEXT_PUBLIC_` names are also set for **Preview**.
 
+**Previews use the dev project (checked 4 Nov 2026, #199).** `SUPABASE_URL` has a separate row for Preview, and its value is the dev
+project's; the Production row holds production's. Only the URL could be compared: Vercel hides a saved secret, so the Preview copies
+of `SUPABASE_SERVICE_ROLE_KEY` and `SQL_READER_DATABASE_URL` can't be read back. When one of those is replaced, set Preview's copy from
+the **dev** project and Production's from production, never the other way round, and never merge the two rows into one.
+
 ### 2.6 The Mac's `.env`
 
 The names in `.env.example` the owner needs for local runs, plus `UV_SYSTEM_CERTS` and `NODE_EXTRA_CA_CERTS` on the campus Wi-Fi.
