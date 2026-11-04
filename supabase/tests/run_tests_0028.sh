@@ -30,7 +30,7 @@ declare eid integer; evid bigint; did bigint; oid bigint; txt text := repeat('Re
 begin
   insert into core.entity (kind, slug, name, short_name, market, currency, is_published)
     values ('company', 'ec28-a', 'Ec28 Ltd', 'ec28-a', 'IN', 'INR', true) returning id into eid;
-  insert into equity.company (entity_id, isin, nse_symbol, bse_code) values (eid, 'INE0000028A01', 'EC28A', '5280');
+  insert into equity.company (entity_id, isin, nse_symbol, bse_code) values (eid, 'INE000002801', 'EC28A', '5280');
   insert into core.event (event_type, entity_id, slug, title, starts_on, status, source_id, is_published)
     values ('earnings_call', eid, 'ec28-a-call-q2-fy27', 'ec28', '2026-10-20', 'stored',
             (select id from core.source where key = 'nse'), true) returning id into evid;
