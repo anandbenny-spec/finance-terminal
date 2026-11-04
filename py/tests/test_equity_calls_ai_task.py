@@ -13,6 +13,7 @@ from collections import Counter
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from itertools import pairwise
 
 import psycopg
 import pytest
@@ -81,6 +82,7 @@ def wipe() -> None:
         ids = "(select id from core.entity where slug like 'cai-%')"
         docs = f"(select id from core.document where entity_id in {ids})"
         c.execute(f"delete from ops.ai_request where document_id in {docs}")
+        c.execute(f"delete from equity.transcript_page where document_id in {docs}")
         c.execute(f"delete from equity.stated_figure where entity_id in {ids}")
         c.execute(f"delete from equity.guidance where entity_id in {ids}")
         c.execute(f"delete from core.ai_output where document_id in {docs}")
@@ -862,3 +864,53 @@ def test_the_independent_check_fails_the_run_if_a_figure_isnt_in_its_stored_quot
     assert go(task([c["slug"]], fake)) != 0 or last_run()["status"] != "success"
     r = last_run()
     assert r["status"] == "checks_failed" and "a figure isn't in its quote" in r["checks"]["guidance_items"]["detail"]
+
+
+def add_pages(c: dict, cuts: list[int]) -> None:
+    """`equity.transcript_page` rows for the call's document: its text split at the offsets given (page 1, 2, ...)."""
+    edges = [0, *cuts, len(c["built"].text)]
+    for n, (a, b) in enumerate(pairwise(edges), start=1):
+        x("insert into equity.transcript_page (document_id, pdf_page, char_start, char_end) values (%s, %s, %s, %s)",
+          c["doc"], n, a, b)
+
+
+@pytest.mark.db
+def test_every_stored_item_starts_inside_a_page_row_of_its_document_when_it_has_them_and_is_stored_when_it_has_none():
+    text = build().text
+    paged, unpaged = make_call(fy_end=3), make_call(fy_end=3)
+    add_pages(paged, [text.index("Anil Shah:"), text.index("Pooja Menon:")])               # three pages, cut between turns
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers([CAPEX_T, OUTLOOK_T], [REV_S, MARGIN_S]))
+    assert go(task([paged["slug"], unpaged["slug"]], fake)) == 0
+    assert last_run()["status"] == "success"
+    for c in (paged, unpaged):
+        assert gx(c["doc"]) == [("published", "", "v1", 2, 2)] and len(grows(c["doc"])) == 2 and len(srows(c["doc"])) == 2
+    for table in ("guidance", "stated_figure"):
+        got = q(f"""select i.char_start, p.pdf_page from equity.{table} i
+                      left join equity.transcript_page p on p.document_id = i.document_id
+                                                         and i.char_start >= p.char_start and i.char_start < p.char_end
+                     where i.document_id = %s order by i.id""", paged["doc"])
+        assert len(got) == 2 and all(page is not None for _, page in got), (table, got)             # every item has its page
+    pages = {t: sorted({p for _, p in q(f"""select i.char_start, p.pdf_page from equity.{t} i
+                                              join equity.transcript_page p on p.document_id = i.document_id
+                                               and i.char_start >= p.char_start and i.char_start < p.char_end
+                                             where i.document_id = %s""", paged["doc"])}) for t in ("guidance", "stated_figure")}
+    assert pages == {"guidance": [1, 2], "stated_figure": [1]}                                       # capex on page 1, the outlook on 2; both stated figures on 1
+    assert q("select count(*) from equity.transcript_page where document_id = %s", unpaged["doc"]) == [(0,)]
+    assert q("select count(*) from core.forecast f join core.series s on s.id = f.series_id "
+             "where s.entity_id = any(%s)", [paged["entity"], unpaged["entity"]]) == [(0,)]       # no forecast row, ever
+
+
+@pytest.mark.db
+def test_a_call_with_only_stated_figures_is_published_with_them_and_counts_zero_targets():
+    c = make_call(fy_end=3)
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers([], [REV_S, MARGIN_S]))
+    assert go(task([c["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    assert gx(c["doc"]) == [("published", "", "v1", 0, 2)] and grows(c["doc"]) == [] and len(srows(c["doc"])) == 2
+    assert shown(c["event"]) == 0
+    assert [p for (p,) in q("select claim_path from core.ai_citation where ai_output_id = (select id from core.ai_output "
+                            "where document_id = %s and task = 'guidance_extraction') order by citation_no", c["doc"])] == [
+        "/stated_figures/0", "/stated_figures/1"]
+    assert r["checks"]["guidance_stored"]["passed"] and r["checks"]["guidance_items"]["passed"]
+    assert "1 published" in r["checks"]["call_guidance"]["detail"]
