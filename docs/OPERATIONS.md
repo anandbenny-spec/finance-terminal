@@ -56,6 +56,10 @@ falling back to production's. The live site does not depend on them. Rotate as t
 |---|---|---|
 | `PRODUCTION_SCHEDULES` | must be `on` for any **scheduled** run to do anything (`daily`, `weekly`, `watch`, `keep-alive`, `keepalive-db`). Manual runs ignore it | unset or anything else: every scheduled run is skipped without an error. The dead-man check then goes Down in about a day. First thing to check when the monitors email and nothing looks broken |
 
+**Presence check, 4 Nov 2026 (#199).** `gh secret list` showed 17 secrets, `gh variable list` showed `PRODUCTION_SCHEDULES`: every
+name in sections 2.1 to 2.3 is set and nothing else is. The latest scheduled runs of `daily`, `keepalive-db`, `weekly` and `keep-alive`
+had all succeeded, which also shows `PRODUCTION_SCHEDULES` is `on`.
+
 ### 2.4 Vercel environment variables: `api` service (server-side only)
 
 | Name | Used by | Expires | If it fails | Rotate |
@@ -76,6 +80,11 @@ only the production deployment may dispatch a production run). Nothing to set.
 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Visitors' browsers read them, so they are not secrets, but
 Next.js bakes them in at build time: **a change needs a redeploy** before the site uses it. If the anon key is wrong the site
 shows "Update delayed" and empty states, not errors.
+
+**Presence check, 4 Nov 2026 (#199), from the Vercel dashboard.** All nine names of sections 2.4 and 2.5 are set for **Production**, and
+nothing else is. `SUPABASE_ANON_KEY` and `CRON_SECRET` are Production-only (a preview deployment's health and keep-alive routes
+therefore answer 503, which is fine). `GITHUB_DISPATCH_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SQL_READER_DATABASE_URL`,
+`VISITOR_HASH_SALT` and the two `NEXT_PUBLIC_` names are also set for **Preview**.
 
 ### 2.6 The Mac's `.env`
 
@@ -108,8 +117,11 @@ list it here with its renewal date.
 **What each alert means.**
 - **UptimeRobot DOWN:** `/api/health` isn't answering 200 with `"status":"ok"`: the Data API read failed, or the daily load
   (`policy.market_series`) has no success in the last 36 hours.
-- **Healthchecks DOWN:** no successful production `daily` run by about 15:37 IST. The morning run is 06:37 IST and GitHub often
-  starts it late (up to about 13:15); nine hours of grace cover that. The weekday 16:37 IST run also pings and counts as "up".
+- **Healthchecks DOWN:** no successful production `daily` run by about 15:37 IST. The morning run is due at 06:37 IST, and GitHub
+  starts it very late: on 3 and 4 Nov 2026 it started at about 13:18 and 12:56 IST and finished by about 13:28 and 13:11, which leaves
+  about two hours inside the nine hours of grace. The weekday 16:37 IST run also pings and counts as "up", but it has started
+  hours late too (about 23:54 IST on 3 Nov), so don't rely on it. A single Down email on a late day is worth a look at the Actions
+  tab before anything else: if the run is queued or running, wait.
 
 **Testing an alert and resetting it** (done on 1 Nov 2026): open the check's ping URL (from Bitwarden) with `/fail` added at the end:
 the check goes Down and the email arrives. Then open the plain ping URL once to reset it.
