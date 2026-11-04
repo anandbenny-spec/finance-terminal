@@ -26,6 +26,7 @@ import type {
 } from "@/lib/queries/api";
 import { indexesOf, readIndexMembers } from "@/lib/queries/equity";
 import { readFieldPolicy, readSeriesInfo, type PolicyDb } from "@/lib/queries/policy";
+import { readCallsTab, type CallsTabData } from "@/lib/queries/calls";
 import { readRateTab, type RateTabData } from "@/lib/queries/rate";
 import { readAll } from "@/lib/queries/read";
 import { publicClient } from "@/lib/supabase/public";
@@ -166,6 +167,8 @@ export type CompanyPageData =
       financials: FinancialsData | null;
       valuation: ValuationData | null;
       rates: RateTabData | null;
+      /** The Earnings calls tab's reads (2B-19), only on that tab. */
+      calls: CallsTabData | null;
     }
   | { ok: false; readAt: string };
 
@@ -192,7 +195,7 @@ export async function readCompanyExists(slug: string): Promise<boolean | null> {
 }
 
 /** The page's reads for one tab, each whole or not at all (the header's company row and actions are on both tabs). */
-export async function readCompanyPage(slug: string, tab: TabId): Promise<CompanyPageData> {
+export async function readCompanyPage(slug: string, tab: TabId, call?: string): Promise<CompanyPageData> {
   "use cache";
   cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);
@@ -210,7 +213,10 @@ export async function readCompanyPage(slug: string, tab: TabId): Promise<Company
     let financials: FinancialsData | null = null;
     let valuation: ValuationData | null = null;
     let rates: RateTabData | null = null;
-    if (tab === "rate-decisions") {
+    let calls: CallsTabData | null = null;
+    if (tab === "calls") {
+      calls = await readCallsTab(db, slug, call);
+    } else if (tab === "rate-decisions") {
       rates = await readRateTab(db, slug);
     } else if (tab === "valuation") {
       const [runs, scenarios, policies, imf, series] = await Promise.all([
@@ -241,7 +247,7 @@ export async function readCompanyPage(slug: string, tab: TabId): Promise<Company
       ]);
       financials = { financials: rows, metrics, promoter };
     }
-    return { ok: true, readAt, today: dateInZone(readAt, "Asia/Kolkata"), company, actions, indexNames, tab, overview, financials, valuation, rates };
+    return { ok: true, readAt, today: dateInZone(readAt, "Asia/Kolkata"), company, actions, indexNames, tab, overview, financials, valuation, rates, calls };
   } catch (error) {
     logFailure(slug, error);
     return { ok: false, readAt };

@@ -13,6 +13,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { CompanyError, CompanyView } from "@/components/company/CompanyView";
 import { StateNote } from "@/components/data/StateNote";
+import { callOf } from "@/lib/equity/calls";
 import { basisOf, tabOf } from "@/lib/equity/company";
 import { windowOf } from "@/lib/equity/rate";
 import { readCompanyExists, readCompanyPage } from "@/lib/queries/company";
@@ -33,7 +34,7 @@ export const metadata: Metadata = {
 
 async function Company({ slug, searchParams }: { slug: string; searchParams: Props["searchParams"] }) {
   const query = await searchParams;
-  const [data, fresh] = await Promise.all([readCompanyPage(slug, tabOf(query.tab)), readFreshness()]);
+  const [data, fresh] = await Promise.all([readCompanyPage(slug, tabOf(query.tab), callOf(query.call)), readFreshness()]);
   if (!data.ok) return <CompanyError />;
   return <CompanyView data={data} basis={basisOf(query.basis)} window={windowOf(query.window)} freshness={fresh.ok ? fresh.tasks : null} />;
 }

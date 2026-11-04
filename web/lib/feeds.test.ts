@@ -42,8 +42,10 @@ describe("module 2's surfaces (2A-26, #132)", () => {
     expect(FEEDS.rateSensitivity).toEqual(["equity.rate_reactions", "policy.rate_cycles"]);
   });
 
-  it("leaves nothing in PREVIEW_FEEDS, so no surface hides a task from the count", () => {
-    expect(Object.keys(PREVIEW_FEEDS)).toEqual([]);
+  // 2B-19 (#182) adds the card's one preview surface, `calls`, until 2B-22 moves it into FEEDS; nothing else may sit there.
+  it("holds only the Earnings calls preview in PREVIEW_FEEDS, out of the status bar's count", () => {
+    expect(Object.keys(PREVIEW_FEEDS)).toEqual(["calls"]);
+    for (const task of PREVIEW_FEEDS.calls) expect(liveTasks()).not.toContain(task);
   });
 
   it("counts only tasks that exist: module 1's, the accuracy projection and module 2's data tasks", () => {

@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { formatCheckedTime } from "@/lib/format";
 import type { AiBlockData } from "@/lib/policy/ai";
 
-export function AIBlock({ block, now, dense = true }: { block: AiBlockData; now: string; dense?: boolean }) {
+export function AIBlock({ block, now, dense = true, note }: { block: AiBlockData; now: string; dense?: boolean; note?: string }) {
   const about = `${block.model} · generated ${formatCheckedTime(block.createdAt, now)}`;
   return (
     <div>
@@ -23,6 +23,7 @@ export function AIBlock({ block, now, dense = true }: { block: AiBlockData; now:
           <TooltipContent>{about}</TooltipContent>
         </Tooltip>
       </div>
+      {note && <p className="mt-0.5 text-meta text-ink-2">{note}</p>}
       <ul className={`mt-1.5 list-disc space-y-1.5 pl-4.5 ${dense ? "text-ui" : "text-read"}`}>
         {block.bullets.map((b, i) => (
           <li key={i}>

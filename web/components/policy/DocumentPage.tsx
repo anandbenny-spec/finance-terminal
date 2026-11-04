@@ -6,6 +6,7 @@
 // published, verified citation points at exactly that span (lib/policy/document.ts). Every word of the text is a
 // chunk body the database stored; the panel carries SourceLine and Freshness; nothing is ever blank (StateNote).
 import { Sparkles } from "lucide-react";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { AIBlock } from "@/components/ai/AIBlock";
@@ -16,12 +17,12 @@ import { PageHeader, type Crumb } from "@/components/data/PageHeader";
 import { Panel } from "@/components/data/Panel";
 import { SourceLine } from "@/components/data/SourceLine";
 import { StateNote } from "@/components/data/StateNote";
-import { FEEDS } from "@/lib/feeds";
-import { formatDate } from "@/lib/format";
+import { FEEDS, PREVIEW_FEEDS } from "@/lib/feeds";
+import { dateInZone, formatDate } from "@/lib/format";
 import { summaryBlock } from "@/lib/policy/ai";
 import { BANK_NAME, bankOf, citedBy, documentDate, documentSource, documentTitle, meetingOf, officialUrl, type CitedBy } from "@/lib/policy/document";
 import { paragraphs, textFromChunks, type Paragraph } from "@/lib/policy/text";
-import type { DocumentRow } from "@/lib/queries/api";
+import type { DocumentRow, TaskFreshnessRow } from "@/lib/queries/api";
 import { readDocumentPage, readSpanCitations, type DocumentPage as PageData } from "@/lib/queries/document";
 import type { Bank } from "@/lib/queries/policy";
 import { readFreshness } from "@/lib/queries/shell";
@@ -63,6 +64,74 @@ function Summary({ page, bank }: { page: PageData; bank: Bank }) {
         </Gated>
       </div>
     </details>
+  );
+}
+
+/** Document types whose text is never shown (core.doc_type.text_public = false: Spec 02B §3.2; CLAUDE.md §1). */
+const PRIVATE_TEXT = new Set(["call_transcript", "call_cover_letter"]);
+
+export const isPrivateText = (doc: Pick<DocumentRow, "doc_type">): boolean => PRIVATE_TEXT.has(doc.doc_type);
+
+export const PRIVATE_TEXT_NOTE = "This transcript isn't reproduced here. Read it at the source.";
+
+/**
+ * A transcript's page (2B-19; Spec 02B §8): its metadata and links, and one line saying why there is no text. The text is
+ * never read here (the chunks of a private document are invisible to visitors) and never shown; the only quotes anywhere are
+ * a verified citation's (CitationChip). The official link is the exchange's own file (or the company's); never our copy.
+ */
+function PrivateTextPage({ doc, readAt, freshness }: { doc: DocumentRow; readAt: string; freshness: TaskFreshnessRow[] | null }) {
+  const date = doc.published_at ? dateInZone(doc.published_at, "Asia/Kolkata") : null;
+  const official = doc.source_url?.startsWith("https://") ? doc.source_url : null;
+  const callHref = `/companies/${doc.entity_slug}?tab=calls${doc.event_slug ? `&call=${doc.event_slug}` : ""}`;
+  const fresh = panelFreshness(freshness, PREVIEW_FEEDS.calls, date, readAt);
+  const source = doc.attribution ?? "Source: NSE";
+  const link = (
+    <>
+      {official && (
+        <a href={official} className="text-meta text-ink-1 underline" rel="noreferrer" target="_blank">
+          Official source ↗
+        </a>
+      )}
+    </>
+  );
+  return (
+    <>
+      <PageHeader
+        crumbs={["Company research", { label: "Company", href: `/companies/${doc.entity_slug}` }, doc.doc_type_label]}
+        title={documentTitle(doc)}
+        description={[doc.doc_type_label, date ? formatDate(date) : null].filter(Boolean).join(" · ")}
+        meta={
+          <>
+            <span>{source}</span>
+            {doc.version_no > 1 && <span>Version {doc.version_no}</span>}
+            {link}
+          </>
+        }
+      />
+      <div className="mt-5">
+        <Panel
+          title={doc.doc_type_label}
+          titleId="panel-document"
+          subtitle="Where can this transcript be read?"
+          actions={link}
+          footer={
+            <>
+              <SourceLine lines={[source]} />
+              <Freshness freshness={fresh} />
+            </>
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <StateNote kind="unavailable">{PRIVATE_TEXT_NOTE}</StateNote>
+            <p className="text-data">
+              <Link href={callHref} className="text-ink-1 underline">
+                See this call&apos;s AI summary and figures
+              </Link>
+            </p>
+          </div>
+        </Panel>
+      </div>
+    </>
   );
 }
 
@@ -110,6 +179,7 @@ export async function DocumentPage({ id, span }: { id: number; span: [number, nu
     );
   }
   const doc = page.document.row;
+  if (doc && isPrivateText(doc)) return <PrivateTextPage doc={doc} readAt={page.readAt} freshness={freshRead.ok ? freshRead.tasks : null} />;
   const bank = doc ? bankOf(doc) : null;
   if (!doc || !bank) notFound();
 
