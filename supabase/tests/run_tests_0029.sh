@@ -32,7 +32,7 @@ begin;
 create function pg_temp.mk_call(p_ent text, p_label text, p_period date, p_filed timestamptz, p_share numeric, p_pages boolean)
 returns void language plpgsql as $f$
 declare txt text := repeat('Revenue grew to ₹1,200 crore this quarter. ', 15);
-        eid integer; evid bigint; did bigint; tag text := p_ent || '-' || replace(p_label, ' ', '');
+        eid integer; evid bigint; did bigint; tag text := lower(p_ent || '-' || replace(p_label, ' ', ''));
 begin
   select id into eid from core.entity where slug = p_ent;
   insert into core.event (event_type, entity_id, slug, title, starts_on, status, source_id, is_published)
@@ -86,9 +86,9 @@ insert into equity.earnings_call (event_id, entity_id, fiscal_label, period_end,
   select ev.id, ev.entity_id, 'Q2 FY27', '2026-09-30', 'q2-fy27', 'results_link', '2026-10-26', 'NSE', 'none',
          'https://example.com/ec29/b-ir'
   from core.event ev where ev.slug = 'ec29-call-b-q2';
-select pg_temp.mk_out('call_summary', 'ec29-ec29-a-Q1FY27', array[10, 50]);
-select pg_temp.mk_out('guidance_extraction', 'ec29-ec29-a-Q1FY27', array[0, 43, 290, 310, 300, 320]);
-select pg_temp.mk_out('guidance_extraction', 'ec29-ec29-a-Q2FY27', array[0, 43]);
+select pg_temp.mk_out('call_summary', 'ec29-ec29-a-q1fy27', array[10, 50]);
+select pg_temp.mk_out('guidance_extraction', 'ec29-ec29-a-q1fy27', array[0, 43, 290, 310, 300, 320]);
+select pg_temp.mk_out('guidance_extraction', 'ec29-ec29-a-q2fy27', array[0, 43]);
 
 insert into equity.guidance (call_event_id, entity_id, ai_output_id, citation_no, document_id, char_start, char_end, metric,
                              metric_label, metric_text, kind, value, unit, period_text, period_kind, target_start, target_end,
@@ -137,8 +137,8 @@ check "C05 an on_company_website call has no summary to hold back: not_generated
   "$(flip anon "$HID" "select summary_state || '|' || status || '|' || official_url from api.earnings_calls where company_slug = 'ec29-b'")" \
   '^not_generated[|]on_company_website[|]https://example.com/ec29/b-ir$'
 check "C06 a stored call's official link is the transcript's own source_url, fragment and all" \
-  "$(flip anon "$HID" "select official_url from api.earnings_calls where call_slug = 'ec29-call-ec29-a-Q1FY27'")" \
-  '^https://example.com/ec29/ec29-a-Q1FY27[.]pdf#page=3$'
+  "$(flip anon "$HID" "select official_url from api.earnings_calls where call_slug = 'ec29-call-ec29-a-q1fy27'")" \
+  '^https://example.com/ec29/ec29-a-q1fy27[.]pdf#page=3$'
 check "C07 counts: figure_ids and the three counts per call (management targets, stated figures, unattributed; duplicates out)" \
   "$(flip anon "$SHOWN" "select string_agg(fiscal_label || ':' || target_count || ':' || stated_figure_count || ':' || unattributed_targets, ',' order by period_end) from api.earnings_calls where company_slug = 'ec29-a'")" \
   '^Q1 FY27:1:1:1,Q2 FY27:0:0:1$'
@@ -167,7 +167,7 @@ check "L02 a company with no call is none_found, with the window covered as data
   '^none_found[|]-[|]true[|]true$'
 check "L03 a company with a call: newest call's columns, the default call's label, no window" \
   "$(flip anon "$SHOWN" "select status || '|' || fiscal_label || '|' || default_fiscal_label || '|' || default_call_slug || '|' || roles_partial::text || '|' || coalesce(window_from::text, '-') from api.earnings_latest where company_slug = 'ec29-a'")" \
-  '^stored[|]Q2 FY27[|]Q1 FY27[|]ec29-call-ec29-a-Q1FY27[|]false[|]-$'
+  '^stored[|]Q2 FY27[|]Q1 FY27[|]ec29-call-ec29-a-q1fy27[|]false[|]-$'
 check "L04 unattributed targets: the newest call's, and the sum over both calls (1 and 1 is 2)" \
   "$(flip anon "$SHOWN" "select unattributed_targets || ':' || unattributed_targets_all from api.earnings_latest where company_slug = 'ec29-a'")" '^1:2$'
 check "L05 with figures hidden, the sums are null" \
@@ -184,7 +184,7 @@ check "F03 page_first and page_last: inside one page, across two pages, at a pag
   '^ec29_m:1-1,ec29_s:2-2,ec29_u:1-2,ec29_u2:---$'
 check "F04 a figure's page_url drops the source's own fragment and adds #page=N; a document with no pages has no link" \
   "$(flip anon "$FIGONLY" "select coalesce(max(page_url) filter (where metric = 'ec29_m'), '-') || ' ' || coalesce(max(page_url) filter (where metric = 'ec29_u2'), '-') from api.call_figures where company_slug = 'ec29-a'")" \
-  '^https://example.com/ec29/ec29-a-Q1FY27[.]pdf#page=1 -$'
+  '^https://example.com/ec29/ec29-a-q1fy27[.]pdf#page=1 -$'
 
 # --- citation_pages
 PAGES="select count(*) from api.citation_pages where ai_output_id in ($OUTIDS)"
