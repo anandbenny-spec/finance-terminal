@@ -114,7 +114,7 @@ def test_a_request_needs_the_fiscal_year_end_month_and_a_check_needs_it_and_the_
 
 def test_the_task_is_registered_with_the_json_route_and_a_reply_budget():
     spec = TASKS[ge.TASK]
-    assert (spec.route, spec.effort, spec.max_tokens) == ("json", "medium", 12_000)
+    assert (spec.route, spec.effort, spec.max_tokens) == ("json", "medium", 16_000)
     assert ge.MAX_QUOTE == 400 and ge.MAX_STATED == 12 and ge.MAX_ESTIMATED_TOKENS == cs.MAX_ESTIMATED_TOKENS
 
 
