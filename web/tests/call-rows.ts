@@ -15,6 +15,7 @@ export function call(over: Partial<EarningsCallRow> = {}): EarningsCallRow {
 export const SHOWN: FieldPolicyRow[] = [
   { field_key: "ai.call_summary", status: "labelled", label: "AI summary" },
   { field_key: "ai.guidance_extraction", status: "labelled", label: "AI-extracted" },
+  { field_key: "equity.guidance_outcome", status: "labelled", label: "derived" },
 ];
 export const HELD: FieldPolicyRow[] = [
   { field_key: "ai.call_summary", status: "hidden", label: "AI summary" },
@@ -63,6 +64,6 @@ export function calls(over: Partial<CallsTabData> = {}): CallsTabData {
     figures: [figure("target"), figure("stated", { citation_no: 2, page_first: 8, page_last: 8, page_url: "https://example.test/tcs-q2.pdf#page=8" })],
     citations: [citation(1), citation(2), citation(1, { ai_output_id: 9002, quote: "Margin words." }), citation(2, { ai_output_id: 9002, quote: "Stated words." })],
     pages: [pageRow(1, 3), pageRow(2, 4, 5), pageRow(1, 7, 7, { ai_output_id: 9002 }), pageRow(2, 8, 8, { ai_output_id: 9002 })],
-    latest: null, ...over,
+    guidance: { rows: [], rate: null, unattributed: 0, citations: [], pages: [] }, latest: null, ...over,
   };
 }

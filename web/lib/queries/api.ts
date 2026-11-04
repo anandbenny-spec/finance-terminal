@@ -659,6 +659,64 @@ export type EarningsListRow = EarningsLatestRow & {
   roles_partial: boolean | null;
 };
 
+/** api.call_guidance (0027, 0028): one row per guidance target management stated on a call; the outcome columns are null while equity.guidance_outcome is hidden. */
+export type CallGuidanceRow = {
+  company_slug: string;
+  company_name: string;
+  short_name: string | null;
+  call_slug: string;
+  fiscal_label: string;
+  call_date: string | null;
+  metric: string;
+  metric_label: string | null;
+  kind: string | null;
+  value: number | null;
+  low: number | null;
+  high: number | null;
+  unit: string | null;
+  direction: string | null;
+  comparison: string | null;
+  period_text: string | null;
+  period_kind: string | null;
+  target_start: string | null;
+  target_end: string | null;
+  basis: string | null;
+  growth_basis: string | null;
+  scope_text: string | null;
+  vintage_date: string | null;
+  ai_output_id: number;
+  citation_no: number;
+  not_scored_reason: string | null;
+  extraction_label: string | null;
+  outcome_label: string | null;
+  is_first: boolean | null;
+  revision: "first" | "raised" | "cut" | "reiterated" | "restated" | null;
+  counted: boolean | null;
+  outcome: "delivered" | "missed" | "pending" | "not_scored" | null;
+  relation: "within" | "above" | "below" | "at_or_past" | "short_of" | "moved_as_said" | "moved_against" | null;
+  actual: number | null;
+  reason: string | null;
+  first_call_slug: string | null;
+  first_stated_on: string | null;
+};
+
+/** api.guidance_hit_rates (0027, 0028): delivered and missed counts per scope; `rate` is null below 5 scored targets. */
+export type GuidanceHitRateRow = {
+  scope: "company" | "peer_group" | "nifty50";
+  scope_key: string;
+  scope_label: string;
+  delivered: number;
+  missed: number;
+  n: number;
+  rate: number | null;
+  first_stated_from: string | null;
+  periods_to: string | null;
+  outcome_label: string | null;
+};
+
+/** api.earnings_latest (0029): the count of a company's forward-looking statements by speakers whose role couldn't be read; null while the figures are held back. */
+export type UnattributedRow = { company_slug: string; unattributed_targets_all: number | null };
+
 /** api.citation_pages (0029): the PDF page(s) of a verified transcript citation; no row where the document has no page map. */
 export type CitationPageRow = {
   ai_output_id: number;
@@ -709,8 +767,10 @@ export type ApiDatabase = {
       company_rate_cycles: View<CompanyRateCycleRow>;
       earnings_calls: View<EarningsCallRow>;
       call_figures: View<CallFigureRow>;
-      earnings_latest: View<EarningsListRow>;
+      earnings_latest: View<EarningsListRow & UnattributedRow>;
       citation_pages: View<CitationPageRow>;
+      call_guidance: View<CallGuidanceRow>;
+      guidance_hit_rates: View<GuidanceHitRateRow>;
     };
     Functions: { [_ in never]: never };
   };
