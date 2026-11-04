@@ -28,7 +28,7 @@ const absent = <span title={NOT_AVAILABLE_LABEL}>{NOT_AVAILABLE}</span>;
 export function CompanyHeader({ company, day, indexNames }: { company: CompanyRow; day: DayChange; indexNames: Record<string, string> }) {
   const indexes = company.index_slugs ?? [];
   return (
-    <Panel label={`${company.name}: identifiers and last close`} market={company.market} className="mt-6">
+    <Panel label={`${company.name}: identifiers and last close`} className="mt-6">
       <div className="grid gap-4 md:grid-cols-3">
         <dl className="grid grid-cols-2 gap-x-6 gap-y-3 md:col-span-2">
           <Item label="NSE symbol">

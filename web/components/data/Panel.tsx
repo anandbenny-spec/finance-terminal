@@ -76,7 +76,7 @@ export function Panel({
           )}
         </div>
       )}
-      {subtitle && <p className="px-3 pt-2 text-meta text-ink-2">{subtitle}</p>}
+      {subtitle && <p className={cn("px-3 pt-2 text-meta text-ink-2", variant === "flush" && "pb-2")}>{subtitle}</p>}
       <div className={cn("min-w-0 flex-1", variant === "flush" ? "p-0" : "p-3", variant === "prose" && "max-w-(--reading-width)")}>
         {children}
       </div>

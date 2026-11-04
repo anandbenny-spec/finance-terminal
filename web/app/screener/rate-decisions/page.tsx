@@ -108,7 +108,8 @@ async function Sectors({ searchParams }: { searchParams: Promise<{ window?: stri
                   <div className="border-t border-line px-3 py-2 text-meta text-ink-2">
                     <p className="mb-1">
                       A peer group&apos;s move on a decision is the equal-weighted mean of its members&apos; excess moves (their price move less the Nifty 50&apos;s over the same dates, excluding dividends, not adjusted for beta). Every
-                      rate decision since 1 January 2019, today&apos;s Nifty 50 members only. Where there are fewer than 5 decisions, no statistic is shown.
+                      rate decision since 1 January 2019, except where a dividend (or a corporate action not yet adjusted) went ex inside the window: those are left out of a member&apos;s move, so a group&apos;s
+                      count can be lower. Today&apos;s Nifty 50 members only. Where there are fewer than 5 decisions, no statistic is shown.
                     </p>
                     <p>{NOT_A_FORECAST}</p>
                   </div>

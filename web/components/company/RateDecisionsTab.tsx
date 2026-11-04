@@ -83,7 +83,7 @@ export function RateDecisionsTab({ data, window, freshness }: { data: Ok; window
   const few = stats.filter((r) => r.fewMoves);
   const listed = few.flatMap((r) => movesOf(rates.moves, r.bank, r.decision, window));
   const cycles = cycleRows(rates.cycles, rates.cycleInfo);
-  const statsTo = latest(rates.moves.map((m) => m.post_date));
+  const statsTo = latest(rates.moves.filter((m) => m.window_key === window).map((m) => m.post_date));
   const cyclesTo = latest(rates.cycles.map((c) => c.post_date));
   const windowNote = WINDOWS.find((w) => w.id === window)?.note;
 
@@ -103,7 +103,6 @@ export function RateDecisionsTab({ data, window, freshness }: { data: Ok; window
         title="Decision days"
         titleId="panel-decision-days"
         subtitle={`How has ${company.short_name ?? company.name} moved in excess of the Nifty 50 when the MPC and the FOMC cut, held or hiked?`}
-        market={company.market}
         variant="flush"
         footer={foot(statsTo)}
       >
@@ -112,7 +111,7 @@ export function RateDecisionsTab({ data, window, freshness }: { data: Ok; window
             none("No decision-day moves are published for this company yet.")
           ) : (
             <Body
-              note={`Excess is the stock's price move less the Nifty 50's over the same dates, in percentage points, excluding dividends and not adjusted for beta. ${windowNote ?? ""} Every rate decision since 1 January 2019. Where there are fewer than 5 decisions, the moves are listed below instead of statistics.`}
+              note={`Excess is the stock's price move less the Nifty 50's over the same dates, in percentage points, excluding dividends and not adjusted for beta. ${windowNote ?? ""} Every rate decision since 1 January 2019, except where a dividend (or a corporate action not yet adjusted) went ex inside the window: those are left out, so counts can differ between companies. Where there are fewer than 5 decisions, the moves are listed below instead of statistics.`}
             >
               <RateStatsTable rows={stats} caption={`${company.name}: excess move over the Nifty 50 by bank and decision, ${window === "d1" ? "one day" : "five days"} after`} />
             </Body>
@@ -125,7 +124,6 @@ export function RateDecisionsTab({ data, window, freshness }: { data: Ok; window
           title="Decisions listed one by one"
           titleId="panel-listed-moves"
           subtitle="Which decisions are too few to summarise, and how did the stock move on each?"
-          market={company.market}
           variant="flush"
           footer={foot(statsTo)}
         >
@@ -141,7 +139,6 @@ export function RateDecisionsTab({ data, window, freshness }: { data: Ok; window
         title="Rate cycles"
         titleId="panel-rate-cycles"
         subtitle="How has it moved over each run of rate cuts or rises, against the Nifty 50?"
-        market={company.market}
         variant="flush"
         footer={foot(cyclesTo)}
       >

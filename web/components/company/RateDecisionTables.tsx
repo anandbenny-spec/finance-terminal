@@ -143,7 +143,7 @@ export function RateSectorTable({ rows, caption }: { rows: SectorRow[]; caption:
         <span>
           <span className="text-ink-1">{r.subjectName}</span>
           {r.group && r.group.members.length > 0 && (
-            <span className="ml-2 text-meta text-ink-2">
+            <span className="block max-w-(--reading-width) text-meta whitespace-normal text-ink-2">
               {r.group.members.map((m, i) => (
                 <span key={m.slug}>
                   {i > 0 && ", "}

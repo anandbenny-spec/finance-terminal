@@ -69,7 +69,6 @@ export function KeyFigures({ company, metrics, footer }: { company: CompanyRow; 
       title="Key figures"
       titleId="panel-key-figures"
       subtitle="What do the latest filings and today's price say about this company?"
-      market={company.market}
       footer={footer}
       variant="flush"
     >

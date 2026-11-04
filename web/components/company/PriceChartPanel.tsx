@@ -95,7 +95,6 @@ export function PriceChartPanel({
       title="Price, excluding dividends"
       titleId="panel-price"
       subtitle="How has the share price moved? Closing prices adjusted for splits and bonus issues; dividends are not added back."
-      market={market}
       actions={rows.length === 0 ? undefined : toggle}
       variant="flush"
       footer={footer}

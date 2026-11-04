@@ -64,7 +64,6 @@ export function PromoterPanel({ rows, market, footer }: { rows: PromoterHoldingR
       title="Promoter holding"
       titleId="panel-promoter"
       subtitle="How much of the company do its promoters hold, quarter by quarter?"
-      market={market}
       variant="flush"
       footer={footer}
     >

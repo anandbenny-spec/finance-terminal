@@ -130,6 +130,11 @@ describe("the Valuation tab", () => {
       expect(t).toContain("₹1,111.00 per share");
       expect(scenario({ growth: 0.1, margin: 0.2112, wacc: 0.0921 })).toContain("₹1,200.00 per share");
     });
+    it("shows the scenario label once when the stored label repeats it", () => {
+      const label = "Model-implied value under selected assumptions";
+      const t = scenario(centre, grid().map((c) => ({ ...c, label })));
+      expect(t.split(label).length - 1).toBe(1);
+    });
     it("never shows the price, a comparison or an upside", () => {
       const t = scenario();
       expect(t).not.toContain("3,456.70");
