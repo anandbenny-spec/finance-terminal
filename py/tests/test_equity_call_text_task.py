@@ -198,7 +198,8 @@ def test_a_call_set_aside_and_restored_is_published_again_without_being_rewritte
     go_text()
     doc = call(HUL)[3]
     chunks = q("select count(*) from core.chunk where document_id = %s", doc)[0][0]
-    x("update core.event set is_published = false where slug = %s", HUL)                      # what the demotion of a general meeting does
+    x("""update core.event set is_published = false where event_type = 'earnings_call'
+            and entity_id = (select id from core.entity where slug = %s)""", HUL)               # what the demotion of a general meeting does
     x("update core.document set is_published = false where id = %s", doc)
     assert call(HUL)[2] is False
     code, tr = go_text()
