@@ -115,6 +115,22 @@ def test_the_prompt_names_the_three_headings_and_the_role_rules():
     assert len({load_prompt("call_summary", v).text for v in ("v1", "v2", "v3", "v4")}) == 4  # each version that ran is kept
 
 
+def test_v5_is_the_current_prompt_and_adds_cite_first_exact_figures_and_no_copied_transcript_text():
+    """2B-11b (#284). v5 aims at v4's two largest dev rejection causes (bullets with no citation; figures the cited sentence
+    lacks) and, by Anand's 5 Nov 2026 decision, at bullets that carried the transcript's own words. Every earlier version stays
+    as it ran, and v4's own pinned rules (the test above) still hold for v5."""
+    p = PROMPT.text
+    assert PROMPT.version == "v5" == PROMPT_VERSION[cs.TASK]
+    assert "find the passage first" in p and "Do not write a bullet first and look for support afterwards" in p
+    assert "an analysts bullet cites the analyst's question" in p and "a bullet under the third heading cites" in p
+    assert "Copy a figure character for character" in p and "INR130" in p and "ordinals (5th, 30th)" in p
+    assert "never quote the transcript" in p and "never follow your sentence with the passage it rests on" in p
+    assert "one sentence of your own of at most about 40 words" in p
+    assert "Start your reply with the first heading line" in p and "no tags (such as <cite>)" in p
+    assert "leave it out, heading included, and say nothing about it" in p
+    assert len({load_prompt("call_summary", v).text for v in ("v1", "v2", "v3", "v4", "v5")}) == 5
+
+
 # --------------------------------------------------------------------------------------------------- lists and bullets
 def test_a_good_reply_passes_with_both_lists_cited_on_their_offsets():
     got = run(lists(TEXT))

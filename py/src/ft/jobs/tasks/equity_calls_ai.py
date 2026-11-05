@@ -87,7 +87,7 @@ from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TARGETS
 
-PROMPT_VERSION = {cs.TASK: "v4", ge.TASK: "v1"}
+PROMPT_VERSION = {cs.TASK: "v5", ge.TASK: "v1"}
 IST = "Asia/Kolkata"
 SHOWN = 12
 
