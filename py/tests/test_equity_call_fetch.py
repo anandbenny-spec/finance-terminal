@@ -398,6 +398,30 @@ def test_a_stored_call_built_on_a_general_meeting_is_unpublished_not_deleted_and
 
 @pytest.mark.db
 @needs_fixtures
+def test_a_stored_call_the_rules_would_now_build_on_another_filing_is_named_and_left_as_stored(s3):
+    eid = make_company("HINDUNILVR", "Hindustan Unilever Limited")
+    seeded = seed_call(eid, "zf-hindunilvr-call-q1-fy27", "q1-fy27", "Q1 FY27", "an-earlier-filing", published=True)
+    code, tr = go(Web())
+    assert code == 0 and tr[0] == "success", tr
+    [row] = calls("zf-hindunilvr")                                                # not rewritten, not renamed, still published
+    assert row[:3] == ("zf-hindunilvr-call-q1-fy27", "stored", True) and row[13] == "an-earlier-filing"
+    assert q("select id from core.event where entity_id = %s and event_type = 'earnings_call'", eid) == [(seeded,)]
+    differ = checks(tr)["stored_calls_differ"]
+    assert not differ["passed"] and not differ["blocking"]
+    assert "zf-hindunilvr-call-q1-fy27" in differ["detail"] and "an-earlier-filing" in differ["detail"]
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_stored_call_built_on_the_filing_the_rules_pick_is_not_named_as_differing(s3):
+    make_company("HINDUNILVR", "Hindustan Unilever Limited")
+    go(Web())
+    code, tr = go(Web())                                                          # the second run finds the call stored from the same filing
+    assert code == 0 and checks(tr)["stored_calls_differ"]["passed"]
+
+
+@pytest.mark.db
+@needs_fixtures
 def test_a_company_host_that_refuses_scripts_is_retried_once_with_chromes_fingerprint(s3):
     make_company("APOLLOHOSP", "Apollo Hospitals Enterprise Limited")
     web = Web()

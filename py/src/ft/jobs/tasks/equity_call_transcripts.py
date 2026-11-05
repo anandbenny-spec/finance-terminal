@@ -37,7 +37,8 @@ Checks, B blocking, W warning:
   §13.3's 90% applies to the latest call only);
 - (W) `raw_storage` (Plan 04b P5): the files and bytes this run stored, and the raw bucket's stored size against the stop
   in `config/equity/calls.yaml` (850 MB); fails when the bucket is over it or can't be read;
-- (W) `late_calls` (#285): every call filed in a season other than its quarter's, with its company, quarter, season and filed
+- (W) `stored_calls_differ` (#285): a stored call the rules would now build on another filing, named and left as it is;
+  `late_calls`: every call filed in a season other than its quarter's, with its company, quarter, season and filed
   date; `general_meetings`: every filing set aside as an annual or extraordinary general meeting; `stored_revised`: a late
   filing that revises a call already in the database (named, not re-registered); `other_meetings`: each later filing that is
   another meeting, with the reason (no quarter, quarter conflict, a different call, the quarter already has a call, a
@@ -120,6 +121,7 @@ class EquityCallTranscripts(DocumentJob):
         self.cfg: dc.CallsConfig | None = None
         self.conflicts: list[str] = []
         self.demoted: list[int] = []                          # events unpublished as general meetings by this run (#285)
+        self.differs: list[str] = []                          # stored calls the rules would now build on another filing (left as stored)
 
     def due(self, db, workflow: str, now=None) -> Due:
         return equity_due(db, self.key, workflow, super().due(db, workflow, now), requires="equity.company")
@@ -260,7 +262,7 @@ class EquityCallTranscripts(DocumentJob):
     # ================================================================== part 2 (2B-07): fetch, text, the call rows
     def fetch(self, ctx: Context) -> Harvest:
         h = super().fetch(ctx)                                # part 1: discovery
-        self.report, self.plans, self.conflicts, self.demoted = pl.Report(), [], [], []
+        self.report, self.plans, self.conflicts, self.demoted, self.differs = pl.Report(), [], [], [], []
         db = ctx.fetcher.db
         try:
             self.storage = ctx.fetcher.storage()
@@ -416,7 +418,7 @@ class EquityCallTranscripts(DocumentJob):
         label = q.label
         slug = f"{co.slug}-call-{rows.season_key(label or plan.season)}"
         existing = tx.execute(
-            """select e.id, e.status, c.status_reason, c.transcript_document_id, c.cover_letter_document_id
+            """select e.id, e.status, c.status_reason, c.transcript_document_id, c.cover_letter_document_id, c.filing_key
                  from core.event e left join equity.earnings_call c on c.event_id = e.id
                 where e.event_type = 'earnings_call' and e.slug = %s""", (slug,)).fetchone()
         if existing and existing[2] == "general_meeting":
@@ -430,6 +432,8 @@ class EquityCallTranscripts(DocumentJob):
         replaces = existing and ((existing[1] != "stored" and plan.status == "stored")
                                  or (existing[2] in ("no_quarter", "quarter_conflict") and plan.status_reason is None))
         if existing and not replaces:
+            if existing[2] is None and plan.status_reason is None and existing[5] not in (None, a.filing_key):
+                self.differs.append(f"{slug} (stored from filing {existing[5]}; the rules now pick {a.exchange} {a.filing_key})")
             self.outcome["skipped"] += 1                       # the call is stored: a re-run writes nothing
             return 0
         if label and (clash := tx.execute("select event_id from equity.earnings_call where entity_id = %s and fiscal_label = %s",
@@ -519,7 +523,8 @@ class EquityCallTranscripts(DocumentJob):
                 ("other_meetings", rep.other_meetings, "later filings that are not the call, with the reason (registered, not analysed)"),
                 ("late_calls", rep.late_calls, "calls filed in a season other than their quarter's (company, quarter, season, filed date)"),
                 ("general_meetings", rep.general_meetings, "filings set aside as an annual or extraordinary general meeting (never calls)"),
-                ("stored_revised", rep.stored_revised, "late filings that revise a call already stored (named, not re-registered)")):
+                ("stored_revised", rep.stored_revised, "late filings that revise a call already stored (named, not re-registered)"),
+                ("stored_calls_differ", self.differs, "stored calls the rules would now build on another filing (left as stored, never rewritten)")):
             out.append(Check(name, not items, f"{what}: {_names(items)}" if items else f"none of the {what}", blocking=False))
         fails = Counter(rep.host_failures)
         lines = [f"{host} {err} x{n}" for (host, err), n in sorted(fails.items())]
