@@ -60,6 +60,8 @@ class Web:
         self.vary_pages = False                        # the company's web page carries a new token on every request
         self.page_no = 0
         self.chrome_seen: list[httpx.Request] = []
+        self.extra_rows: dict[str, list[dict]] = {}    # NSE announcement rows added to a symbol's saved reply
+        self.aliases: dict[str, str] = {}              # an exchange file name served with another saved file's bytes
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         return self.handle(request, chrome=False)
@@ -74,9 +76,10 @@ class Web:
         if host == "www.nseindia.com" and path == "/":
             return httpx.Response(200, content=b"<html>home</html>", headers={"set-cookie": "nsit=1; Path=/"})
         if path == dc.NSE_ANN_PATH:
-            return httpx.Response(200, json=nse_rows(q["symbol"]) if q["symbol"] in ("APOLLOHOSP", "HINDUNILVR", "MARUTI") else [])
+            saved = nse_rows(q["symbol"]) if q["symbol"] in ("APOLLOHOSP", "HINDUNILVR", "MARUTI") else []
+            return httpx.Response(200, json=saved + self.extra_rows.get(q["symbol"], []))
         if host == "nsearchives.nseindia.com":
-            name = path.rsplit("/", 1)[-1]
+            name = self.aliases.get(path.rsplit("/", 1)[-1], path.rsplit("/", 1)[-1])
             if name == MARUTI_LETTER_Q1:
                 name = MARUTI_SAVED
             found = next(CALLS.glob(f"pdf/exchange/{name}"), None)
@@ -326,6 +329,71 @@ def test_a_weekly_run_skips_a_season_that_is_not_newer_than_the_companys_newest_
     assert code == 0 and tr[0] == "success" and tr[1] == 0, tr
     assert not any(r.url.path.endswith(".pdf") for r in web.seen)                  # no PDF was fetched again
     assert len(calls("zf-hindunilvr")) == 1 and date(2026, 8, 4)
+
+
+AGM_SEQ = "900000001"
+AGM_FILE = "HINDUNILVR_20072026120000_SEIntimation80thAGMTranscriptandVideosigned.pdf"
+
+
+def agm_row(symbol: str) -> dict:
+    """An NSE row for the company's AGM transcript, filed on 20 Jul 2026, before its Q1 FY27 call (4 Aug)."""
+    return {"an_dt": "20-Jul-2026 17:30:00", "exchdisstime": "20-Jul-2026 17:30:01", "sort_date": "2026-07-20 17:30:00",
+            "attchmntFile": "https://nsearchives.nseindia.com/corporate/" + AGM_FILE, "seq_id": AGM_SEQ, "symbol": symbol,
+            "attchmntText": "Video recording and Transcript of the 80th AGM of the Company", "desc": "Updates",
+            "sm_isin": next(r["sm_isin"] for r in nse_rows(symbol) if r.get("sm_isin")), "sm_name": "Hindustan Unilever Limited"}
+
+
+def seed_call(entity_id: int, slug: str, season: str, label: str | None, filing_key: str, *, published: bool, reason: str | None = None):
+    """A call row an earlier run left: a stored call (published or not), or a held one (no label, a reason)."""
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        source = c.execute("select id from core.source where key = 'nse'").fetchone()[0]
+        event = c.execute("""insert into core.event (event_type, entity_id, slug, title, starts_on, status, source_id, is_published)
+                             values ('earnings_call', %s, %s, 'seeded', '2026-07-20', 'stored', %s, %s) returning id""",
+                          (entity_id, slug, source, published)).fetchone()[0]
+        c.execute("""insert into equity.earnings_call (event_id, entity_id, fiscal_label, period_end, season_key, quarter_source,
+                                                       filed_at, exchange, filing_key, route, status_reason)
+                     values (%s, %s, %s, %s, %s, %s, '2026-07-20 12:00+00', 'NSE', %s, 'exchange_pdf', %s)""",
+                  (event, entity_id, label, date(2026, 6, 30) if label else None, season, "text" if label else None, filing_key, reason))
+    return event
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_held_row_on_the_slug_is_replaced_by_the_call_whose_quarter_is_decided(s3):
+    eid = make_company("HINDUNILVR", "Hindustan Unilever Limited")
+    seeded = seed_call(eid, "zf-hindunilvr-call-q1-fy27", "q1-fy27", None, "an-earlier-filing", published=False, reason="no_quarter")
+    code, tr = go(Web())
+    assert code == 0 and tr[0] == "success", tr
+    [hul] = calls("zf-hindunilvr")
+    assert hul[:8] == ("zf-hindunilvr-call-q1-fy27", "stored", False, "Q1 FY27", "text", "q1-fy27", "exchange_pdf", None)
+    assert hul[8] is not None and hul[13] != "an-earlier-filing"                  # the real filing's transcript, not the held one's
+    assert q("select id from core.event where entity_id = %s and event_type = 'earnings_call'", eid) == [(seeded,)]     # the same event
+    assert "call_clashes" not in checks(tr)
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_stored_call_built_on_a_general_meeting_is_unpublished_not_deleted_and_its_slug_is_a_named_clash(s3):
+    eid = make_company("HINDUNILVR", "Hindustan Unilever Limited")
+    web = Web()
+    web.extra_rows["HINDUNILVR"] = [agm_row("HINDUNILVR")]
+    web.aliases[AGM_FILE] = HUL_FILE
+    # an earlier run took the AGM transcript for the quarter's call and published it (the Asian Paints case)
+    seeded = seed_call(eid, "zf-hindunilvr-call-q1-fy27", "q1-fy27", "Q1 FY27", AGM_SEQ, published=True)
+    code, tr = go(web)
+    assert code == 0 and tr[0] == "success", tr
+    [row] = calls("zf-hindunilvr")                                                # still one row: nothing deleted, nothing renamed
+    assert row[:8] == ("zf-hindunilvr-call-q1-fy27", "stored", False, None, None, "q1-fy27", "exchange_pdf", "general_meeting")
+    assert q("select id from core.event where entity_id = %s and event_type = 'earnings_call'", eid) == [(seeded,)]
+    c = checks(tr)
+    assert AGM_FILE in c["general_meetings"]["detail"] and not c["general_meetings"]["passed"]
+    assert "general meeting" in c["other_meetings"]["detail"]
+    assert c["general_meeting_calls_unpublished"]["detail"].startswith("1 stored calls")
+    clash = c["call_clashes"]                                                     # the real Q1 FY27 call is named, not written
+    assert not clash["passed"] and "zf-hindunilvr-call-q1-fy27" in clash["detail"] and "general meeting" in clash["detail"]
+    assert q("select count(*) from core.document where entity_id = %s", eid)[0][0] == 0      # the clash writes nothing: it waits for Anand
+    code, tr = go(web)                                                            # a second run changes nothing
+    assert code == 0 and tr[1] == 0 and "general_meeting_calls_unpublished" not in checks(tr), tr
 
 
 @pytest.mark.db
