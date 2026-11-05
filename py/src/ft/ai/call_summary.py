@@ -21,12 +21,23 @@ A role-held call (more than 10% unknown-role words) keeps every list but may lea
 support it, with at least three bullets in all; a call whose roles are read has the first two lists in full. A reply with any
 dropped bullet, a missing or misplaced list or a count out of range isn't published: the task retries it once with a note
 naming the problems, then rejects it (`ft/ai/batch.py`).
+
+**Copied text** (2B-11c, #301; `apply_echo`). Visitors see only the quotes of verified citations, never a transcript's text
+(`CLAUDE.md` §1), and the Earnings calls tab shows a bullet in full, so a bullet may not carry the transcript's own words
+(on dev, 65% of v5's bullets were a short paraphrase followed by the cited passage verbatim). A run of more than
+`MAX_ECHO_CHARS` characters found verbatim in the transcript (whitespace, curly quotes and dashes aside; case kept) is copied
+text. One that reaches the bullet's end (up to `ECHO_TAIL_CHARS` characters of punctuation or quotes may follow) is cut, where
+it starts, and the bullet stands on its lead-in with its citations unchanged (the quote function still shows the source,
+at most 400 characters); this repeats while the new end is a copied run. Copied text anywhere else, or a lead-in under
+`MIN_CUT_WORDS` words, or a figure that is no longer in the cited passages, fails the bullet ("copies transcript text").
+The same function re-checks the outputs stored before the rule (`equity.calls_ai`'s re-check, no AI). Module 1's summaries
+don't use it.
 """
 from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 from ft.ai import summaries
@@ -40,6 +51,12 @@ MIN_ROLE_HELD = 3                                     # a role-held call's summa
 ROSTER_ROLES = (("management", "Management"), ("analyst", "Analysts"), ("moderator", "Moderator"),
                 ("unknown", "Role couldn't be read"))
 MAX_ESTIMATED_TOKENS = 60_000                         # §5.5: a transcript above this is skipped with a warning naming it
+MAX_ECHO_CHARS = 80                                   # a run longer than this found verbatim in the transcript is copied text
+MIN_CUT_WORDS = 6                                     # a bullet cut to its lead-in keeps at least this many words
+ECHO_TAIL_CHARS = 5                                   # punctuation or quotes allowed after a copied run that ends a bullet
+ECHO_RULE = "echo-1"                                  # the rule's name: stamped on the outputs checked or re-checked under it
+_TRAIL = " :;,-\u2014\u2013\"'\u201c\u201d\u2018\u2019\u2026"        # stripped from the end of a lead-in
+_CLAUSE_END = ".!?:;,\u2014\u2013"                          # a lead-in that ends on one of these ends at a clause or sentence
 
 
 @dataclass(frozen=True)
@@ -148,12 +165,123 @@ def role_problem(kind: str, cited: Sequence[Cited], turns: Sequence[Turn], answe
     return None
 
 
+@dataclass(frozen=True)
+class Echo:
+    """A bullet after the copied-text rule: its text as it stands (cut, or as it was), whether a copied end was cut, whether the
+    cut left the lead-in at a clause or sentence end (`clean`), and why it fails, if it does."""
+    text: str
+    cut: bool = False
+    clean: bool = True
+    problem: str | None = None
+
+
+def _ends_clause(form: str, at: int) -> bool:
+    return form[:at].rstrip(" \"'").endswith(tuple(_CLAUSE_END))
+
+
+def _cut_point(form: str, run: tuple[int, int], starts: Sequence[str]) -> tuple[int, bool] | None:
+    """Where to cut a copied tail, and whether the lead-in then ends at a clause or sentence end; None when the cut would fall
+    inside a word. A run starts where the text stops matching on its left, so when the lead-in's last characters happen to
+    equal those before the passage in the transcript (a figure and a full stop, say) the run reaches back into the lead-in.
+    `starts` (the first characters of the cited passages, in `match_form`) say where the copied passage really begins: if
+    one begins just inside the run, the cut is there, and the lead-in keeps its own last words."""
+    start, end = run
+    at = start
+    if not any(form.startswith(p, start) for p in starts):
+        at = min((i for p in starts if (i := form.find(p, start + 1, min(end, start + 40 + len(p)))) > start), default=start)
+    if 0 < at < len(form) and form[at - 1].isalnum() and form[at].isalnum():
+        return None
+    return at, _ends_clause(form, at)
+
+
+def _finish(text: str) -> str:
+    """A cut lead-in as a bullet: trailing spaces, `:;,-` and dashes, quotes and an ellipsis off, and a full stop."""
+    text = text.rstrip()
+    while text and text[-1] in _TRAIL:
+        text = text[:-1].rstrip()
+    return text + "." if text and text[-1] not in ".!?" else text
+
+
+def apply_echo(body: str, passages: Sequence[str], transcript: str) -> Echo:
+    """The copied-text rule on one bullet that has passed `verify_bullet` and the role rules. `passages`: the text its verified
+    citations cover; `transcript`: the call's text in `summaries.match_form`. A copied end is cut (and again while the new
+    end is copied); copied text elsewhere fails the bullet; so does a cut bullet with under `MIN_CUT_WORDS` words, or with a
+    figure its cited passages don't hold."""
+    text, cut, clean = " ".join(body.split()), False, True
+    starts = [f[:20] for p in passages if len(f := summaries.match_form(p)) >= 20]       # where each cited passage begins
+    while True:
+        form = summaries.match_form(text)
+        runs = summaries.copied_runs(form, transcript, MAX_ECHO_CHARS)
+        if not runs:
+            break
+        tail = next((r for r in runs if len(form) - r[1] <= ECHO_TAIL_CHARS
+                     and not any(ch.isalnum() for ch in form[r[1]:])), None)
+        if tail is None:
+            longest = max(b - a for a, b in runs)
+            return Echo(body, problem=f"copies transcript text ({longest} characters word for word, not at the bullet's end)")
+        point = _cut_point(form, tail, starts)
+        if point is None:
+            return Echo(body, problem="copies transcript text (the copied passage starts inside a word of its lead-in)")
+        text, cut, clean = _finish(text[:point[0]]), True, clean and point[1]
+    if cut:
+        words = len(text.split())
+        if words < MIN_CUT_WORDS:
+            return Echo(body, problem=f"copies transcript text (only {words} words are its own once the copied end is cut,"
+                                      f" under {MIN_CUT_WORDS})")
+        if extra := summaries.unsupported_figures(text, list(passages)):
+            return Echo(body, problem="copies transcript text (once the copied end is cut, " + ", ".join(extra)
+                                      + " is not in its cited passages)")
+    return Echo(text, cut, clean)
+
+
+@dataclass
+class Rechecked:
+    """A stored summary's bullets under the copied-text rule (`recheck_content`)."""
+    bullets: list[dict]                                   # as they stand: the stored bullets, a cut one with its new text
+    cut: list[int] = field(default_factory=list)          # the bullets whose copied end was cut
+    unclean: list[int] = field(default_factory=list)      # of those, the ones whose lead-in doesn't end at a clause end
+    failed: dict[int, str] = field(default_factory=dict)  # the bullets that fail, with why
+    longest: int = 0                                      # the longest verbatim run left in any bullet that stands
+
+    @property
+    def verdict(self) -> str:
+        return "rejected" if self.failed else "cut" if self.cut else "unchanged"
+
+
+def recheck_content(content: dict, spans: dict[int, tuple[int, int]], text: str, transcript: str) -> Rechecked:
+    """The copied-text rule on a stored output's bullets. `content`: its `core.ai_output.content` (`bullets` with their citation
+    numbers); `spans`: its verified citations, `{citation_no: (char_start, char_end)}` in `text`, the call's canonical text;
+    `transcript`: `text` in `summaries.match_form`. Nothing is written: the caller supersedes the output with the new bullets,
+    or with a rejection, or leaves it."""
+    out = Rechecked([])
+    for i, b in enumerate(content.get("bullets") or []):
+        nos = b.get("citations") or []
+        if not nos or any(n not in spans for n in nos):
+            out.failed[i] = "no verified citation (its stored citation is missing)"
+            out.bullets.append(dict(b))
+            continue
+        echo = apply_echo(b["text"], [text[spans[n][0]:spans[n][1]] for n in nos], transcript)
+        if echo.problem:
+            out.failed[i] = echo.problem
+            out.bullets.append(dict(b))
+            continue
+        if echo.cut:
+            out.cut.append(i)
+            if not echo.clean:
+                out.unclean.append(i)
+        out.bullets.append({**b, "text": echo.text})
+        out.longest = max(out.longest, summaries.longest_copied(summaries.match_form(echo.text), transcript))
+    return out
+
+
 def check(reply: Reply, sources: tuple[Source, ...], turns: Sequence[Turn], *, role_held: bool = False) -> Checked:
     """Check a reply against our copy of the transcript (`sources`) and its stored turns."""
     mapping: Counter = Counter()
     found = summaries.scan(reply.parts(), HEADINGS)
     answers = answer_turns(turns)
     rng = ranges(role_held=role_held, has_unknown=any(t.role == "unknown" for t in turns))
+    text_of = {s.document_id: s.text for s in sources}
+    transcripts = {d: summaries.match_form(t) for d, t in text_of.items()}            # for the copied-text rule
     bullets = []
     for heading, body, cites in found.bullets:
         b = summaries.verify_bullet(body, cites, sources, mapping)
@@ -162,6 +290,10 @@ def check(reply: Reply, sources: tuple[Source, ...], turns: Sequence[Turn], *, r
             b.problem = "outside the lists"
         elif b.problem is None:
             b.problem = role_problem(b.section, b.citations, turns, answers)
+        if b.problem is None and b.citations:
+            doc = b.citations[0].document_id
+            e = apply_echo(b.text, [text_of[c.document_id][c.start:c.end] for c in b.citations], transcripts[doc])
+            b.problem, b.text = e.problem, (b.text if e.problem else e.text)
         bullets.append(b)
     problems = []
     if found.headings != sorted(set(found.headings)):
@@ -190,5 +322,5 @@ def check(reply: Reply, sources: tuple[Source, ...], turns: Sequence[Turn], *, r
 REASON_PHRASES: dict[str, tuple[str, ...]] = {
     "citation": (r"cites a turn whose role is", r"cites text outside any speaker turn"),
     "format": (r"the lists aren't as asked", r"outside the lists", r"\d+ bullets under", r"has no bullets",
-               r"isn't for this call", r"bullets in all, not at least"),
+               r"isn't for this call", r"bullets in all, not at least", r"copies transcript text"),
 }
