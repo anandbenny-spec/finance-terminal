@@ -193,6 +193,23 @@ def test_a_second_run_writes_nothing(s3):
 
 
 @pytest.mark.db
+def test_a_call_set_aside_and_restored_is_published_again_without_being_rewritten(s3):
+    setup_hul()
+    go_text()
+    doc = call(HUL)[3]
+    chunks = q("select count(*) from core.chunk where document_id = %s", doc)[0][0]
+    x("update core.event set is_published = false where slug = %s", HUL)                      # what the demotion of a general meeting does
+    x("update core.document set is_published = false where id = %s", doc)
+    assert call(HUL)[2] is False
+    code, tr = go_text()
+    assert code == 0 and tr[1] == 2                                                         # the document and the event, nothing else
+    assert call(HUL)[2] is True and q("select is_published from core.document where id = %s", doc) == [(True,)]
+    assert q("select count(*) from core.chunk where document_id = %s", doc)[0][0] == chunks
+    code, tr = go_text()
+    assert code == 0 and tr[1] == 0
+
+
+@pytest.mark.db
 @needs_fixtures
 def test_a_revised_version_of_the_transcript_gets_no_turns_or_chunks(s3):
     setup_hul()
