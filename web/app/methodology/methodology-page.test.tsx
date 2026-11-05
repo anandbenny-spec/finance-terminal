@@ -55,6 +55,9 @@ describe("/methodology", () => {
     expect(text).toContain("labelled AI-extracted");
     expect(text).toContain("no tone or sentiment is read");
     expect(text).toContain("Transcript text stays private");
+    expect(text).toContain("A missed target is a fact about a figure, not a verdict on management");
+    expect(text).toContain("at least five scored targets");
+    expect(text).not.toContain("not scored against what a company later delivered");
     expect(text).not.toMatch(/\b(hit rate|delivered on guidance|beat guidance|missed guidance)\b/i);
   });
 });
