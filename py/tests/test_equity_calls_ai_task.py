@@ -7,6 +7,7 @@ makes its own calls (unique slugs) and the task sees only those (`scope`).
 The guidance extraction (2B-13, #176) rides the same batch for a call whose company row holds a fiscal-year end month: the tests at
 the end give their calls one (`fy_end=3`), and the older ones, which don't, are summarised only (the extraction names such a call
 in `call_guidance` and skips it)."""
+import hashlib
 import json
 import uuid
 from collections import Counter
@@ -914,3 +915,172 @@ def test_a_call_with_only_stated_figures_is_published_with_them_and_counts_zero_
         "/stated_figures/0", "/stated_figures/1"]
     assert r["checks"]["guidance_stored"]["passed"] and r["checks"]["guidance_items"]["passed"]
     assert "1 published" in r["checks"]["call_guidance"]["detail"]
+
+
+# ---------------------------------------------------------------------------- the copied-text re-check (2B-11c, #301): no AI, no request
+# Summaries stored before the rule hold a copied end; an admin writes them here (the task can no longer store one). Each test
+# makes its own calls.
+MEERA = ("Our order book stands at 9,200 crore. Demand in the export market remains soft because of weak freight rates. "
+         "We plan capital expenditure of 800 crore this year.")                         # one management turn's text, label left off
+LEAD = "The order book is 9,200 crore and capital expenditure of 800 crore is planned this year."
+CLEAN = [(t, "management", p) for t, p in GOOD_MANAGEMENT[:2]] + [(t, "analysts", p) for t, p in GOOD_ANALYSTS]
+COPIED = [(f"{LEAD} {MEERA}", "management", [MEERA]), *CLEAN]                          # five bullets, the first copying MEERA
+
+
+def legacy(c, bullets, *, version="v5", stamp=None, task_key="call_summary") -> int:
+    """A published output as an earlier run stored it: `bullets` as (text, list, [the passages it cites]), each citation verified
+    at its passage's place in the transcript. `stamp`: the copied-text rule it was checked under, if any."""
+    text, cites, items = c["built"].text, [], []
+    for i, (claim, kind, passages) in enumerate(bullets):
+        nos = []
+        for passage in passages:
+            a = text.index(passage)
+            cites.append((f"/bullets/{i}", a, a + len(passage)))
+            nos.append(len(cites))
+        items.append({"text": claim, "citations": nos, "list": kind})
+    content = {"bullets": items, "attempt": 1, "stop_reason": "end_turn", "citation_mapping": {"offsets": len(cites)},
+               "message_id": "msg_legacy", **({"echo_rule": stamp} if stamp else {})}
+    sha = hashlib.sha256(uuid.uuid4().bytes).digest()
+    with psycopg.connect(ADMIN) as conn, conn.transaction():
+        out = conn.execute(
+            """insert into core.ai_output (task, document_id, content, body, status, model, prompt_key, prompt_version,
+                                           input_sha256, input_tokens, output_tokens, cost_usd)
+               values (%s, %s, %s, %s, 'draft', 'claude-haiku-5-5', %s, %s, %s, 4000, 300, 0.00235) returning id""",
+            (task_key, c["doc"], json.dumps(content, ensure_ascii=False), "\n".join(i["text"] for i in items), task_key, version,
+             sha)).fetchone()[0]
+        for i, (path, a, b) in enumerate(cites):
+            conn.execute("""insert into core.ai_citation (ai_output_id, citation_no, claim_path, kind, document_id, char_start,
+                                                          char_end, verified)
+                            values (%s, %s, %s, 'document_span', %s, %s, %s, true)""", (out, i + 1, path, c["doc"], a, b))
+        conn.execute("update core.ai_output set status = 'published' where id = %s", (out,))
+    return out
+
+
+def published_summary(doc_id: int):
+    return q("""select id, content, body from core.ai_output where document_id = %s and task = 'call_summary'
+                   and status = 'published'""", doc_id)
+
+
+def citations_of(out_id: int):
+    return q("""select citation_no, claim_path, char_start, char_end, verified from core.ai_citation where ai_output_id = %s
+                 order by citation_no""", out_id)
+
+
+def echo_detail(r) -> dict:
+    return json.loads(r["checks"]["echo_recheck"]["detail"])
+
+
+@pytest.mark.db
+def test_the_recheck_supersedes_a_stored_summary_with_its_copied_end_cut_keeping_the_old_row_its_citations_and_no_cost():
+    c = make_call()
+    old = legacy(c, COPIED)
+    fake = FakeClaude(["ok"], reply=replies())
+    assert go(task([c["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    assert fake.create_calls == 0 and r["rows"] == 1 and not r["cost"]                 # nothing was asked; one output written
+    was, now = outputs(c["doc"])
+    assert was[0] == "superseded" and was[1].startswith("superseded by output") and f"re-check {cs.ECHO_RULE}" in was[1]
+    assert was[2] == 5 and was[3] == Decimal("0.00235")                                # the old row stays as it was
+    assert now == ("published", "", 5, 0, "v5")                                        # same prompt version, no cost
+    ((new, content, body),) = published_summary(c["doc"])
+    was_content = q("select content from core.ai_output where id = %s", old)[0][0]
+    assert content["bullets"][0] == {**was_content["bullets"][0], "text": LEAD}        # cut where the copied run started
+    assert content["bullets"][1:] == was_content["bullets"][1:]                        # the clean ones as they were
+    assert content["recheck"] == content["echo_rule"] == cs.ECHO_RULE and content["echo_cut"] == [0]
+    assert content["message_id"] == "msg_legacy" and body == "\n".join(b["text"] for b in content["bullets"])
+    assert "Demand in the export market" not in body and MEERA[:40] not in body
+    assert citations_of(new) == citations_of(old) and len(citations_of(old)) == 7      # the same citations, copied over
+    assert r["checks"]["echo_clean"]["passed"] and r["checks"]["echo_recheck"]["passed"]
+    d = echo_detail(r)
+    assert (d["looked"], d["unchanged"], d["superseded"], d["rejected"]) == (1, 0, 1, 0)
+    assert d["bullets_cut"] == {"management": 1} and d["bullets_failed"] == {} and d["lost_publication"] == []
+    assert d["published_left"] == 1 and d["longest_verbatim_run_left"] <= cs.MAX_ECHO_CHARS
+    # a second run finds the stamp and writes nothing
+    assert go(task([c["slug"]], fake)) == 0
+    assert len(outputs(c["doc"])) == 2 and last_run()["rows"] == 0 and echo_detail(last_run())["looked"] == 0
+
+
+@pytest.mark.db
+def test_the_recheck_replaces_a_summary_whose_bullet_copies_elsewhere_or_is_too_short_with_a_rejection_and_names_the_call():
+    start, short, fine = make_call(), make_call(), make_call()
+    legacy(start, [(f"{MEERA} {LEAD}", "management", [MEERA]), *CLEAN])                # copied text at the start
+    legacy(short, [(f"Capex is planned. {MEERA}", "management", [MEERA]), *CLEAN])    # under six words once the end is cut
+    legacy(fine, CLEAN)
+    fake = FakeClaude(["ok"], reply=replies())
+    assert go(task([start["slug"], short["slug"], fine["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    for c, why in ((start, "copies transcript text"), (short, "words are its own once the copied end is cut")):
+        rows = outputs(c["doc"])
+        assert [o[0] for o in rows] == ["superseded", "rejected"] and rows[1][2] == 0 and rows[1][3] == 0
+        assert rows[1][1].startswith(f"rejected: re-check {cs.ECHO_RULE}: bullet 1: ") and why in rows[1][1]
+        assert q("select count(*) from core.ai_output where document_id = %s and status = 'published'", c["doc"]) == [(0,)]
+        assert q("""select count(*) from core.ai_citation where ai_output_id = (select max(id) from core.ai_output
+                                                                               where document_id = %s)""", c["doc"]) == [(0,)]
+    assert [o[0] for o in outputs(fine["doc"])] == ["published"]                       # nothing changed: nothing written
+    d = echo_detail(r)
+    assert (d["looked"], d["unchanged"], d["superseded"], d["rejected"]) == (3, 1, 0, 2)
+    assert d["bullets_failed"] == {"management": 2} and sum(d["failures_by_reason"].values()) == 2
+    assert d["lost_publication"] == ["Acme Limited Q2 FY27"] * 2 and d["published_left"] == 1
+    assert r["checks"]["echo_clean"]["passed"] and not r["checks"]["echo_recheck"]["passed"]     # a warning names what was lost
+    assert len(alert(f"check:{KEY}:echo_recheck")) == 1
+    resolve(f"check:{KEY}:echo_recheck")
+
+
+@pytest.mark.db
+def test_the_recheck_leaves_an_older_prompt_version_a_stamped_output_and_other_tasks_alone_and_runs_with_no_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    older, stamped, other, clean = make_call(), make_call(), make_call(), make_call()
+    legacy(older, COPIED, version="v4")
+    legacy(stamped, COPIED, stamp=cs.ECHO_RULE)                                         # checked under the rule already
+    legacy(other, COPIED, task_key="doc_summary")                                       # module 1's task: never looked at
+    legacy(clean, CLEAN)
+    t = task([c["slug"] for c in (older, stamped, other, clean)], FakeClaude(["ok"], reply=replies()))
+    t.claude = None                                                                     # the AI steps are skipped
+    assert go(t) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    assert [outputs(c["doc"]) for c in (older, stamped)] == [[("published", "", 5, Decimal("0.00235"), v)]
+                                                              for v in ("v4", "v5")]
+    assert q("select status, content ->> 'echo_rule' from core.ai_output where document_id = %s", other["doc"]) == [
+        ("published", None)]
+    assert len(outputs(clean["doc"])) == 1 and r["rows"] == 0
+    d = echo_detail(r)
+    assert (d["looked"], d["unchanged"], d["superseded"], d["rejected"]) == (1, 1, 0, 0)
+    resolve(f"ai_unavailable:calls:{month()}")
+    resolve(f"check:{KEY}:ai_available")
+
+
+@pytest.mark.db
+def test_a_backfill_s_range_limits_the_recheck_to_the_calls_filed_in_it():
+    early, late = make_call(filed=date(2026, 7, 20)), make_call(filed=date(2026, 10, 20))
+    for c in (early, late):
+        legacy(c, COPIED)
+    fake = FakeClaude(["ok"], reply=replies())
+    assert go(task([early["slug"], late["slug"]], fake), since=date(2026, 10, 1), until=date(2026, 10, 31)) == 0
+    assert [len(outputs(c["doc"])) for c in (early, late)] == [1, 2] and echo_detail(last_run())["looked"] == 1
+    assert go(task([early["slug"], late["slug"]], fake)) == 0                           # no range: the rest
+    assert [len(outputs(c["doc"])) for c in (early, late)] == [2, 2] and echo_detail(last_run())["looked"] == 1
+
+
+@pytest.mark.db
+def test_the_run_fails_and_rolls_the_recheck_back_if_the_stored_summaries_still_hold_copied_text(monkeypatch):
+    """Simulates a rule that doesn't hold: the read-back after the load finds the cut bullet still copying, the blocking
+    `echo_clean` check fails the run, and the last good data stays."""
+    c = make_call()
+    legacy(c, COPIED)
+    real, seen = cs.recheck_content, []
+
+    def flaky(content, spans, text, transcript):
+        seen.append(1)
+        out = real(content, spans, text, transcript)
+        if len(seen) > 1:                                                               # the read-back
+            out.cut = [0]
+        return out
+    monkeypatch.setattr(cs, "recheck_content", flaky)
+    assert go(task([c["slug"]], FakeClaude(["ok"], reply=replies()))) != 0 or last_run()["status"] != "success"
+    r = last_run()
+    assert r["status"] == "checks_failed" and not r["checks"]["echo_clean"]["passed"]
+    assert "still hold copied text" in r["checks"]["echo_clean"]["detail"]
+    assert [o[0] for o in outputs(c["doc"])] == ["published"]                           # rolled back

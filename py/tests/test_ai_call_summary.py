@@ -2,6 +2,7 @@
 (management, analysts, and participants whose role couldn't be read), summaries.py's rules on every bullet (a verified citation,
 only figures its passages hold), each list's count (which flexes on a role-held call), and the role rules from the call's turns.
 A synthetic call (tests/call_fixtures.py); no database."""
+from ai_fakes import bullets
 from call_fixtures import (
     ANALYST_1,
     ANSWER_1,
@@ -398,3 +399,167 @@ def test_module_ones_summaries_are_unchanged_by_the_shared_scan():
     # without headings, the heading lines come before the first bullet only for the first list: later ones are stray
     assert [b for b, _ in found][:3] == [g[0] for g in GOOD_MANAGEMENT] and stray
     assert ANSWER_1 == 5 and MODERATOR_Q1 == 3 and ANALYST_1 == 4
+
+
+# --------------------------------------------------------------------------------------------------- copied text (2B-11c, #301)
+# Two long passages of the synthetic call: each is a management turn's text without its speaker label.
+RAVI = "Thank you. Revenue from operations grew 12.5 per cent to 4,500 crore in Q2 FY27. EBITDA margin was 21.3 per cent."
+MEERA = ("Our order book stands at 9,200 crore. Demand in the export market remains soft because of weak freight rates. "
+         "We plan capital expenditure of 800 crore this year.")
+LEAD = "The order book is 9,200 crore and capital expenditure of 800 crore is planned this year."
+OWN = "Management described the outlook for demand and spending this year."       # a lead-in with no figure
+
+
+def with_first(claim: str, cited: list[str]):
+    """The good reply with the first management bullet replaced."""
+    return run(lists(TEXT, management=[(claim, cited)] + GOOD_MANAGEMENT[1:]))
+
+
+def test_the_copy_limits_are_named_constants_and_the_transcripts_are_long_enough_to_test_them():
+    assert cs.MAX_ECHO_CHARS == 80 and cs.MIN_CUT_WORDS == 6 and cs.ECHO_TAIL_CHARS == 5
+    assert TEXT.count(RAVI) == TEXT.count(MEERA) == 1 and len(RAVI) > 80 and len(MEERA) > 80
+
+
+def test_a_copied_tail_is_cut_and_the_bullet_keeps_its_citations():
+    got = with_first(f"{LEAD} {MEERA}", [MEERA])
+    assert got.ok and got.kept[0].text == LEAD
+    (cited,) = got.kept[0].citations
+    assert (cited.start, cited.end) == span_of(MEERA) and len(got.kept[0].citations) == 1
+    doc, body, cites = summaries.content(got, attempt=1, reply=reply(lists(TEXT)))
+    assert doc["bullets"][0]["text"] == LEAD and body.splitlines()[0] == LEAD and cites[0][0] == "/bullets/0"
+    assert [b.text for b in got.kept[1:3]] == [g[0] for g in GOOD_MANAGEMENT[1:]]             # the others are untouched
+
+
+def test_a_cut_lead_in_loses_its_dangling_punctuation_and_quotes_and_ends_with_a_full_stop():
+    for lead, tail in (("Management said the order book is 9,200 crore and capital expenditure is 800 crore:", f" {MEERA}"),
+                       ("Management said the order book is 9,200 crore and capital expenditure is 800 crore,", f" {MEERA}"),
+                       ("Management said the order book is 9,200 crore and capital expenditure is 800 crore \u2014", f" {MEERA}"),
+                       ('Management said the order book is 9,200 crore and capital expenditure is 800 crore: "', f'{MEERA}"'),
+                       ("Management said the order book is 9,200 crore and capital expenditure is 800 crore: \u201c",
+                        f"{MEERA}\u201d")):
+        got = with_first(lead + tail, [MEERA])
+        assert got.ok and got.kept[0].text == ("Management said the order book is 9,200 crore and capital expenditure is "
+                                               "800 crore."), lead
+
+
+def test_two_copied_tails_in_a_row_are_both_cut():
+    got = with_first(f"{LEAD} {RAVI} \u2026 {MEERA}", [RAVI, MEERA])
+    assert got.ok and got.kept[0].text == LEAD and len(got.kept[0].citations) == 2
+    got = with_first(f"{LEAD} {RAVI} {MEERA}", [RAVI, MEERA])                         # touching: one run, one cut
+    assert got.ok and got.kept[0].text == LEAD
+
+
+def test_copied_text_at_the_start_or_in_the_middle_fails_the_bullet():
+    for claim in (f"{MEERA} {LEAD}", f"The company gave these figures: {MEERA} They cover the whole year."):
+        got = with_first(claim, [MEERA])
+        assert not got.ok and got.dropped[0].problem.startswith("copies transcript text"), claim
+        assert got.dropped[0].text == claim                                         # the record keeps what the reply said
+        assert "copies transcript text" in got.note() and categorise("rejected", "; ".join(got.reasons())) == ("format", True)
+
+
+def test_a_bullet_that_is_only_the_passage_fails_and_so_does_a_lead_in_under_six_words():
+    for claim in (MEERA, f"Capex is planned. {MEERA}", f"Order book and capex. {MEERA}"):
+        got = with_first(claim, [MEERA])
+        assert not got.ok and "copies transcript text" in got.dropped[0].problem, claim
+    assert "under 6" in with_first(f"Capex is planned. {MEERA}", [MEERA]).dropped[0].problem
+    assert with_first(f"Capex is planned for the year ahead now. {MEERA}", [MEERA]).ok              # six words stand
+
+
+def test_a_figure_that_was_only_in_the_cut_tail_goes_with_it_and_the_rest_passes():
+    got = with_first(f"{OWN} {MEERA}", [MEERA])
+    assert got.ok and got.kept[0].text == OWN and "800" in MEERA and "800" not in got.kept[0].text
+
+
+def test_a_cut_that_leaves_a_figure_the_passages_dont_hold_fails_the_bullet():
+    transcript = summaries.match_form("A" + MEERA + "B")
+    body = f"Capital expenditure is 700 crore and the order book is large this year. {MEERA}"
+    echo = cs.apply_echo(body, [MEERA], transcript)
+    assert echo.problem and echo.problem.startswith("copies transcript text") and "700" in echo.problem and echo.text == body
+
+
+def test_a_passage_may_end_with_up_to_five_characters_of_punctuation_but_not_a_word():
+    for tail, ok in ((MEERA + '."', True), (MEERA + " \u2026", True), (MEERA + ' )"..', True), (MEERA + " yes", False),
+                     (MEERA + " ....!?", False)):
+        got = with_first(f"{LEAD} {tail}", [MEERA])
+        assert got.ok is ok, tail
+        assert got.ok and got.kept[0].text == LEAD or not got.ok
+
+
+def test_the_limit_is_eighty_characters_a_run_of_81_is_copied_and_a_run_of_80_is_not():
+    words = " ".join(f"w{i}" for i in range(40))
+    transcript = summaries.match_form("Q" + words + "Q")
+    lead = "Management said the plan continues this year."
+    for n, cut in ((79, False), (80, False), (81, True), (120, True)):
+        body = f"{lead} {words[:n]}"
+        echo = cs.apply_echo(body, [], transcript)
+        assert echo.problem is None and echo.cut is cut, n
+        assert echo.text == (lead if cut else body), n
+        assert (summaries.copied_runs(summaries.match_form(body), transcript, 80) != []) is cut, n
+
+
+def test_the_comparison_ignores_whitespace_curly_quotes_and_dashes_but_not_case():
+    haystack = summaries.match_form('He said "we will repay 300 crore" - and then paused for the whole of the long second half of year.')
+    same = "He said \u201cwe will  repay\n300 crore\u201d \u2014 and then paused for the whole of the long second half of year."
+    assert summaries.copied_runs(summaries.match_form(same), haystack, 80) != []
+    other_case = same.replace("He said", "he said").replace("and then", "And then").replace("whole", "Whole").replace("long", "Long")
+    assert summaries.copied_runs(summaries.match_form(other_case), haystack, 80) == []
+    assert summaries.longest_copied(summaries.match_form(same), haystack) == len(haystack)
+
+
+def test_runs_that_overlap_or_touch_are_one_copied_stretch_and_the_longest_run_is_found():
+    words = " ".join(f"w{i}" for i in range(60))
+    transcript = summaries.match_form("Q" + words + "Q")
+    text = "Plain lead in words here. " + words[:100] + " " + words[:100] + " tail"
+    runs = summaries.copied_runs(text, transcript, 80)
+    assert [(a, b) for a, b in runs] and all(b - a > 80 for a, b in runs)
+    assert summaries.longest_copied(text, transcript) >= 100
+    assert summaries.longest_copied("nothing here matches at all", transcript) < 10
+
+
+def test_a_run_that_reaches_back_into_the_lead_in_cuts_where_the_cited_passage_begins():
+    """The lead-in's last words equal the transcript's words before the passage, so the run starts inside the lead-in: the cut
+    is where the cited passage begins, and the lead-in keeps its own last words."""
+    passage = " ".join(f"w{i}" for i in range(30)) + "."
+    transcript = summaries.match_form(f"Margin was 16.9%. {passage}")
+    body = f"Management reported that the margin was 16.9%. {passage}"
+    assert summaries.copied_runs(summaries.match_form(body), transcript, 80)[0][0] < body.index(passage)     # it reaches back
+    echo = cs.apply_echo(body, ["Margin was 16.9%.", passage], transcript)
+    assert echo.problem is None and echo.cut and echo.clean
+    assert echo.text == "Management reported that the margin was 16.9%."
+
+
+def test_a_run_that_starts_inside_a_word_of_the_lead_in_fails_rather_than_cut_the_word():
+    passage = " ".join(f"w{i}" for i in range(30)) + "."
+    transcript = summaries.match_form(f"Q marginal improvement in the margin {passage}")
+    body = f"Management said unmarginal improvement in the margin {passage}"
+    echo = cs.apply_echo(body, [], transcript)
+    assert echo.problem and echo.problem.startswith("copies transcript text") and "inside a word" in echo.problem
+    assert echo.text == body
+
+
+def test_a_lead_in_with_no_clause_end_is_cut_where_the_run_starts_and_is_marked_unclean():
+    passage = " ".join(f"w{i}" for i in range(30))
+    transcript = summaries.match_form(f"Q{passage}Q")
+    echo = cs.apply_echo(f"Management expects capital expenditure to be as follows {passage}", [], transcript)
+    assert echo.problem is None and echo.cut and not echo.clean
+    assert echo.text == "Management expects capital expenditure to be as follows."
+
+
+def test_the_rule_runs_on_every_published_bullet_so_a_retry_sees_the_problem_in_its_note():
+    got = with_first(f"The company gave these figures: {MEERA} They cover the whole year.", [MEERA])
+    assert 'bullet 1 ("The company gave these figures: ' in got.note() and got.note().endswith(".")
+
+
+def test_module_ones_summaries_are_checked_as_before_a_quoted_passage_over_80_characters_stands():
+    from ft.ai.client import Source
+    third = "Demand in the export market remains soft because of weak freight rates. We plan capital expenditure of 800 crore this year."
+    quoted = [(p, [c(TEXT, p)]) for p in (RAVI, MEERA, third)]
+    assert all(len(p) > 80 for p, _ in quoted)
+    got = summaries.check("doc_summary", reply(bullets(quoted)), (Source(1, TEXT, "Acme Limited call"),))
+    assert got.ok and [b.text for b in got.kept] == [p for p, _ in quoted]
+    assert not hasattr(summaries.Bullet("x"), "cut")                                  # no new field on module 1's bullets
+
+
+def span_of(snippet: str) -> tuple[int, int]:
+    i = TEXT.index(snippet)
+    return i, i + len(snippet)

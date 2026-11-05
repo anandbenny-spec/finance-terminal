@@ -32,6 +32,15 @@ schema's JSON is retried. No `core.forecast` row is written (that is #177, after
 (store once, never lose): a reader of `equity.guidance` or `equity.stated_figure` joins `core.ai_output` and takes the published
 one, as the `api` views do.
 
+**Copied text (2B-11c, #301).** A summary bullet may not carry the transcript's own words: `ft/ai/call_summary.py`'s rule cuts a
+copied end off a new reply's bullet before anything is stored, and fails a bullet that copies anywhere else (the usual retry
+path). Every run also **re-checks the published summaries of the current prompt version that were stored before the rule**
+(their content has no `echo_rule`), with no AI call and no request: a bullet's copied end is cut and the output is
+**superseded** by a new one (same prompt version, same citations, `cost_usd` 0, `"recheck": "echo-1"` in its content; the old row
+stays as the record), or, if a bullet fails, replaced by a **rejection** with the reason (the call then shows "Summary not
+generated yet"), or, if nothing changes, left alone and nothing is written, so a second re-check writes nothing. With `ai=off`
+(the workflow leaves the keys out) a run does only this. It honours a backfill's `--since` and `--until`.
+
 **Limits (§5.5).** A transcript whose request is estimated above 60,000 tokens is skipped with a warning naming it
 (`calls_too_long`); the wrapper itself refuses anything over 100,000.
 
@@ -44,6 +53,10 @@ Checks, B blocking, W warning:
 - (B) `outputs_stored`: each summary published in this run is on its transcript, has every bullet cited, and each bullet's
   citations are verified and inside the published text;
 - (B) `citation_roles`: the role rules, run again on what is stored (the output's citations against `equity.call_turn`);
+- (B) `echo_clean`: the re-check's summaries, read back from the database against their transcripts: no published bullet holds a
+  verbatim run over `MAX_ECHO_CHARS` characters (its detail names the longest run left);
+- (W) `echo_recheck`: what the re-check found and wrote (counts, bullets cut and failed by list, the calls that lost their
+  summary by company and quarter); a warning when a call lost its summary or a transcript couldn't be read back whole;
 - (B) `guidance_stored`: each extraction stored in this run has its citations and its rows, one each per item (or, with no item,
   is a `no_targets` draft with no row), and the call's `guidance_targets` is the count of its management targets shown;
 - (B) `guidance_items`: each stored row again, against the transcript: its span is at most 400 code points and inside one turn
@@ -133,6 +146,28 @@ class Fetched(RunState):
     wanted_guidance: int = 0                                 # calls that lacked their extraction at the start
     no_guidance: list[str] = field(default_factory=list)     # calls that can't be extracted (no month, date or turns): slugs
     too_big: list[tuple[Work, int]] = field(default_factory=list)   # skipped for their length: (work, estimated tokens)
+    since: date | None = None                                # the run's range (a backfill), for the re-check of stored summaries
+    until: date | None = None
+
+
+@dataclass
+class EchoRun:
+    """What one run's re-check of the stored summaries found and wrote (`EquityCallsAi._echo_recheck`)."""
+    looked: int = 0                                          # published summaries of the current version without the stamp
+    unchanged: int = 0
+    superseded: int = 0                                      # re-written with their copied ends cut
+    rejected: int = 0                                        # replaced by a rejection: a bullet failed
+    cut: Counter = field(default_factory=Counter)            # bullets cut, by list
+    failed: Counter = field(default_factory=Counter)         # bullets that failed, by list
+    unclean: int = 0                                         # cut bullets whose lead-in doesn't end at a clause end
+    reasons: Counter = field(default_factory=Counter)        # failures by reason, up to its first bracket
+    lost: list[str] = field(default_factory=list)            # the calls that lost their summary: 'company quarter'
+    unreadable: list[str] = field(default_factory=list)      # calls whose transcript couldn't be read back whole
+    docs: list[int] = field(default_factory=list)            # the transcripts looked at (`echo_clean` reads them back)
+
+    @property
+    def written(self) -> int:
+        return self.superseded + self.rejected
 
 
 def state(o) -> str:
@@ -151,6 +186,7 @@ class EquityCallsAi(BatchSteps, Task):
 
     def __init__(self):
         self._last: Fetched | None = None
+        self._echo = EchoRun()
 
     def due(self, db, workflow: str, now=None) -> Due:
         return equity_due(db, self.key, workflow, super().due(db, workflow, now), requires=self.requires)
@@ -234,7 +270,8 @@ class EquityCallsAi(BatchSteps, Task):
     # ------------------------------------------------------------------ fetch (network; outputs stored as they come)
     def fetch(self, ctx: Context) -> Fetched:
         db = ctx.fetcher.db
-        f = Fetched("batch", budget=batch.monthly_budget(db), month_spend=batch.month_spend(db))
+        f = Fetched("batch", budget=batch.monthly_budget(db), month_spend=batch.month_spend(db), since=ctx.since,
+                    until=ctx.until)
         prompts = {t: load_prompt(t, v) for t, v in PROMPT_VERSION.items()}
         works = self._calls(db, since=ctx.since, until=ctx.until, skipped=f.no_guidance)
         f.wanted = sum(1 for w in works if w.task == cs.TASK)
@@ -262,6 +299,7 @@ class EquityCallsAi(BatchSteps, Task):
                                     "problems": call.reasons(), "bullets": []}, None, []
         else:
             content, body, cites = summaries.content(call.checked, attempt=call.attempt, reply=reply)
+            content["echo_rule"] = cs.ECHO_RULE              # checked under the copied-text rule (the re-check skips it)
         content["message_id"] = reply.message_id
         if retry_note:
             content["retry_note"] = retry_note
@@ -415,7 +453,147 @@ class EquityCallsAi(BatchSteps, Task):
     def load(self, tx, f: Fetched, task_run_id) -> int:
         self._last = f
         n = sum(1 for o in f.outcomes for c in o.calls if c.output_id is not None)
-        return n + f.batch.results["stale"] + f.batch.results["unstorable"]    # the last two stored bare
+        self._echo = self._echo_recheck(tx, f, task_run_id)
+        return n + f.batch.results["stale"] + f.batch.results["unstorable"] + self._echo.written   # the stale and unstorable ones stored bare
+
+    # ------------------------------------------------------------------ the copied-text re-check (no AI)
+    def _echo_where(self, f: Fetched) -> tuple[list[str], list]:
+        where = ["o.task = %s", "o.status = 'published'", "o.scope = ''", "o.prompt_version = %s"]
+        args: list = [cs.TASK, PROMPT_VERSION[cs.TASK]]
+        if self.scope is not None:
+            where.append("ev.slug = any(%s)"); args.append(sorted(self.scope))
+        if f.since is not None:
+            where.append(f"(ec.filed_at at time zone '{IST}')::date >= %s"); args.append(f.since)
+        if f.until is not None:
+            where.append(f"(ec.filed_at at time zone '{IST}')::date <= %s"); args.append(f.until)
+        return where, args
+
+    @staticmethod
+    def _transcript(tx, doc_id: int, chars: int) -> str | None:
+        """The canonical text of a document as its chunks hold it, or None if it isn't whole (`char_count`)."""
+        text = tx.execute("select string_agg(c.body, '' order by c.chunk_no) from core.chunk c where c.document_id = %s",
+                          (doc_id,)).fetchone()[0]
+        return text if text is not None and len(text) == chars else None
+
+    def _echo_recheck(self, tx, f: Fetched, task_run_id: int) -> EchoRun:
+        """The published summaries of the current prompt version that were stored before the copied-text rule (no `echo_rule`
+        in their content), each checked against its transcript: unchanged, or superseded by the same bullets with their copied
+        ends cut, or replaced by a rejection when a bullet fails (see the module docstring). One at a time, so only one
+        transcript is held."""
+        where, args = self._echo_where(f)
+        where.append("o.content ->> 'echo_rule' is distinct from %s"); args.append(cs.ECHO_RULE)
+        rows = tx.execute(
+            f"""select o.id, o.document_id, o.content, o.model, o.prompt_key, o.prompt_version, o.input_sha256, n.name,
+                       ec.fiscal_label, d.char_count
+                  from core.ai_output o
+                  join equity.earnings_call ec on ec.transcript_document_id = o.document_id
+                  join core.event ev on ev.id = ec.event_id
+                  join core.entity n on n.id = ec.entity_id
+                  join core.document d on d.id = o.document_id
+                 where {' and '.join(where)}
+                 order by o.id""", args).fetchall()
+        run = EchoRun()
+        for out_id, doc_id, content, model, prompt_key, version, sha, company, label, chars in rows:
+            name = f"{company} {label or 'call'}"
+            text = self._transcript(tx, doc_id, chars)
+            if text is None:
+                run.unreadable.append(name)
+                continue
+            run.looked += 1
+            run.docs.append(doc_id)
+            spans = {no: (a, b) for no, a, b in tx.execute(
+                "select citation_no, char_start, char_end from core.ai_citation where ai_output_id = %s and verified",
+                (out_id,)).fetchall()}
+            r = cs.recheck_content(content, spans, text, summaries.match_form(text))
+            lists = [b.get("list") or "none" for b in content.get("bullets") or []]
+            run.cut.update(lists[i] for i in r.cut)
+            run.failed.update(lists[i] for i in r.failed)
+            run.unclean += len(r.unclean)
+            run.reasons.update(why.split(" (")[0] for why in r.failed.values())
+            if r.verdict == "unchanged":
+                run.unchanged += 1
+                continue
+            self._echo_write(tx, out_id, doc_id, content, (model, prompt_key, version, sha), r, task_run_id)
+            if r.failed:
+                run.rejected += 1
+                run.lost.append(name)
+            else:
+                run.superseded += 1
+        return run
+
+    @staticmethod
+    def _echo_write(tx, old_id: int, doc_id: int, content: dict, parts: tuple, r: cs.Rechecked, task_run_id: int) -> None:
+        """One re-checked output replaced (store once, never lose: the old row stays, superseded). Written like a stored reply
+        (`_store`): a draft, its citations (copied from the old output), then the old one superseded and this one published;
+        or, if a bullet fails, a rejected output and the old one superseded, so the call has no published summary."""
+        model, prompt_key, version, sha = parts
+        new = {**content, "bullets": r.bullets, "recheck": cs.ECHO_RULE, "echo_rule": cs.ECHO_RULE}
+        reasons = [f"bullet {i + 1}: {why}" for i, why in sorted(r.failed.items())]
+        if r.failed:
+            new["bullets"] = []
+            new["problems"] = reasons
+            new["dropped"] = [{"text": r.bullets[i]["text"], "problem": why} for i, why in sorted(r.failed.items())]
+        else:
+            new["echo_cut"] = r.cut
+        out_id = tx.execute(
+            """insert into core.ai_output (task, document_id, content, body, status, model, prompt_key, prompt_version,
+                                           input_sha256, input_tokens, output_tokens, cost_usd, task_run_id)
+               values (%s, %s, %s, %s, 'draft', %s, %s, %s, %s, null, null, 0, %s) returning id""",
+            (cs.TASK, doc_id, json.dumps(new, ensure_ascii=False), None if r.failed else "\n".join(b["text"] for b in r.bullets),
+             model, prompt_key, version, sha, task_run_id)).fetchone()[0]
+        if r.failed:
+            reason = ("rejected: re-check " + cs.ECHO_RULE + ": " + "; ".join(reasons))[:1000]
+            tx.execute("update core.ai_output set status = 'rejected', status_reason = %s where id = %s", (reason, out_id))
+            tx.execute("update core.ai_output set status = 'superseded', status_reason = %s where id = %s",
+                       (f"superseded by output {out_id} (re-check {cs.ECHO_RULE}: a bullet copies transcript text)", old_id))
+            return
+        tx.execute("""insert into core.ai_citation (ai_output_id, citation_no, claim_path, kind, document_id, char_start, char_end,
+                                                    verified)
+                      select %s, citation_no, claim_path, kind, document_id, char_start, char_end, verified
+                        from core.ai_citation where ai_output_id = %s""", (out_id, old_id))
+        tx.execute("update core.ai_output set status = 'superseded', status_reason = %s where id = %s",
+                   (f"superseded by output {out_id} (re-check {cs.ECHO_RULE}: copied text cut)", old_id))
+        tx.execute("update core.ai_output set status = 'published' where id = %s", (out_id,))
+
+    def _echo_checks(self, tx, f: Fetched) -> list[Check]:
+        """The re-check's two checks: what is stored for each transcript looked at, read back against its text (blocking), and
+        the counts (a warning when a call lost its summary or a transcript couldn't be read)."""
+        run = self._echo
+        where, args = self._echo_where(f)
+        where.append("o.document_id = any(%s)"); args.append(run.docs)
+        left, longest, bad = 0, 0, []
+        if run.docs:
+            rows = tx.execute(
+                f"""select o.id, o.document_id, o.content, n.name, ec.fiscal_label, d.char_count
+                      from core.ai_output o
+                      join equity.earnings_call ec on ec.transcript_document_id = o.document_id
+                      join core.event ev on ev.id = ec.event_id
+                      join core.entity n on n.id = ec.entity_id
+                      join core.document d on d.id = o.document_id
+                     where {' and '.join(where)}
+                     order by o.id""", args).fetchall()
+            for out_id, doc_id, content, company, label, chars in rows:
+                text = self._transcript(tx, doc_id, chars)
+                if text is None:
+                    bad.append(f"{company} {label}: its transcript can't be read back whole")
+                    continue
+                spans = {no: (a, b) for no, a, b in tx.execute(
+                    "select citation_no, char_start, char_end from core.ai_citation where ai_output_id = %s and verified",
+                    (out_id,)).fetchall()}
+                r = cs.recheck_content(content, spans, text, summaries.match_form(text))
+                left += 1
+                longest = max(longest, r.longest)
+                if r.verdict != "unchanged":
+                    bad.append(f"{company} {label} (output {out_id}): bullets {sorted({*r.cut, *r.failed})} still hold copied text")
+        clean = Check("echo_clean", not bad,
+                      "; ".join(bad[:SHOWN]) or f"{left} published summaries looked at: no bullet holds a verbatim run over "
+                      f"{cs.MAX_ECHO_CHARS} characters (the longest left: {longest})")
+        detail = {"rule": cs.ECHO_RULE, "looked": run.looked, "unchanged": run.unchanged, "superseded": run.superseded,
+                  "rejected": run.rejected, "bullets_cut": dict(sorted(run.cut.items())),
+                  "bullets_failed": dict(sorted(run.failed.items())), "cut_without_clause_end": run.unclean,
+                  "failures_by_reason": dict(sorted(run.reasons.items())), "lost_publication": sorted(run.lost),
+                  "transcript_unreadable": sorted(run.unreadable), "published_left": left, "longest_verbatim_run_left": longest}
+        return [clean, Check("echo_recheck", not (run.rejected or run.unreadable), json.dumps(detail), blocking=False)]
 
     # ------------------------------------------------------------------ checks (same transaction)
     def checks(self, tx, f: Fetched, task_run_id) -> list[Check]:
@@ -453,6 +631,7 @@ class EquityCallsAi(BatchSteps, Task):
         out.append(Check("outputs_stored", not wrong, "; ".join(wrong) or f"{len(published)} published, every bullet cited"))
         out.append(Check("citation_roles", not roles, "; ".join(roles) or
                          f"{len(published)} published, every citation on a turn its list allows"))
+        out += self._echo_checks(tx, f)
 
         c = Counter(o.status for o in f.outcomes if o.work.task == cs.TASK)
         mapping: Counter = Counter()

@@ -353,3 +353,51 @@ def content(c: Checked, *, attempt: int, reply: Reply) -> tuple[dict, str, list[
         doc["problems"] = c.reasons()
         doc["dropped"] = [{"text": b.text, "problem": b.problem} for b in c.dropped]
     return doc, "\n".join(b.text for b in kept), cites
+
+
+# ---------------------------------------------------------------------------------------------- copied text (call summaries)
+# Used by ft/ai/call_summary.py only (2B-11c, #301): module 1's checks above never call these, so `doc_summary` and
+# `statement_diff_summary` are checked exactly as before. Matching is character for character after `match_form`: whitespace
+# collapsed, curly quotes straight, dashes one hyphen, case kept. Every mapped character is one character, so an index in the
+# matched form of a text whose whitespace is already single is an index in the text itself.
+_STRAIGHT = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'", "\u2032": "'",
+                           "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u201f": '"', "\u2033": '"'}) | _DASHES
+
+
+def match_form(text: str) -> str:
+    """`text` as it is compared for copying (see above)."""
+    return " ".join(text.translate(_STRAIGHT).split())
+
+
+def copied_runs(text: str, haystack: str, longer_than: int) -> list[tuple[int, int]]:
+    """The stretches of `text` that are copied: every run of more than `longer_than` characters found verbatim in `haystack`
+    (both in `match_form`), as (start, end) with overlapping or touching runs merged, in order."""
+    n, j, found = len(text), 0, []
+    for i in range(n):
+        if n - i <= longer_than:
+            break
+        j = max(j, i)
+        if j - i <= longer_than and text[i:i + longer_than + 1] not in haystack:
+            continue                                   # no run longer than the limit starts here
+        while j < n and text[i:j + 1] in haystack:     # j only moves right: a run from i + 1 ends no sooner than one from i
+            j += 1
+        if j - i > longer_than:
+            found.append((i, j))
+    merged: list[list[int]] = []
+    for a, b in found:
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    return [(a, b) for a, b in merged]
+
+
+def longest_copied(text: str, haystack: str) -> int:
+    """The length of the longest stretch of `text` found verbatim in `haystack` (both in `match_form`)."""
+    best = 0
+    for i in range(len(text)):
+        if len(text) - i <= best:
+            break
+        while i + best < len(text) and text[i:i + best + 1] in haystack:
+            best += 1
+    return best
