@@ -373,7 +373,7 @@ def test_a_held_row_on_the_slug_is_replaced_by_the_call_whose_quarter_is_decided
 
 @pytest.mark.db
 @needs_fixtures
-def test_a_stored_call_built_on_a_general_meeting_is_unpublished_not_deleted_and_its_slug_is_a_named_clash(s3):
+def test_a_stored_call_built_on_a_general_meeting_is_unpublished_and_the_real_call_takes_its_row(s3):
     eid = make_company("HINDUNILVR", "Hindustan Unilever Limited")
     web = Web()
     web.extra_rows["HINDUNILVR"] = [agm_row("HINDUNILVR")]
@@ -383,17 +383,37 @@ def test_a_stored_call_built_on_a_general_meeting_is_unpublished_not_deleted_and
     code, tr = go(web)
     assert code == 0 and tr[0] == "success", tr
     [row] = calls("zf-hindunilvr")                                                # still one row: nothing deleted, nothing renamed
-    assert row[:8] == ("zf-hindunilvr-call-q1-fy27", "stored", False, None, None, "q1-fy27", "exchange_pdf", "general_meeting")
-    assert q("select id from core.event where entity_id = %s and event_type = 'earnings_call'", eid) == [(seeded,)]
+    assert row[:8] == ("zf-hindunilvr-call-q1-fy27", "stored", False, "Q1 FY27", "text", "q1-fy27", "exchange_pdf", None)
+    assert row[8] is not None and row[13] != AGM_SEQ                              # the real filing's transcript now; unpublished until call_text
+    assert q("select id from core.event where entity_id = %s and event_type = 'earnings_call'", eid) == [(seeded,)]     # the same event
     c = checks(tr)
     assert AGM_FILE in c["general_meetings"]["detail"] and not c["general_meetings"]["passed"]
     assert "general meeting" in c["other_meetings"]["detail"]
     assert c["general_meeting_calls_unpublished"]["detail"].startswith("1 stored calls")
-    clash = c["call_clashes"]                                                     # the real Q1 FY27 call is named, not written
-    assert not clash["passed"] and "zf-hindunilvr-call-q1-fy27" in clash["detail"] and "general meeting" in clash["detail"]
-    assert q("select count(*) from core.document where entity_id = %s", eid)[0][0] == 0      # the clash writes nothing: it waits for Anand
+    assert "call_clashes" not in c
+    assert q("""select count(*) from core.document where entity_id = %s and event_id is null
+                   and title like '%%general meeting transcript%%'""", eid)[0][0] == 1          # the AGM transcript, another meeting's
     code, tr = go(web)                                                            # a second run changes nothing
     assert code == 0 and tr[1] == 0 and "general_meeting_calls_unpublished" not in checks(tr), tr
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_call_the_rules_set_aside_by_mistake_is_restored_when_its_own_filing_is_decided_again(s3):
+    eid = make_company("HINDUNILVR", "Hindustan Unilever Limited")
+    go(Web())
+    [before] = calls("zf-hindunilvr")
+    with psycopg.connect(ADMIN, autocommit=True) as c:                            # what the first detector did to NTPC's call
+        c.execute("""update equity.earnings_call set status_reason = 'general_meeting', fiscal_label = null, period_end = null,
+                            quarter_source = null, results_event_id = null where filing_key = %s""", (before[13],))
+        c.execute("update core.event set is_published = false where entity_id = %s", (eid,))
+    [set_aside] = calls("zf-hindunilvr")
+    assert set_aside[3] is None and set_aside[7] == "general_meeting"
+    code, tr = go(Web())
+    assert code == 0 and tr[0] == "success", tr
+    [after] = calls("zf-hindunilvr")
+    assert after == before                                                        # the same row, label, transcript and filing again
+    assert "call_clashes" not in checks(tr)
 
 
 @pytest.mark.db

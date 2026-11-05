@@ -49,8 +49,11 @@ held `no_quarter` or `quarter_conflict` never takes a slot; a late call becomes 
 A weekly or refresh run is given the database's calls by quarter for that rule, and the company's newest call by quarter
 (`rows.newest_quarter`, never by season). In `load`, a stored call whose filing this run set aside as a general meeting is
 **unpublished, not deleted** (event and transcript document `is_published = false`, `status_reason = 'general_meeting'`, quarter
-fields null as for a held call); a held row (`no_quarter`, `quarter_conflict`) is replaced by a call whose quarter is decided
-at the same slug. A slug held by a general-meeting row is a named clash (`call_clashes`), never renamed here.
+fields null as for a held call); a held row (`no_quarter`, `quarter_conflict`) or a row set aside as a general meeting is
+replaced by a call whose quarter is decided at the same slug (Anand, 5 Nov 2026: the real call takes the row, nothing is
+deleted or renamed; the replaced filing's documents become another meeting's). A row the rules set aside by mistake is
+restored the same way when its own filing is decided again as a call. A slug is a named clash (`call_clashes`) only when
+the quarter already has a call.
 """
 from __future__ import annotations
 
@@ -421,16 +424,16 @@ class EquityCallTranscripts(DocumentJob):
             """select e.id, e.status, c.status_reason, c.transcript_document_id, c.cover_letter_document_id, c.filing_key
                  from core.event e left join equity.earnings_call c on c.event_id = e.id
                 where e.event_type = 'earnings_call' and e.slug = %s""", (slug,)).fetchone()
-        if existing and existing[2] == "general_meeting":
-            if label:                                          # the slug a general meeting held: never renamed here (#285)
-                self.conflicts.append(f"{co.slug} {label}: the slug {slug} is held by a row set aside as a general meeting")
-            else:
-                self.outcome["skipped"] += 1
+        if existing and existing[2] == "general_meeting" and not (label and plan.status_reason is None):
+            self.outcome["skipped"] += 1                       # a set-aside row stays unless a decided call takes it (below)
             return 0
         # A call is replaced by a better outcome for its slug: a stored transcript for one that had none (as before), or a
-        # call whose quarter is decided for a held row (no_quarter, quarter_conflict), which only squatted on the slug (#285).
+        # call whose quarter is decided for a held row (no_quarter, quarter_conflict) or a row set aside as a general meeting,
+        # which only squat on the slug (#285; Anand, 5 Nov 2026: the real call takes the row, nothing is deleted or renamed).
+        # The row's own filing decided again (a rule change set it aside by mistake) is restored the same way.
         replaces = existing and ((existing[1] != "stored" and plan.status == "stored")
-                                 or (existing[2] in ("no_quarter", "quarter_conflict") and plan.status_reason is None))
+                                 or (existing[2] in ("no_quarter", "quarter_conflict", "general_meeting")
+                                     and plan.status_reason is None))
         if existing and not replaces:
             if existing[2] is None and plan.status_reason is None and existing[5] not in (None, a.filing_key):
                 self.differs.append(f"{slug} (stored from filing {existing[5]}; the rules now pick {a.exchange} {a.filing_key})")
@@ -476,7 +479,7 @@ class EquityCallTranscripts(DocumentJob):
                        (*fields, rows.season_key(plan.season), a.disseminated, a.exchange, a.url, a.filing_key, pdfs.PARSER_VERSION,
                         event_id))
             old = [i for i in existing[3:5] if i is not None and i not in (transcript_id, cover_id)]
-            if old:                                            # a replaced held filing's documents become another meeting's
+            if old:                                            # a replaced held or set-aside filing's documents become another meeting's
                 tx.execute("update core.document set event_id = null where id = any(%s) and event_id = %s", (old, event_id))
         else:
             tx.execute(

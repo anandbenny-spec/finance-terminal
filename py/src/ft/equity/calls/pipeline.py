@@ -291,7 +291,7 @@ def resolve_filing(run: Run, co: CompanyRef, a: Announcement, results: list[rows
         return Resolved(a, None)
     info = pdfs.read_pdf(f.body)
     cls = pdfs.classify_pdf(info)
-    if named or (cls in ("full", "cover_letter") and cl.is_general_meeting(pdfs.header_text(info))):
+    if named or (cls in ("full", "cover_letter") and cl.is_general_meeting(pdfs.header_text(info), short=False)):
         doc = None
         if cls == "full":
             doc = _with_text(_doc("call_transcript", a, f, info, co, f"filed {rows.india_date(a.disseminated).isoformat()}",

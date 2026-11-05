@@ -103,6 +103,25 @@ def test_an_earnings_call_that_mentions_the_agm_in_its_text_is_still_a_call():
     assert p.is_stored and p.quarter.label == "Q1 FY27" and run.report.general_meetings == [] and run.report.gm_filings == []
 
 
+@pytest.mark.parametrize("text, is_gm", [
+    ("Yours faithfully, (Ajay Garg) AGM (Finance) Investor Relations Department", False),         # NTPC's signature: a manager
+    ("Dr Reddy's Laboratories Limited 45th AGM Shareholders' Meeting", True),
+    ("Cipla Limited 88th Annual General Meeting held on 16 July 2025", True),
+    ("Notice of the Extra-Ordinary General Meeting", True), ("Q1 FY27 Earnings Conference Call", False)])
+def test_on_a_first_page_a_bare_agm_is_not_a_meeting_but_the_long_names_and_a_numbered_agm_are(text, is_gm):
+    assert cl.is_general_meeting(text, short=False) is is_gm
+
+
+def test_an_earnings_call_whose_cover_letter_is_signed_by_an_agm_is_still_a_call():
+    header = [CO.name, "Q1 FY27 Earnings Conference Call", "The call was held on 29 July 2026", "Yours faithfully,", "(Ajay Garg)",
+              "AGM (Finance)", "Investor Relations Department"]
+    call = call_pdf(header, seed=1)
+    assert "AGM (Finance)" in pdfs.header_text(pdfs.read_pdf(call))
+    run = run_for({"Call.pdf": call})
+    [p] = pl.process_company(run, CO, [filing("Call.pdf", at(8, 3))], [Q1_RESULTS], weekly=False, newest_call=None)
+    assert p.is_stored and p.quarter.label == "Q1 FY27" and run.report.general_meetings == [] and run.report.gm_filings == []
+
+
 def test_the_header_is_the_page_before_the_first_speaker_label():
     info = pdfs.read_pdf(call_pdf(["Header one", "Header two"], seed=3))
     assert pdfs.header_text(info) == "Header one\nHeader two"
