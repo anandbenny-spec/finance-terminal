@@ -1,6 +1,6 @@
 // readAll: a list read either returns every row the database holds or throws (Review 01, N2). The mocked client
 // cuts every response at `cap` rows, as the Data API's max_rows does, without an error.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { IncompleteReadError, MAX_ROWS, readAll, type PageQuery, type PageResult } from "./read";
 
 function table(n: number) {
@@ -76,5 +76,58 @@ describe("readAll", () => {
   it("refuses a page size above the cap", async () => {
     const { query } = api(table(3));
     await expect(readAll("series", query, 5000)).rejects.toThrow(RangeError);
+  });
+
+  describe("statement timeouts (#303)", () => {
+    const timeout = { message: "canceling statement due to statement timeout", code: "57014" };
+
+    it("retries a page once after a statement timeout and returns the rows", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const calls: [number, number][] = [];
+      let n = 0;
+      const query: PageQuery<{ id: number }> = async (from, to) => {
+        calls.push([from, to]);
+        if (n++ === 0) return { data: null, error: timeout, count: null };
+        return { data: table(5), error: null, count: 5 };
+      };
+      expect(await readAll("company_prices", query)).toEqual(table(5));
+      expect(calls).toEqual([[0, 999], [0, 999]]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain("company_prices");
+      warn.mockRestore();
+    });
+
+    it("recognises a timeout by its message alone", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let n = 0;
+      const query: PageQuery<{ id: number }> = async () =>
+        n++ === 0
+          ? { data: null, error: { message: "canceling statement due to statement timeout" }, count: null }
+          : { data: table(2), error: null, count: 2 };
+      expect(await readAll("rate_decision_moves", query)).toHaveLength(2);
+      warn.mockRestore();
+    });
+
+    it("throws after a second timeout", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let calls = 0;
+      const query: PageQuery<{ id: number }> = async () => {
+        calls++;
+        return { data: null, error: timeout, count: null };
+      };
+      await expect(readAll("company_prices", query)).rejects.toThrow(IncompleteReadError);
+      expect(calls).toBe(2);
+      warn.mockRestore();
+    });
+
+    it("does not retry any other error", async () => {
+      let calls = 0;
+      const query: PageQuery<{ id: number }> = async () => {
+        calls++;
+        return { data: null, error: { message: "permission denied", code: "42501" }, count: null };
+      };
+      await expect(readAll("company_prices", query)).rejects.toThrow("permission denied");
+      expect(calls).toBe(1);
+    });
   });
 });

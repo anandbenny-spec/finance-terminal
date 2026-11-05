@@ -131,6 +131,23 @@ describe("the Rate decisions tab", () => {
     expect(out).toMatch(/<span class="[^"]*\bblock\b[^"]*\bwhitespace-normal\b[^"]*">/);
   });
 
+  it("lets the sector table's headers and peer-group cells wrap, so it fits a 1,024 px panel (#303)", () => {
+    const rows = statRows([stat({ subject_kind: "peer_group", subject_key: "it", subject_name: "IT services" })], "d1").map((r) => ({
+      ...r,
+      group: { key: "it", label: "IT services", members: [{ slug: "tcs", name: "TCS" }] },
+    }));
+    const out = renderToStaticMarkup(<RateSectorTable rows={rows} caption="Sector" />);
+    const heads = [...out.matchAll(/<th\b[^>]*class="([^"]*)"/g)].map((m) => m[1]);
+    expect(heads).toHaveLength(5);
+    for (const h of heads) {
+      expect(h).toContain("whitespace-normal");
+      expect(h).not.toContain("whitespace-nowrap");
+    }
+    const cells = [...out.matchAll(/<td\b[^>]*class="([^"]*)"/g)].map((m) => m[1]);
+    expect(cells[0]).toContain("whitespace-normal");
+    expect(cells[2]).toContain("whitespace-nowrap");
+  });
+
   it("keeps the stored statistics out of the page when n is held back", () => {
     const t = text(html(rates({ stats: [stat({ n: null, median_excess_pct: null })] })));
     expect(t).toContain("No decision-day moves are published for this company yet.");
