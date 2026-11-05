@@ -35,6 +35,10 @@ export type Column<Row> = {
   align?: "left" | "right";
   /** A value to sort by; columns without one don't sort. */
   sortValue?: (row: Row) => string | number | null;
+  /** Let the header text run over two lines (a long header must not push the table past its panel; #303). */
+  wrapHeader?: boolean;
+  /** Let this column's cells wrap (long text such as a peer group's members; numbers never wrap). */
+  wrapCell?: boolean;
 };
 
 export function DataTable<Row>({
@@ -85,6 +89,8 @@ export function DataTable<Row>({
     getRowId: rowKey,
   });
   const align = new Map(columns.map((c) => [c.id, c.align ?? "left"]));
+  const wrapHeader = new Set(columns.filter((c) => c.wrapHeader).map((c) => c.id));
+  const wrapCell = new Set(columns.filter((c) => c.wrapCell).map((c) => c.id));
 
   return (
     <div
@@ -106,7 +112,8 @@ export function DataTable<Row>({
                     scope="col"
                     aria-sort={sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : undefined}
                     className={cn(
-                      "h-8 border-b border-line-strong px-3 text-meta font-medium whitespace-nowrap text-ink-2",
+                      "h-8 border-b border-line-strong px-3 text-meta font-medium text-ink-2",
+                      wrapHeader.has(header.column.id) ? "whitespace-normal" : "whitespace-nowrap",
                       right ? "text-right" : "text-left",
                       i === 0 && "sticky left-0 z-10 bg-raised",
                     )}
@@ -142,7 +149,8 @@ export function DataTable<Row>({
                 <td
                   key={cell.id}
                   className={cn(
-                    "px-3 whitespace-nowrap text-ink-1",
+                    "px-3 text-ink-1",
+                    wrapCell.has(cell.column.id) ? "whitespace-normal" : "whitespace-nowrap",
                     dense ? "h-7" : "h-8",
                     align.get(cell.column.id) === "right" ? "text-right" : "text-left",
                     i === 0 && "sticky left-0 bg-panel group-hover:bg-raised",

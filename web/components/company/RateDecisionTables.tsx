@@ -138,12 +138,14 @@ export function RateSectorTable({ rows, caption }: { rows: SectorRow[]; caption:
     {
       id: "group",
       header: "Peer group",
+      wrapHeader: true,
+      wrapCell: true,
       sortValue: (r) => r.subjectName,
       cell: (r) => (
         <span>
           <span className="text-ink-1">{r.subjectName}</span>
           {r.group && r.group.members.length > 0 && (
-            <span className="block max-w-(--reading-width) text-meta whitespace-normal text-ink-2">
+            <span className="block max-w-xs text-meta whitespace-normal text-ink-2">
               {r.group.members.map((m, i) => (
                 <span key={m.slug}>
                   {i > 0 && ", "}
@@ -157,10 +159,10 @@ export function RateSectorTable({ rows, caption }: { rows: SectorRow[]; caption:
         </span>
       ),
     },
-    { id: "decision", header: "Decision", cell: decisionCell },
-    { id: "n", header: "Decisions (n)", align: "right", sortValue: (r) => r.n, cell: (r) => formatCount(r.n) },
-    { id: "median", header: "Median excess (%)", align: "right", sortValue: (r) => r.stat.median_excess_pct, cell: (r) => stat(r, r.stat.median_excess_pct, false) },
-    { id: "positive", header: "Share with a positive excess (%)", align: "right", cell: (r) => (r.fewMoves ? <Few listed={false} /> : formatFraction(r.stat.share_positive)) },
+    { id: "decision", header: "Decision", wrapHeader: true, cell: decisionCell },
+    { id: "n", header: "Decisions (n)", wrapHeader: true, align: "right", sortValue: (r) => r.n, cell: (r) => formatCount(r.n) },
+    { id: "median", header: "Median excess (%)", wrapHeader: true, align: "right", sortValue: (r) => r.stat.median_excess_pct, cell: (r) => stat(r, r.stat.median_excess_pct, false) },
+    { id: "positive", header: "Share with a positive excess (%)", wrapHeader: true, align: "right", cell: (r) => (r.fewMoves ? <Few listed={false} /> : formatFraction(r.stat.share_positive)) },
   ];
   return <DataTable columns={columns} rows={rows} rowKey={(r) => r.key} caption={caption} scroll empty={<StateNote kind="empty">No peer group has decision-day moves yet.</StateNote>} />;
 }

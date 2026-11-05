@@ -11,7 +11,7 @@ export const MAX_ROWS = 1000;
 /** What one page of a PostgREST read resolves to (supabase-js's response, the parts used here). */
 export type PageResult<T> = {
   data: T[] | null;
-  error: { message: string } | null;
+  error: { message: string; code?: string } | null;
   count: number | null;
 };
 
@@ -28,6 +28,14 @@ export class IncompleteReadError extends Error {
   }
 }
 
+/** How long to wait before the one retry of a page that hit a statement timeout. */
+export const RETRY_DELAY_MS = 300;
+
+/** Postgres code 57014 (query_canceled), or the message its statement timeout carries. */
+function isStatementTimeout(error: { message: string; code?: string }): boolean {
+  return error.code === "57014" || /canceling statement due to statement timeout/i.test(error.message);
+}
+
 /** Every row the query matches, checked against the exact count; throws instead of returning a cut list. */
 export async function readAll<T>(what: string, query: PageQuery<T>, pageSize: number = MAX_ROWS): Promise<T[]> {
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MAX_ROWS) {
@@ -36,7 +44,14 @@ export async function readAll<T>(what: string, query: PageQuery<T>, pageSize: nu
   const rows: T[] = [];
   let total: number | null = null;
   do {
-    const page = await query(rows.length, rows.length + pageSize - 1);
+    const from = rows.length;
+    let page = await query(from, from + pageSize - 1);
+    if (page.error && isStatementTimeout(page.error)) {
+      // A cold read on a quiet project can hit the role's 3 s limit (#303): ask for the same page once more.
+      console.warn(`readAll: ${what}: statement timeout, retrying the page once`);
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      page = await query(from, from + pageSize - 1);
+    }
     if (page.error) throw new IncompleteReadError(what, page.error.message);
     if (page.count === null || !Number.isInteger(page.count)) {
       throw new IncompleteReadError(what, "the response carried no exact count");
