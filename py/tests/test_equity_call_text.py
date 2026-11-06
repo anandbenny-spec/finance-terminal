@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import pytest
 import yaml
+from call_pdfs import call_pdf
 
 from ft.engines.document.text import (
     PageSpan,
@@ -423,14 +424,15 @@ NSE = "https://nsearchives.nseindia.com/corporate/"
 class Files:
     """A fake getter serving the saved PDFs by URL, and recording what was asked for."""
 
-    def __init__(self, exchange: dict[str, str], company: dict[str, str | bytes] | None = None):
+    def __init__(self, exchange: dict[str, str | bytes], company: dict[str, str | bytes] | None = None):
         self.exchange, self.company, self.asked = exchange, company or {}, []
 
     def __call__(self, url: str, kind: str):
         self.asked.append(url)
         if kind == "exchange":
             name = url.rsplit("/", 1)[-1]
-            body = pdf_bytes(self.exchange[name]) if name in self.exchange else None
+            v = self.exchange.get(name)
+            body = v if isinstance(v, bytes) else pdf_bytes(v) if v is not None else None
         else:
             v = self.company.get(url)
             body = pdf_bytes(v) if isinstance(v, str) else v
@@ -586,9 +588,11 @@ def test_a_newest_season_that_ends_on_the_company_website_brings_in_the_season_b
     new = filing(CO["maruti"], letter, datetime(2026, 2, 2, 15, 29, tzinfo=UTC))
     plans = pl.process_company(run_for(f), CO["maruti"], [old, new], [], weekly=False, newest_call=None)
     assert [(p.season, p.status) for p in plans] == [("Q3 FY26", "on_company_website"), ("Q2 FY26", "stored")]
-    # never more than two seasons
+    # never more than two seasons. The same letter in three seasons names one quarter (Q3 FY26), and a call is chosen by quarter
+    # (#285), so each season has its own results: the two older letters disagree with them and are held, the newest agrees
     letters = [filing(CO["maruti"], letter, datetime(y, m, 3, 12, 0, tzinfo=UTC), key=f"l{y}{m}") for y, m in ((2025, 8), (2025, 11), (2026, 2))]
-    plans = pl.process_company(run_for(Files({letter: letter}, {page: b"x"})), CO["maruti"], letters, [], weekly=False, newest_call=None)
+    own_results = [res(1, (2025, 7, 25), date(2025, 6, 30)), res(2, (2025, 10, 25), date(2025, 9, 30)), res(3, (2026, 1, 24), date(2025, 12, 31))]
+    plans = pl.process_company(run_for(Files({letter: letter}, {page: b"x"})), CO["maruti"], letters, own_results, weekly=False, newest_call=None)
     assert [p.season for p in plans] == ["Q3 FY26", "Q2 FY26"]
 
 
@@ -616,16 +620,17 @@ def test_a_quarter_conflict_holds_the_call_and_it_does_not_count_as_stored():
 @needs_fixtures
 def test_a_later_filing_of_the_season_is_a_revised_version_or_another_meeting():
     name = "HINDUNILVR_04082026171319_SEIntimationTranscriptofEarningsCallSigned.pdf"
-    other = "CIPLA_15052026182859_EarningscalltranscriptMay26signedrc.pdf"
+    # another call of the same quarter (Q1 FY27) with other text; a transcript of an earlier quarter would now be a late call
+    other = call_pdf(["Hindustan Unilever Limited", "Q1 FY27 Investor Day", "Event held on 5 August 2026"], seed=5)
     first = filing(CO["hul"], name, datetime(2026, 8, 4, 11, 43, tzinfo=UTC), key="1")
     again = filing(CO["hul"], "HUL_again.pdf", datetime(2026, 8, 5, 10, 0, tzinfo=UTC), key="2")
-    meeting = filing(CO["hul"], "HUL_agm.pdf", datetime(2026, 8, 6, 10, 0, tzinfo=UTC), key="3")
-    f = Files({name: name, "HUL_again.pdf": name, "HUL_agm.pdf": other})
+    meeting = filing(CO["hul"], "HUL_other.pdf", datetime(2026, 8, 6, 10, 0, tzinfo=UTC), key="3")
+    f = Files({name: name, "HUL_again.pdf": name, "HUL_other.pdf": other})
     run = run_for(f)
     [p] = pl.process_company(run, CO["hul"], [first, again, meeting], [], weekly=False, newest_call=None)
     assert [(x.kind, x.filing.filing_key) for x in p.extras] == [("revised", "2"), ("other_meeting", "3")]
     assert p.filing.filing_key == "1" and p.transcript.external_key == f"NSE/{name}"            # the call keeps its first version
-    assert run.report.other_meetings and "HUL_agm.pdf" in run.report.other_meetings[0]
+    assert run.report.other_meetings and "HUL_other.pdf" in run.report.other_meetings[0] and "a different call" in run.report.other_meetings[0]
 
 
 @needs_fixtures
@@ -676,19 +681,23 @@ def test_two_runs_over_the_same_filings_make_the_same_plan():
 HUL_PDF = "HINDUNILVR_04082026171319_SEIntimationTranscriptofEarningsCallSigned.pdf"
 HIST = [("HUL_a.pdf", datetime(2025, 2, 3, 12, 0, tzinfo=UTC), "Q3 FY25"), ("HUL_b.pdf", datetime(2025, 5, 12, 12, 0, tzinfo=UTC), "Q4 FY25"),
         ("HUL_c.pdf", datetime(2025, 8, 11, 12, 0, tzinfo=UTC), "Q1 FY26")]
+# A call is chosen by quarter (#285), so a season's transcript must name that season's quarter: one synthetic transcript per season
+# (the saved HUL file names Q1 FY27 and would be the same quarter's call in all three).
+HIST_PDFS = {name: call_pdf(["Hindustan Unilever Limited", f"{season} Earnings Conference Call"], seed=i + 1)
+             for i, (name, _, season) in enumerate(HIST)}
 
 
 def history_filings(co):
     return [filing(co, name, when, key=season) for name, when, season in HIST]
 
 
-@needs_fixtures
 def test_a_backfill_processes_every_season_oldest_first_and_a_refresh_still_stops_at_the_newest_stored():
-    f = Files({name: HUL_PDF for name, _, _ in HIST})
+    f = Files(dict(HIST_PDFS))
     plans = pl.process_company(run_for(f), CO["hul"], history_filings(CO["hul"]), [], weekly=False, newest_call=None, history=True)
     assert [(p.season, p.status) for p in plans] == [(s, "stored") for _, _, s in HIST]               # one call per season, oldest first
+    assert [p.quarter.label for p in plans] == [s for _, _, s in HIST]                                # each in its own quarter
     assert [u.rsplit("/", 1)[-1] for u in f.asked] == [n for n, _, _ in HIST]
-    f = Files({name: HUL_PDF for name, _, _ in HIST})
+    f = Files(dict(HIST_PDFS))
     [only] = pl.process_company(run_for(f), CO["hul"], history_filings(CO["hul"]), [], weekly=False, newest_call=None)
     assert only.season == "Q1 FY26" and len(f.asked) == 1                                              # 2B-lite's rule, unchanged
 
@@ -732,21 +741,22 @@ def test_a_weekly_run_after_a_history_backfill_fetches_nothing_older_than_the_ne
     assert p.season == "Q2 FY26" and [u.rsplit("/", 1)[-1] for u in f.asked] == ["HUL_d.pdf"]
 
 
-@needs_fixtures
 def test_the_latest_call_is_the_same_with_older_calls_present():
-    f = Files({name: HUL_PDF for name, _, _ in HIST})
+    f = Files(dict(HIST_PDFS))
     with_history = pl.process_company(run_for(f), CO["hul"], history_filings(CO["hul"]), [], weekly=False, newest_call=None, history=True)
-    f = Files({name: HUL_PDF for name, _, _ in HIST})
+    f = Files(dict(HIST_PDFS))
     [lite] = pl.process_company(run_for(f), CO["hul"], history_filings(CO["hul"]), [], weekly=False, newest_call=None)
     latest = max((p for p in with_history if p.is_stored), key=lambda p: rows.season_order(p.season))
     assert (latest.season, latest.filing.filing_key) == (lite.season, lite.filing.filing_key)
     assert latest.transcript.text.extracted.sha256 == lite.transcript.text.extracted.sha256
 
 
-def _plan(co, season, status, reason=None):
+def _plan(co, season, status, reason=None, quarter=None):
+    """A plan for the season's own quarter (a held one has none), or for `quarter`: a late call filed in this season (#285)."""
     a = filing(co, f"{co.slug}-{season}.pdf", datetime(2026, 8, 4, 11, 43, tzinfo=UTC), key=f"{co.slug}{season}")
-    return pl.CallPlan(co, season, a, status, "exchange_pdf" if status == "stored" else "none", rows.Quarter("Q1 FY27", date(2026, 6, 30), "text"),
-                       status_reason=reason)
+    label = None if reason else quarter or season
+    q = rows.Quarter(label, rows.period_end_of(label) if label else None, "text" if label else None)
+    return pl.CallPlan(co, season, a, status, "exchange_pdf" if status == "stored" else "none", q, status_reason=reason)
 
 
 def _filed(co, season):
@@ -768,6 +778,9 @@ def test_coverage_by_season_counts_each_outcome_oldest_season_first():
     # a first-page find has no transcript announcement, only its plan: it still counts as a company with a filing
     [c] = pl.coverage_by_season([], [_plan(hul, "Q3 FY25", "stored")])
     assert (c.season, c.companies, c.stored, c.no_call) == ("Q3 FY25", 1, 1, 0)
+    # a late call (a Q4 call filed in the Q1 season) is its own quarter's, not the season's: the season has no call of its own (#285)
+    [c] = pl.coverage_by_season([_filed(hul, "Q1 FY27")], [_plan(hul, "Q1 FY27", "stored", quarter="Q4 FY26")])
+    assert (c.season, c.companies, c.stored, c.no_call) == ("Q1 FY27", 1, 0, 1)
 
 
 def test_the_raw_storage_summary_reports_this_runs_bytes_and_the_buckets_size_against_the_stop():

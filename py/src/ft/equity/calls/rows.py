@@ -1,10 +1,13 @@
 """The rules that turn fetched transcripts into call rows (Spec 02B §4, §13.3; job 2B-07). Pure functions.
 
 - **Selection** (§13.3): per company, the newest season with a transcript filing; the season before it too only if the
-  newest doesn't end `stored`. A weekly run processes only a season newer than the company's newest call.
+  newest doesn't end `stored`. A weekly run processes only a season newer than the company's newest call. **A call is
+  chosen by fiscal quarter** (job 2B-07b, #285; pipeline.py): the order of calls is the order of their quarters
+  (`quarter_order`, `newest_quarter`), never of the season they were filed in.
 - **The quarter** (§4): the company's latest `results_filing` at or before the transcript's dissemination time and no
   more than 45 days before it (`results_link`), checked against the quarter parsed from the first pages: a
   disagreement holds the call (`quarter_conflict`). No results event: the parsed quarter (`text`). Neither: held.
+  **A results period counts at its first filing** (#285 rule 2): a re-filing (`-r2`, `-r3`) doesn't restart the 45 days.
 - **The call date** (§4): from the cover letter or the first pages; else the date an intimation filed by the same
   company in the 10 days before the transcript gives for the call; else none.
 - **A revised version** (§4): a later filing in the same season whose call date matches the first's, or whose text is at
@@ -43,20 +46,56 @@ def season_key(season: str) -> str:
 
 
 def season_order(season: str) -> tuple[int, int]:
-    """Sortable (fiscal year, quarter) of "Q2 FY27"."""
+    """Sortable (fiscal year, quarter) of "Q2 FY27": a season's or a fiscal quarter's, which order alike."""
     m = re.fullmatch(r"Q([1-4]) FY(\d{2})", season)
     return (int(m.group(2)), int(m.group(1))) if m else (0, 0)
 
 
+def quarter_order(label: str | None) -> tuple[int, int]:
+    """Where a call's quarter falls in time (the same order as its `period_end`); a held call has none."""
+    return season_order(label) if label else (0, 0)
+
+
+def newest_quarter(calls: Iterable[tuple[str | None, str]]) -> str | None:
+    """The quarter of a company's newest call, by quarter and never by the season it was filed in (#285 rule 1): a late
+    Q4 call filed in the Q1 season is older than the Q1 call. `calls` are `(fiscal label, season key)`; a held call (no
+    label) counts at its season."""
+    labels = [label or key.upper().replace("-", " ") for label, key in calls]
+    return max(labels, key=season_order) if labels else None
+
+
 @dataclass(frozen=True)
 class ResultsEvent:
-    event_id: int
-    occurs_at: datetime
+    event_id: int                      # the current version of the period's results filing
+    occurs_at: datetime                # when that version was filed
     period_end: date
+    first_at: datetime | None = None   # when the period's results were first filed (any version); None = occurs_at
 
     @property
     def label(self) -> str | None:
         return fiscal_label(self.period_end)
+
+    @property
+    def first(self) -> datetime:
+        """The time the 45 days run from (#285 rule 2)."""
+        return self.first_at or self.occurs_at
+
+
+def with_first_filings(versions: Iterable[tuple[int, datetime, date, bool]]) -> list[ResultsEvent]:
+    """One `ResultsEvent` per period end from every version of the company's results filings, superseded ones included:
+    `(event id, filed at, period end, superseded)`. The event is the period's current version; `first_at` is the earliest
+    time any version was filed (#285 rule 2). A period whose versions are all superseded has no current event: skipped."""
+    by_period: dict[date, list[tuple[int, datetime, bool]]] = {}
+    for event_id, filed, period_end, superseded in versions:
+        by_period.setdefault(period_end, []).append((event_id, filed, superseded))
+    out = []
+    for period_end, group in by_period.items():
+        current = [g for g in group if not g[2]]
+        if not current:
+            continue
+        event_id, filed, _ = max(current, key=lambda g: (g[1], g[0]))
+        out.append(ResultsEvent(event_id, filed, period_end, min(g[1] for g in group)))
+    return sorted(out, key=lambda r: (r.occurs_at, r.period_end))
 
 
 @dataclass(frozen=True)
@@ -77,10 +116,10 @@ def period_end_of(label: str) -> date | None:
 
 
 def decide_quarter(disseminated: datetime, results: Iterable[ResultsEvent], parsed: str | None) -> Quarter:
-    """§4's quarter rule."""
-    near = [r for r in results if r.label and r.occurs_at <= disseminated and disseminated - r.occurs_at <= RESULTS_WITHIN]
+    """§4's quarter rule. A results period counts at its first filing (#285 rule 2)."""
+    near = [r for r in results if r.label and r.first <= disseminated and disseminated - r.first <= RESULTS_WITHIN]
     if near:
-        best = max(near, key=lambda r: (r.occurs_at, r.period_end))
+        best = max(near, key=lambda r: (r.first, r.period_end))
         if parsed and parsed != best.label:
             return Quarter(None, None, None, best.event_id, "quarter_conflict")
         return Quarter(best.label, best.period_end, "results_link", best.event_id)

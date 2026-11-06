@@ -5,10 +5,22 @@ writes.
 
 Per company: a weekly or refresh run processes the newest season with a transcript filing, and the season before it too
 only if the newest call doesn't end `stored` (at most two). **A backfill processes every season in its window** (Plan 04b
-P2), oldest first, so the first filing linked to a quarter's results is that quarter's call (§4). Within a season the call
-is the first filing that yields a stored transcript (else the first filing's outcome); the season's other filings are
-revised versions of it or other meetings (§4). **First pages are opened only for seasons from `first_pages_from`** (Plan 04b
-P3: `config/equity/calls.yaml`); earlier seasons are classified from the subject and the file name.
+P2), oldest first, so the first filing linked to a quarter's results is that quarter's call (§4). **First pages are opened
+only for seasons from `first_pages_from`** (Plan 04b P3: `config/equity/calls.yaml`); earlier seasons are classified from
+the subject and the file name.
+
+**A call is chosen by fiscal quarter** (job 2B-07b, #285; Spec 02B §4: one call per company per fiscal quarter). Every
+filing of a season is resolved (fetch, the full test, the quarter by `rows.decide_quarter`), then:
+- a filing that names a general meeting (subject, file name, or the page before the first speaker label) is set aside
+  before any quarter is decided: registered as another meeting, never a call (rule 3);
+- a stored filing held `no_quarter` or `quarter_conflict` never takes a slot;
+- the season's call is the first stored filing whose quarter is the season's own; a later stored filing of the same
+  quarter is a revised version of it or another meeting (§4);
+- a stored filing of another quarter (a **late call**) is that quarter's call if the company has no stored call for it,
+  in this run or in the database (a weekly or refresh run is given the database's calls); else it is compared with that
+  call as above (rule 1);
+- no filing resolves: the season's outcome is the first filing's, held with its reason, as before.
+`one_call_per_quarter` then leaves one call per quarter across the seasons of the run.
 """
 from __future__ import annotations
 
@@ -74,7 +86,16 @@ class Extra:
     kind: str                            # revised | other_meeting
     filing: Announcement
     doc: Doc
-    reason: str
+    reason: str                          # why it is not the call (an other meeting) or how it is the same (a revision)
+
+
+@dataclass
+class StoredCall:
+    """A call already in the database for a quarter (given to a weekly or refresh run; #285 rule 1): its call date, and a
+    function returning its transcript text, called only when a late filing of the same quarter has to be compared."""
+    label: str
+    call_date: date | None
+    text: Callable[[], str | None]
 
 
 @dataclass
@@ -98,6 +119,11 @@ class CallPlan:
         """Counts as the company's latest call: a stored transcript whose quarter isn't in doubt."""
         return self.status == "stored" and self.status_reason is None
 
+    @property
+    def late(self) -> bool:
+        """Filed in a season other than its quarter's (#285): a late call. Held calls have no quarter."""
+        return self.quarter.label is not None and self.quarter.label != self.season
+
 
 @dataclass
 class Report:
@@ -110,7 +136,11 @@ class Report:
     page_map_failed: list[str] = field(default_factory=list)
     not_served: list[str] = field(default_factory=list)                       # an exchange file that could not be fetched
     not_a_transcript: list[str] = field(default_factory=list)                 # classified a transcript, read as something else
-    other_meetings: list[str] = field(default_factory=list)
+    other_meetings: list[str] = field(default_factory=list)                   # with the reason each is not a call
+    late_calls: list[str] = field(default_factory=list)                       # company, quarter, season filed in, filed date
+    general_meetings: list[str] = field(default_factory=list)                 # filings set aside as a general meeting
+    gm_filings: list[tuple[int, str, str]] = field(default_factory=list)      # the same, as (entity id, exchange, filing key)
+    stored_revised: list[str] = field(default_factory=list)                   # a late filing that revises a call in the database
     first_pages: int = 0                                                       # filings whose first page was opened
 
 
@@ -172,9 +202,9 @@ def _name(co: CompanyRef, a: Announcement) -> str:
     return f"{co.slug} {a.season}"
 
 
-def _doc(doc_type: str, a: Announcement, f: File, info: pdfs.PdfInfo, co: CompanyRef, label: str) -> Doc:
+def _doc(doc_type: str, a: Announcement, f: File, info: pdfs.PdfInfo, co: CompanyRef, label: str, *, meeting: bool = False) -> Doc:
     source = a.exchange.lower()
-    kind = "call transcript" if doc_type == "call_transcript" else "call cover letter"
+    kind = "general meeting transcript" if meeting else "call transcript" if doc_type == "call_transcript" else "call cover letter"
     return Doc(doc_type, source, f"{a.exchange}/{a.file_name or a.filing_key}", f.url,
                f"{co.name} {kind}, {label}", f, info, a.disseminated)
 
@@ -238,18 +268,37 @@ class Resolved:
     company_url: str | None = None
     info: pdfs.PdfInfo | None = None     # the exchange file's
     quarter: rows.Quarter | None = None
+    meeting: str | None = None           # general_meeting: set aside before any quarter is decided (#285 rule 3)
+
+
+def quarter_of(r: Resolved, results: list[rows.ResultsEvent]) -> rows.Quarter:
+    """§4's quarter of a resolved filing: the results link, checked against the quarter parsed from its first pages."""
+    parsed = (r.transcript.info.quarter if r.transcript else None) or (r.cover.info.quarter if r.cover else None) \
+        or (r.info.quarter if r.info else None)
+    return rows.decide_quarter(r.filing.disseminated, results, parsed)
 
 
 def resolve_filing(run: Run, co: CompanyRef, a: Announcement, results: list[rows.ResultsEvent]) -> Resolved:
-    """Fetch and classify one transcript filing; for a cover letter follow its links, then the curated table."""
+    """Fetch and classify one transcript filing; for a cover letter follow its links, then the curated table. A filing that
+    names a general meeting, in its subject, its file name or the page before its first speaker label, is set aside as one
+    (#285 rule 3): its transcript is kept as another meeting's, and no quarter is decided for it."""
+    named = cl.is_general_meeting(a.subject) or cl.is_general_meeting(a.file_name)
     f = run.exchange_file(a)
     if f is None:
+        if named:
+            return Resolved(a, None, meeting="general_meeting")
         run.report.not_served.append(f"{_name(co, a)} ({a.exchange} {a.file_name or a.filing_key})")
         return Resolved(a, None)
     info = pdfs.read_pdf(f.body)
     cls = pdfs.classify_pdf(info)
+    if named or (cls in ("full", "cover_letter") and cl.is_general_meeting(pdfs.header_text(info), short=False)):
+        doc = None
+        if cls == "full":
+            doc = _with_text(_doc("call_transcript", a, f, info, co, f"filed {rows.india_date(a.disseminated).isoformat()}",
+                                  meeting=True), run, co, a)
+        return Resolved(a, None, "none", doc, None, None, info, meeting="general_meeting")
     if cls == "full":
-        label = a.season
+        label = rows.decide_quarter(a.disseminated, results, info.quarter).label or a.season      # #285 rule 4: the call's quarter
         return Resolved(a, "stored", "exchange_pdf", _with_text(_doc("call_transcript", a, f, info, co, label), run, co, a), None,
                         None, info)
     if cls == "cover_letter":
@@ -325,10 +374,12 @@ def subject_line(page_text: str) -> str:
 # ---------------------------------------------------------------------------------------------- one company
 def process_company(run: Run, co: CompanyRef, announcements: list[Announcement], results: list[rows.ResultsEvent], *,
                     weekly: bool, newest_call: str | None, history: bool = False,
-                    first_pages_from: str | None = None) -> list[CallPlan]:
+                    first_pages_from: str | None = None, stored: dict[str, StoredCall] | None = None) -> list[CallPlan]:
     """The company's call plans. A weekly or refresh run: its newest season with a transcript filing, and the season before
     it if the newest doesn't end stored (§13.3). A backfill (`history`, Plan 04b P2): every season with a transcript
-    filing, oldest first. `first_pages_from` (P3): seasons before it are not given first-page checks."""
+    filing, oldest first. `first_pages_from` (P3): seasons before it are not given first-page checks. `stored` (#285): the
+    company's calls already in the database by quarter, for the late-call rule; a backfill decides everything afresh and
+    ignores it. `newest_call` is the quarter of the company's newest call (`rows.newest_quarter`)."""
     mine = [a for a in announcements if a.entity_id == co.entity_id]
     by_season: dict[str, list[Announcement]] = {}
     for a in mine:
@@ -347,13 +398,22 @@ def process_company(run: Run, co: CompanyRef, announcements: list[Announcement],
     seasons = rows.seasons_to_process(by_season, newest_call, weekly)
     if history:
         seasons = sorted(seasons, key=rows.season_order)       # the first filing linked to a quarter's results is its call (§4)
+    done = 0
     for season in seasons:
         filings = sorted(by_season[season], key=lambda a: a.disseminated)
-        plan = build_call(run, co, season, filings, [a for a in mine if a.kind == "intimation" and a.season == season], results)
-        if plan is not None:
-            plans.append(plan)
-            if not history and (plan.is_stored or len(plans) >= MAX_SEASONS):
-                break
+        made = build_calls(run, co, season, filings, [a for a in mine if a.kind == "intimation" and a.season == season], results,
+                           None if history else stored)
+        if not made:
+            continue
+        plans += made
+        done += 1
+        if not history and (any(p.is_stored and p.quarter.label == season for p in made) or done >= MAX_SEASONS):
+            break
+    plans = one_call_per_quarter(run.report, co, plans)
+    for p in plans:
+        if p.late:
+            run.report.late_calls.append(f"{co.slug} {p.quarter.label} (filed {rows.india_date(p.filing.disseminated).isoformat()} "
+                                         f"in the {p.season} season)")
     return plans
 
 
@@ -385,7 +445,7 @@ def coverage_by_season(announcements: list[Announcement], plans: list[CallPlan])
         filed.setdefault(p.season, set()).add(p.company.entity_id)
     out = []
     for season in sorted(filed, key=rows.season_order):
-        mine = [p for p in plans if p.season == season]
+        mine = [p for p in plans if p.season == season and not p.late]       # a late call is its own quarter's, not the season's
         held = sum(1 for p in mine if p.status_reason)
         out.append(SeasonCoverage(
             season, len(filed[season]),
@@ -422,37 +482,123 @@ def _season_of(occurs_at: datetime) -> str:
     return season_of_filing(occurs_at)
 
 
-def build_call(run: Run, co: CompanyRef, season: str, filings: list[Announcement], intimations: list[Announcement],
-               results: list[rows.ResultsEvent]) -> CallPlan | None:
-    """The season's call (the first filing that yields a stored transcript, else the first filing's outcome) and its
-    other filings."""
-    resolved: dict[str, Resolved] = {}
-    chosen: Resolved | None = None
-    for a in filings:
-        resolved[a.filing_key] = r = resolve_filing(run, co, a, results)
-        if r.status == "stored":
-            chosen = r
-            break
-    if chosen is None:
-        chosen = next((r for r in resolved.values() if r.status is not None), None)
-        if chosen is None:
-            return None
-    plan = _plan(co, season, chosen, intimations, results, run.report)
-    if plan.transcript is None or plan.transcript.text is None:
+def _line(co: CompanyRef, a: Announcement, why: str) -> str:
+    return f"{_name(co, a)} ({a.file_name or a.filing_key}): {why}"
+
+
+def _file_date(r: Resolved) -> date | None:
+    """The call date a filing's own pages give."""
+    return (r.transcript.info.call_date if r.transcript else None) or (r.info.call_date if r.info else None)
+
+
+def _add_extra(rep: Report, co: CompanyRef, plan: CallPlan, r: Resolved, why: str) -> bool:
+    """A filing that isn't the plan's call: a revised version of it if `rows.is_revised` says so (§4), else another meeting,
+    named with `why`. Only filings with a transcript text are compared (False for a cover letter or an unreadable file)."""
+    if plan.transcript is None or plan.transcript.text is None or r.transcript is None or r.transcript.text is None:
+        return False
+    if rows.is_revised(plan.call_date, _file_date(r), plan.transcript.text.extracted.text, r.transcript.text.extracted.text):
+        plan.extras.append(Extra("revised", r.filing, r.transcript, "same call date or at least 90% the same text"))
+    else:
+        plan.extras.append(Extra("other_meeting", r.filing, r.transcript, why))
+        rep.other_meetings.append(_line(co, r.filing, why))
+    return True
+
+
+def _against_stored(rep: Report, co: CompanyRef, label: str, stored: StoredCall, group: list[Resolved]) -> None:
+    """Late filings of a quarter that already has a call in the database: each is compared with it by `rows.is_revised`.
+    Nothing is written for them (a stored call is never rewritten); a revision is named, another meeting is named."""
+    for r in group:
+        text = r.transcript.text.extracted.text if r.transcript and r.transcript.text else None
+        old = stored.text() if text is not None else None
+        if old is not None and rows.is_revised(stored.call_date, _file_date(r), old, text):
+            rep.stored_revised.append(_line(co, r.filing, f"a revised version of the stored {label} call"))
+        else:
+            rep.other_meetings.append(_line(co, r.filing, f"the {label} quarter already has a call"))
+
+
+HELD_WHY = {"no_quarter": "no quarter", "quarter_conflict": "quarter conflict"}
+
+
+def build_calls(run: Run, co: CompanyRef, season: str, filings: list[Announcement], intimations: list[Announcement],
+                results: list[rows.ResultsEvent], stored: dict[str, StoredCall] | None = None) -> list[CallPlan]:
+    """The calls of one season's filings, by fiscal quarter (#285). Normally one, the season's own; a late call adds its own
+    quarter's. Empty when no filing of the season resolves to anything."""
+    rep = run.report
+    resolved = [resolve_filing(run, co, a, results) for a in filings]
+    for r in resolved:
+        if r.meeting:
+            rep.general_meetings.append(_line(co, r.filing, "names an annual or extraordinary general meeting"))
+            rep.gm_filings.append((co.entity_id, r.filing.exchange, r.filing.filing_key))
+    pairs = [(r, quarter_of(r, results)) for r in resolved if r.status is not None]
+    groups: dict[str, list[Resolved]] = {}                  # stored filings with a decided quarter, by quarter, in filing order
+    for r, q in pairs:
+        if r.status == "stored" and not q.held_reason:
+            groups.setdefault(q.label, []).append(r)
+
+    def plan_of(r: Resolved) -> CallPlan:
+        return _plan(co, season, r, intimations, results, rep)
+
+    def with_extras(group: list[Resolved]) -> CallPlan:
+        plan = plan_of(group[0])
+        why = "a different call" if plan.quarter.label == season else f"the {plan.quarter.label} quarter already has a call"
+        for r in group[1:]:                                 # a later filing of the same quarter: §4
+            _add_extra(rep, co, plan, r, why)
         return plan
-    for a in filings:
-        if a.filing_key == chosen.filing.filing_key or a.disseminated < chosen.filing.disseminated:
+
+    own = with_extras(groups[season]) if season in groups else None
+    late: list[CallPlan] = []
+    for label in sorted((lb for lb in groups if lb != season), key=lambda lb: groups[lb][0].filing.disseminated):
+        if stored and label in stored:
+            _against_stored(rep, co, label, stored[label], groups[label])       # the database's call stays; these are named
+        else:
+            late.append(with_extras(groups[label]))
+    primary = own
+    if primary is None:                                      # no stored filing of the season's own quarter
+        alt = next((r for r, q in pairs if r.status != "stored" and q.label == season), None)
+        if alt is not None:                                  # a cover letter or an unreadable file for this quarter
+            primary = plan_of(alt)
+        elif not groups:                                     # nothing resolved: the first filing's outcome, held with its reason
+            first = next((r for r, _ in pairs if r.status == "stored"), None) or (pairs[0][0] if pairs else None)
+            primary = plan_of(first) if first is not None else None
+    plans = ([primary] if primary is not None else []) + late
+    head = plans[0] if plans else None
+    if head is not None:
+        taken = {p.filing.filing_key for p in plans}
+        for r, q in pairs:                                   # held filings: never a call, registered as another meeting or revision
+            if r.status == "stored" and q.held_reason and r.filing.filing_key not in taken:
+                _add_extra(rep, co, head, r, HELD_WHY[q.held_reason])
+        for r in resolved:                                   # general meetings: registered as other meetings, never a call
+            if r.meeting and r.transcript is not None and r.transcript.text is not None:
+                head.extras.append(Extra("other_meeting", r.filing, r.transcript, "general meeting"))
+                rep.other_meetings.append(_line(co, r.filing, "general meeting"))
+    return plans
+
+
+def one_call_per_quarter(report: Report, co: CompanyRef, plans: list[CallPlan]) -> list[CallPlan]:
+    """Two plans of one run for the same quarter (the same late call seen from two seasons, or a late call and the season's
+    own, as a newest-first run meets them): the stored one stays, then the one filed in its own season, then the earlier
+    filing (the first linked to the results, §4). The other becomes a revised version or another meeting of it."""
+    def rank(p: CallPlan) -> tuple:
+        return (p.is_stored, not p.late, -p.filing.disseminated.timestamp())
+
+    by_label: dict[str, list[CallPlan]] = {}
+    for p in plans:
+        if p.quarter.label:
+            by_label.setdefault(p.quarter.label, []).append(p)
+    gone: set[int] = set()
+    for label, group in by_label.items():
+        if len(group) < 2:
             continue
-        r = resolved.get(a.filing_key) or resolve_filing(run, co, a, results)
-        if r.status != "stored" or r.transcript is None or r.transcript.text is None:
-            continue
-        new_date = r.transcript.info.call_date or (r.info.call_date if r.info else None)
-        revised = rows.is_revised(plan.call_date, new_date, plan.transcript.text.extracted.text, r.transcript.text.extracted.text)
-        why = "same call date or at least 90% the same text" if revised else "another meeting (not analysed)"
-        plan.extras.append(Extra("revised" if revised else "other_meeting", a, r.transcript, why))
-        if not revised:
-            run.report.other_meetings.append(f"{_name(co, a)} ({a.file_name or a.filing_key})")
-    return plan
+        win = max(group, key=rank)
+        for p in group:
+            if p is win:
+                continue
+            gone.add(id(p))
+            win.extras += p.extras
+            r = Resolved(p.filing, p.status, p.route, p.transcript, p.cover, p.company_url, p.transcript.info if p.transcript else None)
+            if not _add_extra(report, co, win, r, f"the {label} quarter already has a call"):
+                report.other_meetings.append(_line(co, p.filing, f"the {label} quarter already has a call"))
+    return [p for p in plans if id(p) not in gone]
 
 
 def _plan(co: CompanyRef, season: str, r: Resolved, intimations: list[Announcement], results: list[rows.ResultsEvent],
@@ -460,9 +606,7 @@ def _plan(co: CompanyRef, season: str, r: Resolved, intimations: list[Announceme
     a = r.filing
     plan = CallPlan(co, season, a, r.status or "unreadable", r.route, rows.Quarter(None, None, None), None, None,
                     r.transcript, r.cover, r.company_url)
-    parsed_q = (r.transcript.info.quarter if r.transcript else None) or (r.cover.info.quarter if r.cover else None) \
-        or (r.info.quarter if r.info else None)
-    plan.quarter = rows.decide_quarter(a.disseminated, results, parsed_q)
+    plan.quarter = quarter_of(r, results)
     parsed_date = (r.transcript.info.call_date if r.transcript else None) or (r.cover.info.call_date if r.cover else None) \
         or (r.info.call_date if r.info else None)
     plan.call_date, plan.call_date_source = rows.decide_call_date(parsed_date, intimations, a.disseminated)
