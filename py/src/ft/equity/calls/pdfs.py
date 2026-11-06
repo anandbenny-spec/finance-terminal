@@ -155,6 +155,18 @@ def read_pdf(content: bytes, max_pages: int = MAX_PAGES) -> PdfInfo:
     return info
 
 
+def header_text(info: PdfInfo) -> str:
+    """Page 1's text before the first speaker label: the part of a transcript that says which meeting it is (#285 rule 3).
+    A page with no label (a cover letter) is read whole. Text further down is never read: an earnings call that mentions
+    the AGM in its discussion is still a call."""
+    out: list[str] = []
+    for line in (info.page_texts[0].splitlines() if info.page_texts else []):
+        if info.speakers.label(line):
+            break
+        out.append(line)
+    return "\n".join(out)
+
+
 def classify_pdf(info: PdfInfo) -> str:
     """full / image_only / cover_letter / other (V2's order)."""
     if not info.is_pdf or info.unreadable:

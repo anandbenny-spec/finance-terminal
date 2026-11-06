@@ -34,6 +34,8 @@ class _Rules:
     audio_video: tuple[str, ...]
     intimation: tuple[re.Pattern, ...]
     file_intimation: re.Pattern
+    general_meeting: tuple[re.Pattern, ...]
+    general_meeting_short: tuple[re.Pattern, ...]
 
 
 @lru_cache(maxsize=1)
@@ -41,7 +43,9 @@ def rules() -> _Rules:
     cfg = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
     return _Rules(tuple(cfg["transcript_terms"]), tuple(re.compile(p) for p in cfg["future_transcript_patterns"]),
                   tuple(cfg["audio_video_terms"]), tuple(re.compile(p) for p in cfg["intimation_patterns"]),
-                  re.compile(cfg["file_intimation_pattern"]))
+                  re.compile(cfg["file_intimation_pattern"]),
+                  tuple(re.compile(p) for p in cfg["general_meeting_patterns"]),
+                  tuple(re.compile(p) for p in cfg["general_meeting_short_patterns"]))
 
 
 def _norm(s: str | None) -> str:
@@ -80,6 +84,22 @@ def is_audio_video(text: str | None) -> bool:
 def is_intimation(text: str | None) -> bool:
     t = _norm(text)
     return any(p.search(t) for p in rules().intimation) and not says_transcript(t, strip_future=True)
+
+
+def _meeting_words(text: str | None) -> str:
+    """`text` split the way a file name needs and lower-cased: camelCase and digit-to-capital boundaries
+    ("80thAGMTranscript" -> "80th AGM Transcript"), separators to spaces."""
+    t = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text or "")
+    t = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", t.replace("’", "'"))
+    return re.sub(r"[\s_\-.+%/\\]+", " ", t).strip().lower()
+
+
+def is_general_meeting(text: str | None, *, short: bool = True) -> bool:
+    """Does `text` (a subject, a file name, the header of a first page) name an annual or extraordinary general meeting
+    (#285 rule 3)? The terms are in `call_classifier.yaml`. A bare "AGM" or "EGM" counts only where `short` is true (a subject
+    or a file name): on a first page "AGM (Finance)" under a cover letter's signature is an Assistant General Manager."""
+    t = _meeting_words(text)
+    return any(p.search(t) for p in rules().general_meeting) or (short and any(p.search(t) for p in rules().general_meeting_short))
 
 
 def classify(subject: str | None, filename: str | None = "") -> Classification:

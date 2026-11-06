@@ -29,3 +29,19 @@ intimation_patterns:
   - '\bmeet - intimation\b'
 # A file name that names a schedule or an invitation is an intimation when the subject says nothing.
 file_intimation_pattern: '\bschedule\b|\binvite\b|\binvitation\b'
+
+# General meetings (job 2B-07b, #285; Anand, 4 Nov 2026; Spec 02B D1: only quarterly post-results calls are calls). A filing
+# whose subject or file name, or whose own first page before the first speaker label, names an annual or extraordinary
+# general meeting is a general meeting: set aside before any quarter is decided, registered as other meetings are, never a
+# call. The text is matched after camelCase and separators are split ("80thAGMTranscript" reads "80th AGM Transcript"),
+# lower-cased; an earnings call that mentions the AGM further down its text is not affected (only that header is read).
+# A bare "AGM" or "EGM" is read in a subject and a file name only: a cover letter's signature "AGM (Finance)" is an Assistant
+# General Manager (found on dev, 5 Nov 2026: NTPC's Q1 FY27 call was set aside by it). On a first page the long names and
+# a numbered "80th AGM" count.
+general_meeting_patterns:
+  - '\bannual general meetings?\b'
+  - '\bextra ?ordinary general meetings?\b'
+  - '\b\d+(?:st|nd|rd|th) (?:agm|egm)s?\b'
+general_meeting_short_patterns:
+  - '\bagms?\b'
+  - '\begms?\b'

@@ -36,7 +36,24 @@ Checks, B blocking, W warning:
   on_company_website, unreadable, held, with no call, and the share stored (always passes: history is reported, not stopped on;
   §13.3's 90% applies to the latest call only);
 - (W) `raw_storage` (Plan 04b P5): the files and bytes this run stored, and the raw bucket's stored size against the stop
-  in `config/equity/calls.yaml` (850 MB); fails when the bucket is over it or can't be read.
+  in `config/equity/calls.yaml` (850 MB); fails when the bucket is over it or can't be read;
+- (W) `stored_calls_differ` (#285): a stored call the rules would now build on another filing, named and left as it is;
+  `late_calls`: every call filed in a season other than its quarter's, with its company, quarter, season and filed
+  date; `general_meetings`: every filing set aside as an annual or extraordinary general meeting; `stored_revised`: a late
+  filing that revises a call already in the database (named, not re-registered); `other_meetings`: each later filing that is
+  another meeting, with the reason (no quarter, quarter conflict, a different call, the quarter already has a call, a
+  general meeting).
+
+**A call is chosen by fiscal quarter** (#285; `ft/equity/calls/pipeline.py`): a general meeting is never a call; a filing
+held `no_quarter` or `quarter_conflict` never takes a slot; a late call becomes its quarter's call if the company has none.
+A weekly or refresh run is given the database's calls by quarter for that rule, and the company's newest call by quarter
+(`rows.newest_quarter`, never by season). In `load`, a stored call whose filing this run set aside as a general meeting is
+**unpublished, not deleted** (event and transcript document `is_published = false`, `status_reason = 'general_meeting'`, quarter
+fields null as for a held call); a held row (`no_quarter`, `quarter_conflict`) or a row set aside as a general meeting is
+replaced by a call whose quarter is decided at the same slug (Anand, 5 Nov 2026: the real call takes the row, nothing is
+deleted or renamed; the replaced filing's documents become another meeting's). A row the rules set aside by mistake is
+restored the same way when its own filing is decided again as a call. A slug is a named clash (`call_clashes`) only when
+the quarter already has a call.
 """
 from __future__ import annotations
 
@@ -106,6 +123,8 @@ class EquityCallTranscripts(DocumentJob):
         self.storage = None                                   # the object store, for the raw_storage check
         self.cfg: dc.CallsConfig | None = None
         self.conflicts: list[str] = []
+        self.demoted: list[int] = []                          # events unpublished as general meetings by this run (#285)
+        self.differs: list[str] = []                          # stored calls the rules would now build on another filing (left as stored)
 
     def due(self, db, workflow: str, now=None) -> Due:
         return equity_due(db, self.key, workflow, super().due(db, workflow, now), requires="equity.company")
@@ -246,7 +265,7 @@ class EquityCallTranscripts(DocumentJob):
     # ================================================================== part 2 (2B-07): fetch, text, the call rows
     def fetch(self, ctx: Context) -> Harvest:
         h = super().fetch(ctx)                                # part 1: discovery
-        self.report, self.plans, self.conflicts = pl.Report(), [], []
+        self.report, self.plans, self.conflicts, self.demoted, self.differs = pl.Report(), [], [], [], []
         db = ctx.fetcher.db
         try:
             self.storage = ctx.fetcher.storage()
@@ -254,28 +273,66 @@ class EquityCallTranscripts(DocumentJob):
         except Exception:                                      # noqa: BLE001 - only the storage checks use it
             self.storage, self.storage_host = None, ""
         names = dict(db.execute("select id, name from core.entity where kind = 'company'").fetchall())
-        by_entity: dict[int, str] = {}                         # the season of each company's newest call (weekly runs)
-        if ctx.workflow == "weekly":
-            for entity_id, key in db.execute("select entity_id, season_key from equity.earnings_call").fetchall():
-                season = key.upper().replace("-", " ")
-                if entity_id not in by_entity or rows.season_order(season) > rows.season_order(by_entity[entity_id]):
-                    by_entity[entity_id] = season
+        by_entity: dict[int, str] = {}                         # the quarter of each company's newest call (weekly runs, #285)
+        stored: dict[int, dict[str, pl.StoredCall]] = {}       # the calls in the database by quarter (not a backfill)
+        if ctx.workflow != "backfill":
+            newest, stored = self.stored_calls(ctx)
+            if ctx.workflow == "weekly":
+                by_entity = newest
         curated = pl.load_curated()
         run = pl.Run(self._getter(ctx), curated, self.report)
         for co in h.notes["companies"]:
             ref = pl.CompanyRef(co.entity_id, co.slug, names.get(co.entity_id, co.slug), co.symbol)
             self.plans += pl.process_company(run, ref, self.announcements, self.results_events(db, co.entity_id),
                                              weekly=ctx.workflow == "weekly", newest_call=by_entity.get(co.entity_id),
-                                             history=ctx.workflow == "backfill", first_pages_from=self.cfg.first_pages_from)
+                                             history=ctx.workflow == "backfill", first_pages_from=self.cfg.first_pages_from,
+                                             stored=stored.get(co.entity_id))
         return h
 
     @staticmethod
     def results_events(db, entity_id: int) -> list[rows.ResultsEvent]:
-        """The company's results announcements with their period ends (equity.filing holds the period)."""
-        return [rows.ResultsEvent(r[0], r[1], r[2]) for r in db.execute(
-            """select e.id, e.occurs_at, max(f.period_end) from core.event e join equity.filing f on f.event_id = e.id
-                where e.event_type = 'results_filing' and e.entity_id = %s and e.status <> 'superseded'
-                  and e.occurs_at is not null group by e.id, e.occurs_at""", (entity_id,)).fetchall()]
+        """The company's results announcements with their period ends (equity.filing holds the period): one per period, the
+        current version, with the time the period's results were first filed, superseded re-filings included (#285 rule 2)."""
+        versions = [(r[0], r[1], r[2], r[3] == "superseded") for r in db.execute(
+            """select e.id, e.occurs_at, max(f.period_end), e.status from core.event e join equity.filing f on f.event_id = e.id
+                where e.event_type = 'results_filing' and e.entity_id = %s
+                  and e.occurs_at is not null group by e.id, e.occurs_at, e.status""", (entity_id,)).fetchall()]
+        return rows.with_first_filings(v for v in versions if v[2] is not None)
+
+    def stored_calls(self, ctx: Context) -> tuple[dict[int, str], dict[int, dict[str, pl.StoredCall]]]:
+        """The calls already in the database: each company's newest quarter (a weekly run's cut-off, by quarter and never
+        by the season it was filed in) and its stored calls by quarter (a weekly or refresh run's late-call rule, #285)."""
+        db = ctx.fetcher.db
+        found = db.execute(
+            """select c.entity_id, c.fiscal_label, c.season_key, c.call_date, e.status, c.status_reason, c.transcript_document_id
+                 from equity.earnings_call c join core.event e on e.id = c.event_id""").fetchall()
+        newest: dict[int, str] = {}
+        by_entity: dict[int, list[tuple[str | None, str]]] = {}
+        stored: dict[int, dict[str, pl.StoredCall]] = {}
+        for entity_id, label, key, call_date, status, reason, doc_id in found:
+            by_entity.setdefault(entity_id, []).append((label, key))
+            if label and status == "stored" and reason is None:
+                stored.setdefault(entity_id, {})[label] = pl.StoredCall(label, call_date, self._stored_text(ctx, doc_id))
+        for entity_id, calls in by_entity.items():
+            newest[entity_id] = rows.newest_quarter(calls)
+        return newest, stored
+
+    @staticmethod
+    def _stored_text(ctx: Context, document_id: int | None):
+        """A function returning a stored call's transcript text, read from its raw file once and only when asked."""
+        cache: list = []
+
+        def text() -> str | None:
+            if not cache:
+                got = None
+                if document_id is not None:
+                    row = ctx.fetcher.db.execute("select raw_file_id from core.document where id = %s", (document_id,)).fetchone()
+                    if row and row[0] is not None:
+                        info = pdfs.read_pdf(ctx.fetcher.read(row[0]))
+                        got = pdfs.call_text(info).extracted.text if pdfs.classify_pdf(info) == "full" else None
+                cache.append(got)
+            return cache[0]
+        return text
 
     def _getter(self, ctx: Context):
         """The pipeline's fetch function. Every body is stored as a raw file before anything reads it, except a company
@@ -313,9 +370,30 @@ class EquityCallTranscripts(DocumentJob):
     def load(self, tx, h: Harvest, task_run_id: int) -> int:
         self.outcome = {"skipped": 0, "added": [], "versions": [], "source_id": None}
         sources = {k: i for k, i in tx.execute("select key, id from core.source where key in ('nse','bse','company_web')").fetchall()}
-        n = 0
+        n = self._demote_general_meetings(tx)
         for plan in self.plans:
             n += self._write(tx, plan, sources)
+        return n
+
+    def _demote_general_meetings(self, tx) -> int:
+        """A stored call built on a filing this run set aside as a general meeting is unpublished, not deleted (#285): its
+        event and its documents `is_published = false`, `status_reason = 'general_meeting'`, and the quarter it was given
+        removed (as for a held call: it was never a quarter's call). Done before the plans are written, so a slug it held
+        is seen as held by this row. Returns the rows changed."""
+        n = 0
+        for entity_id, exchange, filing_key in self.report.gm_filings:
+            for event_id, transcript_id, cover_id in tx.execute(
+                    """update equity.earnings_call set status_reason = 'general_meeting', fiscal_label = null, period_end = null,
+                              quarter_source = null, results_event_id = null
+                        where entity_id = %s and exchange = %s and filing_key = %s
+                          and status_reason is distinct from 'general_meeting'
+                        returning event_id, transcript_document_id, cover_letter_document_id""",
+                    (entity_id, exchange, filing_key)).fetchall():
+                tx.execute("update core.event set is_published = false, updated_at = now() where id = %s", (event_id,))
+                tx.execute("update core.document set is_published = false where id = any(%s)",
+                           ([i for i in (transcript_id, cover_id) if i is not None],))
+                n += 1
+                self.demoted.append(event_id)
         return n
 
     def _doc(self, tx, d: pl.Doc, plan: pl.CallPlan, sources: dict, event_id: int | None, *, previous: Stored | None = None,
@@ -342,8 +420,23 @@ class EquityCallTranscripts(DocumentJob):
         co, q, a = plan.company, plan.quarter, plan.filing
         label = q.label
         slug = f"{co.slug}-call-{rows.season_key(label or plan.season)}"
-        existing = tx.execute("select id, status from core.event where event_type = 'earnings_call' and slug = %s", (slug,)).fetchone()
-        if existing and not (existing[1] != "stored" and plan.status == "stored"):
+        existing = tx.execute(
+            """select e.id, e.status, c.status_reason, c.transcript_document_id, c.cover_letter_document_id, c.filing_key
+                 from core.event e left join equity.earnings_call c on c.event_id = e.id
+                where e.event_type = 'earnings_call' and e.slug = %s""", (slug,)).fetchone()
+        if existing and existing[2] == "general_meeting" and not (label and plan.status_reason is None):
+            self.outcome["skipped"] += 1                       # a set-aside row stays unless a decided call takes it (below)
+            return 0
+        # A call is replaced by a better outcome for its slug: a stored transcript for one that had none (as before), or a
+        # call whose quarter is decided for a held row (no_quarter, quarter_conflict) or a row set aside as a general meeting,
+        # which only squat on the slug (#285; Anand, 5 Nov 2026: the real call takes the row, nothing is deleted or renamed).
+        # The row's own filing decided again (a rule change set it aside by mistake) is restored the same way.
+        replaces = existing and ((existing[1] != "stored" and plan.status == "stored")
+                                 or (existing[2] in ("no_quarter", "quarter_conflict", "general_meeting")
+                                     and plan.status_reason is None))
+        if existing and not replaces:
+            if existing[2] is None and plan.status_reason is None and existing[5] not in (None, a.filing_key):
+                self.differs.append(f"{slug} (stored from filing {existing[5]}; the rules now pick {a.exchange} {a.filing_key})")
             self.outcome["skipped"] += 1                       # the call is stored: a re-run writes nothing
             return 0
         if label and (clash := tx.execute("select event_id from equity.earnings_call where entity_id = %s and fiscal_label = %s",
@@ -355,8 +448,9 @@ class EquityCallTranscripts(DocumentJob):
         wrote = 0
         if existing:
             event_id = existing[0]
-            tx.execute("""update core.event set status = %s, title = %s, starts_on = %s, source_url = %s, updated_at = now()
-                           where id = %s""", (plan.status, title, plan.call_date or filed_day, a.url, event_id))
+            tx.execute("""update core.event set status = %s, title = %s, starts_on = %s, source_id = %s, source_url = %s,
+                                  updated_at = now() where id = %s""",
+                       (plan.status, title, plan.call_date or filed_day, sources[a.exchange.lower()], a.url, event_id))
         else:
             event_id = tx.execute(
                 """insert into core.event (event_type, entity_id, slug, title, starts_on, occurs_at, status, source_id, source_url,
@@ -376,11 +470,17 @@ class EquityCallTranscripts(DocumentJob):
         fields = (label, q.period_end, q.results_event_id, q.source, plan.call_date, plan.call_date_source, plan.route,
                   transcript_id, cover_id, plan.company_url or None, plan.transcript.words if plan.transcript else None,
                   plan.status_reason)
-        if existing:
+        if existing:                                           # the filing is the plan's: a better one may replace the first (#285)
             tx.execute("""update equity.earnings_call set fiscal_label = %s, period_end = %s, results_event_id = %s,
                              quarter_source = %s, call_date = %s, call_date_source = %s, route = %s,
                              transcript_document_id = %s, cover_letter_document_id = %s, company_url = %s, words = %s,
-                             status_reason = %s where event_id = %s""", (*fields, event_id))
+                             status_reason = %s, season_key = %s, filed_at = %s, exchange = %s, filing_url = %s, filing_key = %s,
+                             parser_version = %s where event_id = %s""",
+                       (*fields, rows.season_key(plan.season), a.disseminated, a.exchange, a.url, a.filing_key, pdfs.PARSER_VERSION,
+                        event_id))
+            old = [i for i in existing[3:5] if i is not None and i not in (transcript_id, cover_id)]
+            if old:                                            # a replaced held or set-aside filing's documents become another meeting's
+                tx.execute("update core.document set event_id = null where id = any(%s) and event_id = %s", (old, event_id))
         else:
             tx.execute(
                 """insert into equity.earnings_call (event_id, entity_id, season_key, filed_at, exchange, filing_url, filing_key,
@@ -423,7 +523,11 @@ class EquityCallTranscripts(DocumentJob):
                 ("page_maps", rep.page_map_failed, "documents whose page map failed (no page rows written)"),
                 ("files_served", rep.not_served, "transcript filings whose file couldn't be fetched"),
                 ("not_transcripts", rep.not_a_transcript, "filings classified a transcript that read as something else"),
-                ("other_meetings", rep.other_meetings, "later filings that are another meeting (registered, not analysed)")):
+                ("other_meetings", rep.other_meetings, "later filings that are not the call, with the reason (registered, not analysed)"),
+                ("late_calls", rep.late_calls, "calls filed in a season other than their quarter's (company, quarter, season, filed date)"),
+                ("general_meetings", rep.general_meetings, "filings set aside as an annual or extraordinary general meeting (never calls)"),
+                ("stored_revised", rep.stored_revised, "late filings that revise a call already stored (named, not re-registered)"),
+                ("stored_calls_differ", self.differs, "stored calls the rules would now build on another filing (left as stored, never rewritten)")):
             out.append(Check(name, not items, f"{what}: {_names(items)}" if items else f"none of the {what}", blocking=False))
         fails = Counter(rep.host_failures)
         lines = [f"{host} {err} x{n}" for (host, err), n in sorted(fails.items())]
@@ -431,6 +535,10 @@ class EquityCallTranscripts(DocumentJob):
                          else "no failure on a company host", blocking=False))
         if self.conflicts:
             out.append(Check("call_clashes", False, "; ".join(self.conflicts[:SHOWN]), blocking=False))
+        if self.demoted:
+            out.append(Check("general_meeting_calls_unpublished", True,
+                             f"{len(self.demoted)} stored calls built on a general meeting were unpublished (not deleted)",
+                             blocking=False))
         stored = sum(p.status == "stored" for p in self.plans)
         by_status = Counter(p.status for p in self.plans)
         revised = sum(1 for p in self.plans for x in p.extras if x.kind == "revised")

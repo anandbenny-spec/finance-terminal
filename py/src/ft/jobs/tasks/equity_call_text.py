@@ -153,12 +153,23 @@ class EquityCallText(Task):
                     call.rechunk = not same_chunks
         return out
 
+    @staticmethod
+    def _publish(tx, doc: int, event_id: int) -> int:
+        """Publish an analysed call's transcript and event if they aren't. Returns the rows changed (0 for a published call)."""
+        n = tx.execute("update core.document set is_published = true where id = %s and not is_published", (doc,)).rowcount
+        return n + tx.execute("update core.event set is_published = true, updated_at = now() where id = %s and not is_published",
+                              (event_id,)).rowcount
+
     # ------------------------------------------------------------------ load
     def load(self, tx, h: Fetched, task_run_id: int) -> int:
         self.done = []
         n = 0
         for call in h.calls:
-            if call.problem or call.analysis is None or call.unchanged:
+            if call.unchanged and call.problem is None:
+                # Nothing to rewrite, but a call set aside and restored (#285) is published again; a published one writes nothing.
+                n += self._publish(tx, call.document_id, call.event_id)
+                continue
+            if call.problem or call.analysis is None:
                 continue                                              # a blocking check fails the run: nothing is kept
             an, doc = call.analysis, call.document_id
             if not call.refresh or call.rechunk:
@@ -172,9 +183,7 @@ class EquityCallText(Task):
             tx.execute("""update equity.earnings_call set unknown_role_share = %s,
                                  words = coalesce(words, %s) where event_id = %s""",
                        (round(an.unknown_share, 4), an.total_words, call.event_id))
-            tx.execute("update core.document set is_published = true where id = %s and not is_published", (doc,))
-            tx.execute("update core.event set is_published = true, updated_at = now() where id = %s and not is_published",
-                       (call.event_id,))
+            self._publish(tx, doc, call.event_id)
             self.done.append(call)
             n += 1 + len(an.turns) + (len(call.chunks) if not call.refresh or call.rechunk else 0)
         for event_id in h.publish_events:
