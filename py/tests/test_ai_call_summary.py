@@ -24,10 +24,10 @@ from ft.ai import call_summary as cs
 from ft.ai import summaries
 from ft.ai.call_summary import HEADINGS, Turn, answer_turns, check, ranges, roster
 from ft.ai.client import TASKS, load_prompt
-from ft.jobs.tasks.equity_calls_ai import PROMPT_VERSION
 from ft.quality.reasons import categorise
 
-PROMPT = load_prompt("call_summary", PROMPT_VERSION[cs.TASK])
+PROMPT = load_prompt("call_summary", "v5")        # the citations route's last prompt: v6 (the structured route, #301) is tested in
+                                                  # test_ai_call_summary_structured.py; this file pins what v1-v5 and `check` do
 B = build()
 TEXT = B.text
 QUESTION = "Can you explain the margin outlook for the second half?"
@@ -116,12 +116,13 @@ def test_the_prompt_names_the_three_headings_and_the_role_rules():
     assert len({load_prompt("call_summary", v).text for v in ("v1", "v2", "v3", "v4")}) == 4  # each version that ran is kept
 
 
-def test_v5_is_the_current_prompt_and_adds_cite_first_exact_figures_and_no_copied_transcript_text():
+def test_v5_adds_cite_first_exact_figures_and_no_copied_transcript_text():
     """2B-11b (#284). v5 aims at v4's two largest dev rejection causes (bullets with no citation; figures the cited sentence
     lacks) and, by Anand's 5 Nov 2026 decision, at bullets that carried the transcript's own words. Every earlier version stays
-    as it ran, and v4's own pinned rules (the test above) still hold for v5."""
+    as it ran, and v4's own pinned rules (the test above) still hold for v5. (v5 stopped being the current prompt when #301 chose
+    the structured route: v6, see test_ai_call_summary_structured.py.)"""
     p = PROMPT.text
-    assert PROMPT.version == "v5" == PROMPT_VERSION[cs.TASK]
+    assert PROMPT.version == "v5"
     assert "find the passage first" in p and "Do not write a bullet first and look for support afterwards" in p
     assert "an analysts bullet cites the analyst's question" in p and "a bullet under the third heading cites" in p
     assert "Copy a figure character for character" in p and "INR130" in p and "ordinals (5th, 30th)" in p

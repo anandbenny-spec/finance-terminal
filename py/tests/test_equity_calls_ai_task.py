@@ -106,6 +106,13 @@ def clean():
     wipe()
 
 
+@pytest.fixture(autouse=True)
+def citations_route(monkeypatch):
+    """The tests in this file drive the summary on the citations route (prompts v1-v5, which the fake answers with cited text
+    blocks). The current prompt is v6, the structured route (#301): its tests are in test_equity_calls_ai_structured.py."""
+    monkeypatch.setattr(eca, "PROMPT_VERSION", {**eca.PROMPT_VERSION, cs.TASK: "v5"})
+
+
 class Ticker:
     """The batch poll's clock: sleeping moves it on at once."""
 

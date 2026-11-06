@@ -32,6 +32,12 @@ schema's JSON is retried. No `core.forecast` row is written (that is #177, after
 (store once, never lose): a reader of `equity.guidance` or `equity.stated_figure` joins `core.ai_output` and takes the published
 one, as the `api` views do.
 
+**The summary's route (2B-11c, #301; Anand, 6 Nov 2026).** Prompts v1 to v5 ran on the citations route; **v6, the current one, is the
+structured route**: the model returns each bullet as its own sentence plus the passages that state its point, as the schema's JSON
+(`config/prompts/call_summary/v6.schema.json`), and `ft/ai/call_summary.py`'s `check_json` finds each quote in our copy of the
+transcript. The stored output, its citations and its checks are the same on both routes. A call whose summary is a published v5
+(the re-checked ones) is asked for again under v6 and keeps its v5 summary unless the v6 reply is published.
+
 **Copied text (2B-11c, #301).** A summary bullet may not carry the transcript's own words: `ft/ai/call_summary.py`'s rule cuts a
 copied end off a new reply's bullet before anything is stored, and fails a bullet that copies anywhere else (the usual retry
 path). Every run also **re-checks the published summaries of the current prompt version that were stored before the rule**
@@ -53,8 +59,8 @@ Checks, B blocking, W warning:
 - (B) `outputs_stored`: each summary published in this run is on its transcript, has every bullet cited, and each bullet's
   citations are verified and inside the published text;
 - (B) `citation_roles`: the role rules, run again on what is stored (the output's citations against `equity.call_turn`);
-- (B) `echo_clean`: the re-check's summaries, read back from the database against their transcripts: no published bullet holds a
-  verbatim run over `MAX_ECHO_CHARS` characters (its detail names the longest run left);
+- (B) `echo_clean`: the re-check's summaries and the summaries published in this run, read back from the database against their
+  transcripts: no published bullet holds a verbatim run over `MAX_ECHO_CHARS` characters (its detail names the longest run left);
 - (W) `echo_recheck`: what the re-check found and wrote (counts, bullets cut and failed by list, the calls that lost their
   summary by company and quarter); a warning when a call lost its summary or a transcript couldn't be read back whole;
 - (B) `guidance_stored`: each extraction stored in this run has its citations and its rows, one each per item (or, with no item,
@@ -73,6 +79,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -100,7 +107,7 @@ from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TARGETS
 
-PROMPT_VERSION = {cs.TASK: "v5", ge.TASK: "v1"}
+PROMPT_VERSION = {cs.TASK: "v6", ge.TASK: "v1"}
 IST = "Asia/Kolkata"
 SHOWN = 12
 
@@ -117,8 +124,8 @@ class Work:
     slug: str                         # the call's event slug, for the checks' messages
     event_id: int = 0                 # the call's event and its company: the extraction's rows
     entity_id: int = 0
-    schema: dict | None = None        # the extraction's JSON schema, and its metric map and switch
-    metrics: Metrics | None = None
+    schema: dict | None = None        # the JSON schema of a request on the json route: the extraction's, or the summary's (v6 on)
+    metrics: Metrics | None = None    # the extraction's metric map and switch
 
     @property
     def target(self) -> str:
@@ -131,11 +138,13 @@ class Work:
     def request(self, prompt, note: str | None = None) -> Request:
         if self.task == ge.TASK:
             return ge.guidance_request(self.call, prompt, self.schema, note=note)
-        return cs.call_summary_request(self.call, prompt, note=note)
+        return cs.call_summary_request(self.call, prompt, note=note, schema=self.schema)
 
     def check(self, req: Request, reply: Reply):
         if self.task == ge.TASK:
             return ge.check(ge.answer_of(reply), self.call, self.metrics)
+        if req.spec.route == "json":                      # the summary's structured route (prompts from v6)
+            return cs.check_json(cs.answer_of(reply), self.call)
         return cs.check(reply, req.sources, self.call.turns, role_held=self.call.role_held)
 
 
@@ -249,6 +258,8 @@ class EquityCallsAi(BatchSteps, Task):
                 turns.setdefault(did, []).append(Turn(no, a, b, speaker, role, section))
         metrics = self.metrics or ge.load_metrics()
         schema = load_schema(ge.TASK, PROMPT_VERSION[ge.TASK]) if guidance else None
+        summary_schema = (load_schema(cs.TASK, PROMPT_VERSION[cs.TASK])
+                          if cs.route_of(PROMPT_VERSION[cs.TASK]) == "json" else None)     # v1-v5 have none
         out = []
         for event_id, slug, label, call_date, filed, did, chars, company, share, text, entity_id, fy_end, has_s, has_x in rows:
             if text is None or len(text) != chars:
@@ -257,7 +268,7 @@ class EquityCallsAi(BatchSteps, Task):
             held = share is not None and float(share) > ROLE_HOLD_SHARE         # strictly greater, as the rules and the views
             call = CallDoc(did, text, title, company, label, call_date or filed, tuple(turns.get(did, ())), held, fy_end)
             if not (lacking and has_s):
-                out.append(Work(cs.TASK, call, slug, event_id, entity_id))
+                out.append(Work(cs.TASK, call, slug, event_id, entity_id, summary_schema))
             if not guidance or (lacking and has_x):
                 continue
             if call.day is None or fy_end is None or not call.turns:
@@ -555,9 +566,10 @@ class EquityCallsAi(BatchSteps, Task):
                    (f"superseded by output {out_id} (re-check {cs.ECHO_RULE}: copied text cut)", old_id))
         tx.execute("update core.ai_output set status = 'published' where id = %s", (out_id,))
 
-    def _echo_checks(self, tx, f: Fetched) -> list[Check]:
+    def _echo_checks(self, tx, f: Fetched, fresh: Sequence[int] = ()) -> list[Check]:
         """The re-check's two checks: what is stored for each transcript looked at, read back against its text (blocking), and
-        the counts (a warning when a call lost its summary or a transcript couldn't be read)."""
+        the counts (a warning when a call lost its summary or a transcript couldn't be read). `fresh`: the summaries published in
+        this run (a reply of the current prompt version), read back the same way."""
         run = self._echo
         where, args = self._echo_where(f)
         where.append("o.document_id = any(%s)"); args.append(run.docs)
@@ -585,6 +597,29 @@ class EquityCallsAi(BatchSteps, Task):
                 longest = max(longest, r.longest)
                 if r.verdict != "unchanged":
                     bad.append(f"{company} {label} (output {out_id}): bullets {sorted({*r.cut, *r.failed})} still hold copied text")
+        for out_id in fresh:
+            row = tx.execute(
+                """select o.document_id, o.content, n.name, ec.fiscal_label, d.char_count
+                     from core.ai_output o
+                     join equity.earnings_call ec on ec.transcript_document_id = o.document_id
+                     join core.entity n on n.id = ec.entity_id
+                     join core.document d on d.id = o.document_id
+                    where o.id = %s""", (out_id,)).fetchone()
+            if row is None:
+                bad.append(f"output {out_id}: not found on a transcript")
+                continue
+            doc_id, content, company, label, chars = row
+            text = self._transcript(tx, doc_id, chars)
+            if text is None:
+                bad.append(f"{company} {label}: its transcript can't be read back whole")
+                continue
+            form = summaries.match_form(text)
+            left += 1
+            for i, b in enumerate((content or {}).get("bullets") or []):
+                run_len = summaries.longest_copied(summaries.match_form(b["text"]), form)
+                longest = max(longest, run_len)
+                if run_len > cs.MAX_ECHO_CHARS:
+                    bad.append(f"{company} {label} (output {out_id}): bullet {i + 1} holds a verbatim run of {run_len} characters")
         clean = Check("echo_clean", not bad,
                       "; ".join(bad[:SHOWN]) or f"{left} published summaries looked at: no bullet holds a verbatim run over "
                       f"{cs.MAX_ECHO_CHARS} characters (the longest left: {longest})")
@@ -631,7 +666,7 @@ class EquityCallsAi(BatchSteps, Task):
         out.append(Check("outputs_stored", not wrong, "; ".join(wrong) or f"{len(published)} published, every bullet cited"))
         out.append(Check("citation_roles", not roles, "; ".join(roles) or
                          f"{len(published)} published, every citation on a turn its list allows"))
-        out += self._echo_checks(tx, f)
+        out += self._echo_checks(tx, f, [out_id for _, out_id in published])
 
         c = Counter(o.status for o in f.outcomes if o.work.task == cs.TASK)
         mapping: Counter = Counter()

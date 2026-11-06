@@ -22,6 +22,16 @@ support it, with at least three bullets in all; a call whose roles are read has 
 dropped bullet, a missing or misplaced list or a count out of range isn't published: the task retries it once with a note
 naming the problems, then rejects it (`ft/ai/batch.py`).
 
+**The structured route** (2B-11c, #301; Anand's decision of 6 Nov 2026; prompts from v6, `route_of`). v5's bullets carried the
+transcript's own words because the Citations API rewards quoting; a prompt rule against it had no effect. From v6 the model has
+no free text to copy into: the reply is the schema's JSON (`config/prompts/call_summary/v6.schema.json`), each bullet its own
+sentence (`text`) with its `list` and, in a separate field, the passages that state its point (`quotes`). The transcript goes with
+a marker line before each turn (as the guidance extraction's), and `check_json` finds each quote exactly once in our copy of the
+text without the markers: the stored citation is that span, never the model's copy of it, so a quote that is not in the
+transcript, is found twice, runs across two turns or is over `MAX_QUOTE` characters fails its bullet. Everything else holds as on the
+citations route: only figures the quoted passages hold, the role rules, the counts, and the copied-text rule below on the bullet's
+text. The route is the request's (`Request.route`), so the stored outputs, the citations and the page links read the same.
+
 **Copied text** (2B-11c, #301; `apply_echo`). Visitors see only the quotes of verified citations, never a transcript's text
 (`CLAUDE.md` §1), and the Earnings calls tab shows a bullet in full, so a bullet may not carry the transcript's own words
 (on dev, 65% of v5's bullets were a short paraphrase followed by the cited passage verbatim). A run of more than
@@ -35,14 +45,17 @@ don't use it.
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 
 from ft.ai import summaries
+from ft.ai.citations import locate_quote
 from ft.ai.client import Prompt, Reply, Request, Source
-from ft.ai.summaries import Checked, Cited
+from ft.ai.summaries import Bullet, Checked, Cited
+from ft.engines.document.text import normalize_inline
 
 TASK = "call_summary"
 HEADINGS = ("What management said", "What analysts asked about", "Said by participants whose role couldn't be read")
@@ -55,6 +68,9 @@ MAX_ECHO_CHARS = 80                                   # a run longer than this f
 MIN_CUT_WORDS = 6                                     # a bullet cut to its lead-in keeps at least this many words
 ECHO_TAIL_CHARS = 5                                   # punctuation or quotes allowed after a copied run that ends a bullet
 ECHO_RULE = "echo-1"                                  # the rule's name: stamped on the outputs checked or re-checked under it
+JSON_FROM = 6                                         # prompt versions from v6 take the structured (json) route, v1-v5 the citations route
+MAX_QUOTE = 400                                       # code points: a quote's span (CLAUDE.md §1: visitors see at most 400 of a quote)
+MAX_QUOTES = 3                                        # quotes a bullet may rest on
 _TRAIL = " :;,-\u2014\u2013\"'\u201c\u201d\u2018\u2019\u2026"        # stripped from the end of a lead-in
 _CLAUSE_END = ".!?:;,\u2014\u2013"                          # a lead-in that ends on one of these ends at a clause or sentence
 
@@ -107,13 +123,27 @@ def roster(turns: Sequence[Turn]) -> list[tuple[str, list[str]]]:
     return [(label, by[role]) for role, label in ROSTER_ROLES if by.get(role)]
 
 
-def call_summary_request(call: CallDoc, prompt: Prompt, *, note: str | None = None) -> Request:
+def route_of(version: str) -> str:
+    """`json` for a prompt version that takes the structured route (v6 on), else `citations`."""
+    m = re.fullmatch(r"v(\d+)", version)
+    return "json" if m and int(m.group(1)) >= JSON_FROM else "citations"
+
+
+def _roster_lines(call: CallDoc) -> list[str]:
+    lines = ["The speakers, as the transcript labels them, by the role our rules read for each:"]
+    return lines + [f"- {label}: {'; '.join(names)}" for label, names in roster(call.turns)]
+
+
+def call_summary_request(call: CallDoc, prompt: Prompt, *, note: str | None = None, schema: dict | None = None) -> Request:
+    """The request for one transcript: the citations route for prompts v1-v5, the structured route (`schema`: the prompt's
+    JSON schema) from v6."""
+    if route_of(prompt.version) == "json":
+        return structured_request(call, prompt, schema, note=note)
     has_unknown = any(t.role == "unknown" for t in call.turns)
     rng = ranges(role_held=call.role_held, has_unknown=has_unknown)
     quarter = f" · {call.fiscal_label}" if call.fiscal_label else ""
     src = Source(call.document_id, call.text, call.title, context=f"{call.company} · Earnings call{quarter} · {_when(call.day)}")
-    lines = ["The speakers, as the transcript labels them, by the role our rules read for each:"]
-    lines += [f"- {label}: {'; '.join(names)}" for label, names in roster(call.turns)]
+    lines = _roster_lines(call)
     lists = [f'"{HEADINGS[i]}" ({lo} to {hi} bullets)' if lo else f'"{HEADINGS[i]}" (up to {hi} bullets)'
              for i, (lo, hi) in enumerate(rng) if hi > 0]
     lines.append(f"Summarise the earnings call above ({call.title}) in these lists, following the rules: "
@@ -126,6 +156,43 @@ def call_summary_request(call: CallDoc, prompt: Prompt, *, note: str | None = No
         lines.append(f'Write "{HEADINGS[2]}" only if those participants said something worth a bullet; otherwise leave it '
                      f"out entirely, heading included.")
     return Request(TASK, prompt, (src,), "\n".join(lines), note=summaries.note_block(note))
+
+
+def _json_note(note: str | None) -> str | None:
+    """The structured route's retry note, in its own last block (so the retry can read the first attempt's cached prefix)."""
+    if not note:
+        return None
+    return ("Your previous answer to this request couldn't be published: " + note
+            + "\nAnswer again as the schema's JSON, following every rule. Quote each passage exactly from the transcript, "
+              "character for character, and write numbers only as the quoted passage writes them.")
+
+
+def structured_request(call: CallDoc, prompt: Prompt, schema: dict | None, *, note: str | None = None) -> Request:
+    """The structured route's request (prompts from v6): the transcript as one plain-text document block without citations,
+    with a marker line before each turn (the guidance extraction's `marked_text`: the role our rules read for each speaker),
+    and the reply the schema's JSON. The markers aren't in our copy of the text, where `check_json` finds the quotes."""
+    # imported here, not at the top: guidance_extraction imports this module
+    from ft.ai.guidance_extraction import marked_text
+    if schema is None:
+        raise ValueError(f"{prompt.task} {prompt.version}: the structured route needs the prompt's JSON schema")
+    has_unknown = any(t.role == "unknown" for t in call.turns)
+    rng = ranges(role_held=call.role_held, has_unknown=has_unknown)
+    quarter = f" · {call.fiscal_label}" if call.fiscal_label else ""
+    src = Source(call.document_id, marked_text(call), call.title,
+                 context=f"{call.company} · Earnings call{quarter} · {_when(call.day)}")
+    lines = _roster_lines(call)
+    lists = [f'"{LISTS[i]}" ({lo} to {hi} bullets)' if lo else f'"{LISTS[i]}" (up to {hi} bullets)'
+             for i, (lo, hi) in enumerate(rng) if hi > 0]
+    lines.append(f"Summarise the earnings call above ({call.title}) as the schema's JSON, following the rules. The lists that "
+                 "apply: " + ", ".join(lists) + ".")
+    if call.role_held:
+        lines.append(f"This call's roles are only partly read. Write each list you can support from turns of the right "
+                     f"role, and leave out entirely a list those turns can't support, with at least {MIN_ROLE_HELD} bullets "
+                     f"in all.")
+    elif has_unknown:
+        lines.append('Write the "unknown" list only if those participants said something worth a bullet; otherwise leave it '
+                     "out entirely.")
+    return Request(TASK, prompt, (src,), "\n".join(lines), schema=schema, note=_json_note(note), route="json")
 
 
 def answer_turns(turns: Sequence[Turn]) -> set[int]:
@@ -317,10 +384,102 @@ def check(reply: Reply, sources: tuple[Source, ...], turns: Sequence[Turn], *, r
     return Checked(TASK, bullets, problems, mapping)
 
 
+# ---------------------------------------------------------------------------------------------- the structured route
+def answer_of(reply: Reply):
+    """The reply's JSON, or None if it isn't JSON."""
+    try:
+        return reply.json()
+    except (ValueError, TypeError):
+        return None
+
+
+def _short(s: str, n: int = 100) -> str:
+    s = " ".join(s.split())
+    return s if len(s) <= n else s[:n - 1] + "…"
+
+
+def _json_bullet(raw, call: CallDoc, transcript: str, answers: set[int], mapping: Counter) -> Bullet:
+    """One bullet of a structured reply: its quotes found in our copy of the transcript (each exactly once, in one place), then
+    the rules every bullet gets: only figures its quoted passages hold, the role rules, and the copied-text rule on its text."""
+    if not isinstance(raw, dict):
+        b = Bullet("")
+        b.problem = "isn't the schema's object"
+        return b
+    text = " ".join(raw["text"].split()) if isinstance(raw.get("text"), str) else ""
+    b = Bullet(text)
+    kind, quotes = raw.get("list"), raw.get("quotes")
+    if not isinstance(kind, str) or kind not in LISTS:
+        b.problem = "outside the lists"
+        return b
+    b.section = kind
+    if not text or not isinstance(quotes, list) or not all(isinstance(q, str) for q in quotes):
+        b.problem = "isn't the schema's object"
+        return b
+    if len(quotes) > MAX_QUOTES:
+        b.problem = f"{len(quotes)} quotes, not 1 to {MAX_QUOTES}"
+        return b
+    passages: list[str] = []
+    for q in quotes:
+        span = locate_quote(call.text, normalize_inline(q)) if q.strip() else None
+        found = span is not None and span.verified
+        mapping["search" if found else "failed"] += 1
+        if not found:
+            b.problem = f"a quote (\"{_short(q)}\") isn't in the transcript exactly once"
+            return b
+        if span.end - span.start > MAX_QUOTE:
+            mapping["too_long"] += 1
+            b.problem = f"a quote is over {MAX_QUOTE} characters (\"{_short(q)}\")"
+            return b
+        cited = Cited(call.document_id, span.start, span.end, "search")
+        if cited not in b.citations:
+            b.citations.append(cited)
+            passages.append(call.text[span.start:span.end])
+    if not b.citations:
+        b.problem = "no verified citation"
+        return b
+    if extra := summaries.unsupported_figures(text, passages):
+        b.problem = "numbers not in its cited passages: " + ", ".join(extra)
+        return b
+    b.problem = role_problem(kind, b.citations, call.turns, answers)
+    if b.problem is None:
+        e = apply_echo(text, passages, transcript)
+        b.problem, b.text = e.problem, (text if e.problem else e.text)
+    return b
+
+
+def check_json(answer, call: CallDoc) -> Checked:
+    """Check a structured reply (`answer`: the reply's JSON) against our copy of the transcript and its stored turns. The same
+    `Checked` as `check`'s, so a published output, its citations and its checks read the same on either route."""
+    mapping: Counter = Counter()
+    rows = answer.get("bullets") if isinstance(answer, dict) else None
+    if not isinstance(rows, list):
+        return Checked(TASK, [], ["the reply isn't the schema's JSON ({bullets: [...]})"], mapping)
+    transcript = summaries.match_form(call.text)
+    answers = answer_turns(call.turns)
+    bullets = [_json_bullet(raw, call, transcript, answers, mapping) for raw in rows]
+    bullets.sort(key=lambda b: LISTS.index(b.section) if b.section in LISTS else len(LISTS))   # the lists in order; stable
+    problems = []
+    if not bullets:
+        problems.append("no bullets (the reply lists none)")
+    rng = ranges(role_held=call.role_held, has_unknown=any(t.role == "unknown" for t in call.turns))
+    for i, (lo, hi) in enumerate(rng):
+        n = sum(b.section == LISTS[i] for b in bullets)
+        if hi == 0 and n:
+            problems.append(f"the list '{LISTS[i]}' isn't for this call (no turn whose role couldn't be read)")
+        elif not lo <= n <= hi:
+            problems.append(f"{n} bullets in the list '{LISTS[i]}', not {lo} to {hi}")
+    if call.role_held and bullets and len(bullets) < MIN_ROLE_HELD:
+        problems.append(f"{len(bullets)} bullets in all, not at least {MIN_ROLE_HELD}")
+    return Checked(TASK, bullets, problems, mapping)
+
+
 # The stable phrases `check` writes into a reason, by the accuracy page's category (ft/quality/reasons.py reads this table;
 # tests run `check` on crafted bad replies and assert each phrase still lands where it says). Regexes, case-insensitive.
 REASON_PHRASES: dict[str, tuple[str, ...]] = {
-    "citation": (r"cites a turn whose role is", r"cites text outside any speaker turn"),
+    "citation": (r"cites a turn whose role is", r"cites text outside any speaker turn",
+                 r"isn't in the transcript exactly once", r"a quote is over \d+ characters"),
     "format": (r"the lists aren't as asked", r"outside the lists", r"\d+ bullets under", r"has no bullets",
-               r"isn't for this call", r"bullets in all, not at least", r"copies transcript text"),
+               r"isn't for this call", r"bullets in all, not at least", r"copies transcript text",
+               r"the reply isn't the schema's JSON", r"isn't the schema's object", r"no bullets \(the reply lists none\)",
+               r"\d+ bullets in the list", r"\d+ quotes, not 1 to"),
 }
