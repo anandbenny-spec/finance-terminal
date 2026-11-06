@@ -60,7 +60,7 @@ import re
 import struct
 import time
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from functools import cache
@@ -99,7 +99,9 @@ TASKS: dict[str, TaskSpec] = {
     "statement_diff_summary": TaskSpec("citations", "low", 8_000),
     "stance_extraction": TaskSpec("json", "low", 4_000),
     "projection_extraction": TaskSpec("json", "low", 4_000),
-    # Module 2's earnings calls (Spec 02B §5.6, §13.3; 2B-11): the summary of one transcript, two cited lists.
+    # Module 2's earnings calls (Spec 02B §5.6, §13.3; 2B-11): the summary of one transcript, two cited lists. Prompts v1 to v5
+    # run on the citations route; from v6 (2B-11c, #301) a request asks for the json route itself (`Request.route`), with the
+    # same effort and headroom, so the model has no free text to copy the transcript into.
     "call_summary": TaskSpec("citations", "low", 8_000),
     # The targets and stated figures of one transcript (Spec 02B §5.9, §13.5; 2B-13): the json route, effort medium, with
     # headroom for thinking and up to about 40 items. 16,000, not 12,000: on the 65-call dev run (4 Nov 2026) about one first
@@ -277,6 +279,7 @@ class Request:
     model: str | None = None          # default: the task's (Haiku 5.5)
     schema: dict | None = None        # the json route's JSON schema
     note: str | None = None           # a retry's note: its own last block, so the prefix before it stays cached
+    route: str | None = None          # 'citations' | 'json': this request's route where it isn't the task's (call_summary v6)
 
     def __post_init__(self):
         if self.task not in TASKS:
@@ -288,7 +291,8 @@ class Request:
 
     @property
     def spec(self) -> TaskSpec:
-        return TASKS[self.task]
+        base = TASKS[self.task]
+        return replace(base, route=self.route) if self.route and self.route != base.route else base
 
     @property
     def model_id(self) -> str:
