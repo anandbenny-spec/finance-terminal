@@ -184,7 +184,7 @@ def test_a_quote_the_transcript_does_not_hold_is_retried_with_a_note_and_then_pu
 
 
 @pytest.mark.db
-def test_a_summary_rejected_twice_leaves_the_published_v5_one_in_place_with_an_alert_and_is_never_resent():
+def test_a_summary_rejected_twice_leaves_the_published_v5_one_in_place_and_is_never_resent():
     c = make_call()
     old = legacy(c, CLEAN, **STAMPED_V5)
     fake = FakeClaude(["ok"], answer=steps(bad_quote()))
@@ -194,11 +194,11 @@ def test_a_summary_rejected_twice_leaves_the_published_v5_one_in_place_with_an_a
     assert [(g[0], g[4]) for g in outputs(c["doc"])] == [("published", "v5"), ("rejected", "v6"), ("rejected", "v6")]
     assert [x[0] for x in requests(c["doc"])] == ["rejected", "rejected"]
     assert [p[0] for p in published_summary(c["doc"])] == [old]                     # the visitor-facing summary is unchanged
-    assert not r["checks"]["citation_integrity"]["passed"]
-    ((sev, msg),) = alert(f"ai_rejected:call_summary:{c['doc']}")
-    assert sev == "warn" and "isn't in the transcript exactly once" in msg
+    assert not r["checks"]["citation_integrity"]["passed"]                          # the rejections are counted and named here
+    assert "isn't in the transcript exactly once" in r["checks"]["citation_integrity"]["detail"]
+    assert alert(f"ai_rejected:call_summary:{c['doc']}") == []                      # no alert while a summary is still published
     assert go(task([c["slug"]], fake)) == 0                                         # an unchanged input is never sent twice
-    assert fake.create_calls == 2 and len(outputs(c["doc"])) == 3 and len(alert(f"ai_rejected:call_summary:{c['doc']}")) == 1
+    assert fake.create_calls == 2 and len(outputs(c["doc"])) == 3
 
 
 @pytest.mark.db
