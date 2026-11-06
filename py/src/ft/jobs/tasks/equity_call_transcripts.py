@@ -37,6 +37,11 @@ Checks, B blocking, W warning:
   §13.3's 90% applies to the latest call only);
 - (W) `raw_storage` (Plan 04b P5): the files and bytes this run stored, and the raw bucket's stored size against the stop
   in `config/equity/calls.yaml` (850 MB); fails when the bucket is over it or can't be read;
+- (W) `files_not_kept` (#287; always passes): the PDFs this run read and did not store, with their size, and the URLs recorded on
+  earlier runs that were not fetched. **A PDF is stored only if a document is made from it** (a transcript or a call's cover
+  letter; an image-only file too, as before): a first-page candidate that is not a transcript, a notice named a transcript that
+  reads as something else, a company link to an annual report. Its URL is recorded as an `ops.http_cache` row with no raw file
+  (`Fetcher.declined`), so the next run does not fetch it. To look at a recorded URL again, delete its `ops.http_cache` row;
 - (W) `stored_calls_differ` (#285): a stored call the rules would now build on another filing, named and left as it is;
   `late_calls`: every call filed in a season other than its quarter's, with its company, quarter, season and filed
   date; `general_meetings`: every filing set aside as an annual or extraordinary general meeting; `stored_revised`: a late
@@ -280,7 +285,8 @@ class EquityCallTranscripts(DocumentJob):
             if ctx.workflow == "weekly":
                 by_entity = newest
         curated = pl.load_curated()
-        run = pl.Run(self._getter(ctx), curated, self.report)
+        run = pl.Run(self._getter(ctx), curated, self.report, keeper=self._keeper(ctx), decliner=self._decliner(ctx),
+                     releaser=self._releaser(ctx))
         for co in h.notes["companies"]:
             ref = pl.CompanyRef(co.entity_id, co.slug, names.get(co.entity_id, co.slug), co.symbol)
             self.plans += pl.process_company(run, ref, self.announcements, self.results_events(db, co.entity_id),
@@ -334,23 +340,32 @@ class EquityCallTranscripts(DocumentJob):
             return cache[0]
         return text
 
+    @staticmethod
+    def _source_of(url: str, kind: str) -> str:
+        return "company_web" if kind == "company" else ("bse" if "bseindia.com" in url else "nse")
+
     def _getter(self, ctx: Context):
-        """The pipeline's fetch function. Every body is stored as a raw file before anything reads it, except a company
-        host's answer that isn't a PDF (a cover letter's link that leads to a web page): nothing reads it (D12: web pages
-        are never scraped), and such pages differ on every request, so storing them added a raw file to every re-run
-        (#173). The attempt is still named ("host web page") in the unresolved line. A company host that refuses (401, 403,
-        406 or a network error) gets one retry with Chrome's TLS fingerprint; every failure on a company host is logged
-        with its error class (D14)."""
+        """The pipeline's fetch function. A PDF comes back **unstored** (#287): the pipeline reads it, and stores it only if it is
+        a transcript or a cover letter (`_keeper`); a file it reads and rejects is recorded, not stored (`_decliner`), and a URL
+        recorded on an earlier run is not fetched at all (a `declined` File). Before #287 every body was stored before anything
+        read it, so every rejected first-page candidate and company link stayed in the bucket with no document.
+        A body that isn't a PDF (a cover letter's link that leads to a web page, an error page) is neither stored nor recorded:
+        nothing reads it (D12: web pages are never scraped), and such pages differ on every request, so storing them added a
+        raw file to every re-run (#173). The attempt is still named ("host web page") in the unresolved line. A company host
+        that refuses (401, 403, 406 or a network error) gets one retry with Chrome's TLS fingerprint; every failure on a company
+        host is logged with its error class (D14)."""
         report = self.report
 
         def get(url: str, kind: str) -> pl.File | None:
             company = kind == "company"
-            source = "company_web" if company else ("bse" if "bseindia.com" in url else "nse")
+            source = self._source_of(url, kind)
+            if ctx.fetcher.declined(url, source=source):
+                return pl.File(url, b"", b"", None, declined=True)
             for chrome in ((False, True) if company else (False,)):
                 try:
                     got = ctx.fetcher.get(url, source=source, allow=(404,), chrome=chrome,
                                           extra_sites=(COMPANY_WEB,) if company else (),
-                                          keep=pdfs.is_pdf_bytes if company else None)
+                                          keep=pdfs.is_pdf_bytes, defer=True)
                 except FetchError as e:
                     if company and not chrome and (e.status in (None, 401, 403, 406)):
                         continue
@@ -365,6 +380,24 @@ class EquityCallTranscripts(DocumentJob):
                 return pl.File(url, body, got.sha256 or b"", got.raw_file_id)
             return None
         return get
+
+    @staticmethod
+    def _keeper(ctx: Context):
+        """Store a deferred PDF the pipeline is making a document from (the fetcher's `keep`)."""
+        def keep(f: pl.File) -> pl.File:
+            got = ctx.fetcher.keep(f.url)
+            return pl.File(f.url, f.body, got.sha256 or f.sha256, got.raw_file_id)
+        return keep
+
+    @staticmethod
+    def _decliner(ctx: Context):
+        """Record that a PDF was read and is not a transcript or a cover letter: its URL, not its bytes (the fetcher's `decline`)."""
+        return lambda f: ctx.fetcher.decline(f.url)
+
+    @staticmethod
+    def _releaser(ctx: Context):
+        """Forget a deferred body nobody settled (a first-page candidate that passed, in a season this run did not build)."""
+        return lambda f: ctx.fetcher.release(f.url)
 
     # ------------------------------------------------------------------ load
     def load(self, tx, h: Harvest, task_run_id: int) -> int:
@@ -533,6 +566,9 @@ class EquityCallTranscripts(DocumentJob):
         lines = [f"{host} {err} x{n}" for (host, err), n in sorted(fails.items())]
         out.append(Check("company_hosts", not lines, ("failures on company hosts: " + _names(lines)) if lines
                          else "no failure on a company host", blocking=False))
+        out.append(Check("files_not_kept", True,
+                         f"{rep.not_kept} PDFs read and not stored ({rep.not_kept_bytes / pl.MB:.1f} MB at source size), their URLs "
+                         f"recorded; {rep.already_declined} URLs recorded on earlier runs were not fetched", blocking=False))
         if self.conflicts:
             out.append(Check("call_clashes", False, "; ".join(self.conflicts[:SHOWN]), blocking=False))
         if self.demoted:

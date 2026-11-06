@@ -662,3 +662,87 @@ def test_chrome_true_sends_through_the_impersonating_client_once_and_closes_it()
     assert len(plain.seen) == 1 and len(chrome.seen) == 1
     assert opened.count("chrome") >= 1
     c.close()
+
+
+# ------------------------------------------------------------------ deferred storing (job 2B-07c, #287)
+def _pdf() -> bytes:
+    return b"%PDF-1.4 " + uuid.uuid4().hex.encode()
+
+
+@pytest.mark.db
+def test_a_deferred_body_is_stored_only_when_kept(s3, task_run):
+    """`get(defer=True)` returns the body with no raw file, no object and no cache row; `keep` then stores it as `get` would."""
+    pdf = _pdf()
+    url, site = unique(FED), Site(pdf, etag=None, content_type="application/pdf")
+    f = fetcher(site, task_run)
+    rows, objects = q("select count(*) from core.raw_file")[0][0], s3.list_objects_v2(Bucket=BUCKET)["KeyCount"]
+    got = f.get(url, source="fed", defer=True)
+    assert (got.status, got.changed, got.body, got.raw_file_id, got.new_file, got.stored) == (200, True, pdf, None, False, False)
+    assert got.sha256 == hashlib.sha256(pdf).digest() and got.media_type == "application/pdf"
+    assert q("select count(*) from core.raw_file")[0][0] == rows and s3.list_objects_v2(Bucket=BUCKET)["KeyCount"] == objects
+    assert q("select count(*) from ops.http_cache where url=%s", url) == [(0,)] and not f.declined(url, source="fed")
+    kept = f.keep(got.url)
+    assert kept.stored and kept.new_file and kept.changed and f.read(kept.raw_file_id) == pdf
+    assert q("select count(*) from ops.http_cache where url=%s", url) == [(1,)] and not f.declined(url, source="fed")
+    assert f.stats() == {"http": {"200": 1, "403": 0, "429": 0, "new_raw_files": 1}, "files": 1}
+    with pytest.raises(ValueError, match="no deferred body"):
+        f.keep(got.url)                                         # a body is settled once
+    f.close()
+
+
+@pytest.mark.db
+def test_a_declined_body_is_recorded_without_a_file_and_the_url_is_declined_from_then_on(s3, task_run):
+    pdf = _pdf()
+    url, site = unique(FED), Site(pdf, etag='"d1"', content_type="application/pdf")
+    f = fetcher(site, task_run)
+    rows, objects = q("select count(*) from core.raw_file")[0][0], s3.list_objects_v2(Bucket=BUCKET)["KeyCount"]
+    got = f.get(url, source="fed", defer=True)
+    assert f.decline(got.url) is True
+    assert q("select status, sha256 = %s, etag, last_modified, task_run_id from ops.http_cache where url=%s",
+             got.sha256, url) == [(200, True, None, None, task_run)]
+    assert q("select count(*) from core.raw_file")[0][0] == rows and s3.list_objects_v2(Bucket=BUCKET)["KeyCount"] == objects
+    assert f.declined(url, source="fed") and not f.declined(unique(FED), source="fed")
+    assert f.stats()["files"] == 0
+    # a later fetch of a declined URL that is kept after all stores it and the URL is no longer declined
+    again = f.get(url, source="fed", defer=True)
+    assert f.keep(again.url).new_file and not f.declined(url, source="fed")
+    f.close()
+
+
+@pytest.mark.db
+def test_declining_bytes_that_are_stored_already_records_nothing_and_a_released_body_leaves_no_trace(s3, task_run):
+    pdf = _pdf()
+    first, second = unique(FED), unique(FED)
+    f = fetcher(Site(pdf, etag=None, content_type="application/pdf"), task_run)
+    f.keep(f.get(first, source="fed", defer=True).url)          # stored under this hash
+    assert f.decline(f.get(second, source="fed", defer=True).url) is False       # the same bytes at another URL: not declined
+    assert q("select count(*) from ops.http_cache where url=%s", second) == [(0,)] and not f.declined(second, source="fed")
+    third = unique(FED)
+    f.release(f.get(third, source="fed", defer=True).url)
+    f.release(third)                                            # releasing a URL that holds nothing is safe
+    assert q("select count(*) from ops.http_cache where url=%s", third) == [(0,)]
+    with pytest.raises(ValueError, match="no deferred body"):
+        f.decline(third)
+    f.close()
+
+
+@pytest.mark.db
+def test_deferring_still_honours_keep_and_a_not_modified_answer(s3, task_run):
+    page = f"<html><body>Investors {uuid.uuid4().hex}</body></html>".encode()
+    url, site = unique(FED), Site(page, etag=None)
+    f = fetcher(site, task_run)
+    is_pdf = lambda body: body.startswith(b"%PDF-")           
+    got = f.get(url, source="fed", keep=is_pdf, defer=True)     # a page `keep` declines is not held either
+    assert (got.body, got.raw_file_id) == (page, None)
+    with pytest.raises(ValueError, match="no deferred body"):
+        f.keep(got.url)
+    pdf = _pdf()
+    pdf_url, site = unique(FED), Site(pdf, etag='"n1"', content_type="application/pdf")
+    f = fetcher(site, task_run)
+    first = f.get(pdf_url, source="fed", keep=is_pdf, defer=True)
+    stored = f.keep(first.url)
+    again = f.get(pdf_url, source="fed", keep=is_pdf, defer=True)      # the stored copy answers 304: nothing is held
+    assert (again.status, again.raw_file_id, again.body) == (304, stored.raw_file_id, None)
+    with pytest.raises(ValueError, match="no deferred body"):
+        f.keep(again.url)
+    f.close()

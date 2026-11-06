@@ -21,6 +21,14 @@ filing of a season is resolved (fetch, the full test, the quarter by `rows.decid
   call as above (rule 1);
 - no filing resolves: the season's outcome is the first filing's, held with its reason, as before.
 `one_call_per_quarter` then leaves one call per quarter across the seasons of the run.
+
+**A file is stored only if it is kept** (job 2B-07c, #287). The getter returns every body unstored; the pipeline reads it, and
+`Run.keep` stores it only when a document is made from it: an earnings-call transcript or a call's cover letter (and an image-only
+file, whose call is `unreadable`). A file that was read and is not one, such as a first-page candidate whose page does not say
+"transcript" or a company link to an annual report, is not stored: `Run.reject` records its URL so the next run does not fetch it
+again. Whether a company PDF is *this company's, this quarter's* transcript depends on the cover letter that links to it, so a
+full transcript that fails that test is released, not recorded (another letter may link to it); a file that is not a transcript
+at all is recorded.
 """
 from __future__ import annotations
 
@@ -51,11 +59,12 @@ class CompanyRef:
 
 @dataclass(frozen=True)
 class File:
-    """A fetched body, already stored as a raw file."""
+    """A fetched body: stored as a raw file once `Run.keep` has kept it."""
     url: str
     body: bytes
     sha256: bytes
-    raw_file_id: int | None = None
+    raw_file_id: int | None = None       # None until `Run.keep` stores it (a getter's deferred body)
+    declined: bool = False               # read on an earlier run and not kept (#287): nothing was fetched, `body` is empty
 
 
 # getter(url, kind) -> File or None; kind is "exchange" or "company". The task's getter logs a failure on a company host.
@@ -142,6 +151,9 @@ class Report:
     gm_filings: list[tuple[int, str, str]] = field(default_factory=list)      # the same, as (entity id, exchange, filing key)
     stored_revised: list[str] = field(default_factory=list)                   # a late filing that revises a call in the database
     first_pages: int = 0                                                       # filings whose first page was opened
+    not_kept: int = 0                                                          # files read and not stored (#287)
+    not_kept_bytes: int = 0
+    already_declined: int = 0                                                  # URLs recorded on an earlier run: not fetched
 
 
 # ---------------------------------------------------------------------------------------------- curated links
@@ -179,23 +191,70 @@ def exchange_urls(a: Announcement) -> list[str]:
 
 class Run:
     """One run's state for a company: the getter, the report, and files already fetched (a first-page check's file is
-    not fetched again)."""
+    not fetched again). `keeper`, `decliner` and `releaser` (the task's) settle a deferred body: store it, record that it was
+    read and not kept, or forget it (#287). Without them (a test serving files) nothing is stored or recorded."""
 
-    def __init__(self, getter: Getter, curated: dict[tuple[str, str], CuratedRow], report: Report):
+    def __init__(self, getter: Getter, curated: dict[tuple[str, str], CuratedRow], report: Report, *,
+                 keeper: Callable[[File], File] | None = None, decliner: Callable[[File], bool] | None = None,
+                 releaser: Callable[[File], None] | None = None):
         self.getter, self.curated, self.report = getter, curated, report
+        self.keeper, self.decliner, self.releaser = keeper, decliner, releaser
         self._cache: dict[str, File | None] = {}
+        self._declined: set[str] = set()      # URLs an earlier run read and did not keep
+        self._settled: set[str] = set()       # URLs this run declined
 
     def get(self, url: str, kind: str) -> File | None:
         if url not in self._cache:
-            self._cache[url] = self.getter(url, kind)
+            f = self.getter(url, kind)
+            self._cache[url] = f
+            if f is not None and f.declined:
+                self._declined.add(url)
+                self.report.already_declined += 1
         return self._cache[url]
 
     def exchange_file(self, a: Announcement) -> File | None:
         for u in exchange_urls(a):
             f = self.get(u, "exchange")
+            if f is not None and f.declined:
+                continue
             if f is not None and pdfs.is_pdf_bytes(f.body):
                 return f
         return None
+
+    def was_declined(self, a: Announcement) -> bool:
+        """The filing's file was read on an earlier run and not kept (a file that cannot be fetched is not the same)."""
+        return any(u in self._declined for u in exchange_urls(a))
+
+    def keep(self, f: File) -> File:
+        """Store a file a document is about to be made from (a transcript or a cover letter). Returns the stored file; a
+        later `get` of the URL returns it too."""
+        have = self._cache.get(f.url)
+        if have is not None and have.raw_file_id is not None:
+            return have
+        if f.raw_file_id is not None or self.keeper is None:
+            return f
+        kept = self.keeper(f)
+        self._cache[f.url] = kept
+        return kept
+
+    def reject(self, f: File) -> None:
+        """The file was read and is not a transcript or a cover letter: it is not stored and its URL is recorded, so the next
+        run does not fetch it again. A copy already stored (a 304's) is left as it is."""
+        if f.raw_file_id is not None or f.declined or f.url in self._settled:
+            return
+        self._settled.add(f.url)
+        if self.decliner is not None and self.decliner(f):
+            self.report.not_kept += 1
+            self.report.not_kept_bytes += len(f.body)
+
+    def settle(self) -> None:
+        """Forget every body still deferred (neither kept nor rejected): nothing is stored or recorded for it, and a later run
+        looks at it again. A first-page candidate that passed but whose season this run did not build is one."""
+        if self.releaser is None:
+            return
+        for url, f in self._cache.items():
+            if f is not None and f.raw_file_id is None and not f.declined and url not in self._settled:
+                self.releaser(f)
 
 
 def _name(co: CompanyRef, a: Announcement) -> str:
@@ -232,12 +291,18 @@ def follow_links(run: Run, co: CompanyRef, a: Announcement, cover: Doc, label: s
         if f is None:
             attempts.append(f"{host} unreachable")
             continue
+        if f.declined:
+            attempts.append(f"{host} PDF that is not a call transcript")
+            continue
         if not pdfs.is_pdf_bytes(f.body):
             attempts.append(f"{host} web page")
             continue
         info = pdfs.read_pdf(f.body)
         if company_pdf_ok(info, co, label):
+            f = run.keep(f)
             return _company_doc(f.url, f, info, co, label, a), attempts
+        if pdfs.classify_pdf(info) != "full":                  # not a transcript of any call: not stored, its URL recorded
+            run.reject(f)
         attempts.append(f"{host} PDF that is not this company's {label} transcript")
     return None, attempts
 
@@ -249,10 +314,12 @@ def curated_doc(run: Run, co: CompanyRef, a: Announcement, label: str) -> Doc | 
     if row is None:
         return None
     f = run.get(row.url, "company")
-    if f is not None and pdfs.is_pdf_bytes(f.body):
+    if f is not None and not f.declined and pdfs.is_pdf_bytes(f.body):
         info = pdfs.read_pdf(f.body)
         if company_pdf_ok(info, co, label):
-            return _company_doc(f.url, f, info, co, label, a)
+            return _company_doc(f.url, run.keep(f), info, co, label, a)
+        if pdfs.classify_pdf(info) != "full":
+            run.reject(f)
     run.report.curated_failed.append(f"{co.slug} {label} ({pdfs.host_of(row.url)})")
     return None
 
@@ -287,6 +354,8 @@ def resolve_filing(run: Run, co: CompanyRef, a: Announcement, results: list[rows
     if f is None:
         if named:
             return Resolved(a, None, meeting="general_meeting")
+        if run.was_declined(a):                                # read on an earlier run and not kept (#287): not a failure to serve
+            return Resolved(a, None)
         run.report.not_served.append(f"{_name(co, a)} ({a.exchange} {a.file_name or a.filing_key})")
         return Resolved(a, None)
     info = pdfs.read_pdf(f.body)
@@ -294,14 +363,17 @@ def resolve_filing(run: Run, co: CompanyRef, a: Announcement, results: list[rows
     if named or (cls in ("full", "cover_letter") and cl.is_general_meeting(pdfs.header_text(info), short=False)):
         doc = None
         if cls == "full":
-            doc = _with_text(_doc("call_transcript", a, f, info, co, f"filed {rows.india_date(a.disseminated).isoformat()}",
-                                  meeting=True), run, co, a)
+            doc = _with_text(_doc("call_transcript", a, run.keep(f), info, co,
+                                  f"filed {rows.india_date(a.disseminated).isoformat()}", meeting=True), run, co, a)
+        else:
+            run.reject(f)                                      # a general meeting's letter or notice: not a call's file
         return Resolved(a, None, "none", doc, None, None, info, meeting="general_meeting")
     if cls == "full":
         label = rows.decide_quarter(a.disseminated, results, info.quarter).label or a.season      # #285 rule 4: the call's quarter
-        return Resolved(a, "stored", "exchange_pdf", _with_text(_doc("call_transcript", a, f, info, co, label), run, co, a), None,
-                        None, info)
+        return Resolved(a, "stored", "exchange_pdf",
+                        _with_text(_doc("call_transcript", a, run.keep(f), info, co, label), run, co, a), None, None, info)
     if cls == "cover_letter":
+        f = run.keep(f)
         cover = _doc("call_cover_letter", a, f, info, co, a.season)
         qd = rows.decide_quarter(a.disseminated, results, info.quarter)
         label = qd.label or a.season
@@ -316,7 +388,9 @@ def resolve_filing(run: Run, co: CompanyRef, a: Announcement, results: list[rows
         run.report.unresolved.append(f"{_name(co, a)} ({'; '.join(attempts) if attempts else 'no company link'})")
         return Resolved(a, "on_company_website", "none", None, cover, company_url, info)
     if cls == "image_only":
+        run.keep(f)                                            # kept as before: the call is `unreadable`, this file is the evidence
         return Resolved(a, "unreadable", "none", None, None, None, info)
+    run.reject(f)                                              # named a transcript, read as something else: not stored (#287)
     run.report.not_a_transcript.append(f"{_name(co, a)} ({a.file_name or a.filing_key}: {cls})")
     return Resolved(a, None, info=info)
 
@@ -345,6 +419,8 @@ def first_page_transcripts(run: Run, co: CompanyRef, season: str, others: list[A
         subject = subject_line(page)
         if cl.says_transcript(page) and not cl.is_audio_video(subject) and not cl.is_intimation(subject):
             out.append(replace(a, kind="transcript", why="first page"))
+        else:
+            run.reject(f)                                      # not a transcript: not stored, its URL recorded (#287)
     return out
 
 
@@ -414,6 +490,7 @@ def process_company(run: Run, co: CompanyRef, announcements: list[Announcement],
         if p.late:
             run.report.late_calls.append(f"{co.slug} {p.quarter.label} (filed {rows.india_date(p.filing.disseminated).isoformat()} "
                                          f"in the {p.season} season)")
+    run.settle()
     return plans
 
 

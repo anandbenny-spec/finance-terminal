@@ -19,6 +19,10 @@ here, and every body it downloads reaches the storage function and `core.raw_fil
   transport changes: pacing, retries, the counts, conditional requests and raw files are the same for every site.
 - **Secrets are sent, never recorded:** `secret_params` (FRED's `api_key`) go on the request only, so the URLs in
   `ops.http_cache`, `core.raw_file`, errors and logs never hold them.
+- **Deferred storing** (`get(defer=True)`, job 2B-07c, #287): a caller that cannot tell whether a file is worth keeping until
+  it has read it gets the body back unstored, then settles it: `keep` stores it as any other body, `decline` records that it
+  was read and not kept, `release` forgets it. A declined URL is an `ops.http_cache` row whose bytes have no raw file (no
+  new table or column): `declined` tells a later run not to fetch it again. Deleting the row asks for a fresh look.
 """
 from __future__ import annotations
 
@@ -353,6 +357,19 @@ class _Cached:
     media_type: str | None
 
 
+@dataclass(frozen=True)
+class _Held:
+    """A 200 body returned by `get(defer=True)` and not yet settled: what `_store` needs to store it later."""
+    response: Response
+    url: str
+    source: str
+    source_id: int
+    cached: _Cached | None
+    media_type: str | None
+    ext: str | None
+    content_date: date | None
+
+
 def _media_type(content_type: str | None) -> str | None:
     mt = (content_type or "").split(";", 1)[0].strip().lower()
     return mt or None
@@ -371,6 +388,7 @@ class Fetcher:
     def __init__(self, http: HttpClient, db, storage: Storage | Callable[[], Storage], task_run_id: int):
         self.http, self.db, self.task_run_id = http, db, task_run_id
         self._storage, self._sources = storage, {}
+        self._held: dict[str, _Held] = {}   # deferred bodies not yet settled, by recorded URL
         self.counts: Counter = Counter({"429": 0, "403": 0})
         self.files = 0                 # bodies downloaded and stored
         self.new_files = 0             # of which new raw files
@@ -411,14 +429,18 @@ class Fetcher:
             secret_params: Mapping[str, str] | None = None, headers: Mapping[str, str] | None = None,
             conditional: bool = True, media_type: str | None = None, ext: str | None = None,
             content_date: date | None = None, allow: Iterable[int] = (), chrome: bool = False,
-            extra_sites: tuple[Site, ...] = (), keep: Callable[[bytes], bool] | None = None) -> Fetched:
+            extra_sites: tuple[Site, ...] = (), keep: Callable[[bytes], bool] | None = None,
+            defer: bool = False) -> Fetched:
         """Fetch `url` for the source `source` (a core.source key). A 200 is stored and registered before this
         returns; a 304 returns the stored copy's raw file; a status in `allow` returns without a file; anything
         else raises FetchError. conditional=False skips the validators (to download a page again on purpose).
         `keep` is for a caller that will use only some answers (a company's link that may lead to a web page, not the
         file): given a 200's body, it says whether the body is worth keeping. A body it declines comes back for a look
         (status 200, `body` and `sha256` set, `changed` True, no `raw_file_id`) but is neither stored nor cached, so a
-        page that differs on every request adds no raw file to a re-run. Without `keep`, every 200 is stored."""
+        page that differs on every request adds no raw file to a re-run. Without `keep`, every 200 is stored.
+        `defer` (#287) is for a caller that decides only after reading the file: a 200 body that `keep` accepts comes back
+        unstored (no raw file, no cache row, `body` and `sha256` set) and is held until `keep`, `decline` or `release` is
+        called with its URL. A 304 still returns the stored copy; nothing is held for it."""
         if (params or secret_params) and urlsplit(url).query:
             raise ValueError("pass query parameters either in the URL or as params, not both")
         record = str(httpx.URL(url, params=dict(params))) if params else url
@@ -446,6 +468,10 @@ class Fetcher:
             if keep is not None and not keep(r.body):
                 return Fetched(r.url, 200, True, None, hashlib.sha256(r.body).digest(),
                                _media_type(r.headers.get("content-type")), r.body, r.fetched_at)
+            if defer:
+                self._held[r.url] = _Held(r, url, source, source_id, cached, media_type, ext, content_date)
+                return Fetched(r.url, 200, True, None, hashlib.sha256(r.body).digest(),
+                               media_type or _media_type(r.headers.get("content-type")), r.body, r.fetched_at)
             return self._store(r, url, source, source_id, cached, media_type, ext, content_date)
         if r.status in set(allow):
             return Fetched(record, r.status, False, None, None, None, None, r.fetched_at)
@@ -475,6 +501,46 @@ class Fetcher:
             return None
         at = self.db.execute("select fetched_at from ops.http_cache where url = %s", (record_url,)).fetchone()[0]
         return Fetched(record_url, 304, False, cached.raw_file_id, cached.sha256, cached.media_type, None, at)
+
+    # ------------------------------------------------------------------ deferred bodies (#287)
+    def declined(self, url: str, *, source: str) -> bool:
+        """True if an earlier run read this URL's body and did not keep it (`decline`): its `ops.http_cache` row has bytes
+        and no raw file. No request is needed to know that. A URL whose bytes are stored (here or under the same hash) is
+        not declined."""
+        cached = self._cached(url, self._source_id(source))
+        return cached is not None and cached.raw_file_id is None
+
+    def keep(self, url: str) -> Fetched:
+        """Store a body `get(defer=True)` returned for `url` (the URL the Fetched named): the storage function, `core.raw_file`
+        and `ops.http_cache`, exactly as `get` would have done."""
+        h = self._held.pop(url, None)
+        if h is None:
+            raise ValueError(f"no deferred body for {url}")
+        return self._store(h.response, h.url, h.source, h.source_id, h.cached, h.media_type, h.ext, h.content_date)
+
+    def decline(self, url: str) -> bool:
+        """Record that the deferred body for `url` was read and is not worth keeping: an `ops.http_cache` row with the body's
+        hash and no raw file, so `declined` is True from now on. Nothing is written to the object store or `core.raw_file`.
+        Returns False, recording nothing, when a raw file with these bytes already exists (the body is kept after all)."""
+        h = self._held.pop(url, None)
+        if h is None:
+            raise ValueError(f"no deferred body for {url}")
+        r = h.response
+        sha = hashlib.sha256(r.body).digest()
+        if self.db.execute("select 1 from core.raw_file where source_id = %s and sha256 = %s", (h.source_id, sha)).fetchone():
+            return False
+        self.db.execute(
+            """insert into ops.http_cache (url, etag, last_modified, sha256, status, fetched_at, task_run_id)
+               values (%s, null, null, %s, 200, %s, %s)
+               on conflict (url) do update set etag = null, last_modified = null, sha256 = excluded.sha256,
+                 status = excluded.status, fetched_at = excluded.fetched_at, task_run_id = excluded.task_run_id""",
+            (r.url, sha, r.fetched_at, self.task_run_id))
+        return True
+
+    def release(self, url: str) -> None:
+        """Forget a deferred body without storing it or recording anything (a later run fetches it again). Safe to call for a
+        URL that holds nothing."""
+        self._held.pop(url, None)
 
     def _store(self, r: Response, url: str, source: str, source_id: int, cached: _Cached | None,
                media_type: str | None, ext: str | None, content_date: date | None) -> Fetched:
