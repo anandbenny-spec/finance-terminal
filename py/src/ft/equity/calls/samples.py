@@ -384,15 +384,14 @@ order by x.ai_output_id, x.citation_no"""
 PAGE_MAP_SQL = """
 with pages as (
   select p.document_id, p.pdf_page, p.char_start, p.char_end,
-         lag(p.char_end) over w as prev_end, lag(p.pdf_page) over w as prev_page,
-         lead(p.document_id) over w as next_doc
+         lag(p.char_end) over w as prev_end
   from equity.transcript_page p
   window w as (partition by p.document_id order by p.pdf_page)
 ), per_doc as (
   select d.id, d.char_count, count(p.pdf_page) as n_pages,
-         count(*) filter (where p.prev_end is not null and p.char_start < p.prev_end) as overlaps,
-         count(*) filter (where p.prev_end is not null and p.char_start > p.prev_end) as gaps,
-         count(*) filter (where p.char_end > d.char_count) as past_end,
+         count(*) filter (where p.prev_end is not null and p.char_start < p.prev_end) as n_overlap,
+         count(*) filter (where p.prev_end is not null and p.char_start > p.prev_end) as n_gap,
+         count(*) filter (where p.char_end > d.char_count) as n_past_end,
          max(p.char_end) as last_end, min(p.char_start) as first_start
   from core.document d
   left join pages p on p.document_id = d.id
@@ -402,9 +401,9 @@ with pages as (
 select count(*) as transcripts,
        count(*) filter (where n_pages > 0) as with_pages,
        count(*) filter (where n_pages = 0) as without_pages,
-       count(*) filter (where overlaps > 0) as with_overlaps,
-       count(*) filter (where gaps > 0) as with_gaps,
-       count(*) filter (where past_end > 0) as past_the_text,
+       count(*) filter (where n_overlap > 0) as with_overlaps,
+       count(*) filter (where n_gap > 0) as with_gaps,
+       count(*) filter (where n_past_end > 0) as past_the_text,
        count(*) filter (where n_pages > 0 and last_end <> char_count) as short_of_the_end,
        count(*) filter (where n_pages > 0 and first_start <> 0) as not_from_the_start
 from per_doc"""

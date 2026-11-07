@@ -271,3 +271,9 @@ def test_the_workflow_passes_its_inputs_through_the_environment():
     run = next(st["run"] for st in wf["jobs"]["run"]["steps"] if st.get("name") == "Draw")
     assert "${{" not in run and '"$GATE"' in run and '"$SEED"' in run
     assert wf["on"]["workflow_dispatch"]["inputs"]["gate"]["options"] == ["all", *s.GATES]
+
+
+def test_the_page_map_check_uses_no_reserved_word_as_a_column_name():
+    # `overlaps` is reserved in Postgres: the first run of this query failed on dev with a syntax error (7 Nov 2026)
+    assert not re.search(r"\bas (overlaps|gaps)\b", s.PAGE_MAP_SQL) and "n_overlap" in s.PAGE_MAP_SQL
+    assert "count(*) filter (where n_pages > 0)" in s.PAGE_MAP_SQL
