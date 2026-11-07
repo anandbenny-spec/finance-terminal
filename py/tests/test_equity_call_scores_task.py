@@ -43,7 +43,7 @@ def task_row():
 def wipe() -> None:
     ids = "(select id from core.entity where slug like 'cs-%')"
     docs = f"(select id from core.document where entity_id in {ids})"
-    with psycopg.connect(ADMIN, autocommit=True) as c:
+    with psycopg.connect(ADMIN) as c:           # one transaction: the chunk check is deferred to commit, and the document is gone then
         c.execute(f"delete from equity.call_remarks_change where event_id in (select event_id from equity.earnings_call where entity_id in {ids})")
         c.execute(f"delete from equity.call_turn where document_id in {docs}")
         c.execute(f"delete from core.chunk where document_id in {docs}")
