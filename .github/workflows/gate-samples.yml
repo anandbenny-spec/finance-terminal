@@ -1,0 +1,49 @@
+# Drawing #178's gate samples (py ft/equity/calls/samples.py; Spec 02B §13.8, §13.11 L12): reads dev's published extraction
+# outputs, chosen by code with the recorded seeds, in a read-only session, and prints the chosen ids, the strata and any
+# shortfall as annotations (Claude reads results from annotations: its workspace can't download logs). Ids only: no transcript
+# text, no quote. Manual only; dev only. Writes nothing, calls no source and no model.
+name: gate-samples
+on:
+  workflow_dispatch:
+    inputs:
+      gate:
+        description: Which sample to draw ("all" also runs the page-map check)
+        type: choice
+        options: [all, targets, unattributed, stated, links]
+        default: all
+      seed:
+        description: A new seed after a failed gate (one gate only); leave empty for the recorded seed
+        type: string
+        default: ""
+concurrency:
+  group: gate-samples
+  cancel-in-progress: false
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: py
+jobs:
+  run:
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026; the audit's G1/S1 ran on 24.04
+    timeout-minutes: 10
+    env:
+      FT_TARGET: dev
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0, pinned by SHA (setup-uv publishes no v8+ major tags)
+        with:
+          enable-cache: true
+          cache-dependency-glob: py/uv.lock
+      - run: uv sync --locked --extra jobs
+      - name: Draw
+        run: |
+          args=(--gate "$GATE")
+          if [ -n "$SEED" ]; then args+=(--seed "$SEED"); fi
+          uv run --locked python -m ft.equity.calls.samples "${args[@]}"
+        env:
+          GATE: ${{ inputs.gate }}
+          SEED: ${{ inputs.seed }}
+          # Dev's credentials only; a missing DEV_ secret leaves the variable empty (the script then stops), never falling
+          # back to production's.
+          JOB_DATABASE_URL: ${{ secrets.DEV_JOB_DATABASE_URL }}
