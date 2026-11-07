@@ -31,6 +31,13 @@ Decided by Claude (standing delegation, 24 Oct 2026), each with its alternative:
 - Eight not-scored targets, two in each type group (§5.11: "about 8"). Drawn from every not-scored target, so most are
   metric `other` (76% of the pool), which is what the pool holds.
 - Seeds are the sitting's date and the gate's number (2026110701 to 2026110704), fixed before any item is read.
+- Rule version 2 (7 Nov 2026, before any item was shown to Anand). Version 1's first draw on dev came back short for two
+  reasons that were the script's, not the pool's: a summary bullet's company was read from `core.ai_output.entity_id`, which
+  is null for every summary, so the one-a-company cap allowed one summary link; and the greedy fill let common cells use up
+  the company slots of the five companies that hold every scored floor, leaving that cell empty. Version 2 reads a summary's
+  company from its document and fills the scarcest cell first, preferring items that help a minimum still unmet; if a draw
+  is still short it tries the next of at most 300 attempts (each its own seeded order) and keeps the first with no shortfall,
+  else the one missing least. The attempt number is recorded with the seed, so the draw can be repeated. No rule was loosened.
 """
 from __future__ import annotations
 
@@ -43,7 +50,8 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
-RULE_VERSION = 1
+RULE_VERSION = 2
+ATTEMPTS = 300                  # a seeded retry limit, see `draw`
 SITTING = 1
 SEEDS = {"targets": 2026110701, "unattributed": 2026110702, "stated": 2026110703, "links": 2026110704}
 GATES = tuple(SEEDS)
@@ -120,6 +128,7 @@ class Draw:
     items: list[Item]                   # in seeded order, so a batch is a mix of strata
     pool: int
     shortfalls: list[str]
+    attempt: int = 0                    # which seeded order gave this draw (0 is the plain one)
 
     def strata(self) -> dict[str, int]:
         rules = RULES[self.gate]
@@ -134,15 +143,28 @@ class Draw:
         return dict(sorted(c.items()))
 
 
-def draw(items: Iterable[Item], gate: str, seed: int | None = None) -> Draw:
-    """Greedy and seeded: each minimum is filled first, in the order the rules list them, then the rest of the slots; an item
-    is taken only while its company is under the cap and its cell has room. What can't be met is reported, not relaxed."""
-    rules = RULES[gate]
-    seed = SEEDS[gate] if seed is None else seed
-    pool = sorted(items, key=lambda it: (rank(seed, gate, it.id), str(it.id)))
+def _cell_order(pool: list[Item], rules: Rules) -> list[str]:
+    """Scarcest cell first: the fewest companies in the pool for its slots, so common cells can't use up its companies."""
+    if not rules.quotas:
+        return [""]
+    companies: dict[str, set[int]] = {c: set() for c in rules.quotas}
+    for it in pool:
+        c = rules.cell(it)
+        if c in companies:
+            companies[c].add(it.company)
+    return sorted(rules.quotas, key=lambda c: (len(companies[c]) / rules.quotas[c], c))
+
+
+def _once(order: list[Item], rules: Rules, cell_order: list[str]) -> tuple[list[Item], list[str], int]:
+    """One greedy pass over a seeded order: (items, shortfalls, how many slots are missing). Without cells, each minimum is
+    filled first in the order the rules list them, then the rest. With cells, each cell in turn, scarcest first, first with
+    the items that help a minimum still unmet, then with any. An item is taken only while its company is under the cap and its
+    cell has room."""
     chosen: list[Item] = []
     per_company: Counter[int] = Counter()
     cells: Counter[str] = Counter()
+    mins: Counter[str] = Counter()
+    taken: set[int | str] = set()
 
     def can(it: Item) -> bool:
         if len(chosen) >= rules.total or per_company[it.company] >= rules.per_company:
@@ -154,31 +176,69 @@ def draw(items: Iterable[Item], gate: str, seed: int | None = None) -> Draw:
 
     def take(it: Item) -> None:
         chosen.append(it)
+        taken.add(it.id)
         per_company[it.company] += 1
         cells[rules.cell(it)] += 1
+        for name, test, _ in rules.minimums:
+            if test(it):
+                mins[name] += 1
 
-    taken: set[int | str] = set()
-    for _name, test, at_least in rules.minimums:
-        for it in pool:
-            if sum(1 for c in chosen if test(c)) >= at_least:
+    def helps(it: Item) -> bool:
+        return any(test(it) and mins[name] < at_least for name, test, at_least in rules.minimums)
+
+    if not rules.quotas:
+        for name, test, at_least in rules.minimums:
+            for it in order:
+                if mins[name] >= at_least:
+                    break
+                if it.id not in taken and test(it) and can(it):
+                    take(it)
+        for it in order:
+            if len(chosen) >= rules.total:
                 break
-            if it.id not in taken and test(it) and can(it):
+            if it.id not in taken and can(it):
                 take(it)
-                taken.add(it.id)
-    for it in pool:
-        if len(chosen) >= rules.total:
-            break
-        if it.id not in taken and can(it):
-            take(it)
-            taken.add(it.id)
+    else:
+        for c in cell_order:
+            for only_helpers in (True, False):
+                for it in order:
+                    if cells[c] >= rules.quotas[c] or len(chosen) >= rules.total:
+                        break
+                    if it.id in taken or rules.cell(it) != c or not can(it) or (only_helpers and not helps(it)):
+                        continue
+                    take(it)
 
-    short = [f"{name}: {have} of {at_least}" for name, test, at_least in rules.minimums
-             if (have := sum(1 for c in chosen if test(c))) < at_least]
+    short = [f"{name}: {mins[name]} of {at_least}" for name, _t, at_least in rules.minimums if mins[name] < at_least]
     short += [f"cell {c}: {cells[c]} of {q}" for c, q in rules.quotas.items() if cells[c] < q]
     if len(chosen) < rules.total:
         short.append(f"total: {len(chosen)} of {rules.total}")
+    missing = (sum(at_least - mins[name] for name, _t, at_least in rules.minimums if mins[name] < at_least)
+               + sum(q - cells[c] for c, q in rules.quotas.items() if cells[c] < q)
+               + (rules.total - len(chosen)))
+    return chosen, short, missing
+
+
+def draw(items: Iterable[Item], gate: str, seed: int | None = None) -> Draw:
+    """Seeded: the same pool and seed give the same items. Attempt 0 orders the pool by `rank(seed, gate, id)`; if it comes
+    back short, attempt k tries the order of `rank(seed, "gate#k", id)`, up to ATTEMPTS, and the first with no shortfall wins
+    (else the one missing least). What no attempt can meet is reported, not relaxed."""
+    rules = RULES[gate]
+    seed = SEEDS[gate] if seed is None else seed
+    pool = sorted(items, key=lambda it: (str(it.id),))
+    cell_order = _cell_order(pool, rules)
+    best: tuple[int, int, list[Item], list[str]] | None = None
+    for attempt in range(ATTEMPTS):
+        key = gate if attempt == 0 else f"{gate}#{attempt}"
+        order = sorted(pool, key=lambda it: (rank(seed, key, it.id), str(it.id)))
+        chosen, short, missing = _once(order, rules, cell_order)
+        if best is None or missing < best[0]:
+            best = (missing, attempt, chosen, short)
+        if missing == 0:
+            break
+    assert best is not None
+    _missing, attempt, chosen, short = best
     chosen.sort(key=lambda it: (rank(seed, gate, it.id), str(it.id)))
-    return Draw(gate, seed, chosen, len(pool), short)
+    return Draw(gate, seed, chosen, len(pool), short, attempt)
 
 
 # ---------------------------------------------------------------------------------------------- the candidate pools
@@ -205,10 +265,11 @@ order by s.id"""
 
 POOL_LINKS = """
 with cit as (
-  select c.ai_output_id, c.citation_no, c.document_id, c.char_start, o.entity_id, 'summary' as source
+  select c.ai_output_id, c.citation_no, c.document_id, c.char_start, sd.entity_id, 'summary' as source
   from core.ai_citation c
   join core.ai_output o on o.id = c.ai_output_id and o.status = 'published' and o.task = 'call_summary'
-  where c.verified and c.kind = 'document_span'
+  join core.document sd on sd.id = c.document_id
+  where c.verified and c.kind = 'document_span' and sd.entity_id is not null
   union all
   select g.ai_output_id, g.citation_no, g.document_id, c.char_start, g.entity_id, 'figure'
   from equity.guidance g
@@ -421,7 +482,7 @@ def main(argv: list[str] | None = None, *, env=None, out=print) -> int:
         conn.execute("set default_transaction_read_only = on")
         for gate in gates:
             d = draw(read_pool(conn, gate), gate, args.seed)
-            body = {"gate": gate, "sitting": SITTING, "rule_version": RULE_VERSION, "seed": d.seed, "target": args.target,
+            body = {"gate": gate, "sitting": SITTING, "rule_version": RULE_VERSION, "seed": d.seed, "attempt": d.attempt, "target": args.target,
                     "pool": d.pool, "n": len(d.items), "ids": [it.id for it in d.items], "strata": d.strata(),
                     "shortfalls": d.shortfalls}
             out(annotation(f"sample {gate} seed {d.seed}", json.dumps(body, separators=(",", ":"))))
