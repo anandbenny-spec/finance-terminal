@@ -337,7 +337,7 @@ function Rail({ ctx }: { ctx: Ctx }) {
 
 // ------------------------------------------------------------------ What changed
 
-async function Changes({ ctx }: { ctx: Ctx }) {
+async function Changes({ ctx, flat = false }: { ctx: Ctx; flat?: boolean }) {
   const decisionDoc = ctx.docs.get(DOC_TYPES[ctx.bank].decision) ?? null;
   const title = ctx.bank === "Fed" ? "What changed in the statement" : "What changed in the resolution";
   const panel = (body: ReactNode, sources: string[] = [docSource(ctx, decisionDoc)]) => (
@@ -345,21 +345,21 @@ async function Changes({ ctx }: { ctx: Ctx }) {
       {body}
     </Panel>
   );
-  if (!decisionDoc) return <div className="mt-5">{panel(<StateNote kind="unavailable">The decision document isn&apos;t on the site yet.</StateNote>)}</div>;
+  if (!decisionDoc) return <div className={flat ? undefined : "mt-5"}>{panel(<StateNote kind="unavailable">The decision document isn&apos;t on the site yet.</StateNote>)}</div>;
   const read = await readMeetingDiff(decisionDoc.id);
-  if (!read.ok) return <div className="mt-5">{panel(<StateNote kind="error">{ERROR}</StateNote>)}</div>;
+  if (!read.ok) return <div className={flat ? undefined : "mt-5"}>{panel(<StateNote kind="error">{ERROR}</StateNote>)}</div>;
   if (!read.diff) {
     return (
-      <div className="mt-5">
+      <div className={flat ? undefined : "mt-5"}>
         {panel(<StateNote kind="unavailable">There&apos;s no earlier {ctx.bank === "Fed" ? "statement" : "resolution"} on the site to compare this one with.</StateNote>)}
       </div>
     );
   }
   const model = changesModel({ bank: ctx.bank, m: ctx.m, decisionDoc, diff: read.diff, base: read.base, summary: read.summary });
   return (
-    <div className="mt-5">
+    <div className={flat ? undefined : "mt-5"}>
       {panel(
-        <div className="flex flex-col gap-5">
+        <div className={flat ? "flex max-h-96 flex-col gap-5 overflow-auto" : "flex flex-col gap-5"}>
           <p className="text-data text-ink-2">Compared with the {model.baseLabel}.</p>
           {model.summary && ctx.policies ? (
             <Gated policies={ctx.policies} field="ai.statement_diff_summary" showLabel={false}>
@@ -421,10 +421,10 @@ async function NumbersPart({ ctx, base }: { ctx: Ctx; base: DocumentRow | null }
 /** Reactions are computed for decisions since 2019 (Spec 01 §2); the 2018 baselines have none. */
 const FIRST_REACTION_DATE = "2019-01-01";
 
-async function MarketReaction({ ctx }: { ctx: Ctx }) {
+async function MarketReaction({ ctx, flat = false }: { ctx: Ctx; flat?: boolean }) {
   const { bank, m } = ctx;
   const panel = (body: ReactNode) => (
-    <div className="mt-5">
+    <div className={flat ? undefined : "mt-5"}>
       <Panel title="Market reaction" titleId="panel-reaction" subtitle="How did markets move when the decision came out?" market={bank === "Fed" ? "US" : "IN"} footer={<Foot ctx={ctx} sources={[docSource(ctx, null)]} dataTo={m.decision_date} />}>
         {body}
       </Panel>
@@ -449,7 +449,7 @@ async function MarketReaction({ ctx }: { ctx: Ctx }) {
       <Freshness freshness={ctx.freshOf(FEEDS.policyReactions, model.dataTo)} />
     </>
   );
-  return <MeetingReactionView model={model} footer={footer} refresh={FEEDS.policyReactions} />;
+  return <MeetingReactionView model={model} footer={footer} refresh={FEEDS.policyReactions} flat={flat} />;
 }
 
 // ------------------------------------------------------------------ Statement, Minutes, Press conference
@@ -588,6 +588,44 @@ function Header({ ctx, tab, tabs }: { ctx: Ctx; tab: TabId; tabs: ReactNode }) {
       />
       {tabs}
     </>
+  );
+}
+
+/** The page's context for a meeting: null when it can't be built (a read failed, or no such meeting). */
+function buildCtx(bank: Bank, page: MeetingPage, freshRead: Awaited<ReturnType<typeof readFreshness>>): Ctx | null {
+  if (!page.meeting.ok || !page.meeting.row || page.meeting.row.bank !== bank) return null;
+  const tasks = bank === "Fed" ? FEEDS.meetingFed : FEEDS.meetingRbi;
+  return {
+    bank,
+    m: page.meeting.row,
+    page,
+    docs: latestByType(page.documents.ok ? page.documents.rows : []),
+    policies: page.fieldPolicy.ok ? page.fieldPolicy.rows : null,
+    fresh: (dataTo) => panelFreshness(freshRead.ok ? freshRead.tasks : null, tasks, dataTo, page.readAt),
+    freshOf: (of, dataTo) => panelFreshness(freshRead.ok ? freshRead.tasks : null, of, dataTo, page.readAt),
+  };
+}
+
+/**
+ * Policy Day's two meeting panels (#90; Spec 01 §4.4): what the latest decision changed (the AI summary, the numbers
+ * and the key changes, scrolling inside the panel) and how markets moved around it. The same components and reads as
+ * the meeting page's What changed and Market reaction tabs, so the two never disagree.
+ */
+export async function PolicyDayMeeting({ bank, slug, date }: { bank: Bank; slug: string; date: string }) {
+  const [page, freshRead] = await Promise.all([readMeetingPage(bank, slug, date), readFreshness()]);
+  const ctx = buildCtx(bank, page, freshRead);
+  if (!ctx) {
+    return (
+      <Panel title="What changed" titleId="panel-changes" market={bank === "Fed" ? "US" : "IN"}>
+        <StateNote kind="error">{ERROR}</StateNote>
+      </Panel>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-4">
+      <Changes ctx={ctx} flat />
+      <MarketReaction ctx={ctx} flat />
+    </div>
   );
 }
 
