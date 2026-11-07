@@ -47,6 +47,12 @@ stays as the record), or, if a bullet fails, replaced by a **rejection** with th
 generated yet"), or, if nothing changes, left alone and nothing is written, so a second re-check writes nothing. With `ai=off`
 (the workflow leaves the keys out) a run does only this. It honours a backfill's `--since` and `--until`.
 
+**One task only (2B-13b, #302; Anand, 5 Nov 2026).** A backfill can be limited to one of the two tasks: the environment
+variable `CALLS_AI_TASK` (the backfill workflow's `calls_ai_task` input) is `both` (the default, and what every other run uses),
+`call_summary` or `guidance_extraction`. The limit applies to what a run *asks for* (and to the summaries' re-check, which an
+extraction-only run skips); the open batches of an earlier run are still read for both tasks. `--task` was taken by the runner's
+task key, so the option has its own name.
+
 **Limits (§5.5).** A transcript whose request is estimated above 60,000 tokens is skipped with a warning naming it
 (`calls_too_long`); the wrapper itself refuses anything over 100,000.
 
@@ -78,6 +84,7 @@ Checks, B blocking, W warning:
 from __future__ import annotations
 
 import json
+import os
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -110,6 +117,15 @@ from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TA
 PROMPT_VERSION = {cs.TASK: "v6", ge.TASK: "v1"}
 IST = "Asia/Kolkata"
 SHOWN = 12
+ONLY_ENV = "CALLS_AI_TASK"            # both (the default) | call_summary | guidance_extraction: limits what a run asks for (#302)
+
+
+def only_task(env=None) -> str | None:
+    """The one task a run is limited to, or None for both. A bad value stops the run before anything is sent."""
+    v = ((os.environ if env is None else env).get(ONLY_ENV) or "both").strip()
+    if v not in ("both", cs.TASK, ge.TASK):
+        raise ValueError(f"{ONLY_ENV} must be both, {cs.TASK} or {ge.TASK}, not {v!r}")
+    return None if v == "both" else v
 
 
 def _names(items: list[str]) -> str:
@@ -157,6 +173,7 @@ class Fetched(RunState):
     too_big: list[tuple[Work, int]] = field(default_factory=list)   # skipped for their length: (work, estimated tokens)
     since: date | None = None                                # the run's range (a backfill), for the re-check of stored summaries
     until: date | None = None
+    only: str | None = None                                  # the one task this run asks for (None: both), #302
 
 
 @dataclass
@@ -282,9 +299,10 @@ class EquityCallsAi(BatchSteps, Task):
     def fetch(self, ctx: Context) -> Fetched:
         db = ctx.fetcher.db
         f = Fetched("batch", budget=batch.monthly_budget(db), month_spend=batch.month_spend(db), since=ctx.since,
-                    until=ctx.until)
+                    until=ctx.until, only=only_task())
         prompts = {t: load_prompt(t, v) for t, v in PROMPT_VERSION.items()}
-        works = self._calls(db, since=ctx.since, until=ctx.until, skipped=f.no_guidance)
+        works = [w for w in self._calls(db, since=ctx.since, until=ctx.until, skipped=f.no_guidance)
+                 if f.only in (None, w.task)]
         f.wanted = sum(1 for w in works if w.task == cs.TASK)
         f.wanted_guidance = sum(1 for w in works if w.task == ge.TASK)
         for w in works:
@@ -464,7 +482,7 @@ class EquityCallsAi(BatchSteps, Task):
     def load(self, tx, f: Fetched, task_run_id) -> int:
         self._last = f
         n = sum(1 for o in f.outcomes for c in o.calls if c.output_id is not None)
-        self._echo = self._echo_recheck(tx, f, task_run_id)
+        self._echo = self._echo_recheck(tx, f, task_run_id) if f.only != ge.TASK else EchoRun()    # extraction only: no summary work
         return n + f.batch.results["stale"] + f.batch.results["unstorable"] + self._echo.written   # the stale and unstorable ones stored bare
 
     # ------------------------------------------------------------------ the copied-text re-check (no AI)

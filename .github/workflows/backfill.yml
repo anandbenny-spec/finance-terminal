@@ -25,6 +25,11 @@ on:
         type: choice
         options: ['on', 'off']
         default: 'on'
+      calls_ai_task:
+        description: 'equity.calls_ai only: ask for both tasks (the default) or just one (the other is not asked for)'
+        type: choice
+        options: [both, call_summary, guidance_extraction]
+        default: both
 concurrency:
   group: jobs-backfill
   cancel-in-progress: false
@@ -56,6 +61,7 @@ jobs:
           INPUT_TASK: ${{ inputs.task }}
           INPUT_SINCE: ${{ inputs.since }}
           INPUT_UNTIL: ${{ inputs.until }}
+          CALLS_AI_TASK: ${{ inputs.calls_ai_task }}
           JOB_DATABASE_URL: ${{ env.FT_TARGET == 'production' && secrets.JOB_DATABASE_URL || env.FT_TARGET == 'dev' && secrets.DEV_JOB_DATABASE_URL || '' }}
           STORAGE_ENDPOINT: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_ENDPOINT || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_ENDPOINT || '' }}
           STORAGE_ACCESS_KEY_ID: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_ACCESS_KEY_ID || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_ACCESS_KEY_ID || '' }}

@@ -665,6 +665,55 @@ def test_the_extraction_rides_the_summary_batch_and_stores_rows_with_verified_ci
     assert "0 calls lacked their extraction" in last_run()["checks"]["call_guidance"]["detail"]
 
 
+# ---------------------------------------------------------------------------- one task only (2B-13b, #302)
+# `CALLS_AI_TASK` limits what a run asks for; unset (every other run) it is `both`, which every test above relies on.
+
+@pytest.mark.db
+def test_the_task_limit_is_both_unless_one_task_is_named_and_a_bad_value_stops_the_run(monkeypatch):
+    monkeypatch.delenv(eca.ONLY_ENV, raising=False)
+    assert eca.only_task() is None and eca.only_task({}) is None
+    assert eca.only_task({eca.ONLY_ENV: ""}) is None and eca.only_task({eca.ONLY_ENV: "both"}) is None
+    assert eca.only_task({eca.ONLY_ENV: " guidance_extraction "}) == ge.TASK
+    assert eca.only_task({eca.ONLY_ENV: "call_summary"}) == cs.TASK
+    with pytest.raises(ValueError, match="CALLS_AI_TASK must be both, call_summary or guidance_extraction"):
+        eca.only_task({eca.ONLY_ENV: "summaries"})
+
+
+@pytest.mark.db
+def test_a_run_limited_to_the_extraction_asks_for_no_summary_and_leaves_stored_summaries_unchecked(monkeypatch):
+    monkeypatch.setenv(eca.ONLY_ENV, ge.TASK)
+    bare, kept = make_call(fy_end=3), make_call(fy_end=3)           # no summary yet / a stored summary with a copied end
+    old = legacy(kept, COPIED)
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers([CAPEX_T, OUTLOOK_T, ASKED_T], [REV_S, MARGIN_S]))
+    assert go(task([bare["slug"], kept["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    ((_, batch),) = fake.batches.items()
+    assert len(batch["requests"]) == 2
+    for c in (bare, kept):
+        assert q("select ai_task from ops.ai_request where document_id = %s", c["doc"]) == [("guidance_extraction",)]
+        assert gx(c["doc"]) == [("published", "", "v1", 2, 2)]
+    assert outputs(bare["doc"]) == []                                # a default run would have asked for one
+    assert [o[0] for o in outputs(kept["doc"])] == ["published"]     # and would have cut its copied end: not re-checked
+    assert q("select content ->> 'echo_rule' from core.ai_output where id = %s", old) == [(None,)]
+    assert "0 calls lacked a published summary" in r["checks"]["call_summaries"]["detail"]
+    assert "2 calls lacked their extraction at the start; this run: 2 published" in r["checks"]["call_guidance"]["detail"]
+    assert echo_detail(r)["looked"] == 0
+
+
+@pytest.mark.db
+def test_a_run_limited_to_the_summary_asks_for_no_extraction(monkeypatch):
+    monkeypatch.setenv(eca.ONLY_ENV, cs.TASK)
+    c = make_call(fy_end=3)
+    fake = FakeClaude(["ok"], reply=replies(), answer=answers([CAPEX_T, OUTLOOK_T, ASKED_T], [REV_S, MARGIN_S]))
+    assert go(task([c["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    assert q("select ai_task from ops.ai_request where document_id = %s", c["doc"]) == [("call_summary",)]
+    assert [o[0] for o in outputs(c["doc"])] == ["published"] and gx(c["doc"]) == []
+    assert "0 calls lacked their extraction at the start" in r["checks"]["call_guidance"]["detail"]
+
+
 @pytest.mark.db
 def test_a_call_where_nothing_is_found_keeps_a_no_targets_draft_counts_zero_and_is_not_asked_again():
     empty, dropped = make_call(fy_end=3), make_call(fy_end=3)
