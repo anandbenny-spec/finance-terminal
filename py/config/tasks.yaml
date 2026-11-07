@@ -107,6 +107,12 @@ equity.rate_reactions:
   run_after: [equity.corporate_actions, policy.rate_cycles, policy.market_series]
   overdue_after: 10 days
   uses_nse: false
+equity.results_reactions:
+  description: Each company's and the Nifty 50's move (one and five sessions) around every results filing since 2025, with the windows left out counted
+  workflows: {weekly: every 6 days}
+  run_after: [equity.filings, equity.corporate_actions, policy.market_series]
+  overdue_after: 10 days
+  uses_nse: false
 equity.valuation:
   description: Each universe company's valuation runs (reverse DCF and default DCF for operating companies, implied return on equity for lenders, a not-applicable lead run for insurers and mixed companies) and the stored scenario grid
   workflows: {weekly: every 6 days}
