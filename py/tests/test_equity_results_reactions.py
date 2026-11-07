@@ -57,7 +57,8 @@ def test_an_evening_an_in_hours_and_a_weekend_release_read_the_right_closes():
     release(w, "aaa", "res-evening", "2025-01-15 19:00 Asia/Kolkata")     # after the close: next session is the 16th
     release(w, "aaa", "res-hours", "2025-01-22 11:00 Asia/Kolkata")       # in hours: that day's close is the first after
     release(w, "aaa", "res-friday", "2025-01-17 20:00 Asia/Kolkata")      # Friday evening: Monday the 20th
-    assert go(task_for(w)) == 12                                           # 3 events × d1, d5 × (company + Nifty)
+    assert go(task_for(w)) == 0
+    assert last_run()[1] == 12                                             # 3 events × d1, d5 × (company + Nifty)
     r = w.rows("aaa")
     assert r[("aaa", "res-evening", "d1")][:2] == [D(2025, 1, 15), D(2025, 1, 16)]
     assert r[("aaa", "res-evening", "d5")][:2] == [D(2025, 1, 15), D(2025, 1, 22)]
