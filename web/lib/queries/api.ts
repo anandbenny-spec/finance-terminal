@@ -486,6 +486,29 @@ export type CompanyValuationRow = {
   source_key: string;
 };
 
+/** api.priced_in_operating and api.priced_in_lenders (0024): one row per company, latest run. Ranked by gap (implied minus delivered); `gap_rank` is null for a held-back or N/A row, whose `reason` says why. Operating: growth as a fraction a year; lenders: ROE as a fraction. */
+export type PricedInRow = {
+  slug: string;
+  name: string;
+  short_name: string | null;
+  nse_symbol: string | null;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  peer_group_key: string | null;
+  valuation_family: string | null;
+  as_of: string;
+  state: "value" | "held" | "not_applicable";
+  reason: string | null;
+  implied: Num;
+  delivered: Num;
+  gap: Num;
+  delivered_years: Num;
+  delivered_reason: string | null;
+  label: string | null;
+  gap_rank: Num;
+  source_key: string;
+};
+
 /** api.valuation_scenarios (0024): one stored cell of the latest default run's grid (growth × EBIT margin × WACC, fractions). */
 export type ValuationScenarioRow = {
   slug: string;
@@ -761,6 +784,8 @@ export type ApiDatabase = {
       company_promoter_holding: View<PromoterHoldingRow>;
       company_valuation: View<CompanyValuationRow>;
       valuation_scenarios: View<ValuationScenarioRow>;
+      priced_in_operating: View<PricedInRow>;
+      priced_in_lenders: View<PricedInRow>;
       rate_decision_stats: View<RateDecisionStatRow>;
       rate_decision_moves: View<RateDecisionMoveRow>;
       rate_cycles: View<RateCycleRow>;
