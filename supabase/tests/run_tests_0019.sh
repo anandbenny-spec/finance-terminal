@@ -82,12 +82,12 @@ values ('2026-01-05', 'IN', 'Software', 1.1, (select id from core.raw_file where
 SQL
 
 ############################################################ structure and catalogues
-check "E01 all 21 equity tables (0019's 15, 0023's 5, 0027's 1) have RLS on and a job_writer_all policy" \
+check "E01 all 23 equity tables (0019's 15, 0023's 5, 0027's 1, 0030's 2) have RLS on and a job_writer_all policy" \
   "$(as_pg "select count(*) from pg_tables t where t.schemaname = 'equity' and t.rowsecurity
             and exists (select 1 from pg_policies p where p.schemaname = 'equity' and p.tablename = t.tablename
-                        and p.policyname = 'job_writer_all' and p.roles = '{job_writer}')")" '^21$'
-check "E02 the schema holds exactly those 21 tables and the price_adjusted view" \
-  "$(as_pg "select (select count(*) from pg_tables where schemaname = 'equity')||'/'||(select count(*) from pg_views where schemaname = 'equity')")" '^21/1$'
+                        and p.policyname = 'job_writer_all' and p.roles = '{job_writer}')")" '^23$'
+check "E02 the schema holds exactly those 23 tables and the price_adjusted view" \
+  "$(as_pg "select (select count(*) from pg_tables where schemaname = 'equity')||'/'||(select count(*) from pg_views where schemaname = 'equity')")" '^23/1$'
 check "E03 four sources with the attribution wording of Spec 02A §3.1, none exportable or suppressed" \
   "$(as_pg "select string_agg(key||'='||attribution||'|'||is_official||'|'||allow_raw_export||'|'||is_suppressed, ';' order by key) from core.source where key in ('nse','bse','damodaran','imf')")" \
   '^bse=Source: BSE\|true\|false\|false;damodaran=Source: Aswath Damodaran, NYU Stern\|false\|false\|false;imf=Source: IMF World Economic Outlook\|true\|false\|false;nse=Source: NSE\|true\|false\|false$'
@@ -110,16 +110,16 @@ check "E09 the metric catalogue has the 37 agreed keys" \
 check "E10 metric labels: derived (ebit_derived, fcf, both betas), annualised (roa), proxy, annualised (nim_proxy), none elsewhere" \
   "$(as_pg "select string_agg(key||'='||label_kind, ';' order by key) from equity.metric where label_kind is not null")" \
   '^beta_bottom_up=derived;beta_regression=derived;ebit_derived=derived;fcf=derived;nim_proxy=proxy, annualised;roa=annualised$'
-check "E11 field policy: four equity fields hidden, six labelled with their labels" \
+check "E11 field policy: six equity fields hidden, six labelled with their labels (0030 adds remarks_change and results_move, hidden)" \
   "$(as_pg "select string_agg(field_key||'='||status||':'||label, ';' order by field_key) from core.field_policy where field_key like 'equity.%'")" \
-  '^equity\.beta=labelled:derived;equity\.cost_of_debt=labelled:derived;equity\.dcf_scenario=hidden:Model-implied value under selected assumptions;equity\.ebit_derived=labelled:derived;equity\.guidance_outcome=hidden:derived;equity\.implied_growth=hidden:model-implied;equity\.implied_roe=hidden:model-implied;equity\.nim_proxy=labelled:proxy, annualised;equity\.peer_group=labelled:curated;equity\.rate_sensitivity=hidden:derived;equity\.roa=labelled:annualised$'
+  '^equity\.beta=labelled:derived;equity\.cost_of_debt=labelled:derived;equity\.dcf_scenario=hidden:Model-implied value under selected assumptions;equity\.ebit_derived=labelled:derived;equity\.guidance_outcome=hidden:derived;equity\.implied_growth=hidden:model-implied;equity\.implied_roe=hidden:model-implied;equity\.nim_proxy=labelled:proxy, annualised;equity\.peer_group=labelled:curated;equity\.rate_sensitivity=hidden:derived;equity\.remarks_change=hidden:derived;equity\.results_move=hidden:derived;equity\.roa=labelled:annualised$'
 check "E12 the schema and every table and the view carry a comment" \
-  "$(as_pg "select (select count(*) from pg_namespace n where n.nspname = 'equity' and obj_description(n.oid, 'pg_namespace') is not null)||'/'||count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'equity' and c.relkind in ('r','v') and obj_description(c.oid, 'pg_class') is not null")" '^1/22$'
+  "$(as_pg "select (select count(*) from pg_namespace n where n.nspname = 'equity' and obj_description(n.oid, 'pg_namespace') is not null)||'/'||count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'equity' and c.relkind in ('r','v') and obj_description(c.oid, 'pg_class') is not null")" '^1/24$'
 
 ############################################################ privileges
-check "E13 job_writer deletes only from adjustment_factor, financials, shareholding, metric_value, valuation_scenario (and 0023's call_turn, guidance, stated_figure, 0027's guidance_outcome)" \
+check "E13 job_writer deletes only from adjustment_factor, financials, shareholding, metric_value, valuation_scenario (and 0023's call_turn, guidance, stated_figure, 0027's guidance_outcome, 0030's call_remarks_change and call_tone)" \
   "$(as_pg "select string_agg(c.relname, ',' order by c.relname) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'equity' and c.relkind = 'r' and has_table_privilege('job_writer', c.oid, 'delete')")" \
-  '^adjustment_factor,call_turn,financials,guidance,guidance_outcome,metric_value,shareholding,stated_figure,valuation_scenario$'
+  '^adjustment_factor,call_remarks_change,call_tone,call_turn,financials,guidance,guidance_outcome,metric_value,shareholding,stated_figure,valuation_scenario$'
 check "E14 job_writer can't delete from price_daily" \
   "$(as_role job_writer "delete from equity.price_daily where trade_date = '2026-01-01'")" 'permission denied'
 check "E15 job_writer can't delete from filing" \

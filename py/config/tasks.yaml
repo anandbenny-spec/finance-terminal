@@ -149,3 +149,9 @@ equity.guidance_scores:
   run_after: [equity.calls_ai, equity.metrics]
   overdue_after: 10 days
   uses_nse: false
+equity.call_scores:
+  description: What changed in each earnings call's opening remarks since the previous quarter's call (similarity with numbers masked, the five most-changed sentence pairs, rewritten openings and new speakers), with no AI; the tone scores join this task later
+  workflows: {weekly: every 6 days}
+  run_after: [equity.calls_ai]
+  overdue_after: 10 days
+  uses_nse: false
