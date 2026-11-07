@@ -328,7 +328,7 @@ left join equity.transcript_page pf on pf.document_id = x.document_id and x.char
 left join equity.transcript_page pl on pl.document_id = x.document_id and x.char_end - 1 >= pl.char_start and x.char_end - 1 < pl.char_end
 join core.document d on d.id = x.document_id"""
 
-_SHOWN = """e.short_name as company, ec.fiscal_label as quarter, ec.call_date, round(ec.unknown_role_share * 100) as unknown_pct,
+_SHOWN = """coalesce(e.short_name, e.name) as company, e.currency, ec.fiscal_label as quarter, ec.call_date, round(ec.unknown_role_share * 100) as unknown_pct,
        t.speaker, t.role as turn_role, t.section,
        {quote} as quote, x.char_end - x.char_start as span_len,
        pf.pdf_page as page_first, pl.pdf_page as page_last,
@@ -364,7 +364,7 @@ def link_sql(keys: Iterable[tuple[int, int]]) -> str:
     if not pairs:
         raise ValueError("no keys")
     return f"""select x.ai_output_id, x.citation_no, o.task, x.claim_path,
-       e.short_name as company, ec.fiscal_label as quarter, x.document_id,
+       coalesce(e.short_name, e.name) as company, e.currency, ec.fiscal_label as quarter, x.document_id,
        {_SHOWN.format(quote=_quote('x'))}
 from core.ai_citation x
 join core.ai_output o on o.id = x.ai_output_id
