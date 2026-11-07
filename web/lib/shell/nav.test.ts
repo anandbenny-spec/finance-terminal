@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { POLICY_SECTION_LIST } from "@/lib/policy/sections";
-import { activeHref, NAV, visibleGroups, type NavGroup } from "./nav";
+import { activeHref, NAV, POLICY_DAY_GROUP, visibleGroups, type NavGroup } from "./nav";
 
 const FED_VS_RBI_SECTIONS = [
   { href: "/policy#where-rates-stand", label: "Where rates stand" },
@@ -114,5 +114,26 @@ describe("sidebar", () => {
       { heading: "Macro and policy", items: [{ href: "/policy", label: "Fed vs RBI", icon: "policy", sections: [{ href: "/policy/deep", label: "Deep" }] }] },
     ];
     expect(activeHref("/policy/deep", groups)).toBe("/policy");
+  });
+});
+
+describe("Policy Day (#90, hidden behind site.policy_day)", () => {
+  it("stays out of the menu while the page is hidden, for the admin too", () => {
+    for (const isAdmin of [false, true]) {
+      const hrefs = visibleGroups(isAdmin).flatMap((g) => g.items.map((i) => i.href));
+      expect(hrefs).not.toContain("/workspace/policy-day");
+    }
+    expect(NAV.map((g) => g.heading)).not.toContain("Workspace");
+  });
+
+  it("has its group ready for the flip: a live page, in Design 01 §4.1's place", () => {
+    const [item] = POLICY_DAY_GROUP.items;
+    expect(POLICY_DAY_GROUP.heading).toBe("Workspace");
+    expect([item.href, item.label]).toEqual(["/workspace/policy-day", "Policy Day"]);
+    expect(existsSync(fileURLToPath(new URL(`../../app${item.href}/page.tsx`, import.meta.url)))).toBe(true);
+    const at = NAV.findIndex((g) => g.heading === "Company research") + 1;
+    const flipped = [...NAV.slice(0, at), POLICY_DAY_GROUP, ...NAV.slice(at)];
+    expect(flipped.map((g) => g.heading)).toEqual(["Overview", "Macro and policy", "Company research", "Workspace", "About", "Admin"]);
+    expect(activeHref("/workspace/policy-day", flipped)).toBe("/workspace/policy-day");
   });
 });

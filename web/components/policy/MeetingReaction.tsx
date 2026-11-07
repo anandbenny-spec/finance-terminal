@@ -118,15 +118,18 @@ export function MeetingReactionView({
   footer,
   refresh,
   note,
+  flat = false,
 }: {
   model: MeetingReaction;
   footer: ReactNode;
   refresh?: readonly string[];
   note?: string;
+  /** No top margin: the caller (Policy Day, #90) spaces its panels itself. */
+  flat?: boolean;
 }) {
   const moves = model.entries.filter((e) => e.chart || e.chartNote);
   return (
-    <div className="mt-5 flex flex-col gap-4">
+    <div className={flat ? "flex flex-col gap-4" : "mt-5 flex flex-col gap-4"}>
       <Panel title="Market reaction" titleId="panel-reaction" subtitle="How did markets move when the decision came out?" variant="flush" footer={footer} refresh={refresh}>
         {note && <p className="border-b border-line px-3 py-2 text-meta text-ink-2">{note}</p>}
         <p className="border-b border-line px-3 py-2 text-meta text-ink-2">
