@@ -277,3 +277,11 @@ def test_the_page_map_check_uses_no_reserved_word_as_a_column_name():
     # `overlaps` is reserved in Postgres: the first run of this query failed on dev with a syntax error (7 Nov 2026)
     assert not re.search(r"\bas (overlaps|gaps)\b", s.PAGE_MAP_SQL) and "n_overlap" in s.PAGE_MAP_SQL
     assert "count(*) filter (where n_pages > 0)" in s.PAGE_MAP_SQL
+
+
+def test_link_sql_takes_the_keys_the_draw_prints_and_finds_the_company_through_the_document():
+    sql = s.link_sql(["1400:6", (948, 5)])
+    assert "(1400, 6), (948, 5)" in sql
+    assert "join core.entity e on e.id = d.entity_id" in sql and "o.entity_id" not in sql
+    with pytest.raises(ValueError):
+        s.link_sql(["1400:6:1"])

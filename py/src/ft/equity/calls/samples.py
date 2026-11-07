@@ -358,19 +358,22 @@ where x.id in ({_ids(ids)})
 order by x.id"""
 
 
-def link_sql(keys: Iterable[tuple[int, int]]) -> str:
-    """Page links for (ai_output_id, citation_no) pairs: the claim path, the quote, the page and the source's own link."""
-    pairs = ", ".join(f"({int(o)}, {int(n)})" for o, n in keys)
+def link_sql(keys: Iterable[tuple[int, int] | str]) -> str:
+    """Page links for (ai_output_id, citation_no) pairs, or the "o:n" keys the draw prints: the claim path, the quote, the page
+    and the source's own link. The company comes from the document (an output's entity_id is null for every summary)."""
+    def pair(k) -> str:
+        o, n = k.split(":") if isinstance(k, str) else k
+        return f"({int(o)}, {int(n)})"
+    pairs = ", ".join(pair(k) for k in keys)
     if not pairs:
         raise ValueError("no keys")
-    return f"""select x.ai_output_id, x.citation_no, o.task, x.claim_path,
-       coalesce(e.short_name, e.name) as company, e.currency, ec.fiscal_label as quarter, x.document_id,
+    return f"""select x.ai_output_id, x.citation_no, o.task, x.claim_path, x.document_id,
        {_SHOWN.format(quote=_quote('x'))}
 from core.ai_citation x
 join core.ai_output o on o.id = x.ai_output_id
-join core.entity e on e.id = o.entity_id
-left join equity.earnings_call ec on ec.transcript_document_id = x.document_id
 {_SPAN}
+join core.entity e on e.id = d.entity_id
+left join equity.earnings_call ec on ec.transcript_document_id = x.document_id
 where (x.ai_output_id, x.citation_no) in ({pairs})
 order by x.ai_output_id, x.citation_no"""
 
