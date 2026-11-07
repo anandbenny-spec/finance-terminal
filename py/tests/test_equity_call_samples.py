@@ -44,7 +44,7 @@ def test_the_same_seed_gives_the_same_items_whatever_the_pool_order():
     shuffled = pool[:]
     random.Random(1).shuffle(shuffled)
     a, b = s.draw(pool, "targets"), s.draw(shuffled, "targets")
-    assert ids(a) == ids(b) and a.shortfalls == b.shortfalls
+    assert ids(a) == ids(b) and a.shortfalls == b.shortfalls and a.attempt == b.attempt
     assert ids(s.draw(pool, "targets", 99)) != ids(a)                     # a new seed is a new sample
     assert a.seed == s.SEEDS["targets"] and s.draw(pool, "targets", 99).seed == 99
 
@@ -112,6 +112,47 @@ def test_the_link_sample_is_five_links_from_five_companies_two_from_summary_bull
     assert all(re.fullmatch(r"\d+:\d+", str(it.id)) for it in d.items)
 
 
+def scarce_floor_pool():
+    """Five companies hold every scored floor and also most of the scored range and point items (as on dev), so a plain greedy
+    fill spends their company slots on the common cells before the floor cell is reached."""
+    out, n = [], 0
+    for company in range(1, 6):
+        for kind in ("floor", "floor", "floor", "range", "range", "range", "point", "point", "point", "direction"):
+            n += 1
+            out.append(s.Item(id=n, company=company, group=s.KIND_GROUP[kind], family="pnl", document=n))
+    for company in range(6, 31):
+        for kind in ("range", "point", "direction", "range", "point", "direction"):
+            n += 1
+            out.append(s.Item(id=n, company=company, group=s.KIND_GROUP[kind], family="margins", document=n))
+    for company in range(1, 41):
+        for kind in ("range", "point", "floor", "direction"):
+            n += 1
+            out.append(s.Item(id=n, company=company, group=s.KIND_GROUP[kind], family="other", not_scored=True,
+                              role_held=company % 3 == 0, document=n))
+    return out
+
+
+def test_the_scarcest_cell_is_filled_first_so_common_cells_cannot_starve_it():
+    pool = scarce_floor_pool()
+    rules = s.RULES["targets"]
+    assert s._cell_order(pool, rules)[0] == "floor_ceiling/sc"           # five companies for six slots
+    d = s.draw(pool, "targets")
+    st = d.strata()
+    assert st["floor_ceiling/sc"] == 6 and len(d.items) == 40, d.shortfalls
+    assert all(sum(1 for it in d.items if it.company == c) <= 2 for c in range(1, 41))
+
+
+def test_a_short_attempt_is_retried_with_another_seeded_order_and_the_attempt_is_kept():
+    pool = scarce_floor_pool()
+    d = s.draw(pool, "targets")
+    again = s.draw(pool[::-1], "targets")
+    assert 0 <= d.attempt < s.ATTEMPTS and again.attempt == d.attempt and ids(again) == ids(d)
+    # an impossible pool uses every attempt and reports the best one, not an arbitrary one
+    impossible = [s.Item(id=i, company=1, group="range", family="pnl") for i in range(1, 30)]
+    worst = s.draw(impossible, "targets")
+    assert len(worst.items) == 2 and "total: 2 of 40" in worst.shortfalls
+
+
 def test_the_strata_are_counted_for_the_record():
     d = s.draw(target_pool(), "targets")
     st = d.strata()
@@ -125,6 +166,13 @@ def test_the_metric_families_cover_the_spec_map_and_nothing_else():
                                      "tax_rate", "capex", "net_debt", "advances_growth", "deposits_growth", "gnpa", "nnpa", "cet1"}
     assert s.family_of("other") == "other" and s.family_of("volumes") == "other"
     assert s.KIND_GROUP["floor"] == s.KIND_GROUP["ceiling"] == "floor_ceiling"
+
+
+def test_a_summary_links_company_comes_from_its_document_not_from_the_output():
+    # `core.ai_output.entity_id` is null for every call summary (checked on dev, 7 Nov 2026), which made one company of them all
+    summary_branch = s.POOL_LINKS.split("union all")[0]
+    assert "sd.entity_id" in summary_branch and "o.entity_id" not in summary_branch
+    assert "join core.document sd on sd.id = c.document_id" in summary_branch
 
 
 def test_the_role_held_share_in_the_pool_query_is_the_one_the_views_use():
@@ -223,3 +271,17 @@ def test_the_workflow_passes_its_inputs_through_the_environment():
     run = next(st["run"] for st in wf["jobs"]["run"]["steps"] if st.get("name") == "Draw")
     assert "${{" not in run and '"$GATE"' in run and '"$SEED"' in run
     assert wf["on"]["workflow_dispatch"]["inputs"]["gate"]["options"] == ["all", *s.GATES]
+
+
+def test_the_page_map_check_uses_no_reserved_word_as_a_column_name():
+    # `overlaps` is reserved in Postgres: the first run of this query failed on dev with a syntax error (7 Nov 2026)
+    assert not re.search(r"\bas (overlaps|gaps)\b", s.PAGE_MAP_SQL) and "n_overlap" in s.PAGE_MAP_SQL
+    assert "count(*) filter (where n_pages > 0)" in s.PAGE_MAP_SQL
+
+
+def test_link_sql_takes_the_keys_the_draw_prints_and_finds_the_company_through_the_document():
+    sql = s.link_sql(["1400:6", (948, 5)])
+    assert "(1400, 6), (948, 5)" in sql
+    assert "join core.entity e on e.id = d.entity_id" in sql and "o.entity_id" not in sql
+    with pytest.raises(ValueError):
+        s.link_sql(["1400:6:1"])
