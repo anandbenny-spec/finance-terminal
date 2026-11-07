@@ -45,12 +45,15 @@ export async function readAll<T>(what: string, query: PageQuery<T>, pageSize: nu
   let total: number | null = null;
   do {
     const from = rows.length;
+    const started = Date.now();
     let page = await query(from, from + pageSize - 1);
     if (page.error && isStatementTimeout(page.error)) {
       // A cold read on a quiet project can hit the role's 3 s limit (#303): ask for the same page once more.
-      console.warn(`readAll: ${what}: statement timeout, retrying the page once`);
+      console.warn(`readAll: ${what}: statement timeout after ${Date.now() - started} ms, retrying the page once`);
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      const retryStarted = Date.now();
       page = await query(from, from + pageSize - 1);
+      console.warn(`readAll: ${what}: retry ${page.error ? "failed" : "succeeded"} after ${Date.now() - retryStarted} ms`);
     }
     if (page.error) throw new IncompleteReadError(what, page.error.message);
     if (page.count === null || !Number.isInteger(page.count)) {

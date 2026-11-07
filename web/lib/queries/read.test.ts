@@ -92,8 +92,9 @@ describe("readAll", () => {
       };
       expect(await readAll("company_prices", query)).toEqual(table(5));
       expect(calls).toEqual([[0, 999], [0, 999]]);
-      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledTimes(2);
       expect(warn.mock.calls[0][0]).toContain("company_prices");
+      expect(warn.mock.calls[1][0]).toContain("retry succeeded");
       warn.mockRestore();
     });
 
