@@ -1,4 +1,4 @@
-"""The call summary's structured route (2B-11c, #301; Anand's decision of 6 Nov 2026; prompts from v6): the model returns each
+"""The call summary's structured route (2B-11c, #301; Anand's decision of 6 Nov 2026; prompts from v6, the current one v7): the model returns each
 bullet as its own sentence plus, in a separate field, the passages that state its point; `check_json` finds each quote exactly once
 in our copy of the transcript and the stored citation is that span. Everything else is as on the citations route (figures,
 role rules, counts, the copied-text rule). A synthetic call (tests/call_fixtures.py); no database."""
@@ -22,8 +22,8 @@ from ft.ai.guidance_extraction import marked_text
 from ft.jobs.tasks import equity_calls_ai as eca
 from ft.quality.reasons import categorise
 
-PROMPT = load_prompt("call_summary", "v6")
-SCHEMA = load_schema("call_summary", "v6")
+PROMPT = load_prompt("call_summary", "v7")
+SCHEMA = load_schema("call_summary", "v7")
 B = build()
 TEXT = B.text
 CALL = calldoc(B)
@@ -69,7 +69,7 @@ def first_management(claim: str, quotes: list[str]):
 def test_prompts_from_v6_take_the_structured_route_and_v1_to_v5_the_citations_route():
     assert [route_of(f"v{n}") for n in range(1, 6)] == ["citations"] * 5
     assert [route_of(v) for v in ("v6", "v7", "v10")] == ["json"] * 3 and cs.JSON_FROM == 6
-    assert eca.PROMPT_VERSION[cs.TASK] == "v6" and route_of(eca.PROMPT_VERSION[cs.TASK]) == "json"
+    assert eca.PROMPT_VERSION[cs.TASK] == "v7" and route_of(eca.PROMPT_VERSION[cs.TASK]) == "json"
     assert TASKS["call_summary"].route == "citations"          # the task's own route is unchanged: a request asks for the json one
 
 
@@ -140,9 +140,32 @@ def test_the_task_builds_and_checks_the_structured_request_for_a_summary_work():
 
 
 # --------------------------------------------------------------------------------------------------- the prompt and its schema
+def test_v7_is_v6_with_the_guidance_verb_rule_and_the_one_point_rule_added_and_nothing_else_changed():
+    """#178, sitting 2 (8 Nov 2026): the summary gate's one failed bullet said "reiterated" where the speaker had only recalled
+    the earlier guide. v7 adds two rules after "Use only what the transcript says"; the schema, the route and every other line are
+    v6's (a wording change is a new version, never an edit of one that has run)."""
+    v6, v7 = load_prompt("call_summary", "v6"), load_prompt("call_summary", "v7")
+    assert (v6.version, v7.version) == ("v6", "v7") and v7.text != v6.text
+    old, new = v6.text.splitlines(), v7.text.splitlines()
+    added = [line for line in new if line not in old]
+    assert [line for line in old if line not in new] == [] and len(added) == 2
+    assert [line for line in new if line in old] == old                          # the old lines, in order, and nothing moved
+    rule, one_point = added
+    assert new.index(rule) == new.index(one_point) - 1 and old[new.index(rule) - 1].startswith("- Use only what the transcript says")
+    for verb in ("Reiterated", "reaffirmed", "maintained", "confirmed", "Raised", "lifted", "cut", "lowered", "narrowed", "withdrew"):
+        assert f'"{verb}"' in rule
+    assert "only if a quote of that bullet shows it" in rule and "has not reiterated anything" in rule
+    assert one_point.startswith("- One point to a bullet") and "a quote for each part of it" in one_point
+
+
+def test_v7_keeps_v6s_schema_and_both_versions_take_the_structured_route():
+    assert load_schema("call_summary", "v7") == load_schema("call_summary", "v6")
+    assert route_of("v6") == route_of("v7") == "json"
+
+
 def test_the_prompt_names_the_fields_the_role_rules_and_the_figure_rules():
     p = PROMPT.text
-    assert PROMPT.version == "v6" and "<!--" not in p and p.endswith("\n")
+    assert PROMPT.version == "v7" and "<!--" not in p and p.endswith("\n")
     for field in ('"list"', '"text"', '"quotes"', '"management"', '"analysts"', '"unknown"'):
         assert field in p
     assert "never guess a role" in p and "never put one in a quote" in p and "Those marker lines are not part" in p

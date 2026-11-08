@@ -110,7 +110,7 @@ def clean():
 @pytest.fixture(autouse=True)
 def citations_route(monkeypatch):
     """The tests in this file drive the summary on the citations route (prompts v1-v5, which the fake answers with cited text
-    blocks). The current prompt is v6, the structured route (#301): its tests are in test_equity_calls_ai_structured.py."""
+    blocks). The current prompt is v7 (v6 until 8 Nov), the structured route (#301): its tests are in test_equity_calls_ai_structured.py."""
     monkeypatch.setattr(eca, "PROMPT_VERSION", {**eca.PROMPT_VERSION, cs.TASK: "v5"})
 
 
