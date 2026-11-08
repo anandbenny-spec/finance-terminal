@@ -73,6 +73,24 @@ def test_the_formula_on_fixed_text():
     assert c.similarity == pytest.approx(1 - 9 / 21, abs=1e-4)
 
 
+def test_no_label_at_any_similarity():
+    """Amended 8 Nov 2026: no threshold, so no `largely_rewritten` at 0.0, near 0.5 or near 1."""
+    def pair(new_body: str):
+        old_text, old = opening_of(("Alice Rao", "management", "One two three four five six seven eight nine ten."))
+        new_text, new = opening_of(("Alice Rao", "management", new_body))
+        return rm.compare(new_text, new, old_text, old)
+    sims = []
+    for body in ("One two three four five six seven eight nine eleven.",
+                 "Red blue green yellow orange purple brown black white grey.",
+                 "One two three four five six seven eight nine ten.",
+                 "One two three four five red blue green yellow orange."):
+        c = pair(body)
+        sims.append(c.similarity)
+        assert c.label is None
+    assert min(sims) < 0.5 <= max(sims)
+    assert rm.RULE_VERSION == "remarks-2"
+
+
 def test_threshold_on_each_side_of_half():
     def pair(new_body: str):
         old_text, old = opening_of(("Alice Rao", "management", "One two three four five six seven eight nine ten."))
@@ -82,7 +100,7 @@ def test_threshold_on_each_side_of_half():
     kept = pair("One two three four five six seven eight nine eleven.")
     assert kept.similarity >= 0.5 and kept.label is None
     rewritten = pair("Red blue green yellow orange purple brown black white grey.")
-    assert rewritten.similarity < 0.5 and rewritten.label == "largely_rewritten"
+    assert rewritten.similarity < 0.5 and rewritten.label is None
 
 
 def test_a_new_ceo_with_a_third_of_the_words_is_a_new_speaker_and_the_opening_is_rewritten():
@@ -146,3 +164,10 @@ def test_pairs_keep_the_figures_as_filed():
                                             ("bad", None), (None, None)])
 def test_previous_label(label, previous):
     assert rm.previous_label(label) == previous
+
+
+def test_the_distribution_check_never_fails_on_low_similarities():
+    from ft.jobs.tasks.equity_call_scores import EquityCallScores
+    c = EquityCallScores._distribution([(i, 0.01 * i, []) for i in range(1, 21)])
+    assert c.passed and not c.blocking and "n 20" in c.detail and "median" in c.detail
+    assert EquityCallScores._distribution([]).passed
