@@ -235,7 +235,7 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   analyzer for each company's latest call. Jobs labelled `after-18-nov` aren't built before then. Nothing the live site
   needs may depend on Claude: every AI feature degrades to a labelled state without a key or credits (#197).
 - **Credit pools and who runs what (Anand, 30 Oct 2026).** Cloud-session credit (until 5 Nov) funds the build chains;
-  the plan's $100 of API credit (until 18 Nov) funds the Batch API and **headless runs**: Anand starts
+  the plan's $100 of API credit (until 21 Nov) funds the Batch API and **headless runs**: Anand starts
   `ops/headless/run-job.sh <issue>` on his Mac (`claude --bare -p`, Sonnet, a dollar cap, its own clone in
   `~/Projects/finance-terminal/headless`, never his `app/`). A headless run takes only jobs labelled `headless`
   (self-contained cards: it can't read the claude.ai project), follows this file like any session, and stops with
@@ -287,8 +287,12 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   start **dev runs that spend no AI credits** (`daily`, `refresh`, `backfill`, `watch`, each with `target=dev`)
   without asking, and records each one on its issue (the run link, what it ran, the result). `policy.ai_batch` is
   the one task that spends: a `refresh` or `backfill` of it, a `daily` while any document still lacks its AI
-  outputs (check through the read-only dev connector first) and a decision-day `watch` are AI runs. **Dev AI runs** need Anand's OK beyond the cap his decision set for that work (D1's $2 for
-  module 1, #24; 2B's $3 in all, Spec 02B §0 decision 4). **Production:** a run is approved only where Anand's dated
+  outputs (check through the read-only dev connector first) and a decision-day `watch` are AI runs. **Dev AI runs**
+  draw on one **$25 pool** of AI-run spend, dev and production together, counted from 8 Nov 2026, 00:00 IST until
+  the API credit expires on 21 Nov 2026 (Anand, 8 Nov 2026, after 15:32 IST; tracker #30). Price each run first from
+  `ai_prices.yaml`, record its cost on its issue and the pool's running total on #30, and ask Anand before a run that
+  would pass the pool. It replaces the per-module dev caps (D1's $2 for module 1, #24; 2B's $3, then $5, Spec 02B §0
+  decision 4). **Production:** a run is approved only where Anand's dated
   approval is on its job card or tracker #30: module 1's early-link backfills (#84, #16), 2A's data backfills and first
   runs (#122, #132), 2B's backfills with its AI backfill and weekly AI runs (#184), one D4 drill after #135. Each run
   is recorded on its issue; §7's $5 stop applies. Any other production run, and any other AI spend, still needs his OK. Claude
