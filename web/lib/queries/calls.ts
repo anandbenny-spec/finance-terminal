@@ -42,8 +42,8 @@ export type CallsTabData = {
   /** The verified citations of the summary's and the figures' outputs. */
   citations: AiCitationRow[];
   pages: CitationPageRow[];
-  /** The Guidance record panel's rows (company-wide, not the selected call's). */
-  guidance: GuidanceRecordData;
+  /** The Guidance record panel's rows (company-wide, not the selected call's); null when its own reads failed (#328), and the panel then says so. */
+  guidance: GuidanceRecordData | null;
   /** With no call: the company's earnings_latest row, whose window says what the transcript discovery covered. */
   latest: EarningsLatestRow | null;
 };
@@ -142,7 +142,15 @@ export async function readGuidanceRecord(db: Db, slug: string): Promise<Guidance
 
 /** The tab's reads: the company's calls, the selected one's summary, figures, citations and pages (§13.7). */
 export async function readCallsTab(db: Db, slug: string, call: string | undefined): Promise<CallsTabData> {
-  const [calls, policies, guidance] = await Promise.all([readCompanyCalls(db, slug), readFieldPolicy(db), readGuidanceRecord(db, slug)]);
+  const [calls, policies, guidance] = await Promise.all([
+    readCompanyCalls(db, slug),
+    readFieldPolicy(db),
+    // The guidance record fails on its own (#328): its three views have timed out when the calls list had loaded fine.
+    readGuidanceRecord(db, slug).catch((error: unknown) => {
+      console.error(`[company] ${slug} guidance record read failed: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }),
+  ]);
   const selected = selectCall(calls, call);
   if (!selected) {
     const latest = await readAll<EarningsLatestRow>("api.earnings_latest", (from, to) =>

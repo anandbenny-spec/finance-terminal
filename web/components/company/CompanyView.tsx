@@ -12,6 +12,7 @@ import { PriceChartPanel } from "@/components/company/PriceChartPanel";
 import { RateDecisionsTab } from "@/components/company/RateDecisionsTab";
 import { PromoterPanel } from "@/components/company/PromoterPanel";
 import { StatementTable } from "@/components/company/StatementTable";
+import { TabError } from "@/components/company/TabError";
 import { ValuationTab } from "@/components/company/valuation/ValuationTab";
 import { Freshness } from "@/components/data/Freshness";
 import { PageHeader } from "@/components/data/PageHeader";
@@ -96,7 +97,7 @@ function BasisToggle({ slug, basis, available }: { slug: string; basis: Basis; a
 
 function Overview({ data, freshness }: { data: Ok; freshness: TaskFreshnessRow[] | null }) {
   const { company, overview } = data;
-  if (!overview) return null;
+  if (!overview) return <TabError title="Overview" titleId="overview-error" />;
   const now = data.readAt;
   const prices = priceData(overview.prices);
   const price = sourceLineFor(company.price_source_key ?? overview.prices[0]?.source_key);
@@ -134,7 +135,7 @@ function Overview({ data, freshness }: { data: Ok; freshness: TaskFreshnessRow[]
 
 function Financials({ data, basis: asked, freshness }: { data: Ok; basis: Basis; freshness: TaskFreshnessRow[] | null }) {
   const { company, financials, actions } = data;
-  if (!financials) return null;
+  if (!financials) return <TabError title="Financials" titleId="financials-error" />;
   const now = data.readAt;
   const rows = financials.financials;
   const family = familyKind(company.valuation_family);
