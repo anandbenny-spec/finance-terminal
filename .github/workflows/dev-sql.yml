@@ -1,0 +1,69 @@
+name: dev-sql
+# Runs ONE reviewed SQL file against DEV ONLY (#101; Plan 02 §9.5; Anand, 27 Oct 2026). Sessions use it for drills and for
+# recording results on dev, so Anand no longer pastes the SQL. Production stays Anand's: this workflow has no target input,
+# and its environment holds only dev's URL.
+#
+# - The file is on main and under supabase/dev-sql/ (NNNN_name.sql): it came in by a pull request, and CI and the
+#   review were the gate. A run from any other ref is refused here, and by the environment's own branch rule (main only).
+# - The login is the dev-sql environment's secret DEV_SQL_URL (dev's shared pooler, session mode), role `dev_sql`. That role
+#   holds no privileges of its own, only SET-able membership in anon, service_role and job_writer, so every file starts
+#   with `set local role <one of them>`. `psql --single-transaction` keeps that role until the end of the file, and any
+#   error rolls the whole file back.
+# - Output is what psql prints: counts and notices. A file selects counts, never rows. A psql meta-command (a line
+#   starting with a backslash, such as \! or \copy) would run on the runner, so a file holding one is refused.
+run-name: dev-sql ${{ inputs.file }}
+on:
+  workflow_dispatch:
+    inputs:
+      file:
+        description: 'A file on main, supabase/dev-sql/NNNN_name.sql'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: dev-sql
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: dev-sql    # holds DEV_SQL_URL only; Deployment branches: main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
+      - name: Check the file
+        env:
+          FILE: ${{ inputs.file }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error title=dev-sql::runs only from main"; exit 1
+          fi
+          re='^supabase/dev-sql/[0-9]{4}_[a-z0-9_]+\.sql$'
+          if ! [[ "$FILE" =~ $re ]]; then
+            echo "::error title=dev-sql::the file must be supabase/dev-sql/NNNN_name.sql (four digits, lower case)"; exit 1
+          fi
+          if [ ! -f "$FILE" ]; then
+            echo "::error title=dev-sql::$FILE is not on main"; exit 1
+          fi
+          if grep -Eq '^[[:space:]]*\\' "$FILE"; then
+            echo "::error title=dev-sql::$FILE holds a psql meta-command (a line starting with a backslash)"; exit 1
+          fi
+      - name: Check the login is dev_sql
+        env:
+          DEV_SQL_URL: ${{ secrets.DEV_SQL_URL }}
+          PGCONNECT_TIMEOUT: '15'
+        run: |
+          if [ -z "$DEV_SQL_URL" ]; then
+            echo "::error title=dev-sql::DEV_SQL_URL is not set in the dev-sql environment"; exit 1
+          fi
+          who=$(psql "$DEV_SQL_URL" -X -At -c 'select current_user' 2>/dev/null) || who=""
+          if [ "$who" != "dev_sql" ]; then
+            echo "::error title=dev-sql::could not log in as dev_sql with DEV_SQL_URL (wrong role, host or password)"; exit 1
+          fi
+      - name: Run the file on dev, in one transaction
+        env:
+          FILE: ${{ inputs.file }}
+          DEV_SQL_URL: ${{ secrets.DEV_SQL_URL }}
+          PGCONNECT_TIMEOUT: '15'
+        run: psql "$DEV_SQL_URL" -X -v ON_ERROR_STOP=1 --single-transaction -f "$FILE"

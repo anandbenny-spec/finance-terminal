@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "bullets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "list": {"type": "string", "enum": ["management", "analysts", "unknown"], "description": "The list the bullet belongs to"},
+          "text": {"type": "string", "description": "The bullet: one sentence of your own words that never copies the transcript"},
+          "quotes": {"type": "array", "items": {"type": "string", "description": "A passage of one turn that states the bullet's point, copied exactly from the transcript"}, "description": "One to three passages"}
+        },
+        "required": ["list", "text", "quotes"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["bullets"],
+  "additionalProperties": false
+}
