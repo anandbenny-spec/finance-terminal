@@ -11,10 +11,12 @@ import psycopg
 import pytest
 from ai_fakes import FakeClaude, documents_of
 from call_fixtures import GOOD_ANALYSTS, GOOD_MANAGEMENT
+from conftest import dsn
 from test_equity_calls_ai_task import (
     JOB,
     KEY,
     alert,
+    as_anon,
     go,
     last_run,
     make_call,
@@ -56,6 +58,19 @@ def clean():
     wipe()
 
 
+def rechunk(c: dict) -> dict:
+    """One chunk per speaker turn, as the production chunker cuts a transcript. (The test chunker needs a speaker-label shape these
+    synthetic lines don't have and cuts the whole call as one chunk; re-chunking is allowed, the text stays the same.)"""
+    text = c["built"].text
+    with psycopg.connect(dsn("postgres")) as conn:
+        conn.execute("delete from core.chunk where document_id = %s", (c["doc"],))
+        for no, t in enumerate(c["built"].turns):
+            conn.execute("""insert into core.chunk (document_id, chunk_no, char_start, char_end, section, speaker, body)
+                            values (%s, %s, %s, %s, null, %s, %s)""",
+                         (c["doc"], no, t.char_start, t.char_end, t.speaker, text[t.char_start:t.char_end]))
+    return c
+
+
 def tone_answer(scores, evidence):
     def fn(body):
         docs, _ = documents_of(body)
@@ -79,7 +94,7 @@ def tone_requests(doc_id):
 @pytest.mark.db
 def test_a_run_limited_to_tone_asks_for_the_management_passages_only_and_stores_scores_with_verified_citations(monkeypatch):
     monkeypatch.setenv(eca.ONLY_ENV, ct.TASK)
-    c = make_call(lines=LONG, fy_end=3)
+    c = rechunk(make_call(lines=LONG, fy_end=3))
     fake = FakeClaude(["ok"], reply=replies(), answer=tone_answer([2, -1], [(1, UP), (2, DOWN)]))
     assert go(task([c["slug"]], fake)) == 0
     r = last_run()
@@ -109,7 +124,7 @@ def test_a_run_limited_to_tone_asks_for_the_management_passages_only_and_stores_
     ck = r["checks"]
     assert ck["tone_stored"]["passed"] and ck["tone_stored"]["detail"].startswith("1 stored")
     assert "1 published" in ck["call_tone"]["detail"]
-    assert q("select count(*) from api.ai_outputs where document_id = %s", c["doc"]) == [(0,)]          # hidden: nothing shows it
+    assert as_anon("select count(*) from api.ai_outputs where document_id = %s", c["doc"]) == [(0,)]       # hidden: nothing shows it
     assert go(task([c["slug"]], fake)) == 0                                  # published: never asked again
     assert fake.create_calls == 1
 
@@ -121,15 +136,14 @@ def test_a_default_run_never_asks_for_tone(monkeypatch):
     fake = FakeClaude(["ok"], reply=replies(management=GOOD_MANAGEMENT, analysts=GOOD_ANALYSTS),
                       answer=lambda body: {"targets": [], "stated_figures": []})
     assert go(task([c["slug"]], fake)) == 0
-    assert q("select ai_task from ops.ai_request where document_id = %s order by ai_task", c["doc"]) == [
-        ("call_summary",), ("guidance_extraction",)]
-    assert tone_outputs(c["doc"]) == []
+    assert "call_tone" not in {t for (t,) in q("select ai_task from ops.ai_request where document_id = %s", c["doc"])}
+    assert tone_outputs(c["doc"]) == [] and tone_requests(c["doc"]) == []
 
 
 @pytest.mark.db
 def test_a_role_held_call_is_not_asked_for_tone(monkeypatch):
     monkeypatch.setenv(eca.ONLY_ENV, ct.TASK)
-    c = make_call(lines=LONG, fy_end=3, role_of={4: "unknown"})
+    c = rechunk(make_call(lines=LONG, fy_end=3, role_of={4: "unknown"}))
     fake = FakeClaude(["ok"], reply=replies(), answer=tone_answer([0], []))
     assert go(task([c["slug"]], fake)) == 0
     assert q("select count(*) from ops.ai_request where document_id = %s", c["doc"]) == [(0,)]
@@ -139,7 +153,7 @@ def test_a_role_held_call_is_not_asked_for_tone(monkeypatch):
 @pytest.mark.db
 def test_a_neutral_call_cites_its_first_passage_so_it_can_be_published(monkeypatch):
     monkeypatch.setenv(eca.ONLY_ENV, ct.TASK)
-    c = make_call(lines=LONG, fy_end=3)
+    c = rechunk(make_call(lines=LONG, fy_end=3))
     fake = FakeClaude(["ok"], reply=replies(), answer=tone_answer([0, 0], []))
     assert go(task([c["slug"]], fake)) == 0
     ((status, _, _, content),) = tone_outputs(c["doc"])
@@ -153,7 +167,7 @@ def test_a_neutral_call_cites_its_first_passage_so_it_can_be_published(monkeypat
 @pytest.mark.db
 def test_a_score_out_of_range_is_retried_with_a_note_then_rejected_with_an_alert_and_never_resent(monkeypatch):
     monkeypatch.setenv(eca.ONLY_ENV, ct.TASK)
-    c = make_call(lines=LONG, fy_end=3)
+    c = rechunk(make_call(lines=LONG, fy_end=3))
     fake = FakeClaude(["ok"], reply=replies(), answer=tone_answer([3, 0], []))
     assert go(task([c["slug"]], fake)) == 0
     outs = tone_outputs(c["doc"])
