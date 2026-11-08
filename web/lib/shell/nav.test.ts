@@ -23,12 +23,14 @@ describe("sidebar", () => {
       ["Overview", ["Start here"]],
       ["Macro and policy", ["Fed vs RBI"]],
       ["Company research", ["Screener", "Earnings calls"]],
+      ["Workspace", ["Policy Day"]],
       ["About", ["About and privacy", "Accuracy"]],
     ]);
     expect(visibleGroups(true).map((g) => [g.heading, g.items.map((i) => i.label)])).toEqual([
       ["Overview", ["Start here"]],
       ["Macro and policy", ["Fed vs RBI"]],
       ["Company research", ["Screener", "Earnings calls"]],
+      ["Workspace", ["Policy Day"]],
       ["About", ["About and privacy", "Accuracy"]],
       ["Admin", ["Admin", "Health", "Labelling"]],
     ]);
@@ -57,6 +59,7 @@ describe("sidebar", () => {
       ...FED_VS_RBI_SECTIONS.map((s) => s.href),
       "/screener",
       "/earnings",
+      "/workspace/policy-day",
       "/about",
       "/accuracy",
       "/admin",
@@ -117,23 +120,21 @@ describe("sidebar", () => {
   });
 });
 
-describe("Policy Day (#90, hidden behind site.policy_day)", () => {
-  it("stays out of the menu while the page is hidden, for the admin too", () => {
+describe("Policy Day (#90, shown since site.policy_day was flipped, #330)", () => {
+  it("is in the menu for visitors and the admin alike", () => {
     for (const isAdmin of [false, true]) {
       const hrefs = visibleGroups(isAdmin).flatMap((g) => g.items.map((i) => i.href));
-      expect(hrefs).not.toContain("/workspace/policy-day");
+      expect(hrefs).toContain("/workspace/policy-day");
     }
-    expect(NAV.map((g) => g.heading)).not.toContain("Workspace");
   });
 
-  it("has its group ready for the flip: a live page, in Design 01 §4.1's place", () => {
+  it("sits in Design 01 §4.1's place, on a live page", () => {
     const [item] = POLICY_DAY_GROUP.items;
+    expect(NAV).toContain(POLICY_DAY_GROUP);
     expect(POLICY_DAY_GROUP.heading).toBe("Workspace");
     expect([item.href, item.label]).toEqual(["/workspace/policy-day", "Policy Day"]);
     expect(existsSync(fileURLToPath(new URL(`../../app${item.href}/page.tsx`, import.meta.url)))).toBe(true);
-    const at = NAV.findIndex((g) => g.heading === "Company research") + 1;
-    const flipped = [...NAV.slice(0, at), POLICY_DAY_GROUP, ...NAV.slice(at)];
-    expect(flipped.map((g) => g.heading)).toEqual(["Overview", "Macro and policy", "Company research", "Workspace", "About", "Admin"]);
-    expect(activeHref("/workspace/policy-day", flipped)).toBe("/workspace/policy-day");
+    expect(NAV.map((g) => g.heading)).toEqual(["Overview", "Macro and policy", "Company research", "Workspace", "About", "Admin"]);
+    expect(activeHref("/workspace/policy-day")).toBe("/workspace/policy-day");
   });
 });
