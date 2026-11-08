@@ -38,6 +38,13 @@ could hold") written as "expects". So a management or unknown bullet whose text 
 "will" fails unless one of its quotes holds a firm word of its own (expect, will, target, guide, plan, aim and the like). The check
 is deliberately narrow, a word-level backstop to prompt v8's rules on hedges, recalled targets, weight words and partial causes.
 
+**An extent word stays** (#178, the v9 round, 8 Nov 2026; `extent_word_problem`). The v8 draw's other word-level fail: a speaker's
+"largely" or "partly" (how much of a cause, how far an effect lands) dropped, so a partial cause or effect read as the whole. So a
+bullet of any list fails when one of its quotes holds an extent word (`EXTENT_QUOTE`: largely, mostly, mainly, primarily, partly,
+in part and their kin) and its text holds none (`EXTENT_TEXT`: those words, or "main", "most of", "part of", "the bulk" and the like,
+so a bullet that says the same thing another way passes). Run over the 420 bullets of dev's 56 published v8 summaries it fires on 8
+(none of an analysts list); the tense and exclusion fails of the same draw are prompt v9's rules alone, since no word marks them.
+
 **Copied text** (2B-11c, #301; `apply_echo`). Visitors see only the quotes of verified citations, never a transcript's text
 (`CLAUDE.md` §1), and the Earnings calls tab shows a bullet in full, so a bullet may not carry the transcript's own words
 (on dev, 65% of v5's bullets were a short paraphrase followed by the cited passage verbatim). A run of more than
@@ -85,6 +92,15 @@ FIRM_TEXT = re.compile(r"\b(expects?|expected|expecting|targets|targeting|guided
 FIRM_QUOTE = re.compile(r"expect|\bwill\b|[’']ll\b|\btarget|\bguid(?:e|ed|es|ing|ance)\b|going to|\bplan|\baim|\bintend|\bcommit"
                         r"|\bconfiden|\bprojec|\bforecast|\banticipat", re.IGNORECASE)
 FIRM_LISTS = ("management", "unknown")                # the lists whose bullets state what a speaker says will happen (an analysts bullet reports a question)
+# An extent word in a quote needs one in the bullet's text (#178, the v9 round, 8 Nov 2026; Anand's decision of 8 Nov, 15:32 IST, item 3c:
+# "a bullet is rejected when one of its quotes holds one of those extent words and its text holds none of them"). The quote's side is
+# the narrow list, the text's side the wide one, so that only a bullet that gives no sign of the extent at all is rejected; a bullet
+# that says "most of" or "the main reason" instead of the speaker's "largely" passes.
+EXTENT_QUOTE = re.compile(r"\b(largely|mostly|mainly|primarily|chiefly|principally|predominantly|majorly|partly|partially|in part)\b",
+                          re.IGNORECASE)
+EXTENT_TEXT = re.compile(r"\b(largely|mostly|mainly|primarily|chiefly|principally|predominantly|majorly|partly|partially|in part"
+                         r"|main|chief|principal|predominant|majority|bulk|most of|much of|part of|some of|portion"
+                         r"|to some extent|to an extent|to a degree)\b", re.IGNORECASE)
 _TRAIL = " :;,-\u2014\u2013\"'\u201c\u201d\u2018\u2019\u2026"        # stripped from the end of a lead-in
 _CLAUSE_END = ".!?:;,\u2014\u2013"                          # a lead-in that ends on one of these ends at a clause or sentence
 
@@ -258,6 +274,19 @@ def firm_verb_problem(kind: str, text: str, passages: Sequence[str]) -> str | No
     if m is None or any(FIRM_QUOTE.search(p) for p in passages):
         return None
     return f'a firm verb ("{m.group(1)}") that none of its quotes says'
+
+
+def extent_word_problem(text: str, passages: Sequence[str]) -> str | None:
+    """Why a bullet drops an extent word its quote has, or None. A bullet any of whose quotes holds an extent word
+    (`EXTENT_QUOTE`: largely, mostly, mainly, primarily, partly, in part and their kin) while its text holds no word of that
+    kind (`EXTENT_TEXT`, wider on purpose) states the point as the whole cause or the whole effect. A word-level check: a quote
+    may use the word of another sentence than the bullet's point, and then the retry rewrites the bullet (or quotes a shorter
+    passage), as it does for a firm verb."""
+    for p in passages:
+        m = EXTENT_QUOTE.search(p)
+        if m is not None:
+            return None if EXTENT_TEXT.search(text) else f'an extent word ("{m.group(1).lower()}") in a quote that its text leaves out'
+    return None
 
 
 @dataclass(frozen=True)
@@ -472,6 +501,8 @@ def _json_bullet(raw, call: CallDoc, transcript: str, answers: set[int], mapping
     if b.problem is None:
         b.problem = firm_verb_problem(kind, text, passages)
     if b.problem is None:
+        b.problem = extent_word_problem(text, passages)
+    if b.problem is None:
         e = apply_echo(text, passages, transcript)
         b.problem, b.text = e.problem, (text if e.problem else e.text)
     return b
@@ -508,7 +539,8 @@ def check_json(answer, call: CallDoc) -> Checked:
 REASON_PHRASES: dict[str, tuple[str, ...]] = {
     "citation": (r"cites a turn whose role is", r"cites text outside any speaker turn",
                  r"isn't in the transcript exactly once", r"a quote is over \d+ characters",
-                 r"a firm verb \(.+\) that none of its quotes says"),
+                 r"a firm verb \(.+\) that none of its quotes says",
+                 r"an extent word \(.+\) in a quote that its text leaves out"),
     "format": (r"the lists aren't as asked", r"outside the lists", r"\d+ bullets under", r"has no bullets",
                r"isn't for this call", r"bullets in all, not at least", r"copies transcript text",
                r"the reply isn't the schema's JSON", r"isn't the schema's object", r"no bullets \(the reply lists none\)",
