@@ -9,8 +9,8 @@ from here, behind the admin gate (`require_admin` on the whole router: signature
   that fails is a bare 503 (the message goes to the server log, which names no text).
 - `Cache-Control: no-store`.
 - The store calls the Data API function `api.admin_labelling_passages(p_items jsonb)` with the secret key, as `RpcRefreshStore` calls
-  0016's. **That function is not in any migration yet**: a migration the card doesn't name needs Anand's OK (`CLAUDE.md` §7),
-  so until it exists the Data API answers 404 and this route answers 503. The proposed function is on issue #175.
+  0016's. The function is migration 0031 (approved by Anand, 8 Nov 2026): `service_role` only, at most 60 chunks a call. Until
+  0031 is pushed to the project the Data API answers 404 and this route answers 503.
 """
 from __future__ import annotations
 

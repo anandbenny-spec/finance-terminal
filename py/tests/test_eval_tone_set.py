@@ -56,8 +56,29 @@ def test_thinning_keeps_the_smallest_hash_per_call_and_group():
 
 def test_a_shortfall_stops_with_the_cell_named():
     rows = [c for c in table() if c.stratum != "rose"]
-    with pytest.raises(ts.NotEnough, match="rose"):
+    with pytest.raises(ts.NotEnough, match="no set satisfies"):
         ts.pick(rows)
+
+
+def test_a_scarce_stratum_that_shares_its_companies_with_the_others_still_gets_its_set():
+    """Plain round-robin greedy fails here (the scarce stratum's companies are taken by the other cells first); the pick backs up."""
+    rows, doc = [], 9000
+    for c in range(14):                                     # 14 companies: each has a "fell" call and a "rose" call
+        for s, season in enumerate(SEASONS[:7]):
+            doc += 1
+            for chunk, (section, group) in enumerate((("opening", "open_close"), ("qa", "answers"))):
+                pat = -0.30 if (c < 12 and s < 2) else 0.40 if s % 2 else 0.02
+                rows.append(ts.Cand(f"sc{c:02d}", season, PEERS[c % len(PEERS)], pat, doc, chunk + 3, section, group,
+                                    ts.rank(ts.SEED, doc, chunk + 3)))
+    for c in range(14, 40):                                 # plenty of companies for the other strata
+        for s, season in enumerate(SEASONS):
+            doc += 1
+            for chunk, (section, group) in enumerate((("opening", "open_close"), ("qa", "answers"))):
+                rows.append(ts.Cand(f"sc{c:02d}", season, PEERS[c % len(PEERS)], [0.4, 0.02][s % 2], doc, chunk + 3, section, group,
+                                    ts.rank(ts.SEED, doc, chunk + 3)))
+    chosen = ts.pick(rows)
+    assert len(chosen) == 30 and len({c.slug for c in chosen}) == 30
+    assert Counter((c.stratum, c.group) for c in chosen) == {(s, g): 5 for s in ts.STRATA for g in ts.GROUPS}
 
 
 def test_too_few_seasons_stops():
@@ -84,3 +105,13 @@ def test_the_items_file_lists_chunk_ids_only():
 def test_the_payload_carries_the_rule_and_the_seed():
     p = ts.payload(ts.pick(table()), "dev")
     assert p["rule_version"] == 1 and p["seed"] == ts.SEED and len(p["items"]) == 30 and p["items"][0]["id"].startswith("earnings_tone:")
+
+
+def test_the_committed_set_is_thirty_items_in_the_six_cells_with_the_caps():
+    path = Path(ts.__file__).resolve().parents[3] / "config" / "eval" / "sets" / "earnings_tone_items.json"
+    items = json.loads(path.read_text(encoding="utf-8"))["items"]
+    assert len(items) == 30 and len({i["id"] for i in items}) == 30
+    assert Counter((i["stratum"], i["group"]) for i in items) == {(s, g): 5 for s in ts.STRATA for g in ts.GROUPS}
+    assert len({i["slug"] for i in items}) == 30
+    assert max(Counter(i["peer_group"] for i in items).values()) <= ts.PEER_CAP
+    assert len({i["season"] for i in items}) >= ts.MIN_SEASONS
