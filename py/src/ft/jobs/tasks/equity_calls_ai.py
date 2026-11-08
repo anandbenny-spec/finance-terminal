@@ -32,15 +32,17 @@ schema's JSON is retried. No `core.forecast` row is written (that is #177, after
 (store once, never lose): a reader of `equity.guidance` or `equity.stated_figure` joins `core.ai_output` and takes the published
 one, as the `api` views do.
 
-**The summary's route (2B-11c, #301; Anand, 6 Nov 2026).** Prompts v1 to v5 ran on the citations route; **v6, v7 and v8 are the
+**The summary's route (2B-11c, #301; Anand, 6 Nov 2026).** Prompts v1 to v5 ran on the citations route; **v6 to v9 are the
 structured route**: the model returns each bullet as its own sentence plus the passages that state its point, as the schema's JSON
-(`config/prompts/call_summary/v6.schema.json`, which v7 and v8 share), and `ft/ai/call_summary.py`'s `check_json` finds each quote in
+(`config/prompts/call_summary/v6.schema.json`, which v7 to v9 share), and `ft/ai/call_summary.py`'s `check_json` finds each quote in
 our copy of the transcript. The stored output, its citations and its checks are the same on both routes. v7 (#178, 8 Nov 2026)
-is v6 plus a rule that a guidance verb ("reiterated", "raised", "cut" and the like) is in a bullet only if its quote says so; **v8, the
-current one (#178, the v8 round, 8 Nov 2026), adds four rules (a speaker's hedge stays a hedge, a recalled target is not a fresh
-expectation, no weight word the speaker did not use, a cause applies only to the part it was attached to) and a check in code
-(`ft/ai/call_summary.py`, `firm_verb_problem`).** A call whose summary is a published v5, v6 or v7 is asked for again under v8 and
-keeps that summary unless the v8 reply is published.
+is v6 plus a rule that a guidance verb ("reiterated", "raised", "cut" and the like) is in a bullet only if its quote says so; v8 (the v8 round,
+8 Nov 2026) adds four rules (a speaker's hedge stays a hedge, a recalled target is not a fresh expectation, no weight word the
+speaker did not use, a cause applies only to the part it was attached to) and a check in code (`ft/ai/call_summary.py`,
+`firm_verb_problem`); **v9, the current one (#178, the v9 round, 8 Nov 2026), adds three rules (a change announced for a later date
+stays in the future, an exclusion stays with its figure, an extent word the speaker used stays) and a second check in code
+(`extent_word_problem`).** A call whose summary is a published v5, v6, v7 or v8 is asked for again under v9 and keeps that summary
+unless the v9 reply is published.
 
 **Copied text (2B-11c, #301).** A summary bullet may not carry the transcript's own words: `ft/ai/call_summary.py`'s rule cuts a
 copied end off a new reply's bullet before anything is stored, and fails a bullet that copies anywhere else (the usual retry
@@ -119,7 +121,7 @@ from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TARGETS
 
-PROMPT_VERSION = {cs.TASK: "v8", ge.TASK: "v1", ct.TASK: "v1"}
+PROMPT_VERSION = {cs.TASK: "v9", ge.TASK: "v1", ct.TASK: "v1"}
 IST = "Asia/Kolkata"
 SHOWN = 12
 ONLY_ENV = "CALLS_AI_TASK"            # both (the default) | call_summary | guidance_extraction | call_tone: limits what a run asks for (#302)

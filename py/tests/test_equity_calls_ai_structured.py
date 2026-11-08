@@ -1,4 +1,4 @@
-"""equity.calls_ai with the call summary on the structured route (prompts from v6, the current one v8; 2B-11c, #301; Anand's decision of 6 Nov 2026) through the
+"""equity.calls_ai with the call summary on the structured route (prompts from v6, the current one v9; 2B-11c, #301; Anand's decision of 6 Nov 2026) through the
 runner and the Batch API path against the test database as job_writer. The reply is the schema's JSON (bullets with their own
 text and the quotes that state their point); the code finds each quote exactly once in the stored transcript and stores that span
 as the citation. The route's checks themselves are in test_ai_call_summary_structured.py (no database); here: the request as it is
@@ -45,7 +45,7 @@ from test_equity_calls_ai_task import (
 from ft.ai import call_summary as cs
 from ft.ai.client import load_prompt
 
-PROMPT = load_prompt("call_summary", "v8")
+PROMPT = load_prompt("call_summary", "v9")
 REV = GOOD_MANAGEMENT[0][1][0]
 STAMPED_V5 = {"version": "v5", "stamp": cs.ECHO_RULE}          # a published v5 summary that the copied-text re-check leaves alone
 
@@ -108,7 +108,7 @@ def test_a_stored_call_gets_a_summary_on_the_structured_route_and_each_quote_is_
     assert "- Management: Ravi Rao; Meera Iyer" in asked["text"] and "- Analysts: Anil Shah; Pooja Menon" in asked["text"]
     # one published output, the model's own sentences, and none of its copies of the quotes
     (o,) = outputs(c["doc"])
-    assert o[:3] == ("published", "", 5) and o[4] == "v8" and o[3] > 0
+    assert o[:3] == ("published", "", 5) and o[4] == "v9" and o[3] > 0
     ((_, _, _, content),) = summary_of(c["doc"])
     assert [x["list"] for x in content["bullets"]] == ["management"] * 3 + ["analysts"] * 2
     assert [x["text"] for x in content["bullets"]] == [t for t, _ in GOOD_MANAGEMENT + GOOD_ANALYSTS]
@@ -160,7 +160,7 @@ def test_a_call_with_one_unreadable_speaker_gets_the_third_list_on_the_structure
     asked = next(iter(fake.batches.values()))["requests"][0]["params"]["messages"][0]["content"][1]["text"]
     assert "- Role couldn't be read: Pooja Menon" in asked and '"unknown" (up to 4 bullets)' in asked
     ((_, status, version, content),) = summary_of(c["doc"])
-    assert (status, version) == ("published", "v8")
+    assert (status, version) == ("published", "v9")
     assert [b["list"] for b in content["bullets"]] == ["management"] * 3 + ["analysts"] * 2 + ["unknown"]
     assert r["checks"]["citation_roles"]["passed"] and none_rejected(r)
 
@@ -191,7 +191,7 @@ def test_a_summary_rejected_twice_leaves_the_published_v5_one_in_place_and_is_ne
     assert go(task([c["slug"]], fake)) == 0
     r = last_run()
     assert r["status"] == "success" and fake.create_calls == 2
-    assert [(g[0], g[4]) for g in outputs(c["doc"])] == [("published", "v5"), ("rejected", "v8"), ("rejected", "v8")]
+    assert [(g[0], g[4]) for g in outputs(c["doc"])] == [("published", "v5"), ("rejected", "v9"), ("rejected", "v9")]
     assert [x[0] for x in requests(c["doc"])] == ["rejected", "rejected"]
     assert [p[0] for p in published_summary(c["doc"])] == [old]                     # the visitor-facing summary is unchanged
     assert not r["checks"]["citation_integrity"]["passed"]                          # the rejections are counted and named here
@@ -202,19 +202,19 @@ def test_a_summary_rejected_twice_leaves_the_published_v5_one_in_place_and_is_ne
 
 
 @pytest.mark.db
-@pytest.mark.parametrize("earlier", ["v5", "v6", "v7"])
-def test_a_v8_summary_supersedes_the_earlier_one_and_keeps_its_row_and_citations(earlier):
+@pytest.mark.parametrize("earlier", ["v5", "v6", "v7", "v8"])
+def test_a_v9_summary_supersedes_the_earlier_one_and_keeps_its_row_and_citations(earlier):
     c = make_call()
     old = legacy(c, CLEAN, version=earlier, stamp=cs.ECHO_RULE)
     before = citations_of(old)
     fake = FakeClaude(["ok"], answer=steps(structured()))
     assert go(task([c["slug"]], fake)) == 0
     assert last_run()["status"] == "success"
-    assert [(g[0], g[4]) for g in outputs(c["doc"])] == [("superseded", earlier), ("published", "v8")]
+    assert [(g[0], g[4]) for g in outputs(c["doc"])] == [("superseded", earlier), ("published", "v9")]
     ((new, *_),) = published_summary(c["doc"])
     assert new != old and citations_of(old) == before and len(before) == 6        # the old rows stay (store once, never lose)
     assert len(citations_of(new)) == 7 and all(v for *_, v in citations_of(new))
-    assert go(task([c["slug"]], fake)) == 0 and fake.create_calls == 1            # v8 is published: nothing more is asked
+    assert go(task([c["slug"]], fake)) == 0 and fake.create_calls == 1            # v9 is published: nothing more is asked
 
 
 @pytest.mark.db
