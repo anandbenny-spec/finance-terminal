@@ -32,6 +32,12 @@ transcript, is found twice, runs across two turns or is over `MAX_QUOTE` charact
 citations route: only figures the quoted passages hold, the role rules, the counts, and the copied-text rule below on the bullet's
 text. The route is the request's (`Request.route`), so the stored outputs, the citations and the page links read the same.
 
+**A firm verb needs a firm quote** (#178, the v8 round, 8 Nov 2026; `firm_verb_problem`). The citation check proves a quote exists, not
+that the bullet's verb is no stronger than the quote, and the summary gate's two fails were exactly that: a hedge ("we hope margins
+could hold") written as "expects". So a management or unknown bullet whose text says "expects", "targets", "guided" or
+"will" fails unless one of its quotes holds a firm word of its own (expect, will, target, guide, plan, aim and the like). The check
+is deliberately narrow, a word-level backstop to prompt v8's rules on hedges, recalled targets, weight words and partial causes.
+
 **Copied text** (2B-11c, #301; `apply_echo`). Visitors see only the quotes of verified citations, never a transcript's text
 (`CLAUDE.md` §1), and the Earnings calls tab shows a bullet in full, so a bullet may not carry the transcript's own words
 (on dev, 65% of v5's bullets were a short paraphrase followed by the cited passage verbatim). A run of more than
@@ -71,6 +77,14 @@ ECHO_RULE = "echo-1"                                  # the rule's name: stamped
 JSON_FROM = 6                                         # prompt versions from v6 take the structured (json) route, v1-v5 the citations route
 MAX_QUOTE = 400                                       # code points: a quote's span (CLAUDE.md §1: visitors see at most 400 of a quote)
 MAX_QUOTES = 3                                        # quotes a bullet may rest on
+# A firm guidance verb in a bullet's text needs a quote in which a speaker is that firm (#178, the v8 round, 8 Nov 2026; Anand's ruling
+# of 8 Nov: "a bullet with a firm guidance verb, such as expects, will, targets or guided, whose cited passages contain no firm verb is
+# rejected"). The text's verbs are the ones the v7 re-draw's two fails turned on; the quote's side is wide on purpose, so the check
+# rejects only a bullet none of whose quotes holds any firm word at all (a hedge such as "we hope margins could hold" has none).
+FIRM_TEXT = re.compile(r"\b(expects?|expected|expecting|targets|targeting|guided|guides|guiding|will)\b")
+FIRM_QUOTE = re.compile(r"expect|\bwill\b|[’']ll\b|\btarget|\bguid(?:e|ed|es|ing|ance)\b|going to|\bplan|\baim|\bintend|\bcommit"
+                        r"|\bconfiden|\bprojec|\bforecast|\banticipat", re.IGNORECASE)
+FIRM_LISTS = ("management", "unknown")                # the lists whose bullets state what a speaker says will happen (an analysts bullet reports a question)
 _TRAIL = " :;,-\u2014\u2013\"'\u201c\u201d\u2018\u2019\u2026"        # stripped from the end of a lead-in
 _CLAUSE_END = ".!?:;,\u2014\u2013"                          # a lead-in that ends on one of these ends at a clause or sentence
 
@@ -230,6 +244,20 @@ def role_problem(kind: str, cited: Sequence[Cited], turns: Sequence[Turn], answe
             if not allowed:
                 return f"{who} cites a turn whose role is {t.role} ({what})"
     return None
+
+
+def firm_verb_problem(kind: str, text: str, passages: Sequence[str]) -> str | None:
+    """Why a bullet states what a speaker says will happen more firmly than any of its quotes does, or None. A bullet of the
+    management or unknown list whose text has "expects", "targets", "guided" or "will" (`FIRM_TEXT`) rests on a quote with a firm
+    word of its own (`FIRM_QUOTE`: expect, will, 'll, target, guide, plan, aim, going to and the like). None of its quotes having
+    one means the model firmed up a hedge or a recollection ("we hope margins could hold" written as "expects"). A word-level
+    check: it can't tell a noun ("targets") from a verb, so it can reject a sound bullet that the retry then rewrites."""
+    if kind not in FIRM_LISTS:
+        return None
+    m = FIRM_TEXT.search(text)
+    if m is None or any(FIRM_QUOTE.search(p) for p in passages):
+        return None
+    return f'a firm verb ("{m.group(1)}") that none of its quotes says'
 
 
 @dataclass(frozen=True)
@@ -442,6 +470,8 @@ def _json_bullet(raw, call: CallDoc, transcript: str, answers: set[int], mapping
         return b
     b.problem = role_problem(kind, b.citations, call.turns, answers)
     if b.problem is None:
+        b.problem = firm_verb_problem(kind, text, passages)
+    if b.problem is None:
         e = apply_echo(text, passages, transcript)
         b.problem, b.text = e.problem, (text if e.problem else e.text)
     return b
@@ -477,7 +507,8 @@ def check_json(answer, call: CallDoc) -> Checked:
 # tests run `check` on crafted bad replies and assert each phrase still lands where it says). Regexes, case-insensitive.
 REASON_PHRASES: dict[str, tuple[str, ...]] = {
     "citation": (r"cites a turn whose role is", r"cites text outside any speaker turn",
-                 r"isn't in the transcript exactly once", r"a quote is over \d+ characters"),
+                 r"isn't in the transcript exactly once", r"a quote is over \d+ characters",
+                 r"a firm verb \(.+\) that none of its quotes says"),
     "format": (r"the lists aren't as asked", r"outside the lists", r"\d+ bullets under", r"has no bullets",
                r"isn't for this call", r"bullets in all, not at least", r"copies transcript text",
                r"the reply isn't the schema's JSON", r"isn't the schema's object", r"no bullets \(the reply lists none\)",

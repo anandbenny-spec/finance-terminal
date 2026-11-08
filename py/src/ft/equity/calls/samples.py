@@ -51,10 +51,10 @@ Decided by Claude (standing delegation, 24 Oct 2026), each with its alternative:
 
 Sitting 2, decided by Claude (standing delegation, 24 Oct 2026), each with its alternative; rule version 3 (8 Nov 2026, before any
 item was drawn or read):
-- The summary gate draws from **published prompt-v7 outputs** (v6 for the first draw of sitting 2, before v7 existed), not
+- The summary gate draws from **published prompt-v8 outputs** (v6 for the first draw of sitting 2, v7 for its re-draw, before v8 existed), not
   re-checked v5 ones: #301's 5 Nov note said v5, but Anand chose the structured route (option 1, 6 Nov), whose outputs are v6 and
-  from 8 Nov v7 (v6 plus a rule on guidance verbs, after the first draw failed on "reiterated"), and #301's report says the gate
-  reads them. One published v5 summary stays out of the pool (Shriram Finance Q2 FY27). Alternative: the v5 outputs, which the
+  from 8 Nov v7 (v6 plus a rule on guidance verbs, after the first draw failed on "reiterated") and v8 (v7 plus four rules and a check on
+  firm verbs, after the re-draw failed on a hedge and a partial cause), and #301's report says the gate reads them. One published v5 summary stays out of the pool (Shriram Finance Q2 FY27). Alternative: the v5 outputs, which the
   final version replaced.
 - At most 2 summaries a peer group (the spec says "across peer groups" and gives no number). Alternative: no cap.
 - Recall's five sector buckets map peer groups as `RECALL_BUCKETS` says (the spec names the sectors, not their members); the
@@ -76,7 +76,7 @@ from dataclasses import dataclass, field, replace
 
 RULE_VERSION = 3                # 2: sitting 1's final rules; 3: adds sitting 2's gates and the "where present" minimums
 ATTEMPTS = 300                  # a seeded retry limit, see `draw`
-SUMMARY_VERSION = "v7"          # the prompt version that runs on production (#301, option 1; v7 from #178, sitting 2); the summary gate judges this one
+SUMMARY_VERSION = "v8"          # the prompt version that runs on production (#301, option 1; v7 and v8 from #178); the summary gate judges this one
 RECALL_EXTRA = 3                # calls after the five, read only while the settled targets are under 15
 SEEDS = {"targets": 2026110701, "unattributed": 2026110702, "stated": 2026110703, "links": 2026110704,
          "summaries": 2026110801, "recall": 2026110802, "scoring": 2026110803}
