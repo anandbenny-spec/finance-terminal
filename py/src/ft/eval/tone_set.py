@@ -37,6 +37,7 @@ PER_CELL = 5
 PEER_CAP = 4
 MIN_SEASONS = 6
 SEED = "earnings_tone-1"
+MAX_NODES = 200_000      # a bound on the search; the data never needs more than a few hundred
 
 CANDIDATE_SQL = """
 with calls as (
@@ -107,29 +108,89 @@ def thin(cands: list[Cand]) -> list[Cand]:
 
 
 def pick(cands: list[Cand]) -> list[Cand]:
-    """The set: PER_CELL per (stratum, group), one per company, PEER_CAP per peer group, seasons spread. Deterministic."""
+    """The set: PER_CELL per (stratum, group), one per company, PEER_CAP per peer group, seasons spread. Deterministic.
+
+    The rule's greedy order (scarcest cell first, round-robin; each time the candidate from the least-used season, then the smallest
+    hash, that breaks no cap) is tried first. A choice is refused when it would leave a later pick without a company (forward check:
+    every cell still has as many companies free as it has picks to make), and a dead end backs up to the last choice that had an
+    alternative. So when the plain greedy order succeeds the result is exactly its result; when it doesn't (a scarce stratum shares
+    its few companies with the others), the set is the first one in that same order that satisfies every rule.
+    """
     cells = [(s, g) for s in STRATA for g in GROUPS]
     pool = {cell: sorted((c for c in cands if (c.stratum, c.group) == cell), key=lambda c: (c.h, c.slug, c.season)) for cell in cells}
     # The scarcest cell (fewest companies to choose from) goes first in every round, since one passage per company is the
     # tightest cap: the order is fixed by the data alone, so the pick stays deterministic.
     cells.sort(key=lambda cell: (len({c.slug for c in pool[cell]}), cell))
+    order = [cell for _ in range(PER_CELL) for cell in cells]
     chosen: list[Cand] = []
     companies: set[str] = set()
     peers: Counter = Counter()
     seasons: Counter = Counter()
-    for _ in range(PER_CELL):
-        for cell in cells:
-            ok = [c for c in pool[cell] if c.slug not in companies and peers[c.peer_group] < PEER_CAP]
-            if not ok:
-                raise NotEnough(f"{cell[0]}/{cell[1]}: {len(chosen)} chosen so far, no candidate left within the caps "
-                                f"({len(pool[cell])} in the cell)")
-            c = min(ok, key=lambda c: (seasons[c.season], c.h, c.slug))
+    nodes = 0
+    deepest = 0
+
+    def short(i: int) -> bool:
+        """The picks still to make can no longer all be filled: a flow from the cells' remaining picks through the free companies
+        (one pick each) and their peer groups (room left under the cap) is smaller than the picks left."""
+        left = Counter(order[i:])
+        co_cells: dict[str, set] = {}
+        co_peer: dict[str, str] = {}
+        for cell in left:
+            for c in pool[cell]:
+                if c.slug not in companies and peers[c.peer_group] < PEER_CAP:
+                    co_cells.setdefault(c.slug, set()).add(cell)
+                    co_peer[c.slug] = c.peer_group
+        room = {pg: PEER_CAP - peers[pg] for pg in set(co_peer.values())}
+        owner: dict[str, tuple] = {}                       # company -> the cell currently using it
+
+        def place(cell, seen: set, pg_used: Counter) -> bool:
+            for co in sorted(k for k, v in co_cells.items() if cell in v):
+                if co in seen:
+                    continue
+                seen.add(co)
+                if co not in owner:
+                    if pg_used[co_peer[co]] < room[co_peer[co]]:
+                        owner[co] = cell
+                        pg_used[co_peer[co]] += 1
+                        return True
+                elif place(owner[co], seen, pg_used):
+                    owner[co] = cell
+                    return True
+            return False
+
+        used: Counter = Counter()
+        for cell, n in left.items():
+            for _ in range(n):
+                if not place(cell, set(), used):
+                    return True
+        return False
+
+    def go(i: int) -> bool:
+        nonlocal nodes, deepest
+        deepest = max(deepest, i)
+        if i == len(order):
+            return len({c.season for c in chosen}) >= MIN_SEASONS
+        nodes += 1
+        if nodes > MAX_NODES:
+            return False
+        cell = order[i]
+        ok = [c for c in pool[cell] if c.slug not in companies and peers[c.peer_group] < PEER_CAP]
+        for c in sorted(ok, key=lambda c: (seasons[c.season], c.h, c.slug)):
             chosen.append(c)
             companies.add(c.slug)
             peers[c.peer_group] += 1
             seasons[c.season] += 1
-    if len(seasons) < MIN_SEASONS:
-        raise NotEnough(f"only {len(seasons)} seasons in the set, {MIN_SEASONS} needed")
+            if not short(i + 1) and go(i + 1):
+                return True
+            chosen.pop()
+            companies.discard(c.slug)
+            peers[c.peer_group] -= 1
+            seasons[c.season] -= 1
+        return False
+
+    if not go(0):
+        raise NotEnough(f"no set satisfies every rule (reached {deepest} of {len(order)} picks in {nodes} steps; "
+                        f"{len({c.season for c in cands})} seasons among {len(cands)} candidates)")
     return sorted(chosen, key=lambda c: c.id)
 
 
