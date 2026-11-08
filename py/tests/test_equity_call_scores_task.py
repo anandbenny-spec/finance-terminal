@@ -140,7 +140,7 @@ def test_a_call_is_compared_with_the_previous_quarter_and_a_rerun_writes_nothing
     status, written, checks, _ = go(slug)
     assert status == "success" and written == 1
     [(ev, base, wb, wn, wa, wr, sim, speakers, label, n_pairs, version)] = rows(eid)
-    assert (ev, base, speakers, label, version) == (cur, prev, [], None, "1")
+    assert (ev, base, speakers, label, version) == (cur, prev, [], None, "remarks-2")
     assert wb == 14 and wn == 15 and (wa, wr) == (5, 4)
     assert float(sim) == pytest.approx(1 - 9 / 29, abs=1e-4)
     assert n_pairs == 2

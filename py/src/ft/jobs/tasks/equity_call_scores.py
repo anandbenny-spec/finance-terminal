@@ -269,17 +269,15 @@ class EquityCallScores(Task):
 
     @staticmethod
     def _distribution(rows: list) -> Check:
-        """The threshold check of Spec 02B §5.13: deciles of the stored similarities and the share below 0.5 (numbers only).
-        Warns when more than 25% fall below 0.5 (Spec 02B §9.4 stops the job there)."""
+        """Informational (Spec 02B §5.13 as amended 8 Nov 2026): count, min, median, max and the nine deciles of the stored
+        similarities, numbers only. No threshold; it never blocks or fails."""
         sims = sorted(float(s) for _, s, _ in rows)
         if not sims:
             return Check("similarity_distribution", True, "no comparisons yet", blocking=False)
         n = len(sims)
-        deciles = [sims[min(n - 1, (n * k) // 10)] for k in range(10)] + [sims[-1]]
-        below = sum(1 for s in sims if s < rm.REWRITTEN_BELOW)
-        share = below / n
-        return Check("similarity_distribution", share <= 0.25,
-                     f"n {n}; below 0.5: {below} ({share:.1%}); deciles 0 to 100%: "
-                     + ", ".join(f"{d:.3f}" for d in deciles)
-                     + ("" if share <= 0.25 else "; MORE THAN 25% BELOW 0.5: stop and show Anand (Spec 02B §9.4)"),
+        deciles = [sims[min(n - 1, (n * k) // 10)] for k in range(1, 10)]
+        median = sims[n // 2] if n % 2 else (sims[n // 2 - 1] + sims[n // 2]) / 2
+        return Check("similarity_distribution", True,
+                     f"n {n}; min {sims[0]:.3f}; median {median:.3f}; max {sims[-1]:.3f}; deciles 10 to 90%: "
+                     + ", ".join(f"{d:.3f}" for d in deciles),
                      blocking=False)

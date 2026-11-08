@@ -5,9 +5,10 @@ Pure functions: the call's text and turns in; a similarity, labels and at most f
   `#` (the figures are in the results beside the call); `masked` keeps a map back to the transcript's own offsets.
 - **Matching:** module 1's sentence-matched differ (`ft.engines.document.diff.diff_texts`), unchanged, on the masked texts.
   **Similarity** = 1 - (words added + words removed) / (the previous opening's words + this opening's words).
-- **Labels:** similarity below `REWRITTEN_BELOW` (0.5) is `largely_rewritten`; a management speaker of this opening who
-  didn't speak in the previous one and has at least `NEW_SPEAKER_SHARE` (30%) of its words is `new_speaker` (and listed);
-  a new speaker wins the single label, since the opening is then treated as rewritten.
+- **Labels:** no similarity threshold and no `largely_rewritten` label (Anand, 8 Nov 2026: the 0.5 check failed, 94% of
+  calls fell below it; openings are reworded every quarter). A management speaker of this opening who didn't speak in the
+  previous one and has at least `NEW_SPEAKER_SHARE` (30%) of its words is listed in `new_speakers` and the label is
+  `new_speaker`; otherwise the label is null. The similarity stays a stored number.
 - **Pairs:** the `MAX_PAIRS` (5) with the most changed words, sentences as filed (numbers included), each side at most
   `MAX_SIDE` (400) code points, with spans in the transcript's canonical text.
 - **No comparison** (None) when either call has no opening words. Role-held calls and a missing previous call are the task's.
@@ -22,8 +23,7 @@ from ft.engines.document.diff import diff_texts
 from ft.engines.document.text import words
 from ft.equity.calls.turns import name_key, same_person
 
-RULE_VERSION = "1"
-REWRITTEN_BELOW = 0.5
+RULE_VERSION = "remarks-2"
 NEW_SPEAKER_SHARE = 0.30
 MAX_PAIRS = 5
 MAX_SIDE = 400
@@ -146,7 +146,7 @@ def compare(new_text: str, new: Opening, old_text: str, old: Opening) -> Change:
          if w >= NEW_SPEAKER_SHARE * sum(new.speakers.values())
          and not any(same_person(k, ok) for ok in old.speakers)),
         key=str.lower)
-    label = "new_speaker" if fresh else ("largely_rewritten" if similarity < REWRITTEN_BELOW else None)
+    label = "new_speaker" if fresh else None
     return Change(old.words, new.words, d.words_added, d.words_removed, round(similarity, 4), fresh, label, pairs)
 
 
