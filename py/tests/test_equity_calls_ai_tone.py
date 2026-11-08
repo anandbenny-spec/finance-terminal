@@ -59,15 +59,24 @@ def clean():
 
 
 def rechunk(c: dict) -> dict:
-    """One chunk per speaker turn, as the production chunker cuts a transcript. (The test chunker needs a speaker-label shape these
-    synthetic lines don't have and cuts the whole call as one chunk; re-chunking is allowed, the text stays the same.)"""
+    """One chunk per speaker turn, as the production chunker cuts a transcript, and a chunk for each gap between turns, so the
+    chunks still add up to the whole text (the run refuses a transcript that isn't whole). (The test chunker needs a speaker-label
+    shape these synthetic lines don't have and cuts the whole call as one chunk; re-chunking is allowed, the text stays the same.)"""
     text = c["built"].text
+    cuts: list[tuple[int, int, str | None]] = []
+    pos = 0
+    for t in c["built"].turns:
+        if t.char_start > pos:
+            cuts.append((pos, t.char_start, None))
+        cuts.append((t.char_start, t.char_end, t.speaker))
+        pos = t.char_end
+    if pos < len(text):
+        cuts.append((pos, len(text), None))
     with psycopg.connect(dsn("postgres")) as conn:
         conn.execute("delete from core.chunk where document_id = %s", (c["doc"],))
-        for no, t in enumerate(c["built"].turns):
+        for no, (a, b, speaker) in enumerate(cuts):
             conn.execute("""insert into core.chunk (document_id, chunk_no, char_start, char_end, section, speaker, body)
-                            values (%s, %s, %s, %s, null, %s, %s)""",
-                         (c["doc"], no, t.char_start, t.char_end, t.speaker, text[t.char_start:t.char_end]))
+                            values (%s, %s, %s, %s, null, %s, %s)""", (c["doc"], no, a, b, speaker, text[a:b]))
     return c
 
 
