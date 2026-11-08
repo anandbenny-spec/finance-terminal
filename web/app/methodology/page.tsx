@@ -26,7 +26,7 @@ const BLOCKS: Block[] = [
     title: "What this site is",
     paragraphs: [
       "Finance Terminal is a non-commercial student research project by Anand Benny. It is informational only, not investment advice, and nothing on it is a recommendation to buy or sell anything. It is not a SEBI-registered research analyst or investment adviser.",
-      "It reads published central-bank documents and market series and shows what they say. It does not forecast, rank or issue verdicts.",
+      "It reads published central-bank documents, company filings, earnings-call transcripts and market series, and shows what they say. It makes no forecasts of its own and issues no verdicts or recommendations: the screener only sorts the figures it shows, and model-implied values are labelled as such.",
     ],
   },
   {
@@ -47,7 +47,7 @@ const BLOCKS: Block[] = [
     id: "ai",
     title: "How AI is used",
     paragraphs: [
-      "AI writes the short summaries of what changed between statements and extracts structured facts from the documents, such as projections and stance. It uses Anthropic's Claude models. The work is done ahead of time in batches, never when a visitor opens a page.",
+      "AI writes the short summaries of what changed between central-bank statements and of each earnings call, and extracts structured facts from the documents, such as projections, stance, and the targets and figures management stated on a call. It uses Anthropic's Claude models. The work is done ahead of time in batches, never when a visitor opens a page.",
       "Every AI output is marked as AI. It may only contain numbers that appear in the passage it cites, and a claim without a verified citation into the stored source text is dropped before anything is published. The database itself refuses to publish an AI output that has no citation.",
       "The AI does not answer from general knowledge, and it does not make forecasts, ratings or recommendations. AI text can be incomplete: a missing summary means nothing passed the checks, not that nothing changed.",
     ],
@@ -64,8 +64,8 @@ const BLOCKS: Block[] = [
     id: "switches",
     title: "Kill switches",
     paragraphs: [
-      "AI spending has a monthly budget that stops new AI work when it is reached. The scheduled workflows can also be started with AI switched off, and when an AI key is missing, refused or out of credit, the AI step is skipped and says so instead of failing the whole update.",
-      "Any AI or model field can be hidden at once through its field policy. Any source can be suppressed at once, and if an owner objects to something shown here it is removed.",
+      "AI spending has a monthly budget that stops new AI work when it is reached. The daily and watch workflows can also be started with AI switched off, the weekly workflow, which writes the call summaries and guidance, can be switched off as a whole, and when an AI key is missing, refused or out of credit, the AI step is skipped and says so instead of failing the whole update.",
+      "Any AI or model field can be hidden at once through its field policy. Any source can be suppressed at once, and if an owner objects to something shown here, the source it comes from is removed promptly.",
     ],
   },
   {
@@ -95,10 +95,10 @@ const BLOCKS: Block[] = [
       "The screener and company pages cover the Nifty 50 only. Valuations shown are model-implied and informational, never a verdict, a target or a recommendation.",
       "Company debt is borrowings only, labelled as excluding lease liabilities because results filings do not report them. Where a company's filed lease payments are material against its operating profit, enterprise-value figures are held back with the reason shown. Operating profit (EBIT) is derived from the filed lines and labelled as derived, and a lender's return on assets is annualised and labelled.",
       "The one-year price return is a price return: it is adjusted for splits and bonus issues but leaves out dividends.",
-      "The earnings-calls list shows the latest call of each Nifty 50 company. Its summary, the guidance given and the figures management stated are written by AI from the stored transcript and labelled AI-extracted, and they are held back until they have passed review, and no tone or sentiment is read from a call.",
+      "The earnings-calls list shows the latest call of each Nifty 50 company, and a company's Calls tab also lists its earlier calls. Its summary, the guidance given and the figures management stated are written by AI from the stored transcript and labelled AI-extracted, and they are held back until they have passed review, and no tone or sentiment is read from a call.",
       "The guidance record compares each measurable target management gave on a call with the company's own filed figures once they are out: delivered, missed, still pending, or not scored with the reason shown. Only what speakers identified as management said is a target. The tolerance for each kind of target was written down before any target was scored, a target is scored on the first time it was stated, and a revised target is shown as revised. A missed target is a fact about a figure, not a verdict on management. The record is held back until it has passed review, and the share delivered appears only once a company has at least five scored targets.",
-      "Some calls are not analysed: a transcript that is only a scan, or one that the company keeps on its own website, is named as such and not summarised. What speakers whose role could not be read said is shown apart and is not attributed to management.",
-      "Transcript text stays private. Visitors see only the short quotes of verified citations, each with its page, never a transcript itself.",
+      "Some calls are not analysed: a transcript that is only a scan, or one kept only on the company's own website that the site has no stored copy of, is named as such and not summarised. What speakers whose role could not be read said is shown apart and is not attributed to management.",
+      "Transcript text stays private. Visitors see only the short quotes of verified citations, each with its page where the page could be matched, never a transcript itself.",
       "The site makes no claim about future rates or prices.",
     ],
   },
@@ -108,7 +108,7 @@ const BLOCKS: Block[] = [
     paragraphs: [
       <>
         The site is run by Anand Benny. If you own data shown here and want it removed, say so to whoever shared this link with you and it will reach him; it
-        is removed. The site collects no personal data beyond what the <Link className="underline" href="/about#logged">About and privacy</Link> page describes.
+        is removed promptly. The site collects no personal data beyond what the <Link className="underline" href="/about#logged">About and privacy</Link> page describes.
       </>,
     ],
   },
@@ -128,7 +128,7 @@ export default function MethodologyPage() {
           <Panel title="Responsible AI use" titleId="alignment-title" variant="prose">
             <p className="text-ink-1">
               Written with SEBI&apos;s consultation paper &ldquo;Guidelines for Responsible Usage of AI/ML in Indian Securities Markets&rdquo; (20 June
-              2025) and its announced final guidelines in mind, which stress human oversight, accountability and traceability. This site is not a
+              2025) in mind, and the final guidelines SEBI said in August 2026 were coming, which it said would stress human oversight, data controls and kill switches. This site is not a
               regulated entity and claims no compliance or endorsement.
             </p>
           </Panel>
