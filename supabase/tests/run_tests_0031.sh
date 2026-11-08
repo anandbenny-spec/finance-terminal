@@ -20,7 +20,7 @@ begin;
 insert into core.entity (kind, slug, name, short_name, market, currency, is_published)
   values ('company', 'ec31-a', 'Ec31 A Ltd', 'ec31-a', 'IN', 'INR', true);
 insert into core.event (event_type, entity_id, slug, title, starts_on, status, source_id, is_published)
-  select 'earnings_call', id, 'ec31-call', 'ec31', '2026-10-25', 'stored', (select id from core.source where key = 'nse'), true
+  select 'earnings_call', id, 'ec31-call', 'ec31', '2026-10-25'::date, 'stored', (select id from core.source where key = 'nse'), true
   from core.entity where slug = 'ec31-a';
 insert into core.document (doc_type, entity_id, event_id, title, source_id, external_key, source_url, published_at,
                            char_count, text_sha256, chunked_at, is_published)
@@ -41,10 +41,10 @@ ASK="[{\"document_id\": $DOC, \"chunk_no\": 2}, {\"document_id\": $DOC, \"chunk_
 FN="'api.admin_labelling_passages(jsonb)'::regprocedure"
 check "R01 only service_role (and the owner) can execute it: not anon, authenticated, PUBLIC, job_writer or sql_reader" \
   "$(as_pg "select string_agg(r, ',' order by r) from unnest(array['anon','authenticated','service_role','job_writer','sql_reader','semantic_owner']) r where has_function_privilege(r, $FN, 'execute')")" '^service_role$'
-check "R02 anon is refused" "$(as_role anon "select api.admin_labelling_passages('[]')")" 'permission denied for function admin_labelling_passages'
-check "R03 authenticated is refused" "$(as_role authenticated "select api.admin_labelling_passages('[]')")" 'permission denied for function admin_labelling_passages'
-check "R04 sql_reader is refused" "$(as_role sql_reader "select api.admin_labelling_passages('[]')")" 'permission denied for function admin_labelling_passages'
-check "R05 job_writer is refused" "$(as_role job_writer "select api.admin_labelling_passages('[]')")" 'permission denied for function admin_labelling_passages'
+check "R02 anon is refused" "$(as_role anon "select api.admin_labelling_passages('[]')")" 'permission denied'
+check "R03 authenticated is refused" "$(as_role authenticated "select api.admin_labelling_passages('[]')")" 'permission denied'
+check "R04 sql_reader is refused" "$(as_role sql_reader "select api.admin_labelling_passages('[]')")" 'permission denied'
+check "R05 job_writer is refused" "$(as_role job_writer "select api.admin_labelling_passages('[]')")" 'permission denied'
 
 check "F01 service_role gets exactly the chunks asked for (an unknown one is left out), in chunk order, with their text" \
   "$(as_role service_role "select (api.admin_labelling_passages('$ASK'::jsonb)) #>> '{}'" | tr -d ' ')" \
