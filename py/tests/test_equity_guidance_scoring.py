@@ -275,7 +275,8 @@ def test_improve_goes_through_the_favourable_side_and_is_vague_without_one():
 
 @pytest.mark.parametrize("field", ["quote", "metric_text", "scope_text", "period_text"])
 @pytest.mark.parametrize("phrase", ["2% to 5% in constant currency", "growth of 2 to 5 percent in Constant-Currency terms",
-                                    "2-5% CC growth"])
+                                    "2-5% CC growth", "between 2% and 3% in consta nt currency terms",
+                                    "2% to 3% in constant curr ency"])
 def test_constant_currency_growth_has_no_filed_figure_wherever_the_statement_says_it(field, phrase):
     """Found by #178's sitting-2 scoring gate: HCL's and Infosys's "constant currency" targets were scored as rupee growth."""
     rows = [pl(1, "year", D(2025, 3, 31), 4000, 400), pl(2, "year", Q4, 4600, 500)]

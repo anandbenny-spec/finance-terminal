@@ -80,7 +80,15 @@ FILE_DAYS, YEAR_END_DAYS = 90, 120
 IMPROVE = re.compile(r"\bimprov", re.IGNORECASE)
 # Constant-currency growth is a company's own restatement at fixed exchange rates, so no filed figure answers it (§5.10). The
 # extraction is told to label it "other"; this catches the times it labels it revenue_growth anyway (found by #178's scoring gate).
-CONSTANT_CURRENCY = re.compile(r"constant[\s-]*currenc|\bcc\b", re.IGNORECASE)
+# Transcripts break words with stray spaces ("consta nt currency"), so the phrase is looked for with spaces and hyphens removed.
+CONSTANT_CURRENCY = re.compile(r"constantcurrenc", re.IGNORECASE)
+CC_ABBREVIATION = re.compile(r"\bcc\b", re.IGNORECASE)
+
+
+def says_constant_currency(text: str) -> bool:
+    return bool(CONSTANT_CURRENCY.search(re.sub(r"[\s-]+", "", text)) or CC_ABBREVIATION.search(text))
+
+
 CASH = ("cash", "bank_balances_other", "current_investments", "noncurrent_investments")
 BORROWINGS = ("borrowings_current", "borrowings_noncurrent")
 
@@ -664,7 +672,7 @@ def statement_reason(s: Statement, line: Line | None, c: Company) -> tuple[str |
         return s.reason, "set by the extraction", eff
     if line is None:
         return "no_filed_figure", "the map has no line for this metric", eff
-    if CONSTANT_CURRENCY.search(" ".join(t for t in (s.quote, s.metric_text, s.scope_text, s.period_text) if t)):
+    if says_constant_currency(" ".join(t for t in (s.quote, s.metric_text, s.scope_text, s.period_text) if t)):
         return "no_filed_figure", "a constant-currency figure: the filings report no such figure", eff
     if s.period_kind not in line.periods:
         return "no_filed_figure", f"the map's line isn't scored for a {s.period_kind.replace('_', ' ')} period", eff
