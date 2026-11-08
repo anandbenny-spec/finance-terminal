@@ -65,7 +65,9 @@ CODE=$?
 set -e
 
 COST="$(jq -r '.total_cost_usd // 0' "$OUT" 2>/dev/null || echo 0)"
-IS_ERR="$(jq -r '.is_error // true' "$OUT" 2>/dev/null || echo true)"
+# Not `.is_error // true`: jq's `//` replaces false as well as null, so every successful run was logged as an error.
+IS_ERR="$(jq -r 'if .is_error == null then true else .is_error end' "$OUT" 2>/dev/null || echo true)"
+[ -n "$IS_ERR" ] || IS_ERR=true
 SESSION="$(jq -r '.session_id // ""' "$OUT" 2>/dev/null || echo "")"
 LEDGER="$LOGS/ledger.csv"
 [ -f "$LEDGER" ] || echo "utc_time,issue,total_cost_usd,exit_code,is_error,session_id" > "$LEDGER"
