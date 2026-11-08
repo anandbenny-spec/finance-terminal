@@ -63,6 +63,7 @@ the fallback. NSE tasks are never visitor-refreshable.
 finance-terminal/            on the Mac: ~/Projects/finance-terminal/app
 ├── supabase/migrations/     numbered, timestamped files: 20261022001100_review_01.sql is 0011
 ├── supabase/tests/          run_all.sh: fresh database, every migration, fixture, every test script
+├── supabase/dev-sql/        reviewed SQL files the dev-sql workflow runs on dev only (NNNN_name.sql; #101)
 ├── supabase/config.toml     Data API: schemas = ["api"], max_rows = 1000; sign-ups off
 ├── py/                      one uv project, Python 3.13 (>=3.13,<3.14); uv.lock covers the Mac and Linux
 │   ├── src/ft/storage.py    the one storage function
@@ -293,6 +294,12 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   runs (#122, #132), 2B's backfills with its AI backfill and weekly AI runs (#184), one D4 drill after #135. Each run
   is recorded on its issue; §7's $5 stop applies. Any other production run, and any other AI spend, still needs his OK. Claude
   never pushes to `main`.
+- **Dev SQL files (#101; Anand, 27 Oct 2026; the role and its secret were created on 8 Nov 2026).** Claude may run a
+  reviewed SQL file on **dev** with the `dev-sql` workflow (`workflow_dispatch`, one input, `file`): a file in
+  `supabase/dev-sql/` that is already on `main`, so a pull request and CI were its review. It logs in as `dev_sql`,
+  which holds no privileges of its own, so every file starts with `set local role anon`, `service_role` or
+  `job_writer`; it selects counts, never rows, holds no psql meta-command, and each run is recorded on its issue (the
+  run link, the file, the result). Never production: the workflow has no target input.
 - The Mac's shell can't run macOS virtual environments, and deleting files there needs Anand's permission.
 - **Campus Wi-Fi (Sophos, from 26 Oct):** `UV_SYSTEM_CERTS=true` for uv, `NODE_EXTRA_CA_CERTS` for npm and the
   Vercel CLI, `http.sslCAInfo` for git. Production (GitHub, Vercel) is unaffected.
