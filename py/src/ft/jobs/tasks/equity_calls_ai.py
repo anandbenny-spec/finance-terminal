@@ -32,11 +32,13 @@ schema's JSON is retried. No `core.forecast` row is written (that is #177, after
 (store once, never lose): a reader of `equity.guidance` or `equity.stated_figure` joins `core.ai_output` and takes the published
 one, as the `api` views do.
 
-**The summary's route (2B-11c, #301; Anand, 6 Nov 2026).** Prompts v1 to v5 ran on the citations route; **v6, the current one, is the
+**The summary's route (2B-11c, #301; Anand, 6 Nov 2026).** Prompts v1 to v5 ran on the citations route; **v6 and v7 are the
 structured route**: the model returns each bullet as its own sentence plus the passages that state its point, as the schema's JSON
-(`config/prompts/call_summary/v6.schema.json`), and `ft/ai/call_summary.py`'s `check_json` finds each quote in our copy of the
-transcript. The stored output, its citations and its checks are the same on both routes. A call whose summary is a published v5
-(the re-checked ones) is asked for again under v6 and keeps its v5 summary unless the v6 reply is published.
+(`config/prompts/call_summary/v6.schema.json`, which v7 shares), and `ft/ai/call_summary.py`'s `check_json` finds each quote in
+our copy of the transcript. The stored output, its citations and its checks are the same on both routes. **v7, the current one
+(#178, 8 Nov 2026), is v6 plus a rule that a guidance verb ("reiterated", "raised", "cut" and the like) is in a bullet only if
+its quote says so.** A call whose summary is a published v5 or v6 is asked for again under v7 and keeps that summary unless the
+v7 reply is published.
 
 **Copied text (2B-11c, #301).** A summary bullet may not carry the transcript's own words: `ft/ai/call_summary.py`'s rule cuts a
 copied end off a new reply's bullet before anything is stored, and fails a bullet that copies anywhere else (the usual retry
@@ -115,7 +117,7 @@ from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TARGETS
 
-PROMPT_VERSION = {cs.TASK: "v6", ge.TASK: "v1", ct.TASK: "v1"}
+PROMPT_VERSION = {cs.TASK: "v7", ge.TASK: "v1", ct.TASK: "v1"}
 IST = "Asia/Kolkata"
 SHOWN = 12
 ONLY_ENV = "CALLS_AI_TASK"            # both (the default) | call_summary | guidance_extraction | call_tone: limits what a run asks for (#302)

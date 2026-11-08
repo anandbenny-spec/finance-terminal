@@ -26,7 +26,7 @@ from ft.ai.call_summary import HEADINGS, Turn, answer_turns, check, ranges, rost
 from ft.ai.client import TASKS, load_prompt
 from ft.quality.reasons import categorise
 
-PROMPT = load_prompt("call_summary", "v5")        # the citations route's last prompt: v6 (the structured route, #301) is tested in
+PROMPT = load_prompt("call_summary", "v5")        # the citations route's last prompt: v6 and v7 (the structured route, #301) are tested in
                                                   # test_ai_call_summary_structured.py; this file pins what v1-v5 and `check` do
 B = build()
 TEXT = B.text
@@ -120,7 +120,7 @@ def test_v5_adds_cite_first_exact_figures_and_no_copied_transcript_text():
     """2B-11b (#284). v5 aims at v4's two largest dev rejection causes (bullets with no citation; figures the cited sentence
     lacks) and, by Anand's 5 Nov 2026 decision, at bullets that carried the transcript's own words. Every earlier version stays
     as it ran, and v4's own pinned rules (the test above) still hold for v5. (v5 stopped being the current prompt when #301 chose
-    the structured route: v6, see test_ai_call_summary_structured.py.)"""
+    the structured route: v6 and v7, see test_ai_call_summary_structured.py.)"""
     p = PROMPT.text
     assert PROMPT.version == "v5"
     assert "find the passage first" in p and "Do not write a bullet first and look for support afterwards" in p
