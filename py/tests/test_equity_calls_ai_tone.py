@@ -96,7 +96,7 @@ def test_a_run_limited_to_tone_asks_for_the_management_passages_only_and_stores_
     monkeypatch.setenv(eca.ONLY_ENV, ct.TASK)
     c = rechunk(make_call(lines=LONG, fy_end=3))
     fake = FakeClaude(["ok"], reply=replies(), answer=tone_answer([2, -1], [(1, UP), (2, DOWN)]))
-    assert go(task([c["slug"]], fake)) == 0
+    assert go(task([c["slug"]], fake)) == 0, last_run()
     r = last_run()
     assert r["status"] == "success", r["error"]
     assert q("select ai_task from ops.ai_request where document_id = %s", c["doc"]) == [("call_tone",)]
@@ -125,7 +125,7 @@ def test_a_run_limited_to_tone_asks_for_the_management_passages_only_and_stores_
     assert ck["tone_stored"]["passed"] and ck["tone_stored"]["detail"].startswith("1 stored")
     assert "1 published" in ck["call_tone"]["detail"]
     assert as_anon("select count(*) from api.ai_outputs where document_id = %s", c["doc"]) == [(0,)]       # hidden: nothing shows it
-    assert go(task([c["slug"]], fake)) == 0                                  # published: never asked again
+    assert go(task([c["slug"]], fake)) == 0, last_run()                                  # published: never asked again
     assert fake.create_calls == 1
 
 
@@ -135,7 +135,7 @@ def test_a_default_run_never_asks_for_tone(monkeypatch):
     c = make_call(lines=LONG, fy_end=3)
     fake = FakeClaude(["ok"], reply=replies(management=GOOD_MANAGEMENT, analysts=GOOD_ANALYSTS),
                       answer=lambda body: {"targets": [], "stated_figures": []})
-    assert go(task([c["slug"]], fake)) == 0
+    assert go(task([c["slug"]], fake)) == 0, last_run()
     assert "call_tone" not in {t for (t,) in q("select ai_task from ops.ai_request where document_id = %s", c["doc"])}
     assert tone_outputs(c["doc"]) == [] and tone_requests(c["doc"]) == []
 
@@ -145,7 +145,7 @@ def test_a_role_held_call_is_not_asked_for_tone(monkeypatch):
     monkeypatch.setenv(eca.ONLY_ENV, ct.TASK)
     c = rechunk(make_call(lines=LONG, fy_end=3, role_of={4: "unknown"}))
     fake = FakeClaude(["ok"], reply=replies(), answer=tone_answer([0], []))
-    assert go(task([c["slug"]], fake)) == 0
+    assert go(task([c["slug"]], fake)) == 0, last_run()
     assert q("select count(*) from ops.ai_request where document_id = %s", c["doc"]) == [(0,)]
     assert fake.create_calls == 0
 
@@ -155,7 +155,7 @@ def test_a_neutral_call_cites_its_first_passage_so_it_can_be_published(monkeypat
     monkeypatch.setenv(eca.ONLY_ENV, ct.TASK)
     c = rechunk(make_call(lines=LONG, fy_end=3))
     fake = FakeClaude(["ok"], reply=replies(), answer=tone_answer([0, 0], []))
-    assert go(task([c["slug"]], fake)) == 0
+    assert go(task([c["slug"]], fake)) == 0, last_run()
     ((status, _, _, content),) = tone_outputs(c["doc"])
     assert status == "published" and content["fallback_citation"] is True and content["evidence"] == []
     ((path, ok),) = q("""select claim_path, verified from core.ai_citation
@@ -169,11 +169,11 @@ def test_a_score_out_of_range_is_retried_with_a_note_then_rejected_with_an_alert
     monkeypatch.setenv(eca.ONLY_ENV, ct.TASK)
     c = rechunk(make_call(lines=LONG, fy_end=3))
     fake = FakeClaude(["ok"], reply=replies(), answer=tone_answer([3, 0], []))
-    assert go(task([c["slug"]], fake)) == 0
+    assert go(task([c["slug"]], fake)) == 0, last_run()
     outs = tone_outputs(c["doc"])
     assert [o[0] for o in outs] == ["rejected", "rejected"] and "-2 to +2" in outs[-1][1]
     assert alert(f"ai_rejected:call_tone:{c['doc']}")
     assert fake.create_calls == 2
     assert fake.create_calls == 2 and last_run()["checks"]["tone_stored"]["passed"]
-    assert go(task([c["slug"]], fake)) == 0
+    assert go(task([c["slug"]], fake)) == 0, last_run()
     assert fake.create_calls == 2 and len(tone_outputs(c["doc"])) == 2       # an unchanged input is never sent twice
