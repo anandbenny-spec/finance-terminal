@@ -367,20 +367,24 @@ def parse_call_date(text: str) -> dt.date | None:
 
 _QUARTER_FY = re.compile(
     r"\bQ\s*([1-4])\s*[-'’ ]?\s*(?:&\s*\d?\s*M\s*)?FY\s*['’]?\s*(\d{2,4})"
-    rf"(?:[-–/](\d{{2,4}})(?!\d)(?!\s*(?:st|nd|rd|th)?\s*(?:{_MONTHS})\b))?", re.IGNORECASE)
+    rf"(?:[-–/](\d{{2,4}})(?!\d)(?!\s*(?:st|nd|rd|th)?\s*(?:{_MONTHS})\b)|\s+[-–]\s+(\d{{4}})(?!\d))?", re.IGNORECASE)
 
 
 def parse_quarter(text: str) -> str | None:
     """The quarter a call names, as "Q2 FY27". A fiscal year is written FY27, FY2027, FY'27, FY’27 (a curly apostrophe) or as
     its two calendar years, FY26-27 or FY2026-27, which is the year that ends in 27 (ONGC's header, 3 Nov 2026). The second
-    year counts only when it directly follows the first with no space around the dash and is the next year: "FY27 - 28 July"
-    stays FY27."""
+    year counts only when it is the next year and either directly follows the first with no space around the dash, or
+    (spaces around the dash) both years are written in full, as in Reliance's "FY2026 - 2027"; "FY27 - 28 July" and
+    "FY26 – 27 results" stay as written (FY27, FY26)."""
     t = re.sub(r"\s+", " ", text or "")
     m = _QUARTER_FY.search(t)
     if m:
         year = m.group(2)[-2:]
-        if m.group(3) and (int(year) + 1) % 100 == int(m.group(3)[-2:]):
-            year = m.group(3)[-2:]
+        second = m.group(3)
+        if m.group(4) and len(m.group(2)) == 4:
+            second = m.group(4)
+        if second and (int(year) + 1) % 100 == int(second[-2:]):
+            year = second[-2:]
         return f"Q{m.group(1)} FY{year}"
     m = re.search(r"quarter (?:and (?:half|nine months) year |and year )?ended (?:on )?(.{6,30})", t, re.IGNORECASE)
     if m and (d := parse_date_at(m.group(1))):

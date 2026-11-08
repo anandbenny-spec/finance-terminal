@@ -311,6 +311,9 @@ def test_a_company_pdf_for_the_wrong_company_or_quarter_is_rejected():
     ("Q1 FY27-28 July 2026 call", "Q1 FY27"),                                   # nor one with a month after it
     ("Q1 FY26 \u2013 27 results", "Q1 FY26"),                                    # only a dash with no spaces joins two years
     ("Q2 FY26-30 plan", "Q2 FY26"),                                             # and the second year must be the next one
+    ("RIL Q1 FY2026 - 2027 Media & Analyst Call Transcript 17 July 2026", "Q1 FY27"),   # full years, spaced dash (Reliance)
+    ("RIL Q2 FY2026 – 2027 Media & Analyst Meet Transcript", "Q2 FY27"),            # an en dash
+    ("Q1 FY2026 - 2028", "Q1 FY26"),                                            # not the next year
     ("Q3 FY25 earnings call", "Q3 FY25"),
     ("quarter ended September 30, 2026", "Q2 FY27"),
     ("no quarter here", None),
