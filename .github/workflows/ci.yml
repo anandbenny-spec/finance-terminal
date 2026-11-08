@@ -18,7 +18,7 @@ jobs:
     # Secret scan of the full history on every push (CLAUDE.md §4). Claude's cloud clones and Anand's Mac also run
     # the same scan as a pre-commit hook; this is the check that can't be skipped.
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 8      # was 5: the install step's worst case is now 4 minutes (two files, three tries of 40 s each)
     outputs:
       web: ${{ steps.changed.outputs.web }}      # 'true' when the web job has something to check (below)
     env:
@@ -51,12 +51,30 @@ jobs:
           echo "web=$web" >> "$GITHUB_OUTPUT"
           echo "::notice title=web job::$([ "$web" = true ] && echo runs || echo 'skipped: nothing it reads changed')"
       - name: Install gitleaks (release archive, checksum checked)
+        # 8 Nov 2026: github.com's release-download page answered 504 for over an hour (its retries all failed too), and
+        # one failed download failed this job, so no pull request could merge. Each file is tried on that page first,
+        # with short retries; if it still fails, the same release's same file comes through the API (api.github.com
+        # was up), which is a different route to the same bytes. --retry-all-errors makes curl retry an HTTP error too.
+        # The checksum check and the scan are unchanged: the archive must still match the release's checksums file.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}     # the API route only; read access to a public repository
         run: |
           base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          api="https://api.github.com/repos/gitleaks/gitleaks/releases"
           tgz="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -fsSLO "$base/$tgz"
-          curl -fsSL "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o checksums.txt
-          grep " $tgz\$" checksums.txt | sha256sum --check -
+          sums="gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          retry="--retry 4 --retry-all-errors --retry-delay 5 --retry-max-time 40"
+          fetch() {
+            curl -fsSL $retry "$base/$1" -o "$1" && return 0
+            echo "::warning title=gitleaks::the release page failed for $1; fetching it through the API"
+            curl -fsSL $retry -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "$api/tags/v${GITLEAKS_VERSION}" -o release.json || return 1
+            id=$(jq -r --arg n "$1" '.assets[] | select(.name == $n) | .id' release.json)
+            [ -n "$id" ] || return 1
+            curl -fsSL $retry -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/octet-stream" "$api/assets/$id" -o "$1"
+          }
+          fetch "$tgz"
+          fetch "$sums"
+          grep " $tgz\$" "$sums" | sha256sum --check -
           tar xzf "$tgz" gitleaks
       - name: Scan the full history
         run: ./gitleaks git --config .gitleaks.toml --redact --no-banner --verbose .

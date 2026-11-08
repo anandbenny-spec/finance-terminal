@@ -3,6 +3,7 @@
 // source, and "Set your own scenario" over the stored grid. Every model-implied part goes through Gated (hidden until
 // 2A-26's checks); nothing is computed here; the latest close is shown only in the assumptions table, never beside a
 // scenario value. Server-rendered; the two client pieces are the tables and the selects.
+import { TabError } from "@/components/company/TabError";
 import type { ReactNode } from "react";
 import { AssumptionsTable } from "@/components/company/valuation/AssumptionsTable";
 import { ImfTable } from "@/components/company/valuation/ImfTable";
@@ -64,7 +65,7 @@ function LeadBody({ lead, lender }: { lead: Lead; lender: boolean }) {
 
 export function ValuationTab({ data, freshness }: { data: Ok; freshness: TaskFreshnessRow[] | null }) {
   const { company, valuation } = data;
-  if (!valuation) return null;
+  if (!valuation) return <TabError title="Valuation" titleId="valuation-error" />;
   const now = data.readAt;
   const kind = leadKind(company.valuation_family);
   const lender = kind === "implied_roe";

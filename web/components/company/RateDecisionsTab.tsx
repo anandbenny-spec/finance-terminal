@@ -4,6 +4,7 @@
 // `Delta`. Every figure is a stored row (lib/queries/rate.ts); every panel goes through `Gated` (hidden until 2A-26's
 // checks), carries its source line and freshness, and says why when it has nothing. Server-rendered; the tables are
 // client components (DataTable).
+import { TabError } from "@/components/company/TabError";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { RateCyclesTable, RateMovesTable, RateStatsTable } from "@/components/company/RateDecisionTables";
@@ -74,7 +75,7 @@ function Body({ note, children }: { note?: ReactNode; children: ReactNode }) {
 
 export function RateDecisionsTab({ data, window, freshness }: { data: Ok; window: WindowKey; freshness: TaskFreshnessRow[] | null }) {
   const { company, rates } = data;
-  if (!rates) return null;
+  if (!rates) return <TabError title="Rate decisions" titleId="rate-decisions-error" />;
   const now = data.readAt;
   const sources = rateSources(rates.niftyAttribution);
   const foot = (dataTo: string | null): ReactNode => <Foot sources={sources} tasks={TASKS} dataTo={dataTo} freshness={freshness} now={now} />;

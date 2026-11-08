@@ -1,5 +1,6 @@
 """The headless runner's scripts parse, and its README's command blocks hold no `#` comment lines (#195)."""
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -46,3 +47,29 @@ def test_job_prompt_has_the_issue_placeholder_and_the_stop_rules():
     assert "{{ISSUE}}" in text
     for label in ("headless", "model:opus", "needs-anand", "needs-mac", "in-progress"):
         assert label in text
+
+
+def _ledger_is_error_filter():
+    text = (HEADLESS / "run-job.sh").read_text()
+    found = re.search(r"""IS_ERR="\$\(jq -r '([^']+)' "\$OUT\"""", text)
+    assert found, "run-job.sh no longer reads is_error with jq"
+    return found.group(1)
+
+
+@pytest.mark.parametrize(
+    ("run_json", "expected"),
+    [
+        ('{"subtype": "success", "is_error": false}', "false"),
+        ('{"subtype": "error_max_budget_usd", "is_error": true}', "true"),
+        ('{"subtype": "success"}', "true"),
+    ],
+)
+def test_ledger_records_is_error_as_the_run_reported_it(run_json, expected):
+    # Regression: `.is_error // true` turned every false into true, so each successful run was logged as an error.
+    jq = shutil.which("jq")
+    if jq is None:
+        pytest.skip("jq isn't installed")
+    done = subprocess.run(
+        [jq, "-r", _ledger_is_error_filter()], input=run_json, check=True, capture_output=True, text=True
+    )
+    assert done.stdout.strip() == expected

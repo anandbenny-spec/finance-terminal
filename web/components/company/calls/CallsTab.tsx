@@ -7,6 +7,7 @@
 import type { ReactNode } from "react";
 import { AIBlock } from "@/components/ai/AIBlock";
 import { CallsTable, FiguresTable, GuidanceTable } from "@/components/company/calls/CallTables";
+import { TabError } from "@/components/company/TabError";
 import { Gated, fieldPolicy } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
 import { Qualifier } from "@/components/data/Qualifier";
@@ -43,7 +44,7 @@ const FIGURES_HELD = "AI-extracted figures held back until they pass review";
 
 const filedDay = (c: EarningsCallRow | null): string | null => (c?.filed_at ? dateInZone(c.filed_at, "Asia/Kolkata") : null);
 
-function Note({ kind = "empty", children }: { kind?: "empty" | "held" | "unavailable"; children: ReactNode }) {
+function Note({ kind = "empty", children }: { kind?: "empty" | "held" | "unavailable" | "error"; children: ReactNode }) {
   return (
     <div className="p-3">
       <StateNote kind={kind}>{children}</StateNote>
@@ -87,11 +88,12 @@ function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<O
     const p = fieldPolicy(data.policies, f);
     return p !== null && p.status !== "hidden";
   };
-  const released = open(FIGURES_FIELD) && open(GUIDANCE_OUTCOME_FIELD);
+  const released = g !== null && open(FIGURES_FIELD) && open(GUIDANCE_OUTCOME_FIELD);
   const outcomePolicy = fieldPolicy(data.policies, GUIDANCE_OUTCOME_FIELD);
-  const groups = guidanceGroups(g.rows, g.citations, g.pages);
-  const rate = hitRate(g.rate);
-  const line = unattributedLine(g.unattributed);
+  // g is null when the record's own reads failed (#328): the panel says so and the rest of the tab renders.
+  const groups = g ? guidanceGroups(g.rows, g.citations, g.pages) : { scored: [], other: [] };
+  const rate = hitRate(g?.rate ?? null);
+  const line = unattributedLine(g?.unattributed ?? null);
   return (
     <Panel
       title="Guidance record"
@@ -101,7 +103,9 @@ function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<O
       variant="flush"
       footer={foot}
     >
-      {!released ? (
+      {!g ? (
+        <Note kind="error">Couldn&apos;t load this panel. Try again.</Note>
+      ) : !released ? (
         <Note kind="held">{GUIDANCE_HELD}</Note>
       ) : (
         <>
@@ -124,7 +128,7 @@ function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<O
 
 export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshnessRow[] | null }) {
   const { company, calls } = data;
-  if (!calls) return null;
+  if (!calls) return <TabError title="Earnings calls" titleId="calls-error" />;
   const now = data.readAt;
   const rows = newestFirst(calls.calls);
   const call = calls.selected;
