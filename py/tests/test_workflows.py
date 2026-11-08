@@ -734,18 +734,87 @@ def test_the_warm_up_loads_nothing_and_warns_when_its_settings_are_not_whole_num
     assert code == 0 and urls == [] and "::warning title=warm-site::WARM_ROUNDS and WARM_GAP_SECONDS must be whole numbers" in out
 
 
-def test_ci_secrets_job_retries_both_gitleaks_downloads_and_still_checks_the_archive_and_scans_the_history():
-    """On 8 Nov 2026 github.com's release host answered with errors for over an hour; the install step had no retry (curl
-    exit 22), so the `secrets` job failed on every pull request and none could merge. Both downloads retry on any error,
-    inside the job's timeout; the checksum check, the extraction and the scan are exactly what they were."""
-    ci = yaml.safe_load((WORKFLOWS / "ci.yml").read_text())["jobs"]["secrets"]
-    steps = {s["name"]: s["run"] for s in ci["steps"] if "run" in s}
-    install = steps["Install gitleaks (release archive, checksum checked)"]
-    curls = [line for line in install.splitlines() if line.strip().startswith("curl")]
-    assert len(curls) == 2
-    for line in curls:
-        assert "--retry-all-errors" in line and re.search(r"--retry [1-9]\d* ", line)
-        assert int(re.search(r"--retry-max-time (\d+)", line)[1]) * len(curls) <= ci["timeout-minutes"] * 60 - 60   # leaves a minute for the rest
-    assert 'grep " $tgz\\$" checksums.txt | sha256sum --check -' in install      # the archive is still checked against the release's checksums
-    assert "tar xzf" in install
-    assert steps["Scan the full history"].strip() == "./gitleaks git --config .gitleaks.toml --redact --no-banner --verbose ."
+INSTALL_STEP = "Install gitleaks (release archive, checksum checked)"
+GITLEAKS_FAKE_CURL = """#!{python}
+import hashlib, io, json, os, sys, tarfile
+args = sys.argv[1:]
+url = [a for a in args if a.startswith("https://")][-1]
+out = args[args.index("-o") + 1]
+heads = [args[i + 1] for i, a in enumerate(args) if a == "-H"]
+with open(os.environ["FAKE_LOG"], "a") as log:
+    log.write(json.dumps({{"url": url, "token": any(h.startswith("Authorization: Bearer") for h in heads)}}) + "\\n")
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w:gz") as t:
+    body = os.environ["FAKE_BODY"].encode()
+    info = tarfile.TarInfo("gitleaks"); info.size = len(body); t.addfile(info, io.BytesIO(body))
+tgz = buf.getvalue()
+listed = tgz if os.environ["FAKE_BODY"] == os.environ["FAKE_LISTED"] else None
+sums = (hashlib.sha256(listed if listed else b"").hexdigest() if os.environ["FAKE_BODY"] == os.environ["FAKE_LISTED"] else "0" * 64)
+sums = "{{}}  other_file.txt\\n{{}}  gitleaks_8.24.2_linux_x64.tar.gz\\n".format("f" * 64, sums)
+direct = "/releases/download/" in url
+if (direct and os.environ["FAKE_DIRECT"] != "ok") or (not direct and os.environ["FAKE_API"] != "ok"):
+    sys.exit(22)
+if url.endswith("/releases/tags/v8.24.2"):
+    open(out, "w").write(json.dumps({{"assets": [{{"name": "gitleaks_8.24.2_linux_x64.tar.gz", "id": 11}}, {{"name": "gitleaks_8.24.2_checksums.txt", "id": 12}}]}}))
+elif url.endswith("checksums.txt") or url.endswith("/assets/12"):
+    open(out, "w").write(sums)
+else:
+    open(out, "wb").write(tgz)
+"""
+
+
+def _run_gitleaks_install(tmp_path, *, direct="ok", api="ok", tamper=False):
+    """Run the CI install step's own script with a stand-in `curl` (the real `jq`, `sha256sum` and `tar`); returns the exit code,
+    whether ./gitleaks was extracted, and the calls curl got. With `tamper`, the archive served is not the one the
+    checksums file lists."""
+    step = next(s for s in yaml.safe_load((WORKFLOWS / "ci.yml").read_text())["jobs"]["secrets"]["steps"] if s.get("name") == INSTALL_STEP)
+    bin_dir, work = tmp_path / "bin", tmp_path / "work"
+    bin_dir.mkdir(); work.mkdir()
+    curl = bin_dir / "curl"
+    curl.write_text(GITLEAKS_FAKE_CURL.format(python=sys.executable))
+    curl.chmod(0o755)
+    log = tmp_path / "curl.log"
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "GITLEAKS_VERSION": "8.24.2", "GITHUB_TOKEN": "t0ken", "FAKE_LOG": str(log),
+           "FAKE_DIRECT": direct, "FAKE_API": api, "FAKE_BODY": "good", "FAKE_LISTED": "bad" if tamper else "good"}
+    done = subprocess.run(["bash", "-e", "-c", step["run"]], check=False, cwd=work, env=env, capture_output=True, text=True)
+    calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    return done.returncode, (work / "gitleaks").exists(), calls
+
+
+def test_ci_install_takes_both_files_from_the_release_page_and_never_sends_the_token_there(tmp_path):
+    code, extracted, calls = _run_gitleaks_install(tmp_path)
+    assert code == 0 and extracted
+    assert [c["url"].rsplit("/", 1)[1] for c in calls] == ["gitleaks_8.24.2_linux_x64.tar.gz", "gitleaks_8.24.2_checksums.txt"]
+    assert all("/releases/download/" in c["url"] and not c["token"] for c in calls)
+
+
+def test_ci_install_falls_back_to_the_api_for_the_same_release_files_when_the_release_page_fails(tmp_path):
+    code, extracted, calls = _run_gitleaks_install(tmp_path, direct="fail")
+    assert code == 0 and extracted
+    api = [c for c in calls if "/releases/download/" not in c["url"]]
+    assert [c["url"].rsplit("/", 2)[-2:] for c in api] == [["tags", "v8.24.2"], ["assets", "11"], ["tags", "v8.24.2"], ["assets", "12"]]
+    assert all(c["url"].startswith("https://api.github.com/repos/gitleaks/gitleaks/releases/") and c["token"] for c in api)
+    assert not any(c["token"] for c in calls if "/releases/download/" in c["url"])
+
+
+def test_ci_install_fails_when_neither_route_works_and_never_extracts_anything(tmp_path):
+    code, extracted, _calls = _run_gitleaks_install(tmp_path, direct="fail", api="fail")
+    assert code != 0 and not extracted
+
+
+def test_ci_install_still_refuses_an_archive_that_does_not_match_the_checksums_file(tmp_path):
+    code, extracted, _calls = _run_gitleaks_install(tmp_path, tamper=True)
+    assert code != 0 and not extracted
+
+
+def test_ci_secrets_job_keeps_the_scan_as_it_was_and_the_install_fits_the_jobs_timeout():
+    job = yaml.safe_load((WORKFLOWS / "ci.yml").read_text())["jobs"]["secrets"]
+    steps = {s["name"]: s for s in job["steps"] if "name" in s}
+    assert steps["Scan the full history"]["run"].strip() == "./gitleaks git --config .gitleaks.toml --redact --no-banner --verbose ."
+    install = steps[INSTALL_STEP]
+    assert install["env"] == {"GITHUB_TOKEN": "${{ github.token }}"}
+    assert "${{" not in install["run"]                                                       # CLAUDE.md §4: no expression in a run line
+    retry = re.search(r'retry="--retry [1-9]\d* --retry-all-errors --retry-delay \d+ --retry-max-time (\d+)"', install["run"])
+    assert retry and 'sha256sum --check -' in install["run"]
+    worst = 2 * 3 * int(retry[1])                                                            # two files, three curl calls each
+    assert worst <= job["timeout-minutes"] * 60 - 120                                       # two minutes left for checkout, the web check and the scan
