@@ -3,6 +3,7 @@ favourable sides, every not-scored reason this job decides, the half-period rule
 structural break, the definition check both ways, SBI's filed unit, and an outcome recomputed from its inputs alone. Pure:
 the task's database tests are in test_equity_guidance_scores_task.py."""
 import json
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -270,6 +271,25 @@ def test_improve_goes_through_the_favourable_side_and_is_vague_without_one():
     capex = one(company(), stmt(metric="capex", kind="direction", direction="increase", unit=None,
                                 quote="capex efficiency will improve"))
     assert (capex.outcome, capex.reason) == ("not_scored", "vague_figure")
+
+
+@pytest.mark.parametrize("field", ["quote", "metric_text", "scope_text", "period_text"])
+@pytest.mark.parametrize("phrase", ["2% to 5% in constant currency", "growth of 2 to 5 percent in Constant-Currency terms",
+                                    "2-5% CC growth"])
+def test_constant_currency_growth_has_no_filed_figure_wherever_the_statement_says_it(field, phrase):
+    """Found by #178's sitting-2 scoring gate: HCL's and Infosys's "constant currency" targets were scored as rupee growth."""
+    rows = [pl(1, "year", D(2025, 3, 31), 4000, 400), pl(2, "year", Q4, 4600, 500)]
+    plain = stmt(metric="revenue_growth", kind="range", low=2, high=5, quote="revenue growth of 2 to 5%")
+    assert (one(company(rows), plain).outcome, one(company(rows), plain).reason) == ("delivered", None)   # without the phrase
+    o = one(company(rows), replace(plain, **{field: phrase}))
+    assert (o.outcome, o.reason, o.counted, o.forecast_ok) == ("not_scored", "no_filed_figure", False, False)
+
+
+def test_words_that_only_contain_cc_or_currency_are_still_scored():
+    rows = [pl(1, "year", D(2025, 3, 31), 4000, 400), pl(2, "year", Q4, 4600, 500)]
+    for quote in ("we will succeed in growing 10% in a currency-stable year", "accounts receivable growth steady; revenue +10%"):
+        o = one(company(rows), stmt(metric="revenue_growth", kind="floor", value=10, quote=quote))
+        assert (o.outcome, o.reason) == ("delivered", None), quote
 
 
 def test_a_merger_inside_the_span_leaves_the_target_unscored_but_one_on_the_first_day_doesn_t():

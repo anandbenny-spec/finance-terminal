@@ -19,7 +19,8 @@ map is `py/config/equity/guidance_metrics.yaml`'s `lines` (map_version 1, fixed 
 **Not scored** (with the reason this job decides, §5.10): `structural_break` (a merger or demerger after the first day the
 figures cover, up to the period's end), `definition` (the definition check, below), `filed_figures_unavailable` (not filed and
 parsed 90 days after the period's end, 120 after a fiscal year's end; or a filed fraction outside 0 to 1, held and named),
-and `no_filed_figure` where the map has no line for the statement (a period, basis, format or growth basis it doesn't hold).
+and `no_filed_figure` where the map has no line for the statement (a period, basis, format or growth basis it doesn't hold,
+or a constant-currency figure, which no filing reports).
 The extraction's own reasons (`no_filed_figure`, `currency`, `undated`, `vague_figure`, `scope`) are kept as it set them.
 
 **The definition check** (EBITDA margin, EBIT margin, net debt): our figure for each quarter management stated on a call
@@ -77,6 +78,9 @@ DEFINITION_LIMITS = {"ebitda_margin": Decimal("0.5"), "ebit_margin": Decimal("0.
 OPERATING_ONLY = frozenset({"ebitda_margin", "ebit_margin", "net_debt"})     # 2A's N/A for lenders and insurers
 FILE_DAYS, YEAR_END_DAYS = 90, 120
 IMPROVE = re.compile(r"\bimprov", re.IGNORECASE)
+# Constant-currency growth is a company's own restatement at fixed exchange rates, so no filed figure answers it (§5.10). The
+# extraction is told to label it "other"; this catches the times it labels it revenue_growth anyway (found by #178's scoring gate).
+CONSTANT_CURRENCY = re.compile(r"constant[\s-]*currenc|\bcc\b", re.IGNORECASE)
 CASH = ("cash", "bank_balances_other", "current_investments", "noncurrent_investments")
 BORROWINGS = ("borrowings_current", "borrowings_noncurrent")
 
@@ -660,6 +664,8 @@ def statement_reason(s: Statement, line: Line | None, c: Company) -> tuple[str |
         return s.reason, "set by the extraction", eff
     if line is None:
         return "no_filed_figure", "the map has no line for this metric", eff
+    if CONSTANT_CURRENCY.search(" ".join(t for t in (s.quote, s.metric_text, s.scope_text, s.period_text) if t)):
+        return "no_filed_figure", "a constant-currency figure: the filings report no such figure", eff
     if s.period_kind not in line.periods:
         return "no_filed_figure", f"the map's line isn't scored for a {s.period_kind.replace('_', ' ')} period", eff
     if line.format == "bank" and "bank" not in c.formats:
