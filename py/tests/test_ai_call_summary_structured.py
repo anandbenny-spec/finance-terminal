@@ -1,7 +1,9 @@
-"""The call summary's structured route (2B-11c, #301; Anand's decision of 6 Nov 2026; prompts from v6, the current one v7): the model returns each
+"""The call summary's structured route (2B-11c, #301; Anand's decision of 6 Nov 2026; prompts from v6, the current one v8): the model returns each
 bullet as its own sentence plus, in a separate field, the passages that state its point; `check_json` finds each quote exactly once
 in our copy of the transcript and the stored citation is that span. Everything else is as on the citations route (figures,
 role rules, counts, the copied-text rule). A synthetic call (tests/call_fixtures.py); no database."""
+from pathlib import Path
+
 import pytest
 from ai_fakes import json_message
 from anthropic.types import Message
@@ -22,8 +24,8 @@ from ft.ai.guidance_extraction import marked_text
 from ft.jobs.tasks import equity_calls_ai as eca
 from ft.quality.reasons import categorise
 
-PROMPT = load_prompt("call_summary", "v7")
-SCHEMA = load_schema("call_summary", "v7")
+PROMPT = load_prompt("call_summary", "v8")
+SCHEMA = load_schema("call_summary", "v8")
 B = build()
 TEXT = B.text
 CALL = calldoc(B)
@@ -34,6 +36,8 @@ RAVI = "Thank you. Revenue from operations grew 12.5 per cent to 4,500 crore in 
 MEERA = ("Our order book stands at 9,200 crore. Demand in the export market remains soft because of weak freight rates. "
          "We plan capital expenditure of 800 crore this year.")
 LEAD = "The order book is 9,200 crore and capital expenditure of 800 crore is planned this year."
+HEDGE = "Demand in the export market remains soft because of weak freight rates."      # MEERA's second sentence: no firm word in it
+PLAN = "We plan capital expenditure of 800 crore this year."                         # MEERA's last sentence
 
 
 def answer(management=GOOD_MANAGEMENT, analysts=GOOD_ANALYSTS, unknown=()):
@@ -68,8 +72,8 @@ def first_management(claim: str, quotes: list[str]):
 # --------------------------------------------------------------------------------------------------- the route and the request
 def test_prompts_from_v6_take_the_structured_route_and_v1_to_v5_the_citations_route():
     assert [route_of(f"v{n}") for n in range(1, 6)] == ["citations"] * 5
-    assert [route_of(v) for v in ("v6", "v7", "v10")] == ["json"] * 3 and cs.JSON_FROM == 6
-    assert eca.PROMPT_VERSION[cs.TASK] == "v7" and route_of(eca.PROMPT_VERSION[cs.TASK]) == "json"
+    assert [route_of(v) for v in ("v6", "v7", "v8", "v10")] == ["json"] * 4 and cs.JSON_FROM == 6
+    assert eca.PROMPT_VERSION[cs.TASK] == "v8" and route_of(eca.PROMPT_VERSION[cs.TASK]) == "json"
     assert TASKS["call_summary"].route == "citations"          # the task's own route is unchanged: a request asks for the json one
 
 
@@ -163,9 +167,42 @@ def test_v7_keeps_v6s_schema_and_both_versions_take_the_structured_route():
     assert route_of("v6") == route_of("v7") == "json"
 
 
+def test_v8_is_v7_with_four_rules_added_after_the_one_point_rule_and_nothing_else_changed():
+    """#178, the v8 round (8 Nov 2026): the v7 re-draw's two failed bullets were a hedge written as "expects" and a cause given to the
+    whole of what the speaker gave it to in part. v8 adds four rules (hedge, recalled target, weight word, partial cause) right
+    after "One point to a bullet"; the schema, the route and every other line are v7's (a wording change is a new version)."""
+    v7, v8 = load_prompt("call_summary", "v7"), load_prompt("call_summary", "v8")
+    assert (v7.version, v8.version) == ("v7", "v8") and v8.text != v7.text
+    old, new = v7.text.splitlines(), v8.text.splitlines()
+    added = [line for line in new if line not in old]
+    assert [line for line in old if line not in new] == [] and len(added) == 4
+    assert [line for line in new if line in old] == old                          # the old lines, in order, and nothing moved
+    hedge, recalled, weight, part = added
+    at = new.index(hedge)
+    assert new[at:at + 4] == added and old[at - 1].startswith("- One point to a bullet")
+    assert old[at].startswith("- A figure goes into the text only if")
+    assert hedge.startswith("- A speaker's hedge stays in the bullet")
+    for verb in ("we think", "we hope", "should", "could", "possible", "likely", "expects", "will", "targets", "guided"):
+        assert f'"{verb}"' in hedge
+    assert recalled.startswith("- A target or guide the speaker recalls or restates") and "never as a fresh expectation" in recalled
+    assert '"Reiterated" and its kin still need the quote' in recalled
+    assert weight.startswith("- No ranking or weight word")
+    for word in ("mainly", "largely", "chiefly", "driven by"):
+        assert f'"{word}"' in weight
+    assert "unless the speaker used it or ranked or weighted" in weight
+    assert part.startswith("- A cause, label or outcome applies only to the part the speaker attached it to") and '"includes"' in part
+
+
+def test_v8_keeps_the_schema_and_the_header_note_quotes_no_transcript():
+    assert load_schema("call_summary", "v8") == load_schema("call_summary", "v7") == load_schema("call_summary", "v6")
+    raw = (Path(__file__).resolve().parents[1] / "config" / "prompts" / "call_summary" / "v8.md").read_text(encoding="utf-8")
+    note = raw.splitlines()[0]
+    assert note.startswith("<!-- call_summary v8") and note.endswith("-->") and "should be possible" not in note and "10%" not in note
+
+
 def test_the_prompt_names_the_fields_the_role_rules_and_the_figure_rules():
     p = PROMPT.text
-    assert PROMPT.version == "v7" and "<!--" not in p and p.endswith("\n")
+    assert PROMPT.version == "v8" and "<!--" not in p and p.endswith("\n")
     for field in ('"list"', '"text"', '"quotes"', '"management"', '"analysts"', '"unknown"'):
         assert field in p
     assert "never guess a role" in p and "never put one in a quote" in p and "Those marker lines are not part" in p
@@ -175,7 +212,7 @@ def test_the_prompt_names_the_fields_the_role_rules_and_the_figure_rules():
     assert "may quote only passages spoken by speakers listed as Management" in p and "never quotes the moderator" in p
     assert "Never add, subtract, round, convert" in p and "Write no digit that isn't in a quote of that bullet" in p
     assert "fewest bullets" in p and "of at most about 40 words" in p
-    assert len({load_prompt("call_summary", f"v{n}").text for n in range(1, 7)}) == 6          # each version that ran is kept
+    assert len({load_prompt("call_summary", f"v{n}").text for n in range(1, 9)}) == 8          # each version that ran is kept
 
 
 def test_the_schema_is_one_list_of_bullets_with_a_list_text_and_quotes_and_nothing_else():
@@ -272,6 +309,45 @@ def test_a_figure_the_quoted_passages_do_not_hold_fails_and_one_they_hold_passes
 
 
 # --------------------------------------------------------------------------------------------------- roles
+@pytest.mark.parametrize("claim", [
+    "Management expects export demand to stay soft.", "Management is targeting a recovery in export demand.",
+    "Management guided that export demand stays soft.", "Management said export demand will stay soft.",
+    "Management expected export demand to stay soft."])
+def test_a_firm_guidance_verb_with_no_firm_word_in_any_quote_fails_the_bullet(claim):
+    """#178, the v8 round: the citation check proves a quote exists, not that the verb is no stronger than the quote."""
+    got = first_management(claim, [HEDGE])
+    assert not got.ok and got.dropped[0].problem.startswith('a firm verb ("')
+    assert got.dropped[0].problem.endswith('") that none of its quotes says')
+    assert 'a firm verb' in got.note()
+
+
+def test_a_firm_verb_passes_when_a_quote_has_a_firm_word_and_a_bullet_without_the_verb_is_not_checked():
+    assert first_management("Management expects margins to stay near 21 per cent.", [ANSWER]).ok
+    assert first_management("Management will spend 800 crore on capital expenditure this year.", [PLAN]).ok
+    assert first_management("Management expects export demand to stay soft, and plans 800 crore of capital expenditure.", [HEDGE, PLAN]).ok
+    assert first_management("Management said export demand remains soft.", [HEDGE]).ok
+    assert first_management("Management is willing to say export demand remains soft.", [HEDGE]).ok          # \bwill\b, not "willing"
+    # an analysts bullet reports a question, not what a speaker says will happen: the check is not for that list
+    asked = run(answer(analysts=[("The analyst asked what the company expects for the margin outlook.", [QUESTION]),
+                                 GOOD_ANALYSTS[1]]))
+    assert asked.ok
+
+
+def test_firm_verb_problem_reads_words_in_the_lists_that_state_what_will_happen():
+    p = cs.firm_verb_problem
+    assert p("management", "Management expected costs to ease.", ["Costs stayed high."]) == 'a firm verb ("expected") that none of its quotes says'
+    assert p("unknown", "A participant said volumes will grow.", ["Volumes may grow."]) == 'a firm verb ("will") that none of its quotes says'
+    assert p("analysts", "Analysts asked what the company expects.", ["What are the margins?"]) is None
+    assert p("management", "Management said costs eased.", ["Costs eased."]) is None
+    assert p("management", "Management will repay debt.", ["Debt is down.", "We\u2019ll repay it."]) is None             # any quote will do
+    for firm in ("We expect", "It will", "we'll", "our target", "the guidance", "going to", "we plan", "we aim", "we intend",
+                 "we are committed", "we are confident", "we project", "a forecast", "we anticipate"):
+        assert p("management", "Management expects it.", [firm]) is None, firm
+    for hedge in ("we hope margins could hold", "growth should be possible", "we are looking at ten per cent", "I had told you the number",
+                  "it is likely"):
+        assert p("management", "Management expects it.", [hedge]) is not None, hedge
+
+
 def test_a_management_bullet_quoting_an_analysts_question_or_the_moderator_fails():
     asked = first_management(f"Management was asked: {QUESTION}", [QUESTION])
     assert asked.dropped[0].problem == "a management bullet cites a turn whose role is analyst (management turns only)"
@@ -380,6 +456,7 @@ def test_every_new_reason_phrase_lands_in_its_accuracy_category():
     third = [("A participant asked about the plan for the dividend and the debt repayment.", [POOJA])]
     crafted = {
         "citation": [first_management("Revenue grew.", ["Revenue rose steadily in the quarter."]).reasons(),
+                     first_management("Management expects export demand to stay soft.", [HEDGE]).reasons(),
                      first_management("Revenue grew.", ["Thank you."]).reasons(),
                      first_management(f"Management was asked: {QUESTION}", [QUESTION]).reasons(),
                      first_management("Revenue grew.", ["x" * 20 + TEXT[:500]]).reasons(),
