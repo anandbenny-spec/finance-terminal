@@ -34,7 +34,7 @@ insert into core.chunk (document_id, chunk_no, char_start, char_end, section, sp
 commit;
 SQL
 )"
-check "A01 the test rows load" "$SETUP_OUT" '^(BEGIN|INSERT 0 [0-9]+|COMMIT|[[:space:]]|[|])*$'
+check "A01 the test rows load $(echo "$SETUP_OUT" | grep -i "error\|detail\|hint" | tr '\n' ' ' | cut -c1-400)" "$SETUP_OUT" '^(BEGIN|INSERT 0 [0-9]+|COMMIT|[[:space:]]|[|])*$'
 DOC="$(as_pg "select id from core.document where external_key = 'ec31-doc'")"
 ASK="[{\"document_id\": $DOC, \"chunk_no\": 2}, {\"document_id\": $DOC, \"chunk_no\": 0}, {\"document_id\": $DOC, \"chunk_no\": 7}]"
 
