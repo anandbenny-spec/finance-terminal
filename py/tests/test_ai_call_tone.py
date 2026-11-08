@@ -222,3 +222,10 @@ def test_the_blank_space_after_a_chunk_does_not_keep_it_from_being_inside_its_tu
     padded = CallDoc(call.document_id, call.text + "\n\n", call.title, call.company, call.fiscal_label, call.day, call.turns)
     got = ct.passages(padded, [ct.Chunk(0, 0, len(call.text) + 2)])
     assert len(got) == 1 and got[0].text == call.text and got[0].char_end == len(call.text)
+
+
+def test_a_failed_check_gives_the_batch_steps_its_reasons_and_a_retry_note():
+    c = ct.Checked(None, problems=["p1: score 3 is out of range", "p2: no score"])
+    assert c.reasons() == ["p1: score 3 is out of range", "p2: no score"]
+    assert c.note() == "p1: score 3 is out of range; p2: no score."
+    assert ct.Checked(None).reasons() == []

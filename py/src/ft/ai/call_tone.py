@@ -134,6 +134,13 @@ class Checked:
     def ok(self) -> bool:
         return not self.problems
 
+    def reasons(self) -> list[str]:
+        return list(self.problems)
+
+    def note(self) -> str:
+        """The retry's note about this reply (what the batch steps send back on the second attempt)."""
+        return "; ".join(self.problems) + "."
+
 
 def _whole(v) -> int | None:
     if isinstance(v, bool):
