@@ -33,7 +33,7 @@ describe("/methodology", () => {
   });
 
   it("shows no figures: no digit except the allowed constants", () => {
-    const stripped = text.replace(/400 characters|20 June 2025|10-year|Fed vs RBI|Nifty 50/g, "");
+    const stripped = text.replace(/400 characters|20 June 2025|August 2026|10-year|Fed vs RBI|Nifty 50/g, "");
     expect(stripped).not.toMatch(/\d/);
   });
 
@@ -55,6 +55,10 @@ describe("/methodology", () => {
     expect(text).toContain("labelled AI-extracted");
     expect(text).toContain("no tone or sentiment is read");
     expect(text).toContain("Transcript text stays private");
+    expect(text).toContain("the source it comes from is removed promptly");
+    expect(text).toContain("The daily and watch workflows can also be started with AI switched off");
+    expect(text).toContain("final guidelines SEBI said in August 2026 were coming");
+    expect(text).not.toContain("announced final guidelines");
     expect(text).toContain("A missed target is a fact about a figure, not a verdict on management");
     expect(text).toContain("at least five scored targets");
     expect(text).not.toContain("not scored against what a company later delivered");
