@@ -1,0 +1,70 @@
+# #178 sitting 2: the small development trial of the guidance extraction (py ft/equity/calls/trial.py; Plan 04b P9 to P11, Spec 02B
+# §13.8). Runs the five recall calls through each arm (a model, a prompt version, an effort), judges every reply with the same code
+# checks the real run uses, and records spans and field values only (no quote, no transcript text) in ops.eval_run/ops.eval_result.
+# It never writes core.ai_output, so nothing it extracts can be published. Prints ids, counts and costs as annotations (Claude reads
+# results from annotations: its workspace can't download logs).
+#
+# Manual only; dev only. The first run is a price check: with `send` off nothing goes to the model. `send` on sends one batch, once
+# Anand has seen the price (CLAUDE.md §6: dev AI spend is within the cap or his OK). `collect` reads a batch that was still running.
+name: extraction-trial
+on:
+  workflow_dispatch:
+    inputs:
+      events:
+        description: Call event ids, comma or space separated (the five recall calls)
+        type: string
+        default: "3743,3780,4002,3855,3863"
+      arms:
+        description: 'Arms as model:prompt:effort:max_tokens, space separated (a model is haiku or sonnet; the prompt is v1 or v2)'
+        type: string
+        default: "sonnet:v1:medium:16000 haiku:v2:medium:24000 haiku:v2:low:16000"
+      send:
+        description: Send the batch to the model (off = the price only, nothing sent)
+        type: boolean
+        default: false
+      collect:
+        description: A batch id from an earlier run that was still running; reads its results (same events and arms) instead of sending
+        type: string
+        default: ""
+      max_cost:
+        description: Refuse a batch whose worst-case cost in USD is over this
+        type: string
+        default: "0.70"
+concurrency:
+  group: extraction-trial
+  cancel-in-progress: false
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: py
+jobs:
+  run:
+    runs-on: ubuntu-24.04   # pinned, as in gate-samples
+    timeout-minutes: 60
+    env:
+      FT_TARGET: dev
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0, pinned by SHA (setup-uv publishes no v8+ major tags)
+        with:
+          enable-cache: true
+          cache-dependency-glob: py/uv.lock
+      - run: uv sync --locked --extra jobs
+      - name: Trial
+        run: |
+          args=(--events "$EVENTS" --arms "$ARMS" --max-cost "$MAX_COST" --target dev)
+          if [ "$SEND" = "true" ]; then args+=(--send); fi
+          if [ -n "$COLLECT" ]; then args+=(--collect "$COLLECT"); fi
+          uv run --locked python -m ft.equity.calls.trial "${args[@]}"
+        env:
+          EVENTS: ${{ inputs.events }}
+          ARMS: ${{ inputs.arms }}
+          MAX_COST: ${{ inputs.max_cost }}
+          SEND: ${{ inputs.send }}
+          COLLECT: ${{ inputs.collect }}
+          # Dev's database only; a missing DEV_ secret leaves the variable empty (the script then stops), never falling back to
+          # production's.
+          JOB_DATABASE_URL: ${{ secrets.DEV_JOB_DATABASE_URL }}
+          # The model key is present only on a run that sends or collects, so the price check cannot reach the model.
+          ANTHROPIC_API_KEY: ${{ (inputs.send || inputs.collect != '') && secrets.ANTHROPIC_API_KEY || '' }}
