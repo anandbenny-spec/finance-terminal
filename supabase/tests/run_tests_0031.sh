@@ -25,7 +25,7 @@ insert into core.event (event_type, entity_id, slug, title, starts_on, status, s
 insert into core.document (doc_type, entity_id, event_id, title, source_id, external_key, source_url, published_at,
                            char_count, text_sha256, chunked_at, is_published)
   select 'call_transcript', e.id, ev.id, 'ec31 call', (select id from core.source where key = 'company_web'), 'ec31-doc',
-         'https://example.com/ec31.pdf', now(), 30, sha256(convert_to(repeat('x', 30), 'UTF8')), now(), false
+         'https://example.com/ec31.pdf', now(), 30, sha256(convert_to('first-ten-second-tenthird-ten-', 'UTF8')), now(), false
   from core.entity e, core.event ev where e.slug = 'ec31-a' and ev.slug = 'ec31-call';
 insert into core.chunk (document_id, chunk_no, char_start, char_end, section, speaker, body)
   select d.id, v.n, v.a, v.b, 'Q&A', 'CFO', v.t
@@ -60,7 +60,7 @@ check "F05 sixty items are served" \
 check "F06 an element that is not a pair of whole numbers is an error, not a guess" \
   "$(as_role service_role "select api.admin_labelling_passages('[{\"document_id\": \"x\", \"chunk_no\": 1}]')")" 'invalid input syntax'
 check "F07 the function writes nothing and reads only core.chunk (stable, security definer, fixed search_path)" \
-  "$(as_pg "select provolatile || ':' || prosecdef || ':' || coalesce(array_to_string(proconfig, ','), '') from pg_proc where oid = $FN")" '^s:t:search_path=pg_catalog, core$'
+  "$(as_pg "select provolatile::text || ':' || prosecdef::text || ':' || coalesce(array_to_string(proconfig, ','), '') from pg_proc where oid = $FN")" '^s:true:search_path=pg_catalog, core$'
 
 cleanup
 echo; echo "passed $pass, failed $fail"
