@@ -17,8 +17,11 @@ What it does and does not touch:
 - **Prints** counts and ids as annotations (Claude reads results from annotations): never a quote, never a transcript word.
   Quotes for the spans are read in the session through the read-only dev connector, into the chat only (Spec 02B §13.11 L12).
 
-An arm is `model:prompt:effort:max_tokens`, for example `sonnet:v1:medium:16000` or `haiku:v2:low:24000`. Any part after the model
-may be left out (`haiku:v2`): the prompt version defaults to `v1`, the effort and the cap to the task's.
+An arm is `model:prompt:effort:max_tokens[:sN]`, for example `sonnet:v1:medium:16000` or `haiku:v2:low:24000`. Any part after the
+model may be left out (`haiku:v2`): the prompt version defaults to `v1`, the effort and the cap to the task's. A last part `s3` reads
+the call in 3 parts of about the same length, cut between turns: one request for each part, the same prompt and schema, every
+quote still checked against the whole stored call; the parts' targets are joined and repeats marked. Why: a long transcript gets a
+short list (8 Nov trial), and a request that sees a third of it can be asked to list everything in it.
 """
 from __future__ import annotations
 
@@ -39,12 +42,14 @@ from ft.ai.client import HAIKU, MILLION, SONNET, Client, Request, TaskSpec, load
 MODELS = {"haiku": HAIKU, "sonnet": SONNET}
 EFFORTS = ("low", "medium", "high")
 MAX_TOKENS_LIMIT = 64_000                  # a typo guard, not the API's limit
+MIN_SECTIONS, MAX_SECTIONS = 2, 6
 DEFAULT_MAX_COST = Decimal("0.70")
 DEFAULT_WAIT_MINUTES = 45
 POLL_SECONDS = 30
 EVAL_SET = "2b15_recall_trial"
 SET_VERSION = "1"
 CUSTOM_ID = re.compile(r"trial-a(\d+)-e(\d+)")
+SECTION_ID = re.compile(r"trial-a(\d+)-e(\d+)-s(\d+)")
 
 
 # ---------------------------------------------------------------------------------------------- arms and requests
@@ -54,17 +59,19 @@ class Arm:
     prompt: str = "v1"
     effort: str | None = None             # None: the task's
     max_tokens: int | None = None
+    sections: int = 1                     # the call read in this many parts (one request each)
 
     @property
     def name(self) -> str:
         short = next((k for k, v in MODELS.items() if v == self.model), self.model)
-        return ":".join([short, self.prompt, self.effort or "task", str(self.max_tokens or "task")])
+        parts = [short, self.prompt, self.effort or "task", str(self.max_tokens or "task")]
+        return ":".join(parts + ([f"s{self.sections}"] if self.sections > 1 else []))
 
 
 def parse_arm(text: str) -> Arm:
     parts = text.strip().split(":")
-    if not 1 <= len(parts) <= 4 or parts[0] not in MODELS:
-        raise ValueError(f"arm {text!r}: expected model[:prompt[:effort[:max_tokens]]], the model one of {sorted(MODELS)}")
+    if not 1 <= len(parts) <= 5 or parts[0] not in MODELS:
+        raise ValueError(f"arm {text!r}: expected model[:prompt[:effort[:max_tokens[:sN]]]], the model one of {sorted(MODELS)}")
     prompt = parts[1] if len(parts) > 1 and parts[1] else "v1"
     if not re.fullmatch(r"v\d+", prompt):
         raise ValueError(f"arm {text!r}: the prompt version must look like v2")
@@ -76,7 +83,13 @@ def parse_arm(text: str) -> Arm:
         if not parts[3].isdigit() or not 1_000 <= int(parts[3]) <= MAX_TOKENS_LIMIT:
             raise ValueError(f"arm {text!r}: max_tokens must be a whole number from 1,000 to {MAX_TOKENS_LIMIT:,}")
         cap = int(parts[3])
-    return Arm(MODELS[parts[0]], prompt, effort, cap)
+    sections = 1
+    if len(parts) > 4:
+        m = re.fullmatch(r"s(\d+)", parts[4])
+        if m is None or not MIN_SECTIONS <= int(m[1]) <= MAX_SECTIONS:
+            raise ValueError(f"arm {text!r}: the last part must be s{MIN_SECTIONS} to s{MAX_SECTIONS} (the call read in that many parts)")
+        sections = int(m[1])
+    return Arm(MODELS[parts[0]], prompt, effort, cap, sections)
 
 
 def parse_arms(text: str) -> list[Arm]:
@@ -109,6 +122,48 @@ def build_request(call, arm: Arm) -> Request:
                         effort=arm.effort, max_tokens=arm.max_tokens)
 
 
+def split_turns(turns, n: int) -> list[list]:
+    """`turns` (in call order) cut between turns into `n` runs of about the same number of characters. Always `n` runs when there
+    are at least `n` turns, and no turn is left out or repeated."""
+    turns = sorted(turns, key=lambda t: t.turn_no)
+    n = max(1, min(n, len(turns)))
+    size = [max(t.char_end - t.char_start, 1) for t in turns]
+    total = sum(size)
+    runs, run, seen = [], [], 0
+    for i, t in enumerate(turns):
+        run.append(t)
+        seen += size[i]
+        left = len(turns) - i - 1                         # turns after this one
+        need = n - len(runs) - 1                          # runs still to start after this one
+        if need > 0 and (seen >= total * (len(runs) + 1) / n or left == need) and left >= need:
+            runs.append(run)
+            run = []
+    if run:
+        runs.append(run)
+    return runs
+
+
+def marked_section(call, turns) -> str:
+    """The marked transcript of just `turns` (the same markers and the same text between turns as `ge.marked_text`)."""
+    out, pos = [], None
+    for t in turns:
+        if pos is not None and t.char_start > pos:
+            out.append(call.text[pos:t.char_start])
+        out.append(ge.marker(t) + "\n" + call.text[max(t.char_start, pos or 0):t.char_end])
+        pos = max(pos or 0, t.char_end)
+    return "".join(out)
+
+
+def build_requests(call, arm: Arm) -> list[Request]:
+    """One request for an arm that reads the call whole, `arm.sections` for one that reads it in parts. A part's request is the
+    whole call's request with only that part's turns as its source: the instruction, prompt and schema are the same."""
+    whole = build_request(call, arm)
+    if arm.sections == 1:
+        return [whole]
+    src = whole.sources[0]
+    return [replace(whole, sources=(replace(src, text=marked_section(call, run)),)) for run in split_turns(call.turns, arm.sections)]
+
+
 def worst_case_cost(req: Request, *, on=None) -> Decimal:
     """The batch price if the request used its whole token cap: the estimated input at the batch rate plus `max_tokens` of
     output (thinking included) at the batch rate."""
@@ -118,8 +173,16 @@ def worst_case_cost(req: Request, *, on=None) -> Decimal:
             / MILLION * factor)
 
 
-def custom_id(arm_no: int, event_id: int) -> str:
-    return f"trial-a{arm_no}-e{event_id}"
+def custom_id(arm_no: int, event_id: int, section: int | None = None) -> str:
+    return f"trial-a{arm_no}-e{event_id}" + ("" if section is None else f"-s{section}")
+
+
+def parse_custom_id(cid: str) -> tuple[int, int, int | None] | None:
+    m = SECTION_ID.fullmatch(cid)
+    if m:
+        return int(m[1]), int(m[2]), int(m[3])
+    m = CUSTOM_ID.fullmatch(cid)
+    return (int(m[1]), int(m[2]), None) if m else None
 
 
 # ---------------------------------------------------------------------------------------------- results
@@ -128,7 +191,7 @@ class CallResult:
     arm_no: int
     event_id: int
     document_id: int
-    status: str                            # checked | stopped | errored | canceled | expired | not_json
+    status: str                            # checked | stopped | errored | canceled | expired | not_json | incomplete
     stop_reason: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0
@@ -137,13 +200,14 @@ class CallResult:
     targets: tuple[dict, ...] = ()         # kept targets, without their quotes
     stated: int = 0
     drops: tuple[tuple[str, int], ...] = ()
+    parts: int = 1                         # the requests behind this result (an arm that reads the call in parts)
 
     @property
     def management(self) -> int:
         return sum(1 for t in self.targets if t["speaker_role"] == "management" and t["duplicate_of"] is None)
 
     def summary(self) -> dict:
-        return {"event": self.event_id, "status": self.status, "stop": self.stop_reason, "in": self.input_tokens,
+        return {"event": self.event_id, "status": self.status, "stop": self.stop_reason, "parts": self.parts, "in": self.input_tokens,
                 "out": self.output_tokens, "cost": f"{self.cost:.4f}", "targets": len(self.targets),
                 "management": self.management, "stated": self.stated, "dropped": dict(self.drops),
                 **({"problems": list(self.problems)} if self.problems else {})}
@@ -175,8 +239,38 @@ def judge(result, work, arm_no: int):
                       stated=len(checked.stated), drops=tuple(sorted(checked.drops.items())), **usage)
 
 
+def merge_parts(parts: list[CallResult], expected: int | None = None) -> CallResult:
+    """The results of one call's parts as one result: the first part that failed names the status (a part that never came back
+    makes it "incomplete"), tokens and cost add up, the targets are in document order with repeats (across parts too) marked in
+    `check`'s way."""
+    if len(parts) == 1 and expected in (None, 1):
+        return parts[0]
+    first = parts[0]
+    bad = next((p for p in parts if p.status != "checked"), None)
+    drops = Counter()
+    for p in parts:
+        drops.update(dict(p.drops))
+    targets = []
+    for p in parts:
+        targets.extend(dict(t) for t in p.targets)
+    targets.sort(key=lambda t: (t["speaker_role"] != "management", t["span"][0]))
+    seen: dict[tuple, int] = {}
+    for i, t in enumerate(targets):
+        key = ge._target_key(t)
+        if key in seen:
+            t["duplicate_of"], t["not_scored_reason"] = seen[key], "duplicate"
+        else:
+            seen[key] = i
+            t["duplicate_of"], t["not_scored_reason"] = None, ge.not_scored_reason(t)
+    status = bad.status if bad else "incomplete" if expected and len(parts) < expected else "checked"
+    return CallResult(first.arm_no, first.event_id, first.document_id, status, bad.stop_reason if bad else first.stop_reason,
+                      sum(p.input_tokens for p in parts), sum(p.output_tokens for p in parts), sum((p.cost for p in parts), Decimal(0)),
+                      tuple(x for p in parts for x in p.problems), tuple(targets), sum(p.stated for p in parts),
+                      tuple(sorted(drops.items())), parts=len(parts))
+
+
 def arm_metrics(arm: Arm, results: list[CallResult], batch_id: str) -> dict:
-    return {"arm": arm.name, "effort": arm.effort, "max_tokens": arm.max_tokens, "batch_id": batch_id,
+    return {"arm": arm.name, "effort": arm.effort, "max_tokens": arm.max_tokens, "sections": arm.sections, "batch_id": batch_id,
             "cost_usd": f"{sum((r.cost for r in results), Decimal(0)):.6f}", "calls": [r.summary() for r in results],
             "judge": "none: a development trial of the extraction, not a gate"}
 
@@ -266,13 +360,15 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, sle
 
     with connect(dsn, autocommit=True, role="extraction-trial") as conn:
         works = read_works(conn, events)
-        items = [(no, w, build_request(w.call, arm)) for no, arm in enumerate(arms) for w in works]
+        # (arm number, call, part number or None, request): an arm that reads the call whole sends one request for it
+        items = [(no, w, k if arm.sections > 1 else None, req) for no, arm in enumerate(arms) for w in works
+                 for k, req in enumerate(build_requests(w.call, arm))]
         per_arm = {}
         for no, arm in enumerate(arms):
-            mine = [r for n, _, r in items if n == no]
+            mine = [r for n, _, _, r in items if n == no]
             per_arm[arm.name] = {"requests": len(mine), "estimated_input_tokens": sum(r.estimated_tokens() for r in mine),
                                  "worst_case_usd": f"{sum(worst_case_cost(r) for r in mine):.4f}"}
-        worst = sum(worst_case_cost(r) for _, _, r in items)
+        worst = sum(worst_case_cost(r) for _, _, _, r in items)
         out(annotation("trial price", json.dumps({"events": events, "requests": len(items), "arms": per_arm,
                                                   "worst_case_usd": f"{worst:.4f}", "max_cost_usd": str(args.max_cost),
                                                   "batch_price": "half the real-time price (ai_prices.yaml)"},
@@ -284,11 +380,11 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, sle
             out(annotation("trial dry run", "nothing sent; run again with send on, or --collect <batch id>"))
             return 0
         claude = client or Client(env["ANTHROPIC_API_KEY"].strip())
-        model_of = {custom_id(no, w.event_id): arm.model for no, arm in enumerate(arms) for w in works}
+        model_of = {custom_id(no, w.event_id, k): arms[no].model for no, w, k, _ in items}
         if args.collect:
             info = claude.batch(args.collect)
         else:
-            info = claude.create_batch([(custom_id(no, w.event_id), req) for no, w, req in items])
+            info = claude.create_batch([(custom_id(no, w.event_id, k), req) for no, w, k, req in items])
             out(annotation("trial batch", json.dumps({"batch_id": info.id, "requests": len(items)}, separators=(",", ":"))))
         deadline = time.monotonic() + args.wait_minutes * 60
         while not info.ended and time.monotonic() < deadline:
@@ -300,13 +396,17 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, sle
                                                         separators=(",", ":"))))
             return 0
         by_event = {w.event_id: w for w in works}
-        results = []
+        parts: dict[tuple[int, int], list[CallResult]] = {}
         for r in claude.batch_results(info, model_of=model_of.get):
-            m = CUSTOM_ID.fullmatch(r.custom_id)
-            if m is None or int(m[1]) >= len(arms) or int(m[2]) not in by_event:
+            ids = parse_custom_id(r.custom_id)
+            if ids is None or r.custom_id not in model_of or ids[1] not in by_event:
                 out(f"::warning::result {r.custom_id!r} isn't one of this trial's requests (the same --events and --arms are needed)")
                 continue
-            results.append(judge(r, by_event[int(m[2])], int(m[1])))
+            parts.setdefault((ids[0], ids[1]), []).append(judge(r, by_event[ids[1]], ids[0]))
+        results = [merge_parts(ps, arms[no].sections) for (no, _), ps in parts.items()]
+        for (no, event), ps in parts.items():
+            if len(ps) != arms[no].sections:
+                out(f"::warning::arm {arms[no].name}, call {event}: {len(ps)} of {arms[no].sections} parts came back")
         notes = f"development trial of the extraction on {len(events)} calls (#178, sitting 2); arms: {', '.join(a.name for a in arms)}"
         run_ids = record(conn, arms, results, info.id, notes)
         for no, arm in enumerate(arms):

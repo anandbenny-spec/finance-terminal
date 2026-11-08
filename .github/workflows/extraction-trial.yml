@@ -15,7 +15,7 @@ on:
         type: string
         default: "3743,3780,4002,3855,3863"
       arms:
-        description: 'Arms as model:prompt:effort:max_tokens, space separated (a model is haiku or sonnet; the prompt is v1 or v2)'
+        description: 'Arms as model:prompt:effort:max_tokens[:sN], space separated (a model is haiku or sonnet; the prompt v1, v2 or v3; sN reads the call in N parts)'
         type: string
         default: "sonnet:v1:medium:16000 haiku:v2:medium:24000 haiku:v2:low:16000"
       send:

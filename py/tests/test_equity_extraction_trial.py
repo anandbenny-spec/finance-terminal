@@ -9,7 +9,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from test_ai_guidance_extraction import GROWTH, T, one
+from test_ai_guidance_extraction import GROWTH, IYER, RAO, T, doc, one
 
 from ft.ai import guidance_extraction as ge
 from ft.ai.client import HAIKU, MILLION, SONNET, BatchResult, Reply, Usage, load_prompt, load_schema
@@ -273,3 +273,155 @@ def test_the_workflow_defaults_parse_and_price_under_the_default_cap():
     assert len(trial.parse_events(spec["events"]["default"])) == 5
     assert [a.name for a in trial.parse_arms(spec["arms"]["default"])] == [
         "sonnet:v1:medium:16000", "haiku:v2:medium:24000", "haiku:v2:low:16000"]
+
+
+# ---------------------------------------------------------------------------------------------- reading a call in parts
+EBITDA = "We expect an EBITDA margin of 21 per cent in FY27."
+CAPEX = "We plan capex of 1,200 crore in FY27."
+
+
+def three_part_call():
+    return doc((RAO, "management", GROWTH), (IYER, "management", EBITDA), (RAO, "management", CAPEX))
+
+
+def fake_turns(sizes):
+    """Turns of the given lengths in characters, one after the other."""
+    at, out = 0, []
+    for i, n in enumerate(sizes):
+        out.append(SimpleNamespace(turn_no=i, char_start=at, char_end=at + n))
+        at += n + 2
+    return out
+
+
+@pytest.mark.parametrize("text,arm", [
+    ("haiku:v3:medium:12000:s3", trial.Arm(HAIKU, "v3", "medium", 12_000, 3)),
+    ("haiku:v3:::s2", trial.Arm(HAIKU, "v3", None, None, 2)),
+    ("sonnet:v1:low:16000", trial.Arm(SONNET, "v1", "low", 16_000, 1)),
+])
+def test_an_arm_may_read_the_call_in_parts(text, arm):
+    assert trial.parse_arm(text) == arm
+
+
+def test_an_arm_name_says_the_parts_and_a_whole_read_keeps_its_old_name():
+    assert trial.parse_arm("haiku:v3:medium:12000:s3").name == "haiku:v3:medium:12000:s3"
+    assert trial.parse_arm("haiku:v2:medium:24000").name == "haiku:v2:medium:24000"
+    assert len(trial.parse_arms("haiku:v3:medium:12000 haiku:v3:medium:12000:s3")) == 2     # not the same arm
+
+
+@pytest.mark.parametrize("text", ["haiku:v3:low:12000:s1", "haiku:v3:low:12000:s9", "haiku:v3:low:12000:x3", "haiku:v3:low:12000:s3:s3"])
+def test_a_bad_number_of_parts_is_refused(text):
+    with pytest.raises(ValueError):
+        trial.parse_arm(text)
+
+
+@pytest.mark.parametrize("sizes,n", [([10] * 6, 3), ([100, 1, 1, 1, 1, 100], 2), ([5, 5, 5], 3), ([5, 5], 4), ([1] * 7, 3), ([300, 2, 2, 2, 2, 2], 3)])
+def test_a_call_is_cut_between_turns_into_runs_that_hold_every_turn_once_in_order(sizes, n):
+    turns = fake_turns(sizes)
+    runs = trial.split_turns(reversed(turns), n)
+    assert len(runs) == min(n, len(turns)) and all(runs)
+    assert [t.turn_no for run in runs for t in run] == [t.turn_no for t in turns]
+
+
+def test_the_runs_are_about_the_same_length():
+    runs = trial.split_turns(fake_turns([10] * 12), 3)
+    assert [len(r) for r in runs] == [4, 4, 4]
+
+
+def test_a_whole_read_is_the_one_production_request_and_a_read_in_parts_sends_each_turn_once():
+    call = three_part_call()
+    whole = trial.build_requests(call, trial.Arm(HAIKU, "v3", None, 12_000))
+    assert whole == [trial.build_request(call, trial.Arm(HAIKU, "v3", None, 12_000))]
+    parts = trial.build_requests(call, trial.Arm(HAIKU, "v3", None, 12_000, 3))
+    assert len(parts) == 3 and len({p.input_sha256 for p in parts}) == 3
+    for p in parts:
+        assert (p.prompt, p.instruction, p.model, p.schema, p.max_tokens) == (
+            whole[0].prompt, whole[0].instruction, whole[0].model, whole[0].schema, whole[0].max_tokens)
+    texts = [p.sources[0].text for p in parts]
+    for t in call.turns:
+        assert sum(call.text[t.char_start:t.char_end] in x for x in texts) == 1                      # each turn in one part only
+    assert all(p.sources[0].document_id == call.document_id and p.sources[0].context == whole[0].sources[0].context for p in parts)
+    assert sum(len(x) for x in texts) < len(whole[0].sources[0].text) * 1.01                          # the parts add nothing but markers
+    assert next(ge.marker(t) for t in call.turns if t.role == "management") in "\n".join(texts)
+
+
+class PartsClient:
+    """A fake Batch API: each request is answered with the targets whose quote its source holds (the model finding all of them)."""
+
+    def __init__(self, targets):
+        self.targets, self.sent = targets, []
+
+    def create_batch(self, items):
+        self.sent = list(items)
+        return SimpleNamespace(id="msgbatch_parts", ended=True, counts={})
+
+    def batch(self, batch_id):
+        return SimpleNamespace(id=batch_id, ended=True, counts={})
+
+    def batch_results(self, info, model_of=lambda cid: None):
+        for cid, req in self.sent:
+            found = [t for t in self.targets if t["quote"] in req.sources[0].text]
+            yield BatchResult(cid, "succeeded", reply({"targets": found, "stated_figures": []}, out=500))
+
+
+def run_main(monkeypatch, call, arms, client):
+    conn, lines = FakeConn(), []
+    monkeypatch.setattr("ft.jobs.runner.connect", lambda dsn, **kw: nullcontext(conn))
+    monkeypatch.setattr(trial, "read_works", lambda c, events: [work(call)])
+    code = trial.main(["--events", "3743", "--arms", arms, "--send", "--wait-minutes", "1"],
+                      env={"JOB_DATABASE_URL": "postgresql://x/y"}, out=lines.append, client=client, sleep=lambda s: None)
+    return code, conn, lines
+
+
+def test_an_arm_that_reads_in_parts_sends_one_request_per_part_and_records_the_joined_targets(monkeypatch):
+    call = three_part_call()
+    targets = [T(GROWTH), T(EBITDA, metric="ebitda_margin", metric_text="EBITDA margin", value=21, growth_basis="level"),
+               T(CAPEX, metric="capex", metric_text="capex", value=1200, unit="inr", growth_basis="level")]
+    client = PartsClient(targets)
+    code, conn, lines = run_main(monkeypatch, call, "haiku:v3:medium:12000 haiku:v3:medium:12000:s3", client)
+    assert code == 0
+    ids = [cid for cid, _ in client.sent]
+    assert ids[0] == "trial-a0-e3743" and ids[1:] == ["trial-a1-e3743-s0", "trial-a1-e3743-s1", "trial-a1-e3743-s2"]
+    (_, whole), (_, parts) = conn.runs
+    assert whole[5].obj["calls"][0]["parts"] == 1 and parts[5].obj["calls"][0]["parts"] == 3
+    assert whole[5].obj["arm"] == "haiku:v3:medium:12000" and parts[5].obj["arm"] == "haiku:v3:medium:12000:s3"
+    assert [r[1] for r in conn.results] == ["3743:0", "3743:1", "3743:2"] * 2          # three targets in each arm, in document order
+    assert not any(w in " ".join(lines) + json.dumps([r[2].obj for r in conn.results]) for w in (GROWTH, EBITDA, CAPEX))
+
+
+def test_the_same_target_found_in_two_parts_is_one_target_and_a_repeat():
+    def result(spans_cost):
+        return trial.CallResult(1, 3743, 5090, "checked", "end_turn", 10_000, 500, Decimal("0.001"),
+                                targets=tuple(trial.target_row(t) for t in spans_cost), stated=1, drops=(("not_found", 1),))
+    call = one(GROWTH)
+    a = ge.check({"targets": [T(GROWTH)], "stated_figures": []}, call, METRICS).targets
+    b = ge.check({"targets": [T(GROWTH)], "stated_figures": []}, call, METRICS).targets
+    m = trial.merge_parts([result(a), result(b)], 2)
+    assert m.status == "checked" and m.parts == 2 and m.cost == Decimal("0.002") and m.input_tokens == 20_000 and m.stated == 2
+    assert [t["duplicate_of"] for t in m.targets] == [None, 0] and m.targets[1]["not_scored_reason"] == "duplicate"
+    assert dict(m.drops) == {"not_found": 2} and m.management == 1
+
+
+def test_a_part_that_failed_or_never_came_back_makes_the_call_not_checked():
+    ok = trial.CallResult(0, 3743, 5090, "checked", "end_turn", 1_000, 100, Decimal("0.001"))
+    stopped = trial.CallResult(0, 3743, 5090, "stopped", "max_tokens", 1_000, 12_000, Decimal("0.003"))
+    assert trial.merge_parts([ok, stopped, ok], 3).status == "stopped"
+    assert trial.merge_parts([ok, ok], 3).status == "incomplete"
+    assert trial.merge_parts([ok], None) is ok and trial.merge_parts([ok], 1) is ok
+    assert trial.merge_parts([ok, stopped], 2).cost == Decimal("0.004")
+
+
+def test_a_custom_id_for_a_part_names_the_arm_the_call_and_the_part():
+    assert trial.custom_id(1, 3743) == "trial-a1-e3743" and trial.custom_id(1, 3743, 2) == "trial-a1-e3743-s2"
+    assert trial.parse_custom_id("trial-a1-e3743-s2") == (1, 3743, 2) and trial.parse_custom_id("trial-a1-e3743") == (1, 3743, None)
+    assert trial.parse_custom_id("trial-a1-e3743-x") is None and trial.parse_custom_id("other") is None
+    assert len(trial.custom_id(5, 99999, 5)) <= 64
+
+
+def test_prompt_v3_is_v2_plus_three_completeness_bullets_and_nothing_else():
+    v2, v3 = load_prompt(ge.TASK, "v2").text, load_prompt(ge.TASK, "v3").text
+    start, end = v3.index("- A figure the company plans to reach"), v3.index("\n\nTARGETS\nA target is")
+    assert v3[:start] + v3[end + 1:] == v2
+    added = v3[start:end]
+    assert added.count("\n- ") == 2 and "scope_text" in added and "one part of the call" in added
+    assert "benchmark" not in v3.lower()                                    # §5.9's definition is unchanged
+    assert load_schema(ge.TASK, "v3") == load_schema(ge.TASK, "v1")
