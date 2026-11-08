@@ -54,8 +54,12 @@ jobs:
         run: |
           base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
           tgz="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -fsSLO "$base/$tgz"
-          curl -fsSL "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o checksums.txt
+          # 8 Nov 2026: github.com's release host answered with errors for over an hour, and a single failed download failed
+          # this job, so no pull request could merge. --retry-all-errors makes curl retry an HTTP error too (plain --retry
+          # covers only timeouts and a few 5xx codes). Two downloads at most 100 s each stay inside the job's 5 minutes.
+          # The checksum check below and the scan are unchanged.
+          curl -fsSLO --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 100 "$base/$tgz"
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 100 "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o checksums.txt
           grep " $tgz\$" checksums.txt | sha256sum --check -
           tar xzf "$tgz" gitleaks
       - name: Scan the full history

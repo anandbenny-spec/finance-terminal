@@ -732,3 +732,20 @@ def test_the_warm_up_stays_quiet_when_only_an_early_round_failed(tmp_path):
 def test_the_warm_up_loads_nothing_and_warns_when_its_settings_are_not_whole_numbers(tmp_path, env):
     code, out, urls = _run_warm(tmp_path, env=env)
     assert code == 0 and urls == [] and "::warning title=warm-site::WARM_ROUNDS and WARM_GAP_SECONDS must be whole numbers" in out
+
+
+def test_ci_secrets_job_retries_both_gitleaks_downloads_and_still_checks_the_archive_and_scans_the_history():
+    """On 8 Nov 2026 github.com's release host answered with errors for over an hour; the install step had no retry (curl
+    exit 22), so the `secrets` job failed on every pull request and none could merge. Both downloads retry on any error,
+    inside the job's timeout; the checksum check, the extraction and the scan are exactly what they were."""
+    ci = yaml.safe_load((WORKFLOWS / "ci.yml").read_text())["jobs"]["secrets"]
+    steps = {s["name"]: s["run"] for s in ci["steps"] if "run" in s}
+    install = steps["Install gitleaks (release archive, checksum checked)"]
+    curls = [line for line in install.splitlines() if line.strip().startswith("curl")]
+    assert len(curls) == 2
+    for line in curls:
+        assert "--retry-all-errors" in line and re.search(r"--retry [1-9]\d* ", line)
+        assert int(re.search(r"--retry-max-time (\d+)", line)[1]) * len(curls) <= ci["timeout-minutes"] * 60 - 60   # leaves a minute for the rest
+    assert 'grep " $tgz\\$" checksums.txt | sha256sum --check -' in install      # the archive is still checked against the release's checksums
+    assert "tar xzf" in install
+    assert steps["Scan the full history"].strip() == "./gitleaks git --config .gitleaks.toml --redact --no-banner --verbose ."
