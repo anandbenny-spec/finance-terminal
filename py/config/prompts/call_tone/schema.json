@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "scores": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "p": {"type": "integer", "description": "The passage's number in the list"},
+          "score": {"type": "integer", "description": "Whole number from -2 to +2, by the rubric"}
+        },
+        "required": ["p", "score"],
+        "additionalProperties": false
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "p": {"type": "integer", "description": "The number of the passage the quote comes from"},
+          "quote": {"type": "string", "description": "A passage of that one passage, copied exactly, at most 300 characters"}
+        },
+        "required": ["p", "quote"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["scores", "evidence"],
+  "additionalProperties": false
+}

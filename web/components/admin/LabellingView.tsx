@@ -7,6 +7,7 @@
 // ai_outputs or a stance or score column. RBI's drafted stance appears only after Anand saves his own label.
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { ToneLabeller } from "@/components/admin/ToneLabeller";
 import { DocumentView } from "@/components/ai/DocumentView";
 import { Panel, PanelGrid } from "@/components/data/Panel";
 import { SourceLine } from "@/components/data/SourceLine";
@@ -219,6 +220,7 @@ function Labeller({ set }: { set: SetName }) {
 export function LabellingView() {
   const { isAdmin, ready } = useAdmin();
   const [set, setSet] = useState<SetName>(SET_NAMES[0]);
+  const [tone, setTone] = useState(false);
 
   if (!ready) return <StateNote kind="empty">Checking your session…</StateNote>;
   if (!isAdmin)
@@ -253,15 +255,26 @@ export function LabellingView() {
               <button
                 key={s}
                 type="button"
-                aria-pressed={s === set}
-                onClick={() => setSet(s)}
+                aria-pressed={!tone && s === set}
+                onClick={() => {
+                  setTone(false);
+                  setSet(s);
+                }}
                 className="h-8 rounded-md border border-line-input px-3 text-ui text-ink-1 hover:bg-active aria-pressed:bg-active"
               >
                 {SET_TITLE[s]} ({formatCount(ITEMS.sets[s].length)})
               </button>
             ))}
+            <button
+              type="button"
+              aria-pressed={tone}
+              onClick={() => setTone(true)}
+              className="h-8 rounded-md border border-line-input px-3 text-ui text-ink-1 hover:bg-active aria-pressed:bg-active"
+            >
+              Call tone: management passages
+            </button>
           </div>
-          <Labeller key={set} set={set} />
+          {tone ? <ToneLabeller /> : <Labeller key={set} set={set} />}
         </div>
       </Panel>
     </PanelGrid>

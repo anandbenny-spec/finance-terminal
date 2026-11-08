@@ -1,0 +1,8 @@
+{
+  "set": "earnings_tone",
+  "rule_version": 1,
+  "seed": "earnings_tone-1",
+  "chosen_from": null,
+  "rule": "Spec 02B §5.8; ft/eval/tone_set.py. Items are chunk ids only (no transcript text); chosen by code before any call_tone output is read.",
+  "items": []
+}

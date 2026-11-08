@@ -107,6 +107,9 @@ TASKS: dict[str, TaskSpec] = {
     # headroom for thinking and up to about 40 items. 16,000, not 12,000: on the 65-call dev run (4 Nov 2026) about one first
     # attempt in four stopped at 12,000 (calls of every length and role mix), and one call stopped on both attempts.
     "guidance_extraction": TaskSpec("json", "medium", 16_000),
+    # The tone of a call's management passages (Spec 02B §5.7; 2B-12): the json route, effort medium (a judgement, like
+    # hawk/dove). One score per passage, up to about 60 passages, and up to three quotes: 8,000 with room for thinking.
+    "call_tone": TaskSpec("json", "medium", 8_000),
 }
 
 
