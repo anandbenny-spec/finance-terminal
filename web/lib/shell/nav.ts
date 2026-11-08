@@ -18,6 +18,15 @@ export type NavItem = { href: string; label: string; icon: NavIcon; sections?: r
 
 export type NavGroup = { heading: string; items: NavItem[]; adminOnly?: boolean };
 
+/**
+ * Workspace › Policy Day (#90): in NAV since `site.policy_day` was flipped to shown on production (8 Nov 2026, #330).
+ * The shell still reads no field policies.
+ */
+export const POLICY_DAY_GROUP: NavGroup = {
+  heading: "Workspace",
+  items: [{ href: "/workspace/policy-day", label: "Policy Day", icon: "policy" }],
+};
+
 export const NAV: readonly NavGroup[] = [
   { heading: "Overview", items: [{ href: "/", label: "Start here", icon: "home" }] },
   {
@@ -42,6 +51,7 @@ export const NAV: readonly NavGroup[] = [
       { href: "/earnings", label: "Earnings calls", icon: "earnings" },
     ],
   },
+  POLICY_DAY_GROUP,
   {
     heading: "About",
     items: [
@@ -59,17 +69,6 @@ export const NAV: readonly NavGroup[] = [
     ],
   },
 ];
-
-/**
- * Workspace › Policy Day (#90) is NOT in NAV while the page is hidden behind `site.policy_day` (tracker #30, 8 Nov
- * 2026): the shell reads no field policies, and one query on every page load for a hidden link isn't worth it. The
- * flip adds this group to NAV after "Company research" (Design 01 §4.1's order) and lists `/workspace/policy-day` in
- * nav.test.ts; the page itself answers 404 until the row exists.
- */
-export const POLICY_DAY_GROUP: NavGroup = {
-  heading: "Workspace",
-  items: [{ href: "/workspace/policy-day", label: "Policy Day", icon: "policy" }],
-};
 
 /** The groups a visitor sees: the admin group only for the admin. */
 export function visibleGroups(isAdmin: boolean, nav: readonly NavGroup[] = NAV): NavGroup[] {
