@@ -96,7 +96,8 @@ def wipe() -> None:
         c.execute("delete from core.entity where slug like 'cai-%'")
         c.execute("delete from core.source where key like 'cai\\_%' and key like '%suppressed'")
         c.execute("delete from ops.alert where dedupe_key like 'ai_rejected:call_summary:%' "
-                  "or dedupe_key like 'ai_rejected:guidance_extraction:%' or dedupe_key like 'ai_unavailable:calls:%'")
+                  "or dedupe_key like 'ai_rejected:guidance_extraction:%' or dedupe_key like 'ai_rejected:call_tone:%' "
+                  "or dedupe_key like 'ai_unavailable:calls:%'")
 
 
 @pytest.fixture(scope="module", autouse=True)

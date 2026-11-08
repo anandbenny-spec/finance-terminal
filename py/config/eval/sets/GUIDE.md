@@ -60,3 +60,39 @@ Labels stay in this browser as you go. **Export** downloads one JSON file per se
 `py/config/eval/sets/<set>.labels.json`. That commit's SHA becomes `ops.eval_run.set_version`. Claude then labels the
 same items independently as the second rater, without seeing yours; you settle the disagreements, and the agreement
 rate is reported with the gate.
+
+## Call tone (`earnings_tone`)
+
+For Anand, labelling the tone gate (Spec 02B §5.8; job 2B-12, #175). The set is 30 passages of management's own words from earnings
+calls, chosen by code from results (quarters where profit to owners fell, held or rose), never from a model's output. Label blind:
+the page shows one passage at a time, with its section (opening remarks, an answer, or closing remarks) and nothing else.
+
+**The question:** how positive or negative is management's own language about results, demand, margins and the outlook in this
+passage? A whole number from −2 to +2, by the rubric below (the same words the model's prompt uses).
+
+| Score | Means | Typical signs |
+|---|---|---|
+| **−2** | strongly negative | clear deterioration in demand, margins or the outlook, stated without an offset; a target or outlook cut; "very difficult", "significant pressure" |
+| **−1** | mildly negative | caution, headwinds named, softer demand, delays, "challenging", expectations lowered with a mitigation |
+| **0** | neutral | figures recited without judgement; balanced statements; procedure, thanks, definitions |
+| **+1** | mildly positive | improvement with qualifiers; "on track", "steady", "encouraging"; risks noted but outweighed |
+| **+2** | strongly positive | confident, unqualified improvement; a target or outlook raised; "strong momentum across", "record" |
+
+**Anchors** (one per score; invented examples, never items):
+
+| Score | Anchor |
+|---|---|
+| −2 | "Demand has fallen sharply across all our markets and we are cutting our full-year margin outlook; the pressure on costs is very difficult to offset." |
+| −1 | "The quarter was challenging, with softer demand in two regions and some delays in deliveries, though we are managing costs to limit the impact." |
+| 0 | "Revenue for the quarter was 4,500 crore and operating profit was 900 crore. I will now hand over to the moderator for questions." |
+| +1 | "We are on track for the year and the order book is steady; early signs in the new segment are encouraging, although input costs remain a watch point." |
+| +2 | "We delivered record margins, we see strong momentum across every segment, and we are raising our full-year outlook." |
+
+**Rules of thumb**
+- Score management's language, not the figures: a passage that only recites figures is 0.
+- A passage that mixes both is scored on its balance. Hedged optimism is +1, not +2.
+- Score the text, not what you know happened to the company afterwards.
+- The reason line: one short sentence naming the words that decided the score.
+- The model reads the whole call's passages and you read one passage; that difference is noted with the gate's result.
+- The gate passes at 24 of 30 right in three classes (≤ −1, 0, ≥ +1) with no item where your label and the model's are on opposite
+  sides (a positive read as negative or the reverse).

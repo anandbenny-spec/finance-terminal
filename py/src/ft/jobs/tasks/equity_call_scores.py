@@ -1,6 +1,14 @@
 """equity.call_scores: what changed in each call's opening remarks since the previous quarter's call, as
 `equity.call_remarks_change` rows (Spec 02B §5.13, §3.3, §6; D9; job 2B-17, #180). The rules are in
-`ft/equity/calls/remarks.py`; the tone part of this task is job 2B-12's (#175) and isn't here yet.
+`ft/equity/calls/remarks.py`; the tone part (job 2B-12, #175, `ft/ai/call_tone.py`) is below.
+
+**Tone** (`equity.call_tone` rows, Spec 02B §5.7): for each stored call with a *published* `call_tone` output (the AI run is
+`equity.calls_ai` with `CALLS_AI_TASK=call_tone`; this task makes no AI call), the mean, sd and n of its passage scores, the
+opening's and the answers' own mean and n, and the change against the previous fiscal quarter's call. A call with fewer than 8
+scored passages is stored held ("too little management text to score"), with n and no mean; the change is left empty when the
+previous call is missing or held. Same recompute-and-diff as the remarks: new rows inserted, changed ones updated, a row whose
+output is gone deleted, a re-run on unchanged data writes nothing. The scores are read from the output's content (no transcript
+text); the field policy `ai.call_tone` stays hidden until the tone gate passes and Anand flips it (§5.8).
 
 Database only, no AI and no fetch. For each stored call (event status `stored`, no `status_reason`, a fiscal quarter, a
 transcript) the previous call is the same company's call for the immediately preceding fiscal quarter, stored the same way.
@@ -15,7 +23,10 @@ the checks name counts and companies only.
 Checks, B blocking, W warning:
 - (B) `similarity_range`: every stored similarity is between 0 and 1;
 - (B) `pairs_capped`: at most 5 pairs per row, each side at most 400 code points;
-- (W) `compared`: calls compared, no previous call, no opening text, role-held, and the labels (always passes).
+- (W) `compared`: calls compared, no previous call, no opening text, role-held, and the labels (always passes);
+- (B) `tone_range`: every stored tone mean is between -2 and +2 with n of at least 8, a held row has no mean, and a change label
+  matches its delta and standard error;
+- (W) `tone_scored`: calls with a tone, held, with a change label (always passes).
 """
 from __future__ import annotations
 
@@ -25,6 +36,7 @@ from decimal import Decimal
 
 from psycopg.types.json import Jsonb
 
+from ft.ai import call_tone as ct
 from ft.equity.calls import remarks as rm
 from ft.equity.calls.turns import ROLE_HOLD_SHARE
 from ft.equity.guard import equity_due
@@ -38,6 +50,7 @@ class Fetched:
     rows: dict[int, tuple] = field(default_factory=dict)       # event_id -> the row to store
     counts: Counter = field(default_factory=Counter)
     scope_ids: list[int] | None = None
+    tone: dict[int, tuple] = field(default_factory=dict)       # event_id -> the call_tone row to store
 
 
 @register
@@ -111,7 +124,38 @@ class EquityCallScores(Task):
                             Decimal(str(ch.similarity)), ch.new_speakers, ch.label, ch.pairs, rm.RULE_VERSION)
             f.counts["compared"] += 1
             f.counts[f"label_{ch.label or 'none'}"] += 1
+        self._tone(db, f, calls, by_label)
         return f
+
+    @staticmethod
+    def _tone(db, f: Fetched, calls: list, by_label: dict) -> None:
+        """The tone rows from the published `call_tone` outputs (reads only; the scores carry no transcript text)."""
+        docs = [c[3] for c in calls]
+        outs: dict[int, tuple[int, dict]] = {}
+        if docs:
+            for oid, did, content in db.execute(
+                    """select id, document_id, content from core.ai_output
+                        where task = 'call_tone' and status = 'published' and scope = '' and document_id = any(%s)""",
+                    (docs,)).fetchall():
+                outs[did] = (oid, content)
+        tones: dict[int, tuple[ct.Tone, int]] = {}
+        for c in calls:
+            got = outs.get(c[3])
+            if got is not None:
+                tones[c[0]] = (ct.aggregate(got[1].get("scores") or []), got[0])
+        for c in calls:
+            if c[0] not in tones:
+                continue
+            tone, out_id = tones[c[0]]
+            prev = by_label.get((c[1], rm.previous_label(c[2])))
+            pt = tones.get(prev[0]) if prev is not None else None
+            ch = ct.change(tone, pt[0] if pt else None, prev[0] if prev is not None else None)
+            f.tone[c[0]] = (out_id, tone.n, tone.mean, tone.sd, tone.opening_n, tone.opening_mean, tone.answers_n,
+                            tone.answers_mean, ch.prev_event_id, ch.delta, ch.se_delta, ch.label, tone.held_reason,
+                            ct.RULE_VERSION)
+            f.counts["tone"] += 1
+            f.counts["tone_held"] += tone.held
+            f.counts["tone_change"] += ch.label is not None
 
     # ------------------------------------------------------------------ load (one transaction)
     def load(self, tx, f: Fetched, task_run_id) -> int:
@@ -143,6 +187,29 @@ class EquityCallScores(Task):
                                        pairs = %s, rule_version = %s where event_id = %s""",
                                 [(*v, e) for e, v in changed])
         self.result.update(inserted=len(new), updated=len(changed), deleted=len(stale))
+        return len(new) + len(changed) + len(stale) + self._load_tone(tx, f, scope, args)
+
+    def _load_tone(self, tx, f: Fetched, scope: str, args: tuple) -> int:
+        have = {r[0]: r[1:] for r in tx.execute(
+            f"""select event_id, ai_output_id, n, mean, sd, opening_n, opening_mean, answers_n, answers_mean, prev_event_id,
+                       delta, se_delta, change, held_reason, rule_version from equity.call_tone {scope}""", args).fetchall()}
+        new = [(e, r) for e, r in f.tone.items() if e not in have]
+        changed = [(e, r) for e, r in f.tone.items() if e in have and tuple(have[e]) != r]
+        stale = [(e,) for e in have if e not in f.tone]
+        with tx.cursor() as cur:
+            if stale:
+                cur.executemany("delete from equity.call_tone where event_id = %s", stale)
+            if new:
+                cur.executemany("""insert into equity.call_tone (event_id, ai_output_id, n, mean, sd, opening_n, opening_mean,
+                                       answers_n, answers_mean, prev_event_id, delta, se_delta, change, held_reason, rule_version)
+                                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                                [(e, *r) for e, r in new])
+            if changed:
+                cur.executemany("""update equity.call_tone set ai_output_id = %s, n = %s, mean = %s, sd = %s, opening_n = %s,
+                                       opening_mean = %s, answers_n = %s, answers_mean = %s, prev_event_id = %s, delta = %s,
+                                       se_delta = %s, change = %s, held_reason = %s, rule_version = %s where event_id = %s""",
+                                [(*r, e) for e, r in changed])
+        self.result.update(tone_inserted=len(new), tone_updated=len(changed), tone_deleted=len(stale))
         return len(new) + len(changed) + len(stale)
 
     # ------------------------------------------------------------------ checks
@@ -170,6 +237,34 @@ class EquityCallScores(Task):
                   f"compared {c['compared']}; no previous call {c['no_previous']}; no opening text {c['no_opening']}; "
                   f"role-held {c['role_held']}; labels: {dist or 'none'}", blocking=False),
             self._distribution(rows),
+            *self._tone_checks(tx, scope, args, f),
+        ]
+
+    @staticmethod
+    def _tone_checks(tx, scope: str, args: tuple, f: Fetched) -> list[Check]:
+        rows = tx.execute(f"select event_id, n, mean, sd, delta, se_delta, change, held_reason from equity.call_tone {scope}",
+                          args).fetchall()
+        bad = []
+        for e, n, mean, sd, delta, se, label, held in rows:
+            if held is not None:
+                ok = mean is None and sd is None and label is None and n < ct.MIN_PASSAGES
+            else:
+                ok = mean is not None and -2 <= mean <= 2 and n >= ct.MIN_PASSAGES and sd is not None and sd >= 0
+                if ok and label is None:
+                    ok = delta is None
+                elif ok:
+                    ok = (delta is not None and se is not None
+                          and (label == "more_positive") == (delta > ct.SIGMAS * se)
+                          and (label == "more_negative") == (delta < -ct.SIGMAS * se))
+            if not ok:
+                bad.append(e)
+        c = f.counts
+        return [
+            Check("tone_range", not bad,
+                  f"{len(bad)} tone rows out of range, held wrongly or with a change label that doesn't match its delta" if bad
+                  else f"all {len(rows)} tone rows are in range, with their change labels matching"),
+            Check("tone_scored", True,
+                  f"calls with a tone {c['tone']}; held {c['tone_held']}; with a change label {c['tone_change']}", blocking=False),
         ]
 
     @staticmethod

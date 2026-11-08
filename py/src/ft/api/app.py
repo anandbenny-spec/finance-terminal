@@ -6,9 +6,11 @@ from fastapi import FastAPI
 
 from ft.api.cron import router as cron_router
 from ft.api.health import router as health_router
+from ft.api.labelling import router as labelling_router
 from ft.api.refresh import router as admin_router
 
 app = FastAPI(title="Finance Terminal API", docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(admin_router)
+app.include_router(labelling_router)
 app.include_router(cron_router)
 app.include_router(health_router)

@@ -5,6 +5,7 @@ test_equity_call_remarks.py. Synthetic text only."""
 import hashlib
 import uuid
 from datetime import UTC, date, datetime
+from decimal import Decimal
 
 import psycopg
 import pytest
@@ -45,6 +46,8 @@ def wipe() -> None:
     docs = f"(select id from core.document where entity_id in {ids})"
     with psycopg.connect(ADMIN) as c:           # one transaction: the chunk check is deferred to commit, and the document is gone then
         c.execute(f"delete from equity.call_remarks_change where event_id in (select event_id from equity.earnings_call where entity_id in {ids})")
+        c.execute(f"delete from equity.call_tone where event_id in (select event_id from equity.earnings_call where entity_id in {ids})")
+        c.execute(f"delete from core.ai_output where document_id in {docs}")
         c.execute(f"delete from equity.call_turn where document_id in {docs}")
         c.execute(f"delete from core.chunk where document_id in {docs}")
         c.execute(f"delete from equity.earnings_call where entity_id in {ids}")
@@ -204,3 +207,95 @@ def test_the_year_boundary_pairs_q1_with_the_previous_years_q4():
     call(eid, slug, D(2026, 7, 25), "Q1 FY27", opening(NEW_BODY))
     go(slug)
     assert len(rows(eid)) == 1
+
+
+# ---------------------------------------------------------------------------------------------- tone (job 2B-12, #175)
+def tone_output(event_id: int, values: list[int], section="qa", status="published") -> int:
+    """A published call_tone output for the call's transcript with the passage scores given (one citation, in the text)."""
+    import json
+    doc = q("select transcript_document_id from equity.earnings_call where event_id = %s", event_id)[0][0]
+    content = {"scores": [{"p": i + 1, "score": v, "chunk_no": 0, "section": section, "speaker": "Alice Rao", "words": 45}
+                          for i, v in enumerate(values)], "evidence": [], "rule_version": "1"}
+    out = q("""insert into core.ai_output (task, document_id, content, model, prompt_key, prompt_version, input_sha256)
+               values ('call_tone', %s, %s, 'test', 'call_tone', 'v1', %s) returning id""",
+            doc, json.dumps(content), hashlib.sha256(uuid.uuid4().bytes).digest())[0][0]
+    x("""insert into core.ai_citation (ai_output_id, citation_no, claim_path, kind, document_id, char_start, char_end, verified)
+         values (%s, 1, '/scores/0', 'document_span', %s, 0, 10, true)""", out, doc)
+    if status == "published":
+        x("update core.ai_output set status = 'published' where id = %s", out)
+    return out
+
+
+def tones(eid: int) -> list[tuple]:
+    return q("""select t.event_id, t.ai_output_id, t.n, t.mean, t.sd, t.opening_n, t.opening_mean, t.answers_n, t.answers_mean,
+                       t.prev_event_id, t.delta, t.se_delta, t.change, t.held_reason, t.rule_version
+                  from equity.call_tone t join equity.earnings_call c on c.event_id = t.event_id
+                 where c.entity_id = %s order by c.period_end""", eid)
+
+
+@pytest.mark.db
+def test_a_tone_row_per_call_with_the_change_against_the_previous_quarter_and_a_rerun_writes_nothing():
+    eid, slug = company()
+    prev = call(eid, slug, D(2026, 7, 25), "Q1 FY27", opening(OLD_BODY))
+    cur = call(eid, slug, D(2026, 10, 25), "Q2 FY27", opening(NEW_BODY))
+    o1 = tone_output(prev, [0] * 10)
+    o2 = tone_output(cur, [1] * 10)
+    status, written, checks, _ = go(slug)
+    assert status == "success" and written >= 2
+    first, second = tones(eid)
+    assert first == (prev, o1, 10, Decimal("0.0000"), Decimal("0.0000"), 0, None, 10, Decimal("0.0000"), None, None, None, None,
+                     None, "1")
+    assert second == (cur, o2, 10, Decimal("1.0000"), Decimal("0.0000"), 0, None, 10, Decimal("1.0000"), prev,
+                      Decimal("1.0000"), Decimal("0.0000"), "more_positive", None, "1")
+    assert "tone_range" in str(checks) and "tone_scored" in str(checks)
+    assert go(slug)[1] == 0                                                 # nothing changed: nothing written
+
+
+@pytest.mark.db
+def test_a_call_with_fewer_than_eight_passages_is_held_and_gives_no_change_label_to_the_next_call():
+    eid, slug = company()
+    prev = call(eid, slug, D(2026, 7, 25), "Q1 FY27", opening(OLD_BODY))
+    cur = call(eid, slug, D(2026, 10, 25), "Q2 FY27", opening(NEW_BODY))
+    tone_output(prev, [1] * 7)
+    tone_output(cur, [1] * 9)
+    go(slug)
+    first, second = tones(eid)
+    assert first[2:5] == (7, None, None) and first[13] == "too little management text to score" and first[12] is None
+    assert second[3] == Decimal("1.0000") and second[9] == prev and second[10:13] == (None, None, None)
+
+
+@pytest.mark.db
+def test_a_call_without_a_published_tone_output_has_no_row_and_a_row_goes_when_its_output_is_superseded():
+    eid, slug = company()
+    cur = call(eid, slug, D(2026, 10, 25), "Q2 FY27", opening(NEW_BODY))
+    go(slug)
+    assert tones(eid) == []
+    out = tone_output(cur, [2] * 8)
+    go(slug)
+    assert len(tones(eid)) == 1
+    x("update core.ai_output set status = 'superseded', status_reason = 'test' where id = %s", out)
+    assert go(slug)[1] == 1 and tones(eid) == []
+
+
+@pytest.mark.db
+def test_the_openings_and_the_answers_have_their_own_means_and_a_draft_output_is_not_read():
+    eid, slug = company()
+    cur = call(eid, slug, D(2026, 10, 25), "Q2 FY27", opening(NEW_BODY))
+    import json
+    out = tone_output(cur, [2, 2, 2, 2], section="opening")
+    content = q("select content from core.ai_output where id = %s", out)[0][0]
+    more = [{**content["scores"][0], "p": 5 + i, "section": "qa", "score": 0} for i in range(4)]
+    # a published output is frozen, so build the whole content first: supersede this one and publish a complete one
+    x("update core.ai_output set status = 'superseded', status_reason = 'test' where id = %s", out)
+    doc = q("select transcript_document_id from equity.earnings_call where event_id = %s", cur)[0][0]
+    out2 = q("""insert into core.ai_output (task, document_id, content, model, prompt_key, prompt_version, input_sha256)
+                values ('call_tone', %s, %s, 'test', 'call_tone', 'v1', %s) returning id""",
+             doc, json.dumps({"scores": content["scores"] + more, "evidence": []}), hashlib.sha256(b"x").digest())[0][0]
+    x("""insert into core.ai_citation (ai_output_id, citation_no, claim_path, kind, document_id, char_start, char_end, verified)
+         values (%s, 1, '/scores/0', 'document_span', %s, 0, 10, true)""", out2, doc)
+    go(slug)                                                                  # still a draft: no row
+    assert tones(eid) == []
+    x("update core.ai_output set status = 'published' where id = %s", out2)
+    go(slug)
+    [row] = tones(eid)
+    assert row[2:4] == (8, Decimal("1.0000")) and row[5:9] == (4, Decimal("2.0000"), 4, Decimal("0.0000"))
