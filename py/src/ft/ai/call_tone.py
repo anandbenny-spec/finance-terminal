@@ -129,6 +129,7 @@ class Checked:
     drops: Counter = field(default_factory=Counter)
     problems: list[str] = field(default_factory=list)
     fallback_citation: bool = False
+    mapping: Counter = field(default_factory=Counter)         # quotes by how they were found (citation_integrity): "search" | "failed"
 
     @property
     def ok(self) -> bool:
@@ -194,11 +195,13 @@ def check(answer, items: Sequence[Passage]) -> Checked:
             c.drops["too_long"] += 1
         elif not quote or by_p[p].text.count(quote) != 1:
             c.drops["not_found"] += 1
+            c.mapping["failed"] += 1
         elif len(c.evidence) >= MAX_EVIDENCE:
             c.drops["over_limit"] += 1
         else:
             a = by_p[p].char_start + by_p[p].text.index(quote)
             c.evidence.append({"p": p, "quote": quote, "span": [a, a + len(quote)]})
+            c.mapping["search"] += 1
     for i, e in enumerate(c.evidence):
         e["citation_no"] = i + 1
         c.citations.append((f"/evidence/{i}", (e["span"][0], e["span"][1])))

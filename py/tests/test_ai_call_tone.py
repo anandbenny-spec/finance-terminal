@@ -229,3 +229,7 @@ def test_a_failed_check_gives_the_batch_steps_its_reasons_and_a_retry_note():
     assert c.reasons() == ["p1: score 3 is out of range", "p2: no score"]
     assert c.note() == "p1: score 3 is out of range; p2: no score."
     assert ct.Checked(None).reasons() == []
+
+
+def test_the_quotes_are_counted_by_how_they_were_found_for_the_citation_integrity_check():
+    assert ct.Checked(None).mapping == {}
