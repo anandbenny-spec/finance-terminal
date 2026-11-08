@@ -13,7 +13,7 @@ It holds **no transcript text and no sample**: the items it chooses are ids, pri
 workflow (dev only, a read-only session). Quotes are fetched through the read-only dev connector into the chat and nowhere
 else (§13.11 L12). A re-draw after a failed gate uses a **new seed** and is a new sample (§9.4); never re-judge a sample.
 
-The samples (sitting 1; the summary gate, recall and scoring belong to sitting 2):
+The samples. Sitting 1 (7 Nov 2026; run with `--gate all`):
 
 | gate | pool | size | rules |
 |---|---|---|---|
@@ -22,7 +22,17 @@ The samples (sitting 1; the summary gate, recall and scoring belong to sitting 2
 | `stated` | stated figures of published extraction outputs, duplicates out | 20 | at most 2 a company; families: P&L 6, margins 4, capex and balance sheet 3, banks 4 (as available) |
 | `links` | verified transcript citations into a document with a page map | 5 | different documents and companies; 2 from cited summary bullets, 3 from extracted figures |
 
-A minimum or a cell the pool can't fill is reported as a **shortfall**, never filled by loosening another rule.
+Sitting 2 (8 Nov 2026; Plan 04b P9 to P11; run with `--gate sitting2`):
+
+| gate | pool | size | rules |
+|---|---|---|---|
+| `summaries` | published `call_summary` outputs of the final prompt version (`SUMMARY_VERSION`) | 10 | at most 1 a company and 2 a peer group; at least 3 from role-held calls; at least 1 from a call with no management turn, where one is stored |
+| `recall` | stored calls whose roles were read (`unknown_role_share` at most 0.10) and whose extraction is published | 5, then up to 3 more | the 5: one each from IT services, banks, consumer, industrials or autos, and energy or materials (`RECALL_BUCKETS`), at most 1 a company; the extra 3 come from any sector in the same seeded order, one a company, and are read only while the settled targets are under 15 (Spec 02B §5.11 row 2) |
+| `scoring` | scored outcomes (`delivered` or `missed`) of management targets | 20 | at most 2 a company; at least 3 of each type (range, point, floor, ceiling, direction) where the pool has them; at least 3 bank metrics; all of them if the pool is smaller (Spec 02B §5.11 row 3) |
+
+A minimum or a cell the pool can't fill is reported as a **shortfall**, never filled by loosening another rule. A minimum marked
+"where present" (the scoring types, the summaries' no-management-turn call) is first cut to what the pool holds, so it isn't a
+shortfall when the pool has none; the bank metrics are not marked, so a pool with fewer than 3 is reported.
 
 Decided by Claude (standing delegation, 24 Oct 2026), each with its alternative:
 - Metric families (the spec names four, not their members): P&L = revenue, revenue_growth, pat, pat_growth; margins =
@@ -38,6 +48,18 @@ Decided by Claude (standing delegation, 24 Oct 2026), each with its alternative:
   company from its document and fills the scarcest cell first, preferring items that help a minimum still unmet; if a draw
   is still short it tries the next of at most 300 attempts (each its own seeded order) and keeps the first with no shortfall,
   else the one missing least. The attempt number is recorded with the seed, so the draw can be repeated. No rule was loosened.
+
+Sitting 2, decided by Claude (standing delegation, 24 Oct 2026), each with its alternative; rule version 3 (8 Nov 2026, before any
+item was drawn or read):
+- The summary gate draws from **published prompt-v6 outputs**, not re-checked v5 ones: #301's 5 Nov note said v5, but Anand chose
+  the structured route (option 1, 6 Nov), whose outputs are v6, and #301's report says the gate reads them. One published v5
+  summary stays out of the pool (Shriram Finance Q2 FY27). Alternative: the v5 outputs, which the final version replaced.
+- At most 2 summaries a peer group (the spec says "across peer groups" and gives no number). Alternative: no cap.
+- Recall's five sector buckets map peer groups as `RECALL_BUCKETS` says (the spec names the sectors, not their members); the
+  other peer groups (pharma, NBFCs, hospitals, insurers, capital markets, telecom) only supply the extra calls. Alternative: the
+  Nifty 50's own industry field.
+- At most 2 scored outcomes a company, as the other samples (the spec sets no cap). Alternative: none.
+- Seeds are the sitting's date and the gate's number (2026110801 to 2026110803), fixed before any item is read.
 """
 from __future__ import annotations
 
@@ -48,13 +70,28 @@ import os
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
-RULE_VERSION = 2
+RULE_VERSION = 3                # 2: sitting 1's final rules; 3: adds sitting 2's gates and the "where present" minimums
 ATTEMPTS = 300                  # a seeded retry limit, see `draw`
-SITTING = 1
-SEEDS = {"targets": 2026110701, "unattributed": 2026110702, "stated": 2026110703, "links": 2026110704}
-GATES = tuple(SEEDS)
+SUMMARY_VERSION = "v6"          # the prompt version that runs on production (#301, option 1); the summary gate judges this one
+RECALL_EXTRA = 3                # calls after the five, read only while the settled targets are under 15
+SEEDS = {"targets": 2026110701, "unattributed": 2026110702, "stated": 2026110703, "links": 2026110704,
+         "summaries": 2026110801, "recall": 2026110802, "scoring": 2026110803}
+GATES = ("targets", "unattributed", "stated", "links")           # sitting 1: `--gate all`
+GATES_2 = ("summaries", "recall", "scoring")                     # sitting 2: `--gate sitting2`
+ALL_GATES = GATES + GATES_2
+SITTING_OF = {**dict.fromkeys(GATES, 1), **dict.fromkeys(GATES_2, 2)}
+
+# Spec 02B §5.11 row 2 names five sectors; the peer groups that stand for each are a decision of the sampler (see the module notes).
+RECALL_BUCKETS = {
+    "it_services": ("it-services",),
+    "banks": ("banks",),
+    "consumer": ("fmcg", "consumer-retail"),
+    "industrials_autos": ("autos", "engineering-defence", "transport"),
+    "energy_materials": ("energy-fuels", "power", "metals-mining", "steel", "building-materials"),
+}
+_BUCKET_OF = {peer: bucket for bucket, peers in RECALL_BUCKETS.items() for peer in peers}
 
 FAMILY = {
     "revenue": "pnl", "revenue_growth": "pnl", "pat": "pnl", "pat_growth": "pnl",
@@ -69,6 +106,11 @@ def family_of(metric: str) -> str:
     return FAMILY.get(metric, "other")
 
 
+def bucket_of(peer_group: str) -> str:
+    """Recall's sector bucket for a peer group, or '' (such a call can only be one of the extras)."""
+    return _BUCKET_OF.get(peer_group, "")
+
+
 @dataclass(frozen=True)
 class Item:
     """One candidate: an id and the strata the rules use. No text."""
@@ -81,6 +123,10 @@ class Item:
     no_mgmt_turn: bool = False  # the call has no management turn at all
     source: str = ""            # links: 'summary' or 'figure'
     document: int = 0
+    peer: str = ""              # summaries: the company's peer group
+    bucket: str = ""            # recall: the sector bucket of the peer group
+    kind: str = ""              # scoring: range, point, floor, ceiling or direction
+    counted: bool = False       # scoring: in the hit rate (reported with the strata, not a rule)
 
 
 @dataclass(frozen=True)
@@ -90,6 +136,8 @@ class Rules:
     cell: Callable[[Item], str] = lambda it: ""
     quotas: dict[str, int] = field(default_factory=dict)       # cell -> slots; empty means no cells
     minimums: tuple[tuple[str, Callable[[Item], bool], int], ...] = ()    # (name, test, at least), filled in this order
+    per_peer: int = 0                                          # at most this many from one peer group; 0 means no cap
+    where_present: frozenset[str] = frozenset()                # minimums cut to what the pool holds ("where present")
 
 
 def _target_cell(it: Item) -> str:
@@ -113,6 +161,19 @@ RULES = {
                   ("capex_balance", lambda it: it.family == "capex_balance", 3), ("banks", lambda it: it.family == "banks", 4))),
     "links": Rules(
         total=5, per_company=1, cell=lambda it: it.source, quotas={"summary": 2, "figure": 3}),
+    # sitting 2
+    "summaries": Rules(
+        total=10, per_company=1, per_peer=2,
+        minimums=(("role_held", lambda it: it.role_held, 3), ("no_mgmt_turn", lambda it: it.no_mgmt_turn, 1)),
+        where_present=frozenset({"no_mgmt_turn"})),
+    "recall": Rules(
+        total=5, per_company=1, cell=lambda it: it.bucket, quotas=dict.fromkeys(RECALL_BUCKETS, 1)),
+    "scoring": Rules(
+        total=20, per_company=2,
+        # filled in this order, the scarcest first, so the commonest types can't use up a company's two slots before it
+        minimums=(("banks", lambda it: it.family == "banks", 3),)
+                 + tuple((k, (lambda it, k=k: it.kind == k), 3) for k in ("ceiling", "floor", "direction", "point", "range")),
+        where_present=frozenset({"range", "point", "floor", "ceiling", "direction"})),
 }
 
 
@@ -129,6 +190,7 @@ class Draw:
     pool: int
     shortfalls: list[str]
     attempt: int = 0                    # which seeded order gave this draw (0 is the plain one)
+    extra: list[Item] = field(default_factory=list)     # recall: the calls after the five, in the order they're read
 
     def strata(self) -> dict[str, int]:
         rules = RULES[self.gate]
@@ -139,7 +201,13 @@ class Draw:
             for name, test, _ in rules.minimums:
                 if test(it):
                     c[name] += 1
-        c["companies"] = len({it.company for it in self.items})
+            if self.gate == "scoring" and it.counted:
+                c["counted"] += 1
+        c["companies"] = len({it.company for it in [*self.items, *self.extra]})
+        if self.gate == "recall":
+            c["extra"] = len(self.extra)
+        if self.gate == "summaries":
+            c["peer_groups"] = len({it.peer for it in self.items})
         return dict(sorted(c.items()))
 
 
@@ -162,12 +230,15 @@ def _once(order: list[Item], rules: Rules, cell_order: list[str]) -> tuple[list[
     cell has room."""
     chosen: list[Item] = []
     per_company: Counter[int] = Counter()
+    per_peer: Counter[str] = Counter()
     cells: Counter[str] = Counter()
     mins: Counter[str] = Counter()
     taken: set[int | str] = set()
 
     def can(it: Item) -> bool:
         if len(chosen) >= rules.total or per_company[it.company] >= rules.per_company:
+            return False
+        if rules.per_peer and per_peer[it.peer] >= rules.per_peer:
             return False
         if rules.quotas:
             c = rules.cell(it)
@@ -178,6 +249,7 @@ def _once(order: list[Item], rules: Rules, cell_order: list[str]) -> tuple[list[
         chosen.append(it)
         taken.add(it.id)
         per_company[it.company] += 1
+        per_peer[it.peer] += 1
         cells[rules.cell(it)] += 1
         for name, test, _ in rules.minimums:
             if test(it):
@@ -218,13 +290,27 @@ def _once(order: list[Item], rules: Rules, cell_order: list[str]) -> tuple[list[
     return chosen, short, missing
 
 
+def _effective(rules: Rules, pool: list[Item]) -> Rules:
+    """The rules with each "where present" minimum cut to what the pool can give (never more than the per-company cap allows),
+    so a type the pool doesn't hold isn't a shortfall. Every other minimum is left as written."""
+    if not rules.where_present:
+        return rules
+    mins = []
+    for name, test, at_least in rules.minimums:
+        if name in rules.where_present:
+            have = [it for it in pool if test(it)]
+            at_least = min(at_least, len(have), rules.per_company * len({it.company for it in have}))
+        mins.append((name, test, at_least))
+    return replace(rules, minimums=tuple(mins))
+
+
 def draw(items: Iterable[Item], gate: str, seed: int | None = None) -> Draw:
     """Seeded: the same pool and seed give the same items. Attempt 0 orders the pool by `rank(seed, gate, id)`; if it comes
     back short, attempt k tries the order of `rank(seed, "gate#k", id)`, up to ATTEMPTS, and the first with no shortfall wins
     (else the one missing least). What no attempt can meet is reported, not relaxed."""
-    rules = RULES[gate]
     seed = SEEDS[gate] if seed is None else seed
     pool = sorted(items, key=lambda it: (str(it.id),))
+    rules = _effective(RULES[gate], pool)
     cell_order = _cell_order(pool, rules)
     best: tuple[int, int, list[Item], list[str]] | None = None
     for attempt in range(ATTEMPTS):
@@ -239,6 +325,24 @@ def draw(items: Iterable[Item], gate: str, seed: int | None = None) -> Draw:
     _missing, attempt, chosen, short = best
     chosen.sort(key=lambda it: (rank(seed, gate, it.id), str(it.id)))
     return Draw(gate, seed, chosen, len(pool), short, attempt)
+
+
+def draw_recall(items: Iterable[Item], seed: int | None = None) -> Draw:
+    """Recall's calls (Spec 02B §5.11 row 2): the five, one from each sector bucket (a `draw`), then up to RECALL_EXTRA more, in
+    the order of `rank(seed, "recall#extra", id)`, from any sector and any company not already drawn, one a company. The extras
+    are read only while the settled targets of the calls read so far are under 15, in this order, up to eight calls in all."""
+    pool = list(items)
+    seed = SEEDS["recall"] if seed is None else seed
+    d = draw(pool, "recall", seed)
+    used = {it.company for it in d.items}
+    for it in sorted((x for x in pool if x.company not in used), key=lambda x: (rank(seed, "recall#extra", x.id), str(x.id))):
+        if len(d.extra) >= RECALL_EXTRA:
+            break
+        if it.company not in {x.company for x in d.extra}:
+            d.extra.append(it)
+    if len(d.extra) < RECALL_EXTRA:
+        d.shortfalls.append(f"extra: {len(d.extra)} of {RECALL_EXTRA}")
+    return d
 
 
 # ---------------------------------------------------------------------------------------------- the candidate pools
@@ -291,6 +395,37 @@ join equity.transcript_page p on p.document_id = cit.document_id
 order by 1"""
 
 
+# Sitting 2. A summary's company comes from its document (`core.ai_output.entity_id` is null for every summary: rule version 2).
+POOL_SUMMARIES = """
+select o.id, d.entity_id, coalesce(ec.unknown_role_share > 0.10, false),
+       not exists (select 1 from equity.call_turn t where t.document_id = o.document_id and t.role = 'management'),
+       c.peer_group_key, o.document_id
+from core.ai_output o
+join core.document d on d.id = o.document_id
+join equity.earnings_call ec on ec.transcript_document_id = o.document_id
+join equity.company c on c.entity_id = d.entity_id
+where o.task = 'call_summary' and o.status = 'published' and o.prompt_version = %s
+order by o.id"""
+
+# Calls whose roles were read, so the extraction's management list is the one the reader's list is compared with.
+POOL_RECALL = """
+select ec.event_id, ec.entity_id, c.peer_group_key, ec.transcript_document_id
+from equity.earnings_call ec
+join equity.company c on c.entity_id = ec.entity_id
+where ec.transcript_document_id is not null and ec.unknown_role_share <= 0.10
+  and exists (select 1 from core.ai_output o where o.document_id = ec.transcript_document_id
+                and o.task = 'guidance_extraction' and o.status = 'published')
+order by ec.event_id"""
+
+POOL_SCORING = """
+select o.guidance_id, g.entity_id, g.kind, g.metric, g.document_id, o.counted
+from equity.guidance_outcome o
+join equity.guidance g on g.id = o.guidance_id
+join core.ai_output ao on ao.id = g.ai_output_id and ao.status = 'published' and ao.task = 'guidance_extraction'
+where o.outcome in ('delivered', 'missed') and o.speaker_role = 'management' and g.duplicate_of is null
+order by o.guidance_id"""
+
+
 def read_pool(conn, gate: str) -> list[Item]:
     if gate in ("targets", "unattributed"):
         role = "management" if gate == "targets" else "unknown"
@@ -300,6 +435,15 @@ def read_pool(conn, gate: str) -> list[Item]:
     if gate == "stated":
         return [Item(id=i, company=co, family=family_of(metric), document=doc)
                 for i, co, metric, doc in conn.execute(POOL_STATED).fetchall()]
+    if gate == "summaries":
+        return [Item(id=i, company=co, role_held=rh, no_mgmt_turn=nm, peer=peer or "", document=doc)
+                for i, co, rh, nm, peer, doc in conn.execute(POOL_SUMMARIES, (SUMMARY_VERSION,)).fetchall()]
+    if gate == "recall":
+        return [Item(id=i, company=co, peer=peer or "", bucket=bucket_of(peer or ""), document=doc)
+                for i, co, peer, doc in conn.execute(POOL_RECALL).fetchall()]
+    if gate == "scoring":
+        return [Item(id=i, company=co, kind=kind, family=family_of(metric), document=doc, counted=bool(counted))
+                for i, co, kind, metric, doc, counted in conn.execute(POOL_SCORING).fetchall()]
     return [Item(id=i, company=co, source=src, document=doc) for i, co, src, doc in conn.execute(POOL_LINKS).fetchall()]
 
 
@@ -358,6 +502,18 @@ where x.id in ({_ids(ids)})
 order by x.id"""
 
 
+def _citation_rows(where: str) -> str:
+    return f"""select x.ai_output_id, x.citation_no, o.task, x.claim_path, x.document_id,
+       {_SHOWN.format(quote=_quote('x'))}
+from core.ai_citation x
+join core.ai_output o on o.id = x.ai_output_id
+{_SPAN}
+join core.entity e on e.id = d.entity_id
+left join equity.earnings_call ec on ec.transcript_document_id = x.document_id
+where {where}
+order by x.ai_output_id, x.citation_no"""
+
+
 def link_sql(keys: Iterable[tuple[int, int] | str]) -> str:
     """Page links for (ai_output_id, citation_no) pairs, or the "o:n" keys the draw prints: the claim path, the quote, the page
     and the source's own link. The company comes from the document (an output's entity_id is null for every summary)."""
@@ -367,15 +523,82 @@ def link_sql(keys: Iterable[tuple[int, int] | str]) -> str:
     pairs = ", ".join(pair(k) for k in keys)
     if not pairs:
         raise ValueError("no keys")
-    return f"""select x.ai_output_id, x.citation_no, o.task, x.claim_path, x.document_id,
-       {_SHOWN.format(quote=_quote('x'))}
-from core.ai_citation x
-join core.ai_output o on o.id = x.ai_output_id
-{_SPAN}
+    return _citation_rows(f"(x.ai_output_id, x.citation_no) in ({pairs})")
+
+
+# ---- sitting 2: what the session shows or hands out. Text comes back only through the read-only dev connector.
+
+def summary_sql(output_ids: Iterable[int]) -> str:
+    """The chosen summaries: company, quarter and the bullets as stored (`content -> 'bullets'`). Their cited quotes come from
+    `summary_citations_sql`, joined to the bullets by claim path."""
+    return f"""select o.id as output_id, coalesce(e.short_name, e.name) as company, ec.fiscal_label as quarter, ec.call_date,
+       round(ec.unknown_role_share * 100) as unknown_pct, o.prompt_version, o.content -> 'bullets' as bullets
+from core.ai_output o
+join core.document d on d.id = o.document_id
 join core.entity e on e.id = d.entity_id
-left join equity.earnings_call ec on ec.transcript_document_id = x.document_id
-where (x.ai_output_id, x.citation_no) in ({pairs})
-order by x.ai_output_id, x.citation_no"""
+join equity.earnings_call ec on ec.transcript_document_id = o.document_id
+where o.id in ({_ids(output_ids)})
+order by o.id"""
+
+
+def summary_citations_sql(output_ids: Iterable[int]) -> str:
+    """Every citation of the chosen summaries: claim path, quote, speaker, section and page link."""
+    return _citation_rows(f"x.ai_output_id in ({_ids(output_ids)})")
+
+
+def recall_calls_sql(event_ids: Iterable[int]) -> str:
+    """What a reader needs to find a call's text, not the text: the document, its chunks and the company's fiscal year end."""
+    return f"""select ec.event_id, coalesce(e.short_name, e.name) as company, c.fy_end_month, ec.fiscal_label as quarter, ec.call_date,
+       ec.transcript_document_id as document_id, ec.words,
+       (select min(ch.chunk_no) from core.chunk ch where ch.document_id = ec.transcript_document_id) as first_chunk,
+       (select max(ch.chunk_no) from core.chunk ch where ch.document_id = ec.transcript_document_id) as last_chunk
+from equity.earnings_call ec
+join core.entity e on e.id = ec.entity_id
+join equity.company c on c.entity_id = ec.entity_id
+where ec.event_id in ({_ids(event_ids)})
+order by ec.event_id"""
+
+
+def recall_chunks_sql(document_id: int, first_chunk: int, last_chunk: int) -> str:
+    """A page of a transcript for the reader: its chunks in order, each with its speaker, role and section."""
+    return f"""select ch.chunk_no, ch.char_start, ch.char_end, ch.section, ch.speaker, t.role, ch.body
+from core.chunk ch
+left join equity.call_turn t on t.document_id = ch.document_id and ch.char_start >= t.char_start and ch.char_start < t.char_end
+where ch.document_id = {int(document_id)} and ch.chunk_no between {int(first_chunk)} and {int(last_chunk)}
+order by ch.chunk_no"""
+
+
+def recall_extraction_sql(event_ids: Iterable[int]) -> str:
+    """The extraction's management targets of the chosen calls, with their quotes: for comparing with the reader's list. The
+    reader never sees this."""
+    return f"""select x.call_event_id, x.id, x.kind, x.metric, x.metric_text, x.value, x.low, x.high, x.unit, x.direction,
+       x.comparison, x.period_text, x.not_scored_reason, x.char_start, x.char_end, {_quote('x')} as quote
+from equity.guidance x
+where x.call_event_id in ({_ids(event_ids)}) and x.speaker_role = 'management' and x.duplicate_of is null
+order by x.call_event_id, x.char_start"""
+
+
+def scoring_packet_sql(guidance_ids: Iterable[int]) -> str:
+    """What the recomputer is given: the statement it must score and nothing of the scorer's result."""
+    return f"""select x.id as guidance_id, e.id as entity_id, coalesce(e.short_name, e.name) as company, e.currency,
+       c.fy_end_month, ec.fiscal_label as call_quarter, ec.call_date,
+       x.metric, x.kind, x.value, x.low, x.high, x.unit, x.direction, x.comparison,
+       x.period_text, x.period_kind, x.target_start, x.target_end, x.basis, x.growth_basis, x.scope_text
+from equity.guidance x
+join core.entity e on e.id = x.entity_id
+join equity.company c on c.entity_id = x.entity_id
+join equity.earnings_call ec on ec.event_id = x.call_event_id
+where x.id in ({_ids(guidance_ids)})
+order by x.id"""
+
+
+def scoring_stored_sql(guidance_ids: Iterable[int]) -> str:
+    """The scorer's stored result for the chosen outcomes: for comparing with the recomputer's. The recomputer never sees this."""
+    return f"""select o.guidance_id, o.outcome, o.relation, o.actual, o.base, o.reason, o.is_first, o.counted, o.revision,
+       o.horizon_share, o.map_version, o.rule_version, o.inputs
+from equity.guidance_outcome o
+where o.guidance_id in ({_ids(guidance_ids)})
+order by o.guidance_id"""
 
 
 # ---------------------------------------------------------------------------------------------- the page-map check
@@ -467,11 +690,12 @@ def annotation(title: str, text: str) -> str:
 
 def main(argv: list[str] | None = None, *, env=None, out=print) -> int:
     p = argparse.ArgumentParser(prog="python -m ft.equity.calls.samples", description=__doc__.split("\n\n")[0])
-    p.add_argument("--gate", choices=(*GATES, "all"), default="all")
+    p.add_argument("--gate", choices=(*ALL_GATES, "all", "sitting2"), default="all",
+                   help='"all" is sitting 1\'s four gates and the page-map check; "sitting2" is summaries, recall and scoring')
     p.add_argument("--seed", type=int, default=None, help="a new sample after a failed gate: one gate only; record the seed")
     p.add_argument("--target", choices=("dev",), default="dev", help="logged; the workflow reads dev's credentials only")
     args = p.parse_args(argv)
-    if args.seed is not None and args.gate == "all":
+    if args.seed is not None and args.gate in ("all", "sitting2"):
         p.error("--seed needs one --gate")
     env = os.environ if env is None else env
     dsn = (env.get("JOB_DATABASE_URL") or "").strip()
@@ -479,14 +703,17 @@ def main(argv: list[str] | None = None, *, env=None, out=print) -> int:
         p.error("JOB_DATABASE_URL is not set (the workflow reads the DEV_ secret)")
     from ft.jobs.runner import connect
 
-    gates = GATES if args.gate == "all" else (args.gate,)
+    gates = {"all": GATES, "sitting2": GATES_2}.get(args.gate, (args.gate,))
     with connect(dsn, autocommit=True, role="gate-samples") as conn:
         conn.execute("set default_transaction_read_only = on")
         for gate in gates:
-            d = draw(read_pool(conn, gate), gate, args.seed)
-            body = {"gate": gate, "sitting": SITTING, "rule_version": RULE_VERSION, "seed": d.seed, "attempt": d.attempt, "target": args.target,
-                    "pool": d.pool, "n": len(d.items), "ids": [it.id for it in d.items], "strata": d.strata(),
-                    "shortfalls": d.shortfalls}
+            pool = read_pool(conn, gate)
+            d = draw_recall(pool, args.seed) if gate == "recall" else draw(pool, gate, args.seed)
+            body = {"gate": gate, "sitting": SITTING_OF[gate], "rule_version": RULE_VERSION, "seed": d.seed, "attempt": d.attempt,
+                    "target": args.target, "pool": d.pool, "n": len(d.items), "ids": [it.id for it in d.items],
+                    "strata": d.strata(), "shortfalls": d.shortfalls}
+            if gate == "recall":
+                body["extra_ids"] = [it.id for it in d.extra]
             out(annotation(f"sample {gate} seed {d.seed}", json.dumps(body, separators=(",", ":"))))
         if args.gate == "all":
             row = conn.execute(PAGE_MAP_SQL).fetchone()
