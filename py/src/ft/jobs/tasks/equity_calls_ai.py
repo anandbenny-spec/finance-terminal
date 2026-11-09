@@ -39,10 +39,11 @@ our copy of the transcript. The stored output, its citations and its checks are 
 is v6 plus a rule that a guidance verb ("reiterated", "raised", "cut" and the like) is in a bullet only if its quote says so; v8 (the v8 round,
 8 Nov 2026) adds four rules (a speaker's hedge stays a hedge, a recalled target is not a fresh expectation, no weight word the
 speaker did not use, a cause applies only to the part it was attached to) and a check in code (`ft/ai/call_summary.py`,
-`firm_verb_problem`); **v9, the current one (#178, the v9 round, 8 Nov 2026), adds three rules (a change announced for a later date
+`firm_verb_problem`); v9 (#178, the v9 round, 8 Nov 2026) adds three rules (a change announced for a later date
 stays in the future, an exclusion stays with its figure, an extent word the speaker used stays) and a second check in code
-(`extent_word_problem`).** A call whose summary is a published v5, v6, v7 or v8 is asked for again under v9 and keeps that summary
-unless the v9 reply is published.
+(`extent_word_problem`); **v10, the current one on this branch (#178, the Sonnet round, 9 Nov 2026), is v9's text and checks run on
+Sonnet 5.5** (`ft/ai/call_summary.py`, `MODEL_OF`) after three Haiku rounds did not pass the summary gate. A call whose summary is a
+published v5, v6, v7, v8 or v9 is asked for again under v10 and keeps that summary unless the v10 reply is published.
 
 **Copied text (2B-11c, #301).** A summary bullet may not carry the transcript's own words: `ft/ai/call_summary.py`'s rule cuts a
 copied end off a new reply's bullet before anything is stored, and fails a bullet that copies anywhere else (the usual retry
@@ -121,7 +122,10 @@ from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TARGETS
 
-PROMPT_VERSION = {cs.TASK: "v9", ge.TASK: "v1", ct.TASK: "v1"}
+# v10 runs on Sonnet 5.5, 20 times Haiku's price (config/ai_prices.yaml): a run that asks for it on production would cost about 15 to 17 USD
+# for the whole set, far past #178's approved 1.50 USD. So this branch (claude/2b-15-summary-v10-sonnet, #178) is run on dev only and is not
+# merged to main until the summary gate has passed and Anand has approved a production run at that price; main stays on v9.
+PROMPT_VERSION = {cs.TASK: "v10", ge.TASK: "v1", ct.TASK: "v1"}
 IST = "Asia/Kolkata"
 SHOWN = 12
 ONLY_ENV = "CALLS_AI_TASK"            # both (the default) | call_summary | guidance_extraction | call_tone: limits what a run asks for (#302)

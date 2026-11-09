@@ -1,7 +1,9 @@
-"""The call summary's structured route (2B-11c, #301; Anand's decision of 6 Nov 2026; prompts from v6, the current one v9): the model returns each
+"""The call summary's structured route (2B-11c, #301; Anand's decision of 6 Nov 2026; prompts from v6, the current one v10): the model returns each
 bullet as its own sentence plus, in a separate field, the passages that state its point; `check_json` finds each quote exactly once
 in our copy of the transcript and the stored citation is that span. Everything else is as on the citations route (figures,
 role rules, counts, the copied-text rule). A synthetic call (tests/call_fixtures.py); no database."""
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -19,13 +21,13 @@ from call_fixtures import (
 from ft.ai import call_summary as cs
 from ft.ai import summaries
 from ft.ai.call_summary import LISTS, check_json, route_of
-from ft.ai.client import TASKS, Reply, Request, Usage, load_prompt, load_schema
+from ft.ai.client import HAIKU, SONNET, TASKS, Reply, Request, Usage, cost_usd, load_prompt, load_schema
 from ft.ai.guidance_extraction import marked_text
 from ft.jobs.tasks import equity_calls_ai as eca
 from ft.quality.reasons import categorise
 
-PROMPT = load_prompt("call_summary", "v9")
-SCHEMA = load_schema("call_summary", "v9")
+PROMPT = load_prompt("call_summary", "v10")
+SCHEMA = load_schema("call_summary", "v10")
 B = build()
 TEXT = B.text
 CALL = calldoc(B)
@@ -76,13 +78,13 @@ def first_management(claim: str, quotes: list[str]):
 def test_prompts_from_v6_take_the_structured_route_and_v1_to_v5_the_citations_route():
     assert [route_of(f"v{n}") for n in range(1, 6)] == ["citations"] * 5
     assert [route_of(v) for v in ("v6", "v7", "v8", "v9", "v10")] == ["json"] * 5 and cs.JSON_FROM == 6
-    assert eca.PROMPT_VERSION[cs.TASK] == "v9" and route_of(eca.PROMPT_VERSION[cs.TASK]) == "json"
+    assert eca.PROMPT_VERSION[cs.TASK] == "v10" and route_of(eca.PROMPT_VERSION[cs.TASK]) == "json"
     assert TASKS["call_summary"].route == "citations"          # the task's own route is unchanged: a request asks for the json one
 
 
 def test_the_request_is_the_marked_transcript_without_citations_and_the_schema_as_the_output_format():
     r = cs.call_summary_request(CALL, PROMPT, schema=SCHEMA)
-    assert r.spec.route == "json" and r.route == "json" and r.schema == SCHEMA and r.model_id == "claude-haiku-5-5"
+    assert r.spec.route == "json" and r.route == "json" and r.schema == SCHEMA and r.model_id == SONNET
     assert (r.spec.effort, r.spec.max_tokens) == ("low", 8_000)
     params = r.params(batch=True)
     (doc, instruction) = params["messages"][0]["content"]
@@ -241,9 +243,51 @@ def test_v9_keeps_the_schema_and_the_header_note_quotes_no_transcript():
     assert "should be possible" not in note and "10%" not in note and "excluding two" in note       # words of ours, not a transcript's
 
 
+# ------------------------------------------------------------------------------------ v10: v9's text, written by Sonnet 5.5
+def test_v10_is_v9s_text_and_schema_and_only_the_model_differs():
+    """#178, the Sonnet round (9 Nov 2026; Anand's ladder of 8 Nov, item 4): v9 failed the summary gate at 9 of 10, so the next round keeps
+    v9's rules, route, schema and checks and changes the model. A prompt version names the model, so Sonnet's summaries are v10 and the
+    published v9 ones, which Haiku wrote, stay apart (a v9 summary is asked for again under v10 and kept until the v10 reply is published)."""
+    v9, v10 = load_prompt("call_summary", "v9"), load_prompt("call_summary", "v10")
+    assert (v9.version, v10.version) == ("v9", "v10") and v10.text == v9.text and v10.sha256 == v9.sha256
+    assert load_schema("call_summary", "v10") == load_schema("call_summary", "v9")
+    assert cs.MODEL_OF == {"v10": SONNET} and cs.model_of("v10") == SONNET
+    assert all(cs.model_of(f"v{n}") is None for n in range(1, 10))                      # every earlier version runs on the task's model
+    r9 = cs.call_summary_request(CALL, v9, schema=load_schema("call_summary", "v9"))
+    r10 = cs.call_summary_request(CALL, v10, schema=load_schema("call_summary", "v10"))
+    assert r9.model_id == HAIKU == TASKS["call_summary"].model and r10.model_id == SONNET
+    assert r10.params(batch=True)["model"] == SONNET and r9.params(batch=True)["model"] == HAIKU
+    assert r10.instruction == r9.instruction and r10.sources == r9.sources and r10.spec == r9.spec and r10.schema == r9.schema
+    assert r10.input_sha256 != r9.input_sha256                                         # another model is another input: v9's replies are never reused
+    retry = cs.structured_request(CALL, v10, load_schema("call_summary", "v10"), note="a quote is not in the transcript")
+    assert retry.model_id == SONNET and retry.input_sha256 != r10.input_sha256         # the retry stays on Sonnet
+
+
+def test_v10_header_note_quotes_no_transcript_and_names_the_judge():
+    raw = (Path(__file__).resolve().parents[1] / "config" / "prompts" / "call_summary" / "v10.md").read_text(encoding="utf-8")
+    note = raw.splitlines()[0]
+    assert note.startswith("<!-- call_summary v10") and note.endswith("-->")
+    assert "Sonnet 5.5" in note and "never Sonnet" in note and "should be possible" not in note and "10%" not in note
+
+
+def test_a_v10_run_is_priced_from_the_table_at_twenty_times_haikus_batch_price():
+    """The v9 dev run (8 Nov 2026) sent 116 requests: 2,719,212 input and 308,090 output tokens, 0.2130 USD on Haiku 5.5 (`core.ai_output`).
+    The same tokens on Sonnet 5.5 are the round's estimate, about 4.26 USD: under the 5 USD stop (CLAUDE.md section 7), inside the 25 USD pool.
+    Each request is priced on its own (a request over 100,000 input tokens would take the long-context tier), the totals shared out evenly."""
+    n, tokens_in, tokens_out, on = 116, 2_719_212, 308_090, date(2026, 11, 9)
+
+    def run_cost(model: str) -> Decimal:
+        return sum((cost_usd(model, Usage(input=tokens_in // n + (k < tokens_in % n), output=tokens_out // n + (k < tokens_out % n)),
+                             batch=True, on=on) for k in range(n)), Decimal(0))
+
+    haiku, sonnet = run_cost(HAIKU), run_cost(SONNET)
+    assert abs(haiku - Decimal("0.2130")) < Decimal("0.0005") and abs(sonnet - Decimal("4.26")) < Decimal("0.005")
+    assert abs(sonnet - 20 * haiku) < Decimal("0.001") and sonnet < Decimal(5)
+
+
 def test_the_prompt_names_the_fields_the_role_rules_and_the_figure_rules():
     p = PROMPT.text
-    assert PROMPT.version == "v9" and "<!--" not in p and p.endswith("\n")
+    assert PROMPT.version == "v10" and "<!--" not in p and p.endswith("\n")
     for field in ('"list"', '"text"', '"quotes"', '"management"', '"analysts"', '"unknown"'):
         assert field in p
     assert "never guess a role" in p and "never put one in a quote" in p and "Those marker lines are not part" in p

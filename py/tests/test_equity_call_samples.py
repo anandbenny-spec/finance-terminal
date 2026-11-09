@@ -342,7 +342,7 @@ def test_the_peer_group_cap_is_a_rule_of_the_draw():
 
 
 def test_the_summary_pool_reads_the_final_prompt_version_and_the_company_from_the_document():
-    assert s.SUMMARY_VERSION == "v9"
+    assert s.SUMMARY_VERSION == "v10"
     assert "o.prompt_version = %s" in s.POOL_SUMMARIES and "o.status = 'published'" in s.POOL_SUMMARIES
     assert "d.entity_id" in s.POOL_SUMMARIES and "o.entity_id" not in s.POOL_SUMMARIES
     assert "unknown_role_share > 0.10" in s.POOL_SUMMARIES
@@ -562,7 +562,7 @@ def test_sitting2_prints_three_samples_with_their_seeds_strata_and_the_extra_rec
     assert summaries["n"] == 10 and recall["n"] == 5 and len(recall["extra_ids"]) == 3 and scoring["n"] == 20
     assert "extra_ids" not in summaries and "page map check" not in " ".join(lines)
     assert ("set default_transaction_read_only = on", None) == conn.seen[0]
-    assert (s.POOL_SUMMARIES, ("v9",)) in conn.seen
+    assert (s.POOL_SUMMARIES, ("v10",)) in conn.seen
 
 
 def test_all_still_draws_sitting_ones_four_samples_and_the_page_map_check(monkeypatch):

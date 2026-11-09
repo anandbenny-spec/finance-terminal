@@ -45,6 +45,12 @@ in part and their kin) and its text holds none (`EXTENT_TEXT`: those words, or "
 so a bullet that says the same thing another way passes). Run over the 420 bullets of dev's 56 published v8 summaries it fires on 8
 (none of an analysts list); the tense and exclusion fails of the same draw are prompt v9's rules alone, since no word marks them.
 
+**Which model writes it** (#178, the Sonnet round, 9 Nov 2026; `MODEL_OF`). A prompt version names the prompt and the model that runs
+it. Every version up to v9 runs on the task's model (Haiku 5.5). **v10 is v9's text, unchanged, on Sonnet 5.5**: Anand's fallback
+ladder of 8 Nov, after three Haiku rounds (v7, v8, v9) did not reach 10 of 10. A call whose published summary is a v9 is asked for
+again under v10 and keeps the v9 summary unless the v10 reply is published. Sonnet's batch price is 20 times Haiku's
+(`config/ai_prices.yaml`), so a run under v10 is priced first. The judge of a v10 draw is never Sonnet.
+
 **Copied text** (2B-11c, #301; `apply_echo`). Visitors see only the quotes of verified citations, never a transcript's text
 (`CLAUDE.md` §1), and the Earnings calls tab shows a bullet in full, so a bullet may not carry the transcript's own words
 (on dev, 65% of v5's bullets were a short paraphrase followed by the cited passage verbatim). A run of more than
@@ -66,7 +72,7 @@ from datetime import date
 
 from ft.ai import summaries
 from ft.ai.citations import locate_quote
-from ft.ai.client import Prompt, Reply, Request, Source
+from ft.ai.client import SONNET, Prompt, Reply, Request, Source
 from ft.ai.summaries import Bullet, Checked, Cited
 from ft.engines.document.text import normalize_inline
 
@@ -82,6 +88,7 @@ MIN_CUT_WORDS = 6                                     # a bullet cut to its lead
 ECHO_TAIL_CHARS = 5                                   # punctuation or quotes allowed after a copied run that ends a bullet
 ECHO_RULE = "echo-1"                                  # the rule's name: stamped on the outputs checked or re-checked under it
 JSON_FROM = 6                                         # prompt versions from v6 take the structured (json) route, v1-v5 the citations route
+MODEL_OF = {"v10": SONNET}                            # the model of a prompt version that doesn't run on the task's (Haiku 5.5); v10 is v9's text on Sonnet 5.5
 MAX_QUOTE = 400                                       # code points: a quote's span (CLAUDE.md §1: visitors see at most 400 of a quote)
 MAX_QUOTES = 3                                        # quotes a bullet may rest on
 # A firm guidance verb in a bullet's text needs a quote in which a speaker is that firm (#178, the v8 round, 8 Nov 2026; Anand's ruling
@@ -159,6 +166,11 @@ def route_of(version: str) -> str:
     return "json" if m and int(m.group(1)) >= JSON_FROM else "citations"
 
 
+def model_of(version: str) -> str | None:
+    """The model a prompt version names (`MODEL_OF`), or None for the task's own (Haiku 5.5)."""
+    return MODEL_OF.get(version)
+
+
 def _roster_lines(call: CallDoc) -> list[str]:
     lines = ["The speakers, as the transcript labels them, by the role our rules read for each:"]
     return lines + [f"- {label}: {'; '.join(names)}" for label, names in roster(call.turns)]
@@ -222,7 +234,8 @@ def structured_request(call: CallDoc, prompt: Prompt, schema: dict | None, *, no
     elif has_unknown:
         lines.append('Write the "unknown" list only if those participants said something worth a bullet; otherwise leave it '
                      "out entirely.")
-    return Request(TASK, prompt, (src,), "\n".join(lines), schema=schema, note=_json_note(note), route="json")
+    return Request(TASK, prompt, (src,), "\n".join(lines), model=model_of(prompt.version), schema=schema, note=_json_note(note),
+                   route="json")
 
 
 def answer_turns(turns: Sequence[Turn]) -> set[int]:
