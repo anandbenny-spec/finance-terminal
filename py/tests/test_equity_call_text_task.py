@@ -2,6 +2,8 @@
 the saved replies and PDFs in data/fixtures/equity/calls (the same mock transport as test_equity_call_fetch.py; these tests
 skip without the private fixtures), then this task cuts turns, chunks and publishes them."""
 import itertools
+from datetime import timedelta
+from types import SimpleNamespace
 
 import boto3
 import httpx
@@ -71,12 +73,12 @@ def s3():
     srv.stop()
 
 
-def go_text(expect="success"):
+def go_text(expect="success", now=NOW):
     t = Text()
     t.workflows = ("weekly", "backfill")
     web = Web()
-    http = HttpClient(transport=httpx.MockTransport(web), sleep=lambda s: None, clock=lambda: NOW)
-    code = run(JOB, "backfill", [t], only=KEY2, force=True, http=http, storage=storage, clock=lambda: NOW)
+    http = HttpClient(transport=httpx.MockTransport(web), sleep=lambda s: None, clock=lambda: now)
+    code = run(JOB, "backfill", [t], only=KEY2, force=True, http=http, storage=storage, clock=lambda: now)
     tr = q("select status, rows_written, checks, error from ops.task_run where task_key = %s order by id desc limit 1", KEY2)[0]
     assert tr[0] == expect, ("RUN " + tr[0] + " " + (tr[3] or "")[-500:] + " " + str([c for c in tr[2] if not c["passed"]])).replace("\n", " | ")
     return code, tr
@@ -273,6 +275,8 @@ def test_a_published_call_whose_stored_roles_differ_from_the_rules_gets_them_rew
     chunks = q("select chunk_no, char_start, char_end, section, speaker from core.chunk where document_id = %s order by chunk_no", doc)
     x("update equity.call_turn set role = 'unknown' where document_id = %s", doc)
     x("update equity.earnings_call set unknown_role_share = 1 where transcript_document_id = %s", doc)
+    # A new role rule changes the analysis version (2B-09b): a call analysed under the old one is re-derived once.
+    x("update equity.earnings_call set analysis_version = 'the rules before the change' where transcript_document_id = %s", doc)
     _, tr = go_text()
     assert tr[1] > 0
     assert q("select turn_no, role from equity.call_turn where document_id = %s order by turn_no", doc) == want
@@ -280,3 +284,121 @@ def test_a_published_call_whose_stored_roles_differ_from_the_rules_gets_them_rew
     assert q("select chunk_no, char_start, char_end, section, speaker from core.chunk where document_id = %s order by chunk_no", doc) == chunks
     _, tr = go_text()
     assert tr[1] == 0                                                         # and now a second run writes nothing
+
+
+# ---------------------------------------------------------------------------------------------- 2B-09b: the analysis version
+SLICES = 4
+
+
+@pytest.fixture
+def reads(monkeypatch):
+    """The sizes of the stored files `Fetcher.read` returns, in order: one entry per stored PDF read from Storage."""
+    from ft.jobs.fetch import Fetcher
+    real, seen = Fetcher.read, []
+
+    def counting(self, raw_file_id):
+        data = real(self, raw_file_id)
+        seen.append(len(data))
+        return data
+    monkeypatch.setattr(Fetcher, "read", counting)
+    return seen
+
+
+def hul_event_id():
+    return q("""select c.event_id from equity.earnings_call c join core.entity en on en.id = c.entity_id where en.slug = %s""", HUL)[0][0]
+
+
+def stored_version():
+    return q("select analysis_version from equity.earnings_call where event_id = %s", hul_event_id())[0][0]
+
+
+def run_time(inside: bool, week: int = 0):
+    """A weekly run's clock in which HUL's call is (or isn't) in the integrity slice, from `week` weeks after NOW."""
+    eid = hul_event_id()
+    return next(NOW + timedelta(weeks=k) for k in range(week, week + 2 * SLICES)
+                if ect.in_slice(eid, (NOW + timedelta(weeks=k)).date(), SLICES) == inside)
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_an_analysed_call_is_read_once_then_skipped_until_its_slice_comes_and_nothing_is_written(s3, reads):
+    setup_hul()
+    assert stored_version() is None
+    reads.clear()
+    _, tr = go_text(now=run_time(False))                                        # (d)/(b): new, never analysed: read, version written
+    assert len(reads) == 1 and tr[1] > 0 and stored_version() == ect.analysis_version()
+    detail = checks(tr)["calls_analysed"]["detail"]
+    assert "1 calls analysed" in detail and "0 skipped" in detail and "1 stored files read" in detail and "MB" in detail
+    assert checks(tr)["analysis_versions"]["passed"]
+    tables = ("core.chunk", "equity.call_turn", "core.document", "core.event", "equity.earnings_call")
+    snap = [q(f"select count(*) from {t}")[0][0] for t in tables]
+    stamp = q("select updated_at from core.event where slug like 'zf-%'")
+
+    reads.clear()
+    _, tr = go_text(now=run_time(False))                                        # (a) current version, outside the slice
+    assert reads == [] and tr[1] == 0                                           # (g) not read, and a second run writes nothing
+    c = checks(tr)
+    assert "1 skipped" in c["calls_analysed"]["detail"] and "0 stored files read" in c["calls_analysed"]["detail"]
+    assert c["text_matches"]["passed"] and "0 transcripts re-derived" in c["text_matches"]["detail"]
+    assert snap == [q(f"select count(*) from {t}")[0][0] for t in tables] and stamp == q("select updated_at from core.event where slug like 'zf-%'")
+
+    reads.clear()
+    _, tr = go_text(now=run_time(True))                                         # the integrity slice reads it, still unchanged
+    assert len(reads) == 1 and tr[1] == 0 and stored_version() == ect.analysis_version()
+    assert "1 in this run's integrity slice" in checks(tr)["text_matches"]["detail"]
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_over_four_consecutive_weekly_runs_with_unchanged_rules_a_call_is_read_exactly_once(s3, reads):
+    setup_hul()
+    go_text()
+    reads.clear()
+    for k in range(SLICES):
+        _, tr = go_text(now=NOW + timedelta(weeks=k))
+        assert tr[1] == 0
+    assert len(reads) == 1
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_changed_rule_makes_every_call_read_again_once_and_records_the_new_version(s3, reads, monkeypatch):
+    setup_hul()
+    go_text(now=run_time(False))
+    old = stored_version()
+    monkeypatch.setattr(ect, "analysis_version", lambda: "after-a-rule-change")                 # (c)
+    reads.clear()
+    _, tr = go_text(now=run_time(False))
+    assert len(reads) == 1 and tr[1] == 1 and stored_version() == "after-a-rule-change" != old       # unchanged text: the version row
+    assert "1 with no or another analysis version" in checks(tr)["text_matches"]["detail"]
+    reads.clear()
+    _, tr = go_text(now=run_time(False))                                                        # and then skipped again
+    assert reads == [] and tr[1] == 0
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_file_that_no_longer_hashes_to_the_stored_text_fails_the_check_when_it_is_read_and_the_version_stays(s3, monkeypatch):
+    setup_hul()
+    go_text(now=run_time(False))
+    monkeypatch.setattr(ect.pdfs, "call_text", lambda info: SimpleNamespace(extracted=SimpleNamespace(sha256=bytes(32)), labels=[]))
+    _, tr = go_text(now=run_time(False))                                                        # skipped: the check can't see it
+    assert checks(tr)["text_matches"]["passed"]
+    _, tr = go_text(expect="checks_failed", now=run_time(True))                                 # (f) the integrity slice catches it
+    assert not checks(tr)["text_matches"]["passed"] and HUL in checks(tr)["text_matches"]["detail"]
+    assert stored_version() == ect.analysis_version() and call(HUL)[2] is True                  # nothing was rolled forward
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_without_migration_0033_every_call_is_read_nothing_is_recorded_and_a_warning_says_so(s3, reads, monkeypatch):
+    setup_hul()
+    go_text(now=run_time(False))
+    x("update equity.earnings_call set analysis_version = null")
+    monkeypatch.setattr(ect, "_has_version_column", lambda db: False)                          # as on a project not migrated yet
+    reads.clear()
+    _, tr = go_text(now=run_time(False))
+    assert len(reads) == 1 and tr[1] == 0 and stored_version() is None
+    c = checks(tr)
+    assert not c["analysis_versions"]["passed"] and "0033" in c["analysis_versions"]["detail"]
+    assert c["text_matches"]["passed"] and "1 read because versions aren't recorded here yet" in c["calls_analysed"]["detail"]
