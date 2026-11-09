@@ -171,7 +171,9 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   (`Delta`, inline SVG). Never for policy decisions, hawk/dove, stance or forecast revisions: those are words
   and position (`DecisionLine`, `VoteDotPlot`; `HawkDoveMeter` has no hue). A signed policy or forecast change (`NumbersChanged`, the History table's change) carries its sign and a neutral triangle in the ink colour (`Delta` with `tone="neutral"`), never green or red (Anand, 1 Nov 2026). White (`--highlight`, `#ffffff`) is the one accent, for
   interaction. Chart colour follows the entity: cyan for the US and the Fed, violet for India and the RBI,
-  magenta for a third series.
+  magenta for a third series. Market edges (the 3 px top edge in the market's colour) go only on a panel about one
+  market on a page that mixes markets; a page about one market, such as every company page (India only), has none
+  (Design 01 §1.15; Anand, 4 Nov 2026).
 - **Every number, date and time goes through `web/lib/format.ts`:** true minus, a fixed month table, grouping
   by the figure's market (Indian for INR, US for USD), never the viewer's locale. Nothing formats inline.
 - Charts: at most three series, one y-axis, "View as table" on every chart. Each library has one wrapper, so an
@@ -233,8 +235,12 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   follows, so the site must be recruiter-ready by then and keep running with no Claude session, scheduled task or API
   credit. Three modules, one per weekly window (the plan limit resets on Mondays, 20:30 IST): (a) Fed vs RBI, polished
   to its link; (b) the Nifty 50 screener with valuation, rate sensitivity and the accuracy page; (c) the earnings-call
-  analyzer for each company's latest call. Jobs labelled `after-18-nov` aren't built before then. Nothing the live site
-  needs may depend on Claude: every AI feature degrades to a labelled state without a key or credits (#197).
+  analyzer for each company's latest call, plus guidance against delivery (back in scope, Anand, 2 Nov 2026, 15:03 IST;
+  Plan 04b; cut line Wed 11 Nov, 20:00 IST for scoring, #177). Jobs labelled `after-18-nov` aren't built before then,
+  except those Anand pulled forward (8 Nov 2026, 00:26 IST; #30): a pulled-forward feature ships hidden (a `site.*`
+  field key with no `core.field_policy` row; his flip is inserting the row), and a daytime session for a launch job may
+  ignore a pulled-forward job's claim when it checks whether its lane is busy. Nothing the live site needs may depend
+  on Claude: every AI feature degrades to a labelled state without a key or credits (#197).
 - **Credit pools and who runs what (Anand, 30 Oct 2026).** Cloud-session credit (until 5 Nov) funds the build chains;
   the plan's $100 of API credit (until 21 Nov) funds the Batch API and **headless runs**: Anand starts
   `ops/headless/run-job.sh <issue>` on his Mac (`claude --bare -p`, Sonnet, a dollar cap, its own clone in
@@ -258,6 +264,7 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   changed (`web/`, `py/config/eval/sets/`, `vercel.json`, `ci.yml`), and a skipped `web` counts as passed.
 - **Write files to the Mac or the repo before the session ends.** A session's cloud workspace is invisible to
   every other session. After writing a file to the Mac, read it back there.
+- Read the clock (`TZ=Asia/Kolkata date`) before writing any time on GitHub or in a handoff; never estimate it.
 - **Branches and pull requests (Anand, 23 Oct 2026; replaces "Anand commits and pushes").** Claude commits in
   its own cloud clone, pushes only to `claude/<job>` branches it created, and opens a pull request; CI runs on
   it. If `main` moves, merge `main` into the branch; never rebase a branch that's been pushed (Anand, 24 Oct 2026).
@@ -282,7 +289,9 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   VM) reach GitHub, PyPI, npm and the Anthropic API, but not the data sources or Supabase. So unit and SQL tests
   run in Claude's workspace (on a local Postgres with pgvector) or in CI. Anything that touches a live source or
   the real project runs on GitHub's runners or in Anand's Terminal on the Mac, and Claude reads the results from
-  the run status, the Mac folder or what Anand pastes.
+  the run status, the Mac folder or what Anand pastes. Supabase's free plan counts egress per organisation (5 GB a
+  cycle; dev's ends 21 Nov 2026), so production lives in its own organisation (Anand, 9 Nov 2026) and a run that
+  re-reads the raw bucket states its egress cost on its issue; dev runs that read the bucket wait until 21 Nov (#30).
 - **Runs Claude may start (Anand, 22 Oct 2026; widened 24 Oct 2026, 23:46 IST).** Claude may open, update and
   close GitHub issues, and start `ci` and the manual check workflows against the **dev** project. It may also
   start **dev runs that spend no AI credits** (`daily`, `refresh`, `backfill`, `watch`, each with `target=dev`)
@@ -292,8 +301,9 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   draw on one **$25 pool** of AI-run spend, dev and production together, counted from 8 Nov 2026, 00:00 IST until
   the API credit expires on 21 Nov 2026 (Anand, 8 Nov 2026, after 15:32 IST; tracker #30). Price each run first from
   `ai_prices.yaml`, record its cost on its issue and the pool's running total on #30, and ask Anand before a run that
-  would pass the pool. It replaces the per-module dev caps (D1's $2 for module 1, #24; 2B's $3, then $5, Spec 02B §0
-  decision 4). **Production:** a run is approved only where Anand's dated
+  would pass the pool. One exception (Anand, 9 Nov 2026, 17:37 IST): #178's Opus summary round is outside the pool, §7's
+  $5 stop and the $15 switch (#30). It replaces the per-module dev caps (D1's $2 for module 1, #24; 2B's $3, then $5,
+  Spec 02B §0 decision 4). **Production:** a run is approved only where Anand's dated
   approval is on its job card or tracker #30: module 1's early-link backfills (#84, #16), 2A's data backfills and first
   runs (#122, #132), 2B's backfills with its AI backfill and weekly AI runs (#184), one D4 drill after #135. Each run
   is recorded on its issue; §7's $5 stop applies. Any other production run, and any other AI spend, still needs his OK. Claude
@@ -337,9 +347,9 @@ never rebuild a rule from memory.
 | Arch 03 / 03a | Architecture - 03 AI layer · 03a AI layer prototypes | wrapper, citations, guard, retrieval, evaluation |
 | Arch 04 / 04a | Architecture - 04 Storage, repo layout, Python and lock file · 04a Repo skeleton | storage, CI, one-time setup, secrets |
 | Design 01 / 01b | Design - 01 Design system · 01b Changes of 1 Nov 2026 (tape, white accent, favicon, neutral triangle) | tokens, formatting, components, layouts; read 01b with 01, and 01b holds where they differ (Anand, 1 Nov 2026) |
-| Spec NN | Spec - 01 Fed vs RBI policy tracker · 02A Equity screener and valuation (Nifty 50) · 02B Earnings calls and guidance (Nifty 50) | inputs, rules, outputs, UI, done when; from module 2 on, the build prompt (§9) |
+| Spec NN | Spec - 01 Fed vs RBI policy tracker · 02A Equity screener and valuation (Nifty 50) · 02B Earnings calls and guidance (Nifty 50) · 02B.1 Changes of 4 Nov 2026 (role-held calls, option C) | inputs, rules, outputs, UI, done when; from module 2 on, the build prompt (§9); 02B.1 holds where it differs from 02B and Plan 04b |
 | Prompt NN | Prompt - 01 Fed vs RBI sub-prompt (one per module; from module 2 on, the build prompt is part of the spec: Spec 02A, 02B) | the module's build order and stop conditions |
-| Plan NN | Plan - 01 Pass 2 ECB and BoE · 02 Module 2 scope, releases and reuse · 03 Module 1 longer history · 04 Ship by 18 Nov · 04a Changes of 1 Nov 2026 (lane C, renumbered migration, week 3) | later work's scope, order and reuse; 04: the 18 Nov plan, with 04a's changes |
+| Plan NN | Plan - 01 Pass 2 ECB and BoE · 02 Module 2 scope, releases and reuse · 03 Module 1 longer history · 04 Ship by 18 Nov · 04a Changes of 1 Nov 2026 (lane C, renumbered migration, week 3) · 04b Guidance against delivery for 18 Nov (2 Nov 2026) | later work's scope, order and reuse; 04: the 18 Nov plan, with 04a's and 04b's changes (where they differ, 04b holds until 18 Nov) |
 | Setup NN | Setup - 01 Supabase projects · Setup - 02 Cloud environment | one-time setup steps |
 | Review 01 | Review - 01 Argon external review triage | the 22 Oct fixes and why |
 | Data Audit NN | Data Audit - 00 Process and status · 01 … 08 | source evidence; closed audit docs are frozen records |
