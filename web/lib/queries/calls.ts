@@ -5,7 +5,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cacheLife, cacheTag } from "next/cache";
 import { selectCall } from "@/lib/equity/calls";
-import type { AiCitationRow, AiOutputRow, ApiDatabase, CallFigureRow, CallGuidanceRow, CitationPageRow, GuidanceHitRateRow, UnattributedRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
+import { guidanceFiguresOpen, unattributedAll } from "@/lib/equity/guidance";
+import type { AiCitationRow, AiOutputRow, ApiDatabase, CallFigureRow, CallGuidanceRow, CitationPageRow, GuidanceHitRateRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
 import { readFieldPolicy } from "@/lib/queries/policy";
 import { readAll } from "@/lib/queries/read";
 import { publicClient } from "@/lib/supabase/public";
@@ -22,14 +23,18 @@ const CITATION_COLUMNS = "ai_output_id, citation_no, claim_path, document_id, do
 const GUIDANCE_COLUMNS =
   "company_slug, company_name, short_name, call_slug, fiscal_label, call_date, metric, metric_label, kind, value, low, high, unit, direction, comparison, period_text, period_kind, target_start, target_end, basis, growth_basis, scope_text, vintage_date, ai_output_id, citation_no, not_scored_reason, extraction_label, outcome_label, is_first, revision, counted, outcome, relation, actual, reason, first_call_slug, first_stated_on";
 
-/** What the Guidance record panel reads (2B-19b, #267): the company's guidance rows, its hit-rate row, and the count left out. */
-export type GuidanceRecordData = {
+/** What readGuidanceRecord reads for the Guidance record panel (2B-19b, #267): the company's guidance rows, its hit-rate row, and their quotes' citations and pages. */
+export type GuidanceRecordReads = {
   rows: CallGuidanceRow[];
   rate: GuidanceHitRateRow | null;
-  /** api.earnings_latest.unattributed_targets_all: null while the figures are held back. */
-  unattributed: number | null;
   citations: AiCitationRow[];
   pages: CitationPageRow[];
+};
+
+/** What the panel renders: those reads and the count left out, which readCallsTab derives from the calls it read (#342). */
+export type GuidanceRecordData = GuidanceRecordReads & {
+  /** The company's statements by speakers whose role couldn't be read (what api.earnings_latest.unattributed_targets_all gave before #342): null while the figures are held back. */
+  unattributed: number | null;
 };
 
 export type CallsTabData = {
@@ -108,9 +113,13 @@ async function readOutputPages(db: Db, ids: readonly number[]): Promise<Citation
   );
 }
 
-/** The company's guidance rows, hit rate and left-out count with their quotes' citations and pages (#267). Every list is read whole against the exact count. */
-export async function readGuidanceRecord(db: Db, slug: string): Promise<GuidanceRecordData> {
-  const [rows, rates, latest] = await Promise.all([
+/**
+ * The company's guidance rows and hit rate with their quotes' citations and pages (#267). Every list is read whole against the exact
+ * count. The count left out is not read here: api.earnings_latest builds every call of every company to give it (#329), so
+ * readCallsTab derives it from the calls it already holds (#342).
+ */
+export async function readGuidanceRecord(db: Db, slug: string): Promise<GuidanceRecordReads> {
+  const [rows, rates] = await Promise.all([
     readAll<CallGuidanceRow>("api.call_guidance", (from, to) =>
       db
         .from("call_guidance")
@@ -131,26 +140,25 @@ export async function readGuidanceRecord(db: Db, slug: string): Promise<Guidance
         .order("scope_key")
         .range(from, to),
     ),
-    readAll<UnattributedRow>("api.earnings_latest unattributed", (from, to) =>
-      db.from("earnings_latest").select("company_slug, unattributed_targets_all", { count: "exact" }).eq("company_slug", slug).order("company_slug").range(from, to),
-    ),
   ]);
   const ids = [...new Set(rows.map((r) => r.ai_output_id))].sort((a, b) => a - b);
   const [citations, pages] = await Promise.all([readOutputCitations(db, ids), readOutputPages(db, ids)]);
-  return { rows, rate: rates[0] ?? null, unattributed: latest[0]?.unattributed_targets_all ?? null, citations, pages };
+  return { rows, rate: rates[0] ?? null, citations, pages };
 }
 
 /** The tab's reads: the company's calls, the selected one's summary, figures, citations and pages (§13.7). */
 export async function readCallsTab(db: Db, slug: string, call: string | undefined): Promise<CallsTabData> {
-  const [calls, policies, guidance] = await Promise.all([
+  const [calls, policies, record] = await Promise.all([
     readCompanyCalls(db, slug),
     readFieldPolicy(db),
-    // The guidance record fails on its own (#328): its three views have timed out when the calls list had loaded fine.
+    // The guidance record fails on its own (#328): its views have timed out when the calls list had loaded fine.
     readGuidanceRecord(db, slug).catch((error: unknown) => {
       console.error(`[company] ${slug} guidance record read failed: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }),
   ]);
+  // The count left out comes from the calls just read, not from api.earnings_latest, which builds every call of every company (#342, #329).
+  const guidance: GuidanceRecordData | null = record ? { ...record, unattributed: unattributedAll(calls, guidanceFiguresOpen(policies)) } : null;
   const selected = selectCall(calls, call);
   if (!selected) {
     const latest = await readAll<EarningsLatestRow>("api.earnings_latest", (from, to) =>

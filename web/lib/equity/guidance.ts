@@ -1,11 +1,12 @@
 // web/lib/equity/guidance.ts: the Guidance record panel's rules, pure (2B-19b, #267; Spec 02B §8, §5.10; Plan 04b P12; 02B.1 C6).
-// Every figure is a row an `api` view returned (api.call_guidance, api.guidance_hit_rates, api.earnings_latest,
-// api.citation_pages); nothing here computes an outcome or a rate (the database scored them). An outcome is words and its
+// Every figure is a row an `api` view returned (api.call_guidance, api.guidance_hit_rates, api.earnings_calls,
+// api.citation_pages); nothing here computes an outcome or a rate (the database scored them); the one sum, the count left out,
+// adds counts api.earnings_calls returned (unattributedAll, #342). An outcome is words and its
 // relation, never a colour and never a verdict on management. Words never used: tests/banned-words.ts.
 import { figureText, citationOf, pageIndex } from "@/lib/equity/calls";
 import { NOT_AVAILABLE, formatCount, formatDate, formatFraction, formatStatedValue } from "@/lib/format";
 import { pageLink, type Citation, type CitationPage } from "@/lib/policy/ai";
-import type { AiCitationRow, CallGuidanceRow, CitationPageRow, GuidanceHitRateRow } from "@/lib/queries/api";
+import type { AiCitationRow, CallGuidanceRow, CitationPageRow, EarningsCallRow, FieldPolicyRow, GuidanceHitRateRow } from "@/lib/queries/api";
 
 export const GUIDANCE_HELD = "Guidance record held back until it passes review";
 export const MIN_SCORED = 5;
@@ -102,6 +103,25 @@ export function hitRate(row: GuidanceHitRateRow | null): HitRate {
     context: `Delivered ${formatCount(row.delivered)} of ${formatCount(row.n)} scored targets; missed ${formatCount(row.missed)}`,
     asOf: window,
   };
+}
+
+/**
+ * Whether the extraction field is shown or labelled: the `fig_ok` that api.earnings_calls and api.earnings_latest test before they
+ * give a count (otherwise their counts are null).
+ */
+export function guidanceFiguresOpen(policies: ReadonlyArray<FieldPolicyRow>): boolean {
+  return policies.some((p) => p.field_key === "ai.guidance_extraction" && (p.status === "shown" || p.status === "labelled"));
+}
+
+/**
+ * api.earnings_latest.unattributed_targets_all, rebuilt from the company's calls the tab has already read (#342; #329, recommendation
+ * 2a), because that view builds every call of every company to answer it. It is the view's own rule: null while the extraction field
+ * is held back; otherwise the sum of the calls' `unattributed_targets` with a null counted as 0 (`coalesce(sum(...), 0)`), so a
+ * company with no calls gives 0. Each addend is a count the database returned.
+ */
+export function unattributedAll(calls: ReadonlyArray<Pick<EarningsCallRow, "unattributed_targets">>, figuresOpen: boolean): number | null {
+  if (!figuresOpen) return null;
+  return calls.reduce((sum, c) => sum + (c.unattributed_targets ?? 0), 0);
 }
 
 /** The line for statements by speakers whose role couldn't be read (Spec 02B.1 C6); null while the count is null (gated) or 0. */

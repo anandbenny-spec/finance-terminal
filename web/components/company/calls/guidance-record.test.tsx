@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CompanyView } from "@/components/company/CompanyView";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { guidanceGroups, hitRate, outcomeText, unattributedLine } from "@/lib/equity/guidance";
+import { guidanceFiguresOpen, guidanceGroups, hitRate, outcomeText, unattributedAll, unattributedLine } from "@/lib/equity/guidance";
 import type { CallGuidanceRow, GuidanceHitRateRow } from "@/lib/queries/api";
 import { readGuidanceRecord, type CallsTabData, type GuidanceRecordData } from "@/lib/queries/calls";
 import { bannedCallWordsIn } from "@/tests/banned-words";
@@ -134,6 +134,33 @@ describe("the left-out line (02B.1 C6)", () => {
   });
 });
 
+describe("the count left out, rebuilt from the calls (#342)", () => {
+  const withCount = (n: number | null) => ({ unattributed_targets: n });
+  it("is null while the extraction field is held back, whatever the calls hold", () => {
+    expect(unattributedAll([withCount(2), withCount(null)], false)).toBeNull();
+    expect(unattributedAll([], false)).toBeNull();
+  });
+  it("is the sum of the calls' counts once the field is open, a null counting as 0", () => {
+    expect(unattributedAll([withCount(1), withCount(null), withCount(2)], true)).toBe(3);
+    expect(unattributedAll([withCount(null), withCount(null)], true)).toBe(0);
+  });
+  it("is 0, not null, for a company with no calls once the field is open (the view's coalesce)", () => {
+    expect(unattributedAll([], true)).toBe(0);
+  });
+  it("reads the extraction field's policy as the views' fig_ok does: shown or labelled, not hidden, not another field", () => {
+    expect(guidanceFiguresOpen(SHOWN)).toBe(true);
+    expect(guidanceFiguresOpen([{ field_key: "ai.guidance_extraction", status: "shown", label: null }])).toBe(true);
+    expect(guidanceFiguresOpen(HELD)).toBe(false);
+    expect(guidanceFiguresOpen([{ field_key: "ai.call_summary", status: "shown", label: null }])).toBe(false);
+    expect(guidanceFiguresOpen([])).toBe(false);
+  });
+  it("gives the line the panel shows: 3 from the calls reads as the plural line, none as no line", () => {
+    expect(unattributedLine(unattributedAll([withCount(1), withCount(2)], true))).toContain("3 forward-looking statements by speakers");
+    expect(unattributedLine(unattributedAll([withCount(0)], true))).toBeNull();
+    expect(unattributedLine(unattributedAll([withCount(2)], false))).toBeNull();
+  });
+});
+
 describe("the hit rate and the words", () => {
   it("writes the rate as a whole percent from the stored fraction, and the note below 5", () => {
     expect(hitRate(rate())).toMatchObject({ kind: "rate", value: "67%" });
@@ -152,15 +179,20 @@ describe("the read", () => {
     const { db, seen } = fakeClient({
       call_guidance: many(1200),
       guidance_hit_rates: [rate() as unknown as Row],
-      earnings_latest: [{ company_slug: "tcs", unattributed_targets_all: 3 }],
       ai_citations: [],
       citation_pages: [],
     });
     const got = await readGuidanceRecord(db, "tcs");
     expect(got.rows).toHaveLength(1200);
     expect(got.rate?.n).toBe(6);
-    expect(got.unattributed).toBe(3);
     expect(seen.every((s) => s.countExact)).toBe(true);
     expect(seen.filter((s) => s.view === "call_guidance").length).toBeGreaterThan(1);
+  });
+  it("no longer asks api.earnings_latest for the count left out, which builds every call of every company (#342)", async () => {
+    // earnings_latest is absent from the store, so a request for it would answer 404 and the read would throw.
+    const { db, seen } = fakeClient({ call_guidance: [], guidance_hit_rates: [], ai_citations: [], citation_pages: [] });
+    const got = await readGuidanceRecord(db, "tcs");
+    expect(Object.keys(got).sort()).toEqual(["citations", "pages", "rate", "rows"]);
+    expect(seen.some((s) => s.view === "earnings_latest")).toBe(false);
   });
 });

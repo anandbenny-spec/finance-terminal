@@ -68,10 +68,28 @@ describe("the Earnings calls tab's guidance record", () => {
     expect(out.calls).toHaveLength(1);
     expect(out.selected?.call_slug).toBe("q2-fy27");
   });
-  it("is the record when its reads succeed", async () => {
-    const { db } = fakeClient({ ...CALLS, call_guidance: [], guidance_hit_rates: [], earnings_latest: [] });
+  it("is the record when its reads succeed, without a request for api.earnings_latest when a call is selected (#342)", async () => {
+    const { db, seen } = fakeClient({ ...CALLS, call_guidance: [], guidance_hit_rates: [] });
     const out = await readCallsTab(db, "tcs", undefined);
-    expect(out.guidance).toEqual({ rows: [], rate: null, unattributed: null, citations: [], pages: [] });
+    expect(out.guidance).toEqual({ rows: [], rate: null, unattributed: 0, citations: [], pages: [] });
+    expect(seen.some((s) => s.view === "earnings_latest")).toBe(false);
+  });
+  it("takes the count left out from the calls it read: their counts summed, a null as 0, once the extraction field is open (#342)", async () => {
+    const rows = [call({ call_slug: "q2-fy27", unattributed_targets: 1 }), call({ call_slug: "q1-fy27", unattributed_targets: null, is_newest: false, is_default: false }), call({ call_slug: "q4-fy26", unattributed_targets: 2, is_newest: false, is_default: false })];
+    const { db } = fakeClient({ ...CALLS, earnings_calls: rows as unknown as Row[], call_guidance: [], guidance_hit_rates: [] });
+    expect((await readCallsTab(db, "tcs", undefined)).guidance?.unattributed).toBe(3);
+  });
+  it("leaves the count null while the extraction field is held back, as the view did (#342)", async () => {
+    const held = [{ field_key: "ai.call_summary", status: "hidden", label: null }, { field_key: "ai.guidance_extraction", status: "hidden", label: null }];
+    const { db } = fakeClient({ ...CALLS, field_policy: held as unknown as Row[], call_guidance: [], guidance_hit_rates: [] });
+    expect((await readCallsTab(db, "tcs", undefined)).guidance?.unattributed).toBeNull();
+  });
+  it("gives 0 for a company with no calls once the field is open, and still reads the discovery window for the empty tab (#342)", async () => {
+    const { db, seen } = fakeClient({ ...CALLS, earnings_calls: [], call_guidance: [], guidance_hit_rates: [], earnings_latest: [] });
+    const out = await readCallsTab(db, "tcs", undefined);
+    expect(out.guidance?.unattributed).toBe(0);
+    expect(out.selected).toBeNull();
+    expect(seen.filter((s) => s.view === "earnings_latest")).toHaveLength(1);
   });
   it("still throws when the calls list itself can't be read", async () => {
     const { db } = fakeClient({ field_policy: SHOWN as unknown as Row[], call_guidance: [], guidance_hit_rates: [], earnings_latest: [] });
