@@ -76,11 +76,15 @@ class CallsConfig:
     history_from: date           # a backfill without --since reads announcements from here
     first_pages_from: str        # filings of an earlier season are classified without opening their first pages ("Q1 FY27")
     raw_storage_stop_mb: int     # the stop for a project's stored raw files
+    call_text_integrity_slices: int   # equity.call_text re-reads one of this many slices of the unchanged calls in each run
 
 
 def load_calls_config(path: Path = CALLS_CONFIG) -> CallsConfig:
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return CallsConfig(doc["history_from"], str(doc["first_pages_from"]), int(doc["raw_storage_stop_mb"]))
+    slices = int(doc["call_text_integrity_slices"])
+    if slices < 1:
+        raise ValueError("call_text_integrity_slices must be at least 1")
+    return CallsConfig(doc["history_from"], str(doc["first_pages_from"]), int(doc["raw_storage_stop_mb"]), slices)
 
 
 def window_start(since: date | None, latest_stored: datetime | None, *, backfill: bool = False,

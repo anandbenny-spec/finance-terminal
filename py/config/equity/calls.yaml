@@ -12,3 +12,10 @@ first_pages_from: Q1 FY27
 # P5: the stop for a project's raw files, in MB of stored objects (85% of the Free plan's 1 GB). The check `raw_storage`
 # reports the bucket's stored size against it; a session reads it between the two halves of a history backfill.
 raw_storage_stop_mb: 850
+
+# 2B-09b (#341, 9 Nov 2026): equity.call_text no longer re-reads every stored transcript PDF on every run (Supabase counts the
+# bytes read out of Storage as egress). A call whose transcript was analysed under the rules it still runs under is skipped,
+# except for one rotating slice: each run re-reads the calls whose stable hash (of the call's id) modulo this number equals the
+# run's week number modulo this number, as the integrity check. 4 means each call is re-read about monthly. Changing it never
+# changes the analysis version, so it never makes every call re-read.
+call_text_integrity_slices: 4
