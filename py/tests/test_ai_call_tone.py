@@ -264,3 +264,21 @@ def test_the_tone_set_names_its_documents_and_refuses_any_other_use():
             eca.tone_set_documents(only, "dev", env)
     with pytest.raises(ValueError, match="runs on dev only"):
         eca.tone_set_documents(ct.TASK, "production", env)
+
+
+V3_RULES = ("roughly offset, the score is 0", "A factual update (a project, launch, approval, order, capacity addition",
+            "Score each passage on its own words.")
+
+
+def test_v3_is_v1s_rubric_plus_three_rules_and_v4_v5_are_its_text_on_sonnet_and_opus():
+    """#175's second round (Anand, 10 Nov 2026): v3 keeps v1's rubric and adds three rules, which GUIDE.md's tone section carries too,
+    so the labeller and the model read the same rules; v4 and v5 send v3's text unchanged."""
+    from ft.ai.client import SONNET
+    v1, v3, v4, v5 = (load_prompt(ct.TASK, v) for v in ("v1", "v3", "v4", "v5"))
+    added = [line for line in v3.text.splitlines() if line not in v1.text.splitlines()]
+    assert len(added) == 3 and all(any(r in line for line in added) for r in V3_RULES)
+    assert [line for line in v1.text.splitlines() if line not in v3.text.splitlines()] == []
+    assert v4.text == v3.text == v5.text
+    assert ct.model_of("v3") is None and ct.model_of("v4") == SONNET and ct.model_of("v5") == ct.OPUS == "claude-opus-5-5"
+    guide = (eca.TONE_SETS["earnings_tone"].parent / "GUIDE.md").read_text(encoding="utf-8")
+    assert all(r in guide for r in V3_RULES)

@@ -17,6 +17,15 @@ anthropic:
         long: {input: 0.50, cache_write_5m: 0.625, cache_write_1h: 1.00, cache_read: 0.05, output: 2.50}
       claude-sonnet-5-5:
         standard: {input: 2.00, cache_write_5m: 2.50, cache_write_1h: 4.00, cache_read: 0.10, output: 10.00}
+  # Opus 5.5, for call_summary v11 (#178's Opus round; Anand's decision of 9 Nov 2026). A new dated entry for a model the table
+  # didn't hold: the 23 Oct entry above is unchanged, and a model is priced from the newest entry that lists it. Twice Sonnet 5.5's
+  # price (batch: 2 in, 10 out per million). The page lists no long-context surcharge for Opus 5.5, so there is no `long` tier.
+  - from: 2026-11-10
+    source: https://platform.claude.com/docs/en/about-claude/pricing (read 9 Nov 2026 for #178's handoff, read again 10 Nov 2026)
+    batch: 0.5
+    models:
+      claude-opus-5-5:
+        standard: {input: 4.00, cache_write_5m: 5.00, cache_write_1h: 8.00, cache_read: 0.20, output: 20.00}
 
 # Embeddings: the first 200M tokens per model are free (Architecture 03 §1.5); tokens are counted per run in the
 # policy.ai_batch task's `embeddings` check, and no cost is recorded while the allowance lasts.

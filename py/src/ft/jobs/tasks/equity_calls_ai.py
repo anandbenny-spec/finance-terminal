@@ -133,12 +133,15 @@ from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TA
 # call_tone v2 is v1's text on Sonnet 5.5 (ft/ai/call_tone.py, MODEL_OF), 20 times Haiku's price (config/ai_prices.yaml): the tone
 # gate's Sonnet round (#175, Spec 02B §5.8). This branch (claude/2b-12-tone-sonnet) is run on dev only, limited to the gate set's
 # calls (CALLS_AI_TONE_SET), and is not merged to main: main stays on v1 unless Sonnet passes and Anand approves its re-run.
-PROMPT_VERSION = {cs.TASK: "v9", ge.TASK: "v1", ct.TASK: "v2"}
+# The second round (Anand, 10 Nov 2026, 22:24-22:33 IST): v3 on Haiku, then v4 (Sonnet) and v5 (Opus), v3's text, each run on the
+# second set's calls only (tone_set=earnings_tone_2); this line moves to the next version for each run.
+PROMPT_VERSION = {cs.TASK: "v9", ge.TASK: "v1", ct.TASK: "v3"}
 IST = "Asia/Kolkata"
 SHOWN = 12
 ONLY_ENV = "CALLS_AI_TASK"            # both (the default) | call_summary | guidance_extraction | call_tone: limits what a run asks for (#302)
 TONE_SET_ENV = "CALLS_AI_TONE_SET"    # empty (the default) | earnings_tone: a tone-only run limited to that evaluation set's calls (#175)
-TONE_SETS = {"earnings_tone": Path(__file__).resolve().parents[4] / "config" / "eval" / "sets" / "earnings_tone_items.json"}
+_SETS_DIR = Path(__file__).resolve().parents[4] / "config" / "eval" / "sets"
+TONE_SETS = {name: _SETS_DIR / f"{name}_items.json" for name in ("earnings_tone", "earnings_tone_2")}
 
 
 NEWEST, ALL = "newest", "all"         # which calls a run asks a summary for (#370): `summary_scope`

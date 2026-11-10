@@ -33,7 +33,10 @@ delta > 2 SE, **more negative** if delta < -2 SE, otherwise **little changed**; 
 model that runs it. v1 runs on the task's model (Haiku 5.5). **v2 is v1's text, unchanged, on Sonnet 5.5**: Spec 02B §5.8's "If Haiku
 fails" step, after Haiku's v1 scored 21 of 30 on the `earnings_tone` set (24 needed). Sonnet's batch price is 20 times Haiku's
 (`config/ai_prices.yaml`), so a run under v2 is priced first, and the gate's run is limited to the set's 30 calls
-(`CALLS_AI_TONE_SET`, ft/jobs/tasks/equity_calls_ai.py).
+(`CALLS_AI_TONE_SET`, ft/jobs/tasks/equity_calls_ai.py). **The second round** (Anand, 10 Nov 2026, 22:24-22:33 IST, after both
+models failed): v3 is v1's rubric plus three rules (offsetting language is 0; a factual update is 0 unless management judges it; each
+passage on its own words), tested on a new set (`earnings_tone_2`, labelled by Claude Fable) on Haiku (v3), then Sonnet (v4) and Opus
+(v5) with v3's text unchanged.
 """
 from __future__ import annotations
 
@@ -55,7 +58,10 @@ MAX_QUOTE = 300                       # characters (the spec's cap; the private-
 SCORES = (-2, -1, 0, 1, 2)
 SECTIONS = ("opening", "qa", "closing")
 SIGMAS = 2                            # the change is called when |delta| exceeds this many standard errors
-MODEL_OF = {"v2": SONNET}             # the model of a prompt version that doesn't run on the task's (Haiku 5.5); v2 is v1's text on Sonnet 5.5
+OPUS = "claude-opus-5-5"
+# The model of a prompt version that doesn't run on the task's (Haiku 5.5): v2 is v1's text on Sonnet 5.5 (the first round); v4 and v5
+# are v3's text on Sonnet 5.5 and Opus 5.5 (the second round, #175: Haiku, then Sonnet, then Opus, the cheapest that passes).
+MODEL_OF = {"v2": SONNET, "v4": SONNET, "v5": OPUS}
 DROPS: dict[str, str] = {
     "malformed": "evidence item isn't the schema's object",
     "unknown_passage": "evidence names a passage that isn't in the list",

@@ -91,6 +91,11 @@ passage? A whole number from −2 to +2, by the rubric below (the same words the
 **Rules of thumb**
 - Score management's language, not the figures: a passage that only recites figures is 0.
 - A passage that mixes both is scored on its balance. Hedged optimism is +1, not +2.
+- When a passage's positive and negative language roughly offset, the score is 0. Give +1 or −1 only when one side clearly outweighs
+  the other. *(From prompt v3 and the second set, `earnings_tone_2`; 10 Nov 2026.)*
+- A factual update (a project, launch, approval, order, capacity addition, partnership, sustainability or leadership news) is 0
+  unless management attaches a judgement about results, demand, margins or the outlook to it. *(v3.)*
+- Score each passage on its own words. *(v3: the model is told the same about the call's other passages.)*
 - Score the text, not what you know happened to the company afterwards.
 - The reason line: one short sentence naming the words that decided the score.
 - The model reads the whole call's passages and you read one passage; that difference is noted with the gate's result.

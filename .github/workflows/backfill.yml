@@ -33,7 +33,7 @@ on:
       tone_set:
         description: 'equity.calls_ai with calls_ai_task=call_tone only: limit the run to an evaluation set''s calls (#175, the tone gate''s Sonnet round)'
         type: choice
-        options: [none, earnings_tone]
+        options: [none, earnings_tone, earnings_tone_2]
         default: none
 concurrency:
   group: jobs-backfill
