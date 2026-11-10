@@ -120,7 +120,10 @@ def _ai_rows(tx, f: Fetched) -> None:
              left join core.doc_type dt on dt.key = d.doc_type
              left join core.event e on e.id = o.event_id
              left join core.event_type et on et.key = e.event_type
-            where o.created_at <= %s""", (f.now,)).fetchall()
+            where o.created_at <= %s
+              -- policy.ai_batch asked for call-transcript summaries in error (8-10 Nov 2026, issue #351/#356): every
+              -- one was rejected and none is shown, and no equity task makes a doc_summary, so they are not counted
+              and not (o.task = 'doc_summary' and d.doc_type = 'call_transcript')""", (f.now,)).fetchall()
     for module in f.settings.modules:
         mine = [r for r in data if r[0] == module]
         for period, span in PERIODS.items():
