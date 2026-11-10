@@ -20,6 +20,7 @@ FAMILIES = ("operating", "lender", "insurer", "mixed")
 RUN_KINDS = ("reverse_dcf", "implied_roe")       # 2A-14's kinds of equity.valuation_run (dcf_default is `Result`)
 RUN_STATUSES = ("solved", "no_solution", "not_applicable")
 UNITS = ("fraction", "money", "shares", "beta", "multiple")
+MAX_NEAR_COST_MARGIN = Decimal("0.02")           # #354's stop condition: the near-cost margin is never above 2 points
 
 # The N/A sentences of the non-operating families (Spec 02A §5.9's wording for insurers and mixed companies).
 FAMILY_NA = {
@@ -186,13 +187,15 @@ class Settings:
     grid_margin_steps: tuple[Decimal, ...]
     grid_wacc_steps: tuple[Decimal, ...]
     max_effective_tax: Decimal     # a 3-FY effective rate outside [0, this] gives way to the marginal rate
+    near_cost_margin: Decimal      # the reverse DCF's near-cost case: a return on capital at most this above WACC
 
     def json(self) -> dict:
         return {"kd_spread": str(self.kd_spread), "growth_clamp": [str(self.growth_low), str(self.growth_high)],
                 "grid_growth": [str(g) for g in self.grid_growth],
                 "grid_margin_steps": [str(m) for m in self.grid_margin_steps],
                 "grid_wacc_steps": [str(w) for w in self.grid_wacc_steps],
-                "max_effective_tax": str(self.max_effective_tax)}
+                "max_effective_tax": str(self.max_effective_tax),
+                "near_cost_margin": str(self.near_cost_margin)}
 
     @classmethod
     def from_mapping(cls, raw: dict) -> Settings:
@@ -208,6 +211,7 @@ class Settings:
 
         kd, clamp, grid, tax = need("cost_of_debt_spread"), need("default_growth"), need("scenario_grid"), \
             need("effective_tax")
+        near = need("near_cost_margin")
         g = grid["growth"]
         start, stop, step = num(g["from"]), num(g["to"]), num(g["step"])
         if step <= 0 or stop < start:
@@ -218,9 +222,12 @@ class Settings:
             x += step
         out = cls(num(kd["spread"]), num(clamp["low"]), num(clamp["high"]), tuple(growth),
                   tuple(num(m) for m in grid["margin_steps"]), tuple(num(w) for w in grid["wacc_steps"]),
-                  num(tax["max"]))
+                  num(tax["max"]), num(near["margin"]))
         if not out.growth_low < out.growth_high or out.kd_spread <= 0 or not 0 < out.max_effective_tax < 1:
             raise ValueError("valuation.yaml model: a growth clamp low < high, a positive spread, a tax cap in (0, 1)")
+        if not 0 < out.near_cost_margin <= MAX_NEAR_COST_MARGIN:
+            raise ValueError("valuation.yaml model.near_cost_margin: above 0 and at most 2 points (#354: a wider "
+                             "margin would call clearly profitable growth near-cost, so it's Anand's decision)")
         return out
 
 

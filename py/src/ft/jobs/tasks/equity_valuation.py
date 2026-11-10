@@ -18,8 +18,17 @@ Checks, B blocking, W warning:
 - (B) `round_trip`: for every solved operating company the value at the implied growth, solved again, gives the growth back
   within 0.01 points, and the price lies between the values at the growth ± 0.01 points (Spec 02A §9.5 item 9);
 - (B) `lead_runs`: every universe company has its lead run, with a reason whenever it isn't solved;
-- (B) `quarter_rule`: more than a quarter of the operating companies `no_solution` fails the run (Spec 02A §9.4: the model
-  or its inputs are wrong; loosening it is Anand's call);
+- (B) `quarter_rule`, two tripwires (Spec 02A §9.4: the model or its inputs are wrong), either failing the run:
+  - an **unexplained** no-solution (`below_range`, `above_range`: the price outside the range at a return on capital
+    clearly above WACC; any outcome the engine doesn't name as explained counts here too) in more than a quarter of
+    the operating companies;
+  - **any** no-solution in more than half of them, so an input bug that depresses every company's return on capital
+    (and so makes them all "explained") still stops the load.
+  Why it changed (CLAUDE.md §7: the reason beside the check): until 10 Nov 2026 any no-solution counted toward the
+  quarter. The 8 Nov production `weekly` failed it at 9 of 35; dev's run of 1 Nov had passed at 8 of 35, every one a
+  company whose return on capital sits below or within a point of its cost of capital: the model's known limit (Spec
+  02A §10 decision 3, #120), not a wrong input. Anand chose to count only what the rule was written to catch, with the
+  half as the backstop (#354, option 1, 10 Nov 2026, 12:30 IST);
 - (W) `outcomes`: the outcomes by kind, with every no-solution and not-applicable reason counted;
 - (W) `banned_words`: no stored sentence holds one of Brief §11's banned words (whole words, the site's own text).
 """
@@ -53,13 +62,15 @@ from ft.equity.valuation import (
 )
 from ft.equity.valuation import default_run as dcf_default_run
 from ft.equity.valuation.model import MODEL_VERSION
+from ft.equity.valuation.reverse import EXPLAINED
 from ft.jobs.due import Due
 from ft.jobs.runner import Check, Context, Task
 from ft.jobs.tasks import register
 
 SHOWN = 10
 POINTS = Decimal("0.0001")                      # 0.01 points, as a fraction
-QUARTER = 4                                     # more than one in QUARTER operating companies without a solution fails
+QUARTER = 4                 # more than one in QUARTER operating companies with an unexplained no-solution fails (#354)
+HALF = 2                    # more than one in HALF operating companies with any no-solution fails (#354)
 BANNED = re.compile(r"\b(overvalued|undervalued|cheap|expensive|upside|fair value|target|buy|sell)\b", re.IGNORECASE)
 
 
@@ -251,12 +262,24 @@ class EquityValuation(Task):
         reverse = {co.eid: r for co in f.companies if co.family == "operating"
                    for r in co.runs if r.kind == "reverse_dcf"}
         operating = [co for co in f.companies if co.eid in reverse]       # one lacking its run is lead_runs' failure
-        failed = [co.slug for co in operating if reverse[co.eid].status == "no_solution"]
-        out.append(Check("quarter_rule", len(failed) * QUARTER <= len(operating),
-                         f"{len(failed)} of {len(operating)} operating companies have no solution"
+        # Two tripwires (#354, option 1, Anand, 10 Nov 2026; the reason is in the module docstring): the quarter counts
+        # only the no-solutions the model doesn't explain, the half counts them all. Fails closed: a no-solution whose
+        # outcome isn't one of the engine's explained cases counts as unexplained.
+        n = len(operating)
+        outcome = {co.eid: (reverse[co.eid].inputs or {}).get("outcome") for co in operating}
+        failed = [f"{co.slug} ({outcome[co.eid]})" for co in operating if reverse[co.eid].status == "no_solution"]
+        unexplained = [co.slug for co in operating
+                       if reverse[co.eid].status == "no_solution" and outcome[co.eid] not in EXPLAINED]
+        quarter_ok, half_ok = len(unexplained) * QUARTER <= n, len(failed) * HALF <= n
+        out.append(Check("quarter_rule", quarter_ok and half_ok,
+                         f"{len(unexplained)} of {n} operating companies have an unexplained no-solution (the price "
+                         "outside the range)" + (": " + _names(unexplained) if unexplained else "")
+                         + ("" if quarter_ok else
+                            " (more than a quarter: the model or its inputs are wrong; Spec 02A §9.4)")
+                         + f". {len(failed)} of {n} have no solution of any kind"
                          + (": " + _names(failed) if failed else "")
-                         + ("" if len(failed) * QUARTER <= len(operating) else
-                            " (more than a quarter: the model or its inputs are wrong; Spec 02A §9.4)")))
+                         + ("" if half_ok else
+                            " (more than half: an input may be lowering every company's return on capital; #354)")))
 
         trips, solved, settings = [], 0, assemble.load_settings()
         for co in operating:
@@ -280,6 +303,7 @@ class EquityValuation(Task):
         out.append(Check("banned_words", not found, ("banned words in stored reasons: " + _names(found)) if found
                          else "no stored reason holds a banned word", blocking=False))
         self.result.update(solved=solved, operating=len(operating), no_solution=len(failed),
+                           unexplained_no_solution=len(unexplained),
                            reasons={f"{k}: {why}": n for (k, why), n in by_reason.items()})
         return out
 

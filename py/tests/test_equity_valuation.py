@@ -344,7 +344,21 @@ def test_the_settings_need_their_sources(tmp_path):
                                                          if k != "source"}})
 
 
-WORDS = re.compile(r"\b(India|Indian|INR|NSE|BSE)\b")
+def test_the_near_cost_margin_is_one_point_with_its_source_and_never_above_two():
+    """#354: Anand chose 1.0 point (10 Nov 2026); a margin above 2 points is his call, so the loader refuses it."""
+    raw = assemble._valuation_yaml()["model"]
+    assert SETTINGS.near_cost_margin == Decimal("0.01") and "#354" in raw["near_cost_margin"]["source"]
+    assert SETTINGS.json()["near_cost_margin"] == "0.01"
+    with pytest.raises(ValueError, match="source"):
+        Settings.from_mapping({**raw, "near_cost_margin": {"margin": "0.01"}})
+    assert Settings.from_mapping({**raw, "near_cost_margin": {**raw["near_cost_margin"], "margin": "0.02"}}) \
+        .near_cost_margin == Decimal("0.02")
+    for bad in ("0.0201", "0", "-0.01"):
+        with pytest.raises(ValueError, match="near_cost_margin"):
+            Settings.from_mapping({**raw, "near_cost_margin": {**raw["near_cost_margin"], "margin": bad}})
+
+
+WORDS =re.compile(r"\b(India|Indian|INR|NSE|BSE)\b")
 LITERALS = ("25.168", "ctryprem", "betaIndia")
 
 

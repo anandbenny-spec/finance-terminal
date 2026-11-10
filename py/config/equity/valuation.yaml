@@ -33,6 +33,15 @@ model:
     source: >-
       Spec 02A §5.7 (28 Oct 2026): the 3-FY effective rate gives way to the marginal rate when it's outside 0 to 50%
       or profit before tax is zero or negative; Brief §6.3 and Data Audit 02 E8 (effective rate to marginal rate)
+  # The reverse DCF's near-cost case (Spec 02A §5.9; #354): a 3-FY return on capital above WACC by no more than this,
+  # the model's value rising with growth and the price above its value at the range's top (+50%) is
+  # `return_near_cost`, not `above_range`: at that return growth earns little more than it costs, so the model can't
+  # reach the price, whatever the market expects. 2 points is the most the code accepts (#354's stop condition).
+  near_cost_margin:
+    margin: 0.01
+    source: >-
+      Anand, 10 Nov 2026, 12:30 IST (#354, option 1: 1.0 point, as the card proposed). Dev's run of 1 Nov 2026 (prices
+      to 30 Oct 2026) had four companies in this case, 0.4 to 0.7 points above their WACC, all stored as above_range
 
 # A lender's delivered return on equity, the figure its implied ROE is set against (Spec 02A §5.9; job 2A-14), read by
 # ft/equity/assemble.py. The spec's window is five financial years, but results filings carry balance sheets only from

@@ -14,10 +14,13 @@ import psycopg
 import pytest
 from banned_words import banned_words_in
 from conftest import dsn
+from test_equity_reverse import shaped
 from test_equity_valuation import SETTINGS, company, market
 
 from ft.equity import snapshot as sn
 from ft.equity.valuation import Input, default_run, per_share, prepare, reverse_dcf, scenario_grid
+from ft.equity.valuation import reverse as R
+from ft.equity.valuation.model import MODEL_VERSION
 from ft.jobs.runner import run
 from ft.jobs.tasks import equity_valuation as ev
 from ft.jobs.tasks.equity_snapshot import EquitySnapshot
@@ -25,6 +28,7 @@ from ft.jobs.tasks.equity_valuation import (
     CompanyRuns,
     EquityValuation,
     Fetched,
+    Stored,
     from_result,
     from_run,
     round_trip,
@@ -141,10 +145,11 @@ def test_the_snapshot_columns_are_the_tables_columns():
 
 
 # ---------------------------------------------------------------------------------------------- the valuation checks
-def synthetic(slug: str, eid: int, target_growth: str | None = "0.08", *, price=None, family="operating") -> CompanyRuns:
-    """Runs from the engine on the worked example's company, priced so that its reverse DCF solves at the target growth
-    (or at `price`, e.g. a price above the range)."""
-    c, m = company(key=slug, family=family), market()
+def synthetic(slug: str, eid: int, target_growth: str | None = "0.08", *, price=None, family="operating",
+              base=None) -> CompanyRuns:
+    """Runs from the engine on the worked example's company (or `base`), priced so that its reverse DCF solves at the
+    target growth (or at `price`, e.g. a price above the range)."""
+    c, m = base or company(key=slug, family=family), market()
     if price is None:
         d, _, _ = prepare(c, m, SETTINGS)
         price = per_share(d, Decimal(target_growth)).quantize(Decimal("0.01"))
@@ -186,6 +191,69 @@ def test_more_than_a_quarter_of_the_operating_companies_without_a_solution_fails
     f = Fetched(DAY, market(), fine[:2] + [high, synthetic("y", 10, price=Decimal(10) ** 9)])
     got = {c.name: c for c in t.checks(None, f, 1)}
     assert not got["quarter_rule"].passed and "2 of 4" in got["quarter_rule"].detail
+
+
+# ---------------------------------------------------------------------------------------------- quarter rule (#354)
+def near_cost(slug: str, eid: int) -> CompanyRuns:
+    """#354's case: 0.5 points over its WACC, priced at twice its value at +50% (test_equity_reverse's `shaped`)."""
+    c = shaped("1.04", "0.25", key=slug)
+    d, _, _ = prepare(c, market(), SETTINGS)
+    co = synthetic(slug, eid, price=(per_share(d, R.HIGH) * 2).quantize(Decimal("0.01")), base=c)
+    assert (co.runs[0].status, co.runs[0].inputs["outcome"]) == ("no_solution", "return_near_cost")
+    return co
+
+
+def stub(eid: int, outcome: str) -> CompanyRuns:
+    """An operating company with only its reverse-DCF row, for the rule's arithmetic (no engine needed)."""
+    status = "not_applicable" if outcome == "not_applicable" else "no_solution"
+    r = Stored("reverse_dcf", status, "A reason.", Decimal(100), None, None, None, {"outcome": outcome}, MODEL_VERSION)
+    return CompanyRuns(eid, f"c{eid}", "operating", DAY, [r])
+
+
+def quarter_rule(companies):
+    return {c.name: c for c in EquityValuation().checks(None, Fetched(DAY, market(), companies), 1)}["quarter_rule"]
+
+
+def test_near_cost_companies_count_toward_the_half_but_not_the_quarter():
+    """2 of 4 near-cost: the rule before #354 failed this; now only the half counts them, and 2 of 4 is half."""
+    fine = [synthetic(f"s{k}", k) for k in range(3)]
+    two = quarter_rule(fine[:2] + [near_cost("n1", 11), near_cost("n2", 12)])
+    assert two.passed and two.blocking
+    assert two.detail.startswith("0 of 4 operating companies have an unexplained no-solution")
+    assert two.detail.endswith(". 2 of 4 have no solution of any kind: n1 (return_near_cost); n2 (return_near_cost)")
+    three = quarter_rule(fine[:1] + [near_cost(f"n{k}", 10 + k) for k in range(3)])
+    assert not three.passed and "3 of 4 have no solution of any kind" in three.detail and "more than half" in three.detail
+    mixed = quarter_rule(fine[:2] + [near_cost("n1", 11), synthetic("x", 9, price=Decimal(10) ** 9)])
+    assert mixed.passed and mixed.detail.startswith(
+        "1 of 4 operating companies have an unexplained no-solution (the price outside the range): x. 2 of 4")
+
+
+@pytest.mark.parametrize("unexplained,explained,ok", [
+    (0, 8, True),       # dev's run of 1 Nov: 4 near-cost, 1 return below cost, 3 growth lowers value
+    (1, 8, True),       # the same plus a ninth company above the range at a healthy return (production's 8 Nov
+    #                     run failed at 9 of 35; its ninth isn't read yet)
+    (8, 8, True),       # 8 unexplained of 35 is not more than a quarter; 16 in all is not more than half
+    (9, 8, False),      # 9 of 35 unexplained: more than a quarter
+    (0, 17, True),      # 17 of 35 explained: not more than half
+    (0, 18, False),     # 18 of 35: more than half, though all are explained (an input lowering every return)
+])
+def test_the_two_tripwires_on_thirty_five_operating_companies(unexplained, explained, ok):
+    kinds = ["return_near_cost", "return_below_cost", "growth_lowers_value", "tax_fade"]
+    cos = [stub(k, "above_range" if k % 2 else "below_range") for k in range(unexplained)]
+    cos += [stub(100 + k, kinds[k % 4]) for k in range(explained)]
+    cos += [stub(200 + k, "not_applicable") for k in range(35 - len(cos))]
+    got = quarter_rule(cos)
+    assert got.passed is ok and got.detail.startswith(f"{unexplained} of 35 operating companies")
+    assert f". {unexplained + explained} of 35 have no solution of any kind" in got.detail
+
+
+def test_a_no_solution_the_engine_doesnt_name_as_explained_counts_as_unexplained():
+    """Fails closed: an outcome outside the engine's explained list (a new one, or none stored) counts toward the quarter."""
+    for odd in ("something_new", None):
+        cos = [stub(1, odd), stub(2, odd)] + [stub(10 + k, "not_applicable") for k in range(5)]
+        got = quarter_rule(cos)
+        assert not got.passed and got.detail.startswith("2 of 7 operating companies have an unexplained no-solution")
+    assert quarter_rule([stub(1, "something_new")] + [stub(10 + k, "not_applicable") for k in range(3)]).passed
 
 
 def test_a_company_without_its_lead_run_fails_the_lead_run_check():
@@ -352,6 +420,23 @@ def test_the_quarter_rule_fails_the_run_and_rolls_the_load_back():
     status, _, checks = last_run(key)
     assert status == "checks_failed" and not check(checks, "quarter_rule")["passed"]
     assert q("select count(*) from equity.valuation_run where entity_id = any(%s)", ids)[0][0] == 0
+
+
+def test_two_near_cost_companies_of_four_load_with_their_sentence():
+    """#354: the load the rule before it rolled back (2 of 4 without a solution) now stores, near-cost runs and all."""
+    key = "test.valuation_n"
+    w = World(key)
+    ids = [w.company(n)[0] for n in ("a", "b", "c", "d")]
+    cos = [synthetic("a", ids[0]), synthetic("b", ids[1]), near_cost("c", ids[2]), near_cost("d", ids[3])]
+    t = valuation_task(key, lambda self: Fetched(DAY, market(), cos))
+    go(t, key)
+    status, _, checks = last_run(key)
+    assert status == "success" and check(checks, "quarter_rule")["passed"]
+    assert check(checks, "quarter_rule")["detail"].startswith("0 of 4 operating companies have an unexplained")
+    stored = q("""select status, inputs->>'outcome', reason from equity.valuation_run
+                  where kind = 'reverse_dcf' and entity_id = any(%s) order by entity_id""", ids[2:])
+    assert [s[:2] for s in stored] == [("no_solution", "return_near_cost")] * 2
+    assert all(s[2].startswith("At its 3-year return on capital of 12.8%, close to its cost of capital") for s in stored)
 
 
 # ---------------------------------------------------------------------------------------------- the snapshot task
