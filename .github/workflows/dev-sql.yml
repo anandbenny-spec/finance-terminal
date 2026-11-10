@@ -9,8 +9,9 @@ name: dev-sql
 #   holds no privileges of its own, only SET-able membership in anon, service_role and job_writer, so every file starts
 #   with `set local role <one of them>`. `psql --single-transaction` keeps that role until the end of the file, and any
 #   error rolls the whole file back.
-# - Output is what psql prints: counts and notices. A file selects counts, never rows. A psql meta-command (a line
-#   starting with a backslash, such as \! or \copy) would run on the runner, so a file holding one is refused.
+# - Output is what psql prints: counts and notices. A file selects counts, never rows. A psql meta-command (a backslash
+#   command such as \! or \copy, which psql also runs after SQL on the same line, as in `select 1 \gexec`) would run on
+#   the runner, so a file holding a backslash anywhere is refused.
 run-name: dev-sql ${{ inputs.file }}
 on:
   workflow_dispatch:
@@ -46,8 +47,8 @@ jobs:
           if [ ! -f "$FILE" ]; then
             echo "::error title=dev-sql::$FILE is not on main"; exit 1
           fi
-          if grep -Eq '^[[:space:]]*\\' "$FILE"; then
-            echo "::error title=dev-sql::$FILE holds a psql meta-command (a line starting with a backslash)"; exit 1
+          if grep -Fq '\' "$FILE"; then
+            echo "::error title=dev-sql::$FILE holds a backslash anywhere: a psql meta-command (even after SQL on the same line) would run on the runner"; exit 1
           fi
       - name: Check the login is dev_sql
         env:

@@ -96,6 +96,13 @@ def test_a_psql_meta_command_is_refused_because_it_would_run_on_the_runner(tmp_p
     assert code == 1 and "psql meta-command" in out
 
 
+@pytest.mark.parametrize("line", ["select 1 \\gexec", "select 1; \\! true", "select 'a\\b'", "-- a comment \\! true"])
+def test_a_backslash_anywhere_in_the_file_is_refused(tmp_path, line):
+    """F1-07: psql runs a meta-command that follows SQL on the same line, so the check is on any backslash."""
+    code, out = _check_step(tmp_path, "supabase/dev-sql/0003_meta.sql", content=f"set local role anon;\n{line}\n")
+    assert code == 1 and "backslash" in out
+
+
 def test_the_login_check_names_dev_sql_and_hides_connection_errors():
     run = _steps()["Check the login is dev_sql"]["run"]
     assert "select current_user" in run and '!= "dev_sql"' in run
@@ -120,5 +127,5 @@ def test_every_file_starts_with_a_role_switch_holds_no_meta_command_and_selects_
     for path in _files():
         lines = [ln for ln in path.read_text().splitlines() if ln.strip() and not ln.strip().startswith("--")]
         assert FIRST_STATEMENT.fullmatch(lines[0].strip()), f"{path.name}: the first statement must be `set local role ...;`"
-        assert not any(ln.lstrip().startswith("\\") for ln in lines), f"{path.name}: psql meta-command"
+        assert not any("\\" in ln for ln in lines), f"{path.name}: psql meta-command (no backslash anywhere)"
         assert not re.search(r"select\s+\*", " ".join(lines), re.IGNORECASE), f"{path.name}: select counts, never rows"
