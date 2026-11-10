@@ -144,7 +144,7 @@ def test_over_the_token_limit_or_without_a_price_nothing_is_sent():
     with pytest.raises(TooLong, match="100,000"):
         claude(fake).send(req("x" * 400_000))
     with pytest.raises(NoPrice):
-        claude(fake).send(req(model="claude-opus-5-5"))
+        claude(fake).send(req(model="claude-fable-5-2"))                 # a model the table doesn't price (Opus 5.5 is, from 10 Nov 2026)
     assert fake.requests == []
 
 

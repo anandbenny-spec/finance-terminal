@@ -51,7 +51,9 @@ Decided by Claude (standing delegation, 24 Oct 2026), each with its alternative:
 
 Sitting 2, decided by Claude (standing delegation, 24 Oct 2026), each with its alternative; rule version 3 (8 Nov 2026, before any
 item was drawn or read):
-- The summary gate draws from **published prompt-v9 outputs** (v6 for the first draw of sitting 2, v7 for its re-draw, v8 for the third, before v9 existed), not
+- The summary gate draws from **published prompt-v11 outputs** (v6 for the first draw of sitting 2, v7 for its re-draw, v8 for the third, v9 for the
+  fourth, before v9 and v11 existed; v10, the Sonnet round, was drawn from its own outputs; v11 is v9's text plus the Fable review's picks, written by
+  Opus 5.5 at effort high, the Opus round of 10 Nov, and its draw is judged by a fresh Fable session, never Opus), not
   re-checked v5 ones: #301's 5 Nov note said v5, but Anand chose the structured route (option 1, 6 Nov), whose outputs are v6 and
   from 8 Nov v7 (v6 plus a rule on guidance verbs, after the first draw failed on "reiterated") and v8 (v7 plus four rules and a check on
   firm verbs, after the re-draw failed on a hedge and a partial cause) and v9 (v8 plus three rules and a check on extent words, after the
@@ -77,7 +79,7 @@ from dataclasses import dataclass, field, replace
 
 RULE_VERSION = 3                # 2: sitting 1's final rules; 3: adds sitting 2's gates and the "where present" minimums
 ATTEMPTS = 300                  # a seeded retry limit, see `draw`
-SUMMARY_VERSION = "v9"          # the prompt version that runs on production (#301, option 1; v7 to v9 from #178); the summary gate judges this one
+SUMMARY_VERSION = "v11"         # the prompt version the summary gate judges (#301, option 1; v7 to v11 from #178; v11 is the Opus round, on this branch only until the gate passes)
 RECALL_EXTRA = 3                # calls after the five, read only while the settled targets are under 15
 SEEDS = {"targets": 2026110701, "unattributed": 2026110702, "stated": 2026110703, "links": 2026110704,
          "summaries": 2026110801, "recall": 2026110802, "scoring": 2026110803}
