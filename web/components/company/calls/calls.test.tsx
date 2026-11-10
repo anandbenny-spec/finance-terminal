@@ -4,14 +4,15 @@
 // transcript text, tokens only, and the banned-words scan. Test rows, not real figures.
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { AIBlock } from "@/components/ai/AIBlock";
 import { Passage } from "@/components/ai/CitationChip";
 import { PRIVATE_TEXT_NOTE, isPrivateText } from "@/components/policy/DocumentPage";
 import { CompanyView } from "@/components/company/CompanyView";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { callOf, figureText, selectCall, statusText, summaryLists } from "@/lib/equity/calls";
+import { SUMMARY_HELD, SUMMARY_LABEL, callOf, figureText, selectCall, statusText, summaryLists } from "@/lib/equity/calls";
 import { tabOf } from "@/lib/equity/company";
 import { formatPageRange, formatStatedValue } from "@/lib/format";
-import { toCitation } from "@/lib/policy/ai";
+import { toCitation, wholeQuote } from "@/lib/policy/ai";
 import type { CallsTabData } from "@/lib/queries/calls";
 import { bannedCallWordsIn, BANNED_WORDS, CALLS_BANNED_WORDS } from "@/tests/banned-words";
 import { HELD, call, calls, citation, figure, output, pageRow } from "@/tests/call-rows";
@@ -25,6 +26,16 @@ const html = (c: CallsTabData | null) =>
       <CompanyView data={page({ tab: "calls", overview: null, calls: c })} basis="consolidated" freshness={null} />
     </TooltipProvider>,
   );
+
+/** The tab's markup with every blockquote taken out: what is left must hold none of a transcript's words (#371). */
+const withoutBlockquotes = (markup: string) => markup.replace(/<blockquote[\s\S]*?<\/blockquote>/g, "");
+/** The text of each blockquote, in page order. */
+const quotesIn = (markup: string) => [...markup.matchAll(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/g)].map((m) => text(m[1]));
+/** The summary panel's text: from its heading to the next panel. */
+const summaryPanel = (markup: string) => {
+  const t = text(markup);
+  return t.slice(t.indexOf("call: what was said"), t.indexOf("Guidance given on this call"));
+};
 
 describe("the tab and the call in the URL", () => {
   it("is a tab in the URL, marked current", () => {
@@ -69,10 +80,14 @@ describe("the summary", () => {
     expect(t).not.toContain("Said by participants whose role couldn't be read Not attributed");
   });
 
-  it("drops a bullet with no verified citation and shows no quote text outside a chip", () => {
+  it("drops a bullet with no verified citation and shows quote text only inside a blockquote", () => {
     const lists = summaryLists(output(), [citation(1)], []);
     expect(lists.flatMap((l) => l.bullets.map((b) => b.text))).toEqual(["Management described demand as steady across regions."]);
-    expect(text(html(calls()))).not.toContain("Quoted words number 1");
+    // Changed with Anand's OK (10 Nov 2026, on #371; CLAUDE.md §7). This used to say the quote text shows nowhere outside a chip's
+    // popover. The quote-led summary now shows each verified quote under its bullet, so the rule is where the words may appear:
+    // only in a blockquote under a bullet, never anywhere else on the tab.
+    expect(text(withoutBlockquotes(html(calls())))).not.toContain("Quoted words number 1");
+    expect(quotesIn(html(calls()))).toEqual(["Quoted words number 1.", "Quoted words number 2."]);
   });
 
   it("says the summary is held back while its field is hidden, and not generated yet when the call has none", () => {
@@ -146,6 +161,97 @@ describe("the figures", () => {
     expect(formatStatedValue(1234567.5, "inr")).toBe("₹12,34,567.5 cr");
     expect(formatStatedValue(12.5, "pct")).toBe("12.5%");
     expect(formatStatedValue(-2, "pct")).toBe("−2%");
+  });
+});
+
+describe("the quote-led summary (#371)", () => {
+  const long = Array.from({ length: 50 }, (_, i) => `word${i}`).join(" ");
+  const two = output({
+    content: { bullets: [{ text: "Management gave two reasons for the margin.", citations: [2, 1], list: "management" }] },
+  });
+
+  it("puts each bullet's quote directly under it, after its chip, with the PDF page link where there is one", () => {
+    const s = summaryPanel(html(calls()));
+    expect(s).toContain("Management described demand as steady across regions. [1] Quoted words number 1. p. 3 ↗ What analysts asked about");
+    expect(s).toContain("Analysts asked about hiring plans. [2] Quoted words number 2. pp. 4–5 ↗");
+  });
+
+  it("shows two quotes for a bullet with two citations, in the order its chips run", () => {
+    const s = summaryPanel(html(calls({ summary: two })));
+    expect(s).toContain("[2] [1] Quoted words number 2. pp. 4–5 ↗ Quoted words number 1. p. 3 ↗");
+    expect(quotesIn(html(calls({ summary: two })))).toEqual(["Quoted words number 2.", "Quoted words number 1."]);
+  });
+
+  it("labels each block once, in the note slot, with Anand's wording", () => {
+    expect(SUMMARY_LABEL).toBe("AI paraphrase; the quote is the speaker's words.");
+    const s = summaryPanel(html(calls()));
+    expect(s.split(SUMMARY_LABEL)).toHaveLength(3); // two blocks, two labels
+    expect(s.indexOf(SUMMARY_LABEL)).toBeLessThan(s.indexOf("Management described demand"));
+  });
+
+  it("shows the whole stored quote, uncut, while the chip's popover keeps its cut", () => {
+    expect([...long].length).toBeGreaterThan(280);
+    expect([...long].length).toBeLessThanOrEqual(400);
+    const d = calls({ citations: [citation(1, { quote: `  ${long}\n` }), citation(2)] });
+    expect(quotesIn(html(d))[0]).toBe(long);
+    const cited = summaryLists(output(), d.citations, [])[0].bullets[0].citations[0];
+    expect(cited.fullQuote).toBe(long);
+    expect([...cited.quote].length).toBeLessThanOrEqual(280); // the chip's popover is unchanged
+    expect(wholeQuote("  a\n  b ")).toBe("a b");
+  });
+
+  it("still drops a bullet whose citation row is missing, and shows no quote for it", () => {
+    const d = calls({ citations: [citation(1)] });
+    const s = summaryPanel(html(d));
+    expect(s).toContain("Management described demand as steady across regions. [1] Quoted words number 1.");
+    expect(s).not.toContain("Analysts asked about hiring plans.");
+    expect(s).not.toContain("Quoted words number 2.");
+    expect(s).not.toContain("What analysts asked about");
+  });
+
+  it("shows neither bullets nor quotes while the field is hidden", () => {
+    const s = summaryPanel(html(calls({ policies: HELD })));
+    expect(s).toContain(SUMMARY_HELD);
+    expect(s).not.toContain("Management described demand");
+    expect(s).not.toContain("Quoted words");
+    expect(html(calls({ policies: HELD }))).not.toContain("<blockquote");
+  });
+
+  it("gives the unread-role list the same treatment, with its own note first", () => {
+    const held = call({ roles_partial: true, unknown_role_share: 0.52 });
+    const d = calls({
+      calls: [held],
+      selected: held,
+      summary: output({ content: { bullets: [{ text: "A participant said hiring would continue.", citations: [2], list: "unknown" }] } }),
+    });
+    const s = summaryPanel(html(d));
+    expect(s).toContain(`Said by participants whose role couldn't be read Not attributed to management. ${SUMMARY_LABEL}`);
+    expect(s).toContain("A participant said hiring would continue. [2] Quoted words number 2. pp. 4–5 ↗");
+  });
+
+  it("sets each quote as a blockquote inside its bullet's list item, at the passage's text size, with nothing that opens on hover", () => {
+    const out = html(calls());
+    const panel = out.slice(out.indexOf('aria-labelledby="panel-call-summary"'), out.indexOf('aria-labelledby="panel-call-guidance"'));
+    const items = [...panel.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) => m[1]);
+    expect(items).toHaveLength(2);
+    for (const li of items) expect(li).toMatch(/<\/button><\/span><\/span><div class="[^"]*"><div><blockquote class="[^"]*\btext-data\b[^"]*"/);
+    expect(out).toMatch(/<blockquote class="border-l-2 border-highlight pl-2\.5 text-data text-ink-1 break-words">/); // the passage's rule and size
+    expect(out).not.toMatch(/<blockquote[^>]*(onmouse|hover:)/i);
+  });
+
+  it("is off by default: a module 1 AIBlock without the prop shows its chips alone", () => {
+    const block = { label: "AI summary", model: "claude-haiku-5-5", createdAt: "2026-10-30T09:00:00+00:00", bullets: [{ text: "The Committee held the rate.", citations: [toCitation(citation(1), true, pageRow(1, 3))!] }] };
+    const render = (quotes?: boolean) =>
+      renderToStaticMarkup(
+        <TooltipProvider>
+          <AIBlock block={block} now="2026-11-10T09:00:00+00:00" dense={false} quotes={quotes} />
+        </TooltipProvider>,
+      );
+    expect(render()).not.toContain("<blockquote");
+    expect(text(render())).not.toContain("Quoted words");
+    expect(render(false)).not.toContain("<blockquote");
+    // With the prop and no fullQuote, the cut quote shows: nothing breaks for a citation built elsewhere.
+    expect(quotesIn(render(true))).toEqual(["Quoted words number 1."]);
   });
 });
 
@@ -261,7 +367,14 @@ describe("what the tab promises", () => {
     }
   });
 
-  it("shows a transcript's words only as a chip's quote, which a static render keeps closed", () => {
-    expect(out).not.toContain("Quoted words");
+  it("shows a transcript's words only as a verified citation's quote: under its summary bullet, and in no table, heading or note", () => {
+    // Changed with Anand's OK (10 Nov 2026, on #371; CLAUDE.md §7). This used to say "Quoted words" is nowhere in the tab (the
+    // quotes lived in a chip's popover, closed in a static render). The summary's quotes now sit under their bullets in a
+    // blockquote; every other place still shows a chip alone, so the figures' quotes stay out of the markup and the blockquotes
+    // are exactly the summary's.
+    expect(withoutBlockquotes(out)).not.toContain("Quoted words");
+    expect(out).not.toContain("Margin words");
+    expect(out).not.toContain("Stated words");
+    expect(quotesIn(out)).toHaveLength(2);
   });
 });

@@ -15,6 +15,8 @@ export const QUOTE_MAX = 280;
 export type Citation = {
   no: number;
   quote: string;
+  /** The whole stored quote, whitespace tidied and never cut (at most 400 characters from the view), for the inline quotes under a bullet (#371). Only the Calls tab's summary sets it. */
+  fullQuote?: string;
   documentTitle: string | null;
   /** "Open in document": the document page with the cited span (C5's /documents/[id]). */
   href: string | null;
@@ -46,6 +48,11 @@ export function cutQuote(quote: string, max = QUOTE_MAX): string {
   if (sentence > max / 3) return `${head.slice(0, sentence + 1)} …`;
   const space = head.lastIndexOf(" ");
   return `${space > 0 ? head.slice(0, space) : head} …`;
+}
+
+/** A stored quote with its whitespace tidied and nothing cut: the inline quotes show the speaker's words whole (#371). */
+export function wholeQuote(quote: string): string {
+  return quote.replace(/\s+/g, " ").trim();
 }
 
 /** The document page for a cited span: /documents/12?span=340-512#cited (offsets in code points, as stored). */
