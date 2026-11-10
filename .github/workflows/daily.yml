@@ -36,7 +36,7 @@ jobs:
     # Manual runs are unchanged. py/tests/test_workflows.py fails CI for a scheduled workflow without this guard.
     if: github.event_name != 'schedule' || vars.PRODUCTION_SCHEDULES == 'on'
     runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026; the audit's G1/S1 ran on 24.04
-    timeout-minutes: 30
+    timeout-minutes: 45   # #364 (Review 02c F3-08): a day whose AI batch outlasts its 15-minute poll reaches 25-28 minutes before the summary task
     env:
       # GitHub issue #2, item 1: a scheduled run always targets production; a manual run targets dev unless
       # production is chosen. Production's credentials enter the environment only on a production run, and a

@@ -131,7 +131,7 @@ def test_nulls_reports_shares():
 # ---------------------------------------------------------------------------------------------- wiring
 def test_tasks_yaml_has_the_entry_and_the_site_is_listed():
     t = config.load()["crypto.coingecko_markets"]
-    assert t.rules == {"daily": "every 20 hours"} and t.overdue_after == timedelta(days=3)
+    assert t.rules == {"daily": "every 16 hours"} and t.overdue_after == timedelta(days=3)
     assert site_for("https://api.coingecko.com/api/v3/coins/markets", SITES).key == "coingecko"
     assert cg.CoingeckoMarkets.key == "crypto.coingecko_markets"
 

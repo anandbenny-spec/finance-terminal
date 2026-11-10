@@ -4,20 +4,20 @@
 # mpc_decision_day, after_decision_document (ft/jobs/due.py). Each task needs at least one `every` rule.
 # A decision-day rule is due inside the meeting's watch window; once the window has closed it stays due as a
 # *catch-up* while the decision document (or, for after_decision_document, the AI step) is missing, until the end of
-# the next calendar day in the bank's zone. A daily rule may add that catch-up: `every 20 hours or fomc_catch_up`
-# (also mpc_catch_up, ai_catch_up) is due after 20 hours, or while the named rule's catch-up applies (ft/jobs/config.py).
+# the next calendar day in the bank's zone. A daily rule may add that catch-up: `every 16 hours or fomc_catch_up`
+# (also mpc_catch_up, ai_catch_up) is due after 16 hours, or while the named rule's catch-up applies (ft/jobs/config.py).
 policy.calendar:
   description: FOMC and MPC meeting calendars
   workflows: {weekly: every 25 days}
   overdue_after: 40 days
 policy.fed_documents:
   description: FOMC statements, minutes, press-conference transcripts
-  workflows: {daily: every 20 hours or fomc_catch_up, watch: fomc_decision_day}
+  workflows: {daily: every 16 hours or fomc_catch_up, watch: fomc_decision_day}
   run_after: [policy.calendar]
   overdue_after: 3 days
 policy.rbi_documents:
   description: MPC resolutions, Governor's statements, minutes, transcripts (old site + RSS)
-  workflows: {daily: every 20 hours or mpc_catch_up, watch: mpc_decision_day}
+  workflows: {daily: every 16 hours or mpc_catch_up, watch: mpc_decision_day}
   run_after: [policy.calendar]
   overdue_after: 3 days
 policy.market_series:
@@ -28,27 +28,27 @@ policy.market_series:
   overdue_after: 4 days
 policy.reactions:
   description: Market reactions around each decision
-  workflows: {daily: every 20 hours}
+  workflows: {daily: every 16 hours}
   run_after: [policy.market_series, policy.fed_documents, policy.rbi_documents]
   overdue_after: 4 days
 policy.ai_batch:
   description: Summaries, diffs, stance, scores and projections for new documents
-  workflows: {daily: every 20 hours or ai_catch_up, watch: after_decision_document}
+  workflows: {daily: every 16 hours or ai_catch_up, watch: after_decision_document}
   run_after: [policy.fed_documents, policy.rbi_documents]
   overdue_after: 3 days
 policy.rate_cycles:
   description: Each bank's easing and tightening cycles, derived from its stored rate decisions
-  workflows: {daily: every 20 hours}
+  workflows: {daily: every 16 hours}
   run_after: [policy.fed_documents, policy.rbi_documents]
   overdue_after: 3 days
 site.quality_summary:
   description: The accuracy page's counts by module and period, projected from the site's own records (AI outputs, loads, freshness, drills, gates, held-back fields)
-  workflows: {daily: every 20 hours}
+  workflows: {daily: every 16 hours}
   run_after: [policy.calendar, policy.fed_documents, policy.rbi_documents, policy.market_series, policy.reactions, policy.rate_cycles, policy.ai_batch]
   overdue_after: 3 days
 crypto.coingecko_markets:
   description: CoinGecko daily market snapshot, top 500 (stored, unpublished)
-  workflows: {daily: every 20 hours}
+  workflows: {daily: every 16 hours}
   overdue_after: 3 days
 equity.universe:
   description: Company master, Nifty index membership and curated peer groups (Nifty 50 universe)
