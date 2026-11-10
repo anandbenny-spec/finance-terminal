@@ -3,7 +3,7 @@
 // status are Spec 02B §5.2's, quoted on the card. Nothing here computes a number. Words never used here (Spec 02B §8):
 // tests/banned-words.ts scans the tab's own text for them.
 import { dateInZone, formatDate, formatFraction, formatStatedValue } from "@/lib/format";
-import { pageLink, toCitation, type Citation, type CitationPage } from "@/lib/policy/ai";
+import { pageLink, toCitation, wholeQuote, type Citation, type CitationPage } from "@/lib/policy/ai";
 import type { AiCitationRow, AiOutputRow, CallFigureRow, CitationPageRow, EarningsCallRow, EarningsListRow } from "@/lib/queries/api";
 
 /** The call the tab shows: the one in the URL (?call=q2-fy27) if it is one of the company's, else the default. */
@@ -24,6 +24,8 @@ export function newestFirst(calls: readonly EarningsCallRow[]): EarningsCallRow[
 
 export const SUMMARY_HELD = "AI summary held back until it passes review";
 export const SUMMARY_NOT_YET = "Summary not generated yet";
+/** The line under each summary block's heading (Anand, 10 Nov 2026): the bullet is a reading, the quote under it is the fact. */
+export const SUMMARY_LABEL = "AI paraphrase; the quote is the speaker's words.";
 export const WEBSITE = "Transcript on the company's website";
 export const SCANNED = "Transcript is a scanned image; not analysed";
 export const NO_TRANSCRIPT = "No transcript found";
@@ -92,9 +94,13 @@ export function summaryLists(output: AiOutputRow, citations: readonly AiCitation
     if (typeof raw !== "object" || raw === null) continue;
     const { text, citations: nos, list } = raw as { text?: unknown; citations?: unknown; list?: unknown };
     if (typeof text !== "string" || !text.trim() || !Array.isArray(nos)) continue;
+    // Each citation also carries its whole quote for the inline display under the bullet (#371); the chip's popover keeps the cut one.
     const cites = nos
       .map((n) => byNo.get(n as number))
-      .map((c) => (c ? citationOf(c, index) : null))
+      .map((c): Citation | null => {
+        const cite = c ? citationOf(c, index) : null;
+        return c && cite ? { ...cite, fullQuote: wholeQuote(c.quote ?? "") } : null;
+      })
       .filter((c): c is Citation => c !== null);
     if (cites.length === 0) continue;
     const key = ORDER.find((k) => k === list) ?? null;

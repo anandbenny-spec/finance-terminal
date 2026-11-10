@@ -60,7 +60,7 @@ declare did bigint; oid bigint; i int;
 begin
   select id into did from core.document where external_key = p_ext;
   insert into core.ai_output (task, document_id, content, body, status, model, prompt_key, prompt_version, input_sha256)
-    values (p_task, did, jsonb_build_object(), 'ec29 output', 'draft', 'claude-haiku-5-5', p_task, 'v1',
+    values (p_task, did, jsonb_build_object(), 'ec29 output', 'draft', 'claude-haiku-5-5', p_task, case when p_task = 'call_summary' then 'v11' else 'v1' end,   -- 0035's floor counts a call_summary only from v11
             sha256(convert_to('ec29' || p_task || p_ext, 'UTF8'))) returning id into oid;
   for i in 1 .. array_length(p_spans, 1) / 2 loop
     insert into core.ai_citation (ai_output_id, citation_no, claim_path, kind, document_id, char_start, char_end, verified)

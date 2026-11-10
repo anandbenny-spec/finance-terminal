@@ -20,6 +20,7 @@ import {
   NO_TRANSCRIPT,
   SCANNED,
   SUMMARY_HELD,
+  SUMMARY_LABEL,
   SUMMARY_NOT_YET,
   UNKNOWN_ROLE_HEADING,
   WEBSITE,
@@ -71,7 +72,8 @@ function Summary({ data, call, now }: { data: NonNullable<Ok["calls"]>; call: Ea
             block={{ label: l.heading, model: output.model, createdAt: output.created_at, bullets: l.bullets }}
             now={now}
             dense={false}
-            note={l.key === "unknown" ? "Not attributed to management." : undefined}
+            note={l.key === "unknown" ? `Not attributed to management. ${SUMMARY_LABEL}` : SUMMARY_LABEL}
+            quotes
           />
         ))}
       </div>
