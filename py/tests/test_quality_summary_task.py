@@ -366,7 +366,7 @@ def test_a_rejected_summary_of_a_call_transcript_is_not_counted_under_equity(jr)
     eid = admin("""insert into core.entity (kind, slug, name, short_name, market, currency, is_published)
                    values ('company', 'qtest-co', 'Qtest Ltd', 'Qtest', 'IN', 'INR', true) returning id""")[0][0]
     doc = admin("""insert into core.document (doc_type, entity_id, title, source_id, external_key, source_url, is_published)
-                   select 'call_transcript', %s, 'transcript', s.id, '/test/qtest/t.pdf', 'https://example.invalid/t.pdf', true
+                   select 'call_transcript', %s, 'transcript', s.id, '/test/qtest/t.pdf', 'https://example.invalid/t.pdf', false
                      from core.source s where s.key = 'nse' returning id""", eid)[0][0]
     _, before = compute(eq)
     base = before[("equity", "all", "ai_outputs")][0]

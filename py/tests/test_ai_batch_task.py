@@ -196,8 +196,8 @@ def test_rejected_call_transcript_requests_stay_out_of_the_months_integrity_shar
     eid = q("""insert into core.entity (kind, slug, name, short_name, market, currency, is_published)
                values ('company', 'ab356-co', 'Ab356 Ltd', 'Ab356', 'IN', 'INR', true) returning id""")[0][0]
     try:
-        tdoc = q("""insert into core.document (doc_type, entity_id, title, source_id, external_key, source_url, is_published)
-                    select 'call_transcript', %s, 'transcript', s.id, '/test/ab356/t.pdf', 'https://example.invalid/t.pdf', true
+        tdoc = q("""insert into core.document (doc_type, entity_id, title, source_id, external_key, source_url)
+                    select 'call_transcript', %s, 'transcript', s.id, '/test/ab356/t.pdf', 'https://example.invalid/t.pdf'
                       from core.source s where s.key = 'nse' returning id""", eid)[0][0]
         for i in range(30):
             x("""insert into ops.ai_request (custom_id, ai_task, document_id, input_sha256, model, prompt_version, status,
@@ -209,7 +209,7 @@ def test_rejected_call_transcript_requests_stay_out_of_the_months_integrity_shar
         ci = last_run()["checks"]["citation_integrity"]
         assert ci["passed"] and json.loads(ci["detail"])["month"]["rejected"] == 0
     finally:
-        x("delete from ops.ai_request where custom_id like 'ab356:%'")
+        x("delete from ops.ai_request where custom_id like 'ab356:%%'")
         x("delete from core.document where external_key = '/test/ab356/t.pdf'")
         x("delete from core.entity where slug = 'ab356-co'")
 
