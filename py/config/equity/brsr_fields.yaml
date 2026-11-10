@@ -1,0 +1,113 @@
+# The value chain card's 13 BRSR fields (Spec 02B §12.3, job VC-02, #187): the kit's FIELDS (15 elements, Data Audit 08 kit/brsr.py)
+# less rpt_loans_share and rpt_investments_share (D2). Read by the `equity.brsr` task (VC-04): which element feeds which field,
+# and which entry points the field is valid from. The labels, item references and kinds are also in the migration's field list
+# (`equity.brsr_card`, 0034), because the views need them for the labels and the "Not reported" rows; py/tests/test_brsr_fields.py
+# keeps the two equal, so remapping a field to a new element is a change here alone, and a new field or label also needs a
+# migration (the card's decision 4, 29 Oct 2026).
+#
+# element:   the `in-capmkt` element name in the filing (SEBI's BRSR taxonomy, prefix in-capmkt). Percentage… and NumberOf…
+#            elements only, never Amount… (Data Audit 08 §3.5 item 4). Facts without dimensions, current-year context.
+# item_ref:  the BRSR item reference, from the M&M FY 2025-26 PDF read by VC-03 (#188) and fixed by Anand (29 Oct 2026, 22:49 IST).
+#            A = Section A, III = Operations, P1 and P8 = Principles 1 and 8, EI = Essential Indicator.
+# kind:      share = the filed fraction (0.7933 = 79.33%), never rescaled; count = a whole number >= 0.
+# parent:    a top-10 share is shown only when its parent share is above 0 (Spec 02B §12.4).
+# valid_from: the first entry point (taxonomy date) the element is valid from. Every card field is valid from 2024-04-30 (D1).
+entry_points:
+  # The card's formats. The 2021 format's entry points (2021-09-30, 2023-06-30) are stored, not shown (Data Audit 08 §3.3).
+  shown: ["2024-04-30", "2025-05-31", "2026-02-28"]
+  stored_not_shown: ["2021-09-30", "2023-06-30"]
+
+fields:
+  - key: within_india_share
+    element: PercentageOfSourcedDirectlyFromWithinTheDistrictAndNeighbouringDistricts
+    label: Inputs sourced directly from within India
+    item_ref: P8-EI-4, Within India
+    kind: share
+    parent: null
+    valid_from: "2024-04-30"
+    note: The taxonomy's label is still the 2021 format's "within the district and neighbouring districts"; the July 2023 format's row is "Directly from within India" and companies put that figure here (M&M FY 2023-24 filed 84%).
+  - key: msme_share
+    element: PercentageOfDirectlySourcedFromMSMEsOrSmallProducers
+    label: Inputs sourced directly from MSMEs and small producers
+    item_ref: P8-EI-4, MSMEs
+    kind: share
+    parent: null
+    valid_from: "2024-04-30"
+  - key: trading_house_share
+    element: PercentageOfPurchasesFromTradingHousesInTotalPurchasesForConcentrationOfPurchases
+    label: Purchases from trading houses, share of purchases
+    item_ref: P1-EI-9, Purchases (a)
+    kind: share
+    parent: null
+    valid_from: "2024-04-30"
+  - key: trading_houses
+    element: NumberOfTradingHousesWherePurchasesAreMade
+    label: Trading houses purchased from
+    item_ref: P1-EI-9, Purchases (b)
+    kind: count
+    parent: null
+    valid_from: "2024-04-30"
+  - key: top10_trading_share
+    element: PercentageOfPurchasesFromTopTenTradingHousesInTotalPurchasesFromTradingHouses
+    label: Top 10 trading houses, share of purchases from trading houses
+    item_ref: P1-EI-9, Purchases (c)
+    kind: share
+    parent: trading_house_share
+    valid_from: "2024-04-30"
+  - key: dealer_share
+    element: PercentageOfSalesToDealersOrDistributorsInTotalSales
+    label: Sales to dealers and distributors, share of sales
+    item_ref: P1-EI-9, Sales (a)
+    kind: share
+    parent: null
+    valid_from: "2024-04-30"
+  - key: dealers
+    element: NumberOfDealersOrDistributorsToWhomSalesAreMade
+    label: Dealers and distributors sold to
+    item_ref: P1-EI-9, Sales (b)
+    kind: count
+    parent: null
+    valid_from: "2024-04-30"
+  - key: top10_dealer_share
+    element: PercentageOfSalesToTopTenDealersOrDistributorsInTotalSalesToDealersOrDistributors
+    label: Top 10 dealers and distributors, share of sales to dealers
+    item_ref: P1-EI-9, Sales (c)
+    kind: share
+    parent: dealer_share
+    valid_from: "2024-04-30"
+  - key: exports_share
+    element: PercentageOfContributionOfExportsInTheTotalTurnoverOfTheEntity
+    label: Exports, share of turnover
+    item_ref: A-III-19(b)
+    kind: share
+    parent: null
+    valid_from: "2024-04-30"
+  - key: states_served
+    element: NumberOfStatesWhereMarketServedByTheEntity
+    label: States served
+    item_ref: A-III-19(a), States
+    kind: count
+    parent: null
+    valid_from: "2024-04-30"
+    note: States only. The PDF's "28 States and 6 Union Territories" is 28 in the XBRL.
+  - key: countries_served
+    element: NumberOfCountriesWhereMarketServedByTheEntity
+    label: Countries served
+    item_ref: A-III-19(a), Countries
+    kind: count
+    parent: null
+    valid_from: "2024-04-30"
+  - key: rpt_purchases_share
+    element: PercentageOfPurchasesFromRelatedPartiesInTotalPurchasesForShareOfRelatedPartyTransactions
+    label: Purchases from related parties, share of purchases
+    item_ref: P1-EI-9, RPTs (a)
+    kind: share
+    parent: null
+    valid_from: "2024-04-30"
+  - key: rpt_sales_share
+    element: PercentageOfSalesToRelatedPartiesInTotalSalesForShareOfRelatedPartyTransactions
+    label: Sales to related parties, share of sales
+    item_ref: P1-EI-9, RPTs (b)
+    kind: share
+    parent: null
+    valid_from: "2024-04-30"
