@@ -17,7 +17,7 @@ from ai_fakes import FakeClaude, FakeVoyage, claude
 from conftest import dsn
 from policy_docs import FOMC_A, FOMC_B, fed_rss
 from test_document_chunks import plain
-from test_equity_calls_ai_task import make_call
+from test_equity_calls_ai_task import make_call, wipe
 from test_fed_documents_task import (  # noqa: F401 - s3 and roster are fixtures
     Clock,
     Sites,
@@ -439,6 +439,16 @@ def daily(t: AiBatch, when: datetime) -> int:
     return run(JOB, "daily", [t], only=KEY, force=True, clock=lambda: when)
 
 
+@pytest.fixture
+def calls():
+    """`make_call` (a stored earnings-call transcript, published and chunked) for the tests that need one, with
+    everything it made removed afterwards: other tasks' tests read every call in the database and count companies,
+    events and alerts (equity.call_text's failed on the leftovers of the first version of these tests)."""
+    wipe()
+    yield make_call
+    wipe()
+
+
 def one_statement(d: date) -> tuple[str, int]:
     s, e = meeting(d)
     return s, statement(d, e, FOMC_A)
@@ -613,12 +623,12 @@ def test_a_result_whose_input_changed_is_stored_stale_with_its_cost(monkeypatch)
 
 
 @pytest.mark.db
-def test_a_call_transcript_is_neither_planned_sent_nor_embedded():
+def test_a_call_transcript_is_neither_planned_sent_nor_embedded(calls):
     """policy.ai_batch is the policy module's task (the Fed's and the RBI's documents). A published, chunked earnings-call
     transcript (equity's, another task's) is no target and its chunks wait for no embedding. Production's daily hung
     on exactly this from 8 Nov 2026: 302 summaries nobody asked for and 32,610 chunks to embed (issue #351)."""
     s, doc = one_statement(date(2054, 3, 4))
-    call = make_call()
+    call = calls()
     assert q("select count(*) from core.chunk where document_id = %s", call["doc"])[0][0] > 0   # it is chunked, published
     assert q("select is_published from core.document where id = %s", call["doc"]) == [(True,)]
     fake, voyage = FakeClaude(["ok"], ends_after=1), FakeVoyage()
@@ -639,12 +649,12 @@ def test_a_call_transcript_is_neither_planned_sent_nor_embedded():
 
 
 @pytest.mark.db
-def test_a_request_open_on_a_call_transcript_is_collected_stale_and_publishes_nothing(monkeypatch):
+def test_a_request_open_on_a_call_transcript_is_collected_stale_and_publishes_nothing(calls, monkeypatch):
     """Production's batch of 2 still open on 10 Nov 2026 (issue #351): its requests were sent while call transcripts were
     targets. The next run collects the batch, stores each reply rejected as stale with its cost, publishes none of them
     and sends nothing for the transcript again. (The first run makes the transcript's issuer a bank, as the old query did.)"""
     s, doc = one_statement(date(2054, 5, 13))
-    call = make_call()
+    call = calls()
     issuer = q("select slug from core.entity where id = %s", call["entity"])[0][0]
     slugs = [s, call["slug"]]
     fake = FakeClaude(["ok"], ends_after=None)
@@ -696,6 +706,7 @@ def test_a_run_that_dies_after_storing_replies_keeps_their_spend_in_the_months_t
     assert q(month)[0][0] - before == r["cost"]
     with connect(JOB) as c:
         assert ai_batch.batch.month_spend(c) == q(month)[0][0]
+    x("update ops.alert set resolved_at = now() where dedupe_key = %s and resolved_at is null", f"task_failed:{KEY}")
 
 
 @pytest.mark.db
