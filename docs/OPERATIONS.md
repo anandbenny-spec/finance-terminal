@@ -39,7 +39,7 @@ the private fixtures repo, which used a second token (`FIXTURES_READ_TOKEN`), be
 | `FRED_API_KEY` | `policy.market_series` (the daily load every other daily task follows), through `daily`, `weekly`, `watch`, `refresh`, `backfill` | none known; FRED can disable a key | `policy.market_series` raises "FRED_API_KEY is not set" or FRED refuses the key: the daily load fails, so this is the secret whose loss shows first | request a new free key from the St. Louis Fed's API page; update the secret, `.env`, Bitwarden |
 | `COINGECKO_DEMO_KEY` | `crypto.coingecko_markets` (`daily`, `refresh`); sent in a header, never in a URL | none known | with no key the task reports "not set up" and skips; a refused key fails that task only | new Demo key in CoinGecko's developer dashboard |
 | `SEC_USER_AGENT` | the shared HTTP client, for SEC requests (a declared User-Agent) | no | SEC may throttle an undeclared client | not a credential: an identifying contact string, kept secret so the contact address isn't public; edit the string |
-| `ANTHROPIC_API_KEY` | every AI step (`policy.ai_batch` and the 2B tasks) through `ft/ai/client.py` and the Batch API. Scoped to the Console's Default workspace | no; but it stops working when credits end (18 Nov) | the AI steps skip with a recorded reason, never fail the run (section 5.3) | new key in the Console (Default workspace), update the secret and Bitwarden, then disable the old key |
+| `ANTHROPIC_API_KEY` | every AI step (`policy.ai_batch` and the 2B tasks) through `ft/ai/client.py` and the Batch API. Scoped to the Console's Default workspace | no; but it stops working when credits end (the plan's API credit ends 21 Nov 2026; 18 Nov is Claude Max) | the AI steps skip with a recorded reason, never fail the run (section 5.3) | new key in the Console (Default workspace), update the secret and Bitwarden, then disable the old key |
 | `VOYAGE_API_KEY` | embeddings in the AI steps. A MongoDB Atlas model API key; the client routes it to `ai.mongodb.com/v1` | no | as `ANTHROPIC_API_KEY`: the chunks wait for a key | new key in Atlas, update the secret and Bitwarden |
 | `HEALTHCHECKS_PING_URL` | the last step of `daily.yml` after a successful **production** run; skips quietly with no secret | no | no ping, so the dead-man check goes Down and emails | see section 3 (the monitors) |
 | `HEALTHCHECKS_WEEKLY_PING_URL` | the last steps of `weekly.yml` after a **production** run: the plain URL on success, `<URL>/fail` on failure; skips quietly with no secret (#364) | no | no ping, so the "weekly production load" check goes Down after its grace time | make a new check with the same settings, update the secret and Bitwarden |
@@ -110,7 +110,7 @@ manager can't hold its own way back in.
 | **GitHub** (the app repo, the private fixtures and backup repos) | the code; Actions runs the schedules; the secrets above | Actions minutes are free on a public repo. **Scheduled workflows switch off after 60 days with no repository activity.** Scheduled runs can also start very late, or not at all (28 Oct 2026, #158) | `keep-alive.yml` re-enables the scheduled workflows on the 1st and 15th, using its own token; the `watch` catch-up runs and the dead-man check cover a missed run. If `keep-alive` itself is off: Actions tab → each workflow → Enable |
 | **Vercel** (free, Hobby plan; one project, two services) | hosts the site and `/api/*`; one cron | **Cron runs at most once a day, at some point inside the scheduled hour** (`vercel.json`: 03:17 UTC). Hobby is for non-commercial use, which this project is | a cron missed on a given day is covered by `keepalive-db.yml`. Don't add a sub-daily Vercel cron: the deploy fails |
 | **Supabase** (free plan; a production and a dev project) | the database, the Data API and file storage | **A free project is paused after a week of low activity** (an email warns about a week before). Free-plan database and storage size caps (see each project's Usage page; the build kept raw files under an 850 MB stop, #265) | the keep-alive (daily Vercel cron plus `keepalive-db` twice a day) prevents the pause. If paused anyway: section 5.5. At a size cap, writes can be refused: the daily load fails and `/api/health` goes degraded |
-| **Anthropic Console** | the API key for AI summaries and extraction | prepaid credit; the plan's $100 credit runs to 18 Nov 2026. The pipeline's own $15 monthly switch (`ai_monthly_budget_usd`) stays on | no credit: AI steps skip with the reason "no API credits left"; published AI outputs stay as they are (section 5.3) |
+| **Anthropic Console** | the API key for AI summaries and extraction | prepaid credit; the plan's $100 API credit runs to 21 Nov 2026 (18 Nov is when Claude Max ends, not the credit). The pipeline's own $15 monthly switch (`ai_monthly_budget_usd`) stays on | no credit: AI steps skip with the reason "no API credits left"; published AI outputs stay as they are (section 5.3) |
 | **MongoDB Atlas** (for Voyage embeddings) | the Voyage model API key; a payment method is on file | billing; keys are managed in Atlas | a refused or unpaid key: embedding steps skip |
 | **FRED** (St. Louis Fed) | the free API key for the daily rates and series | FRED's terms let it disable a key or change its API at any time | the daily load fails (the first thing to break); health goes degraded |
 | **CoinGecko** | the free Demo key for the crypto daily store | the Demo plan's call quota (10,000 calls a month; the code paces at 30 a minute and the daily snapshot makes 2 calls) | the task skips or fails alone; nothing else depends on it |
@@ -199,10 +199,13 @@ states instead of errors. To switch AI off deliberately for a manual run, set th
 1. **The daily load fails**: the FRED key, a source's page layout changing, a database or storage problem. Shows as "Update delayed"
    on the site, `/api/health` going degraded, and both monitors emailing. A `weekly` run that fails now emails the same day through its own check (it pings `/fail`). Open the Actions tab, read the failed `daily` run's
    annotations, fix or wait, then run `daily` by hand (5.7).
-2. **A new committee member.** `py/config/members.yaml` is curated by hand and fails closed: the blocking check
-   `voters_on_roster` rolls the load back when a statement or the minutes name someone the roster doesn't know, so the
-   last good data stays and the page shows "Update delayed". The FOMC's voting presidents change each January (each voting
-   year is its own term in the file); MPC membership changes when the government appoints. It needs a human edit, with a source note per term.
+2. **A new committee member.** `py/config/members.yaml` is curated by hand. Only a name the roster has never seen blocks:
+   the blocking check `voters_on_roster` rolls the load back when a statement or the minutes name someone the roster doesn't
+   know, so the last good data stays and the page shows "Update delayed". The FOMC's voting presidents change each January
+   (each voting year is its own term in the file), and a stale term does not block: the non-blocking warnings `voter_terms`
+   and `minutes_roster` fire, and `api.policy_votes` reads `is_voter` from the term on file, so a 2027 voter can carry last
+   year's term (voting or not) until the file is edited (see "Upkeep by date", 5.11). MPC membership changes when the government
+   appoints. It needs a human edit, with a source note per term.
 3. **An unscheduled FOMC meeting** needs a row in `py/config/meeting_times.yaml` (the calendar task fails without one, by design).
    Scheduled meetings need nothing.
 4. **A token revoked for sitting unused** (section 4): only the admin refresh button, never the site or the scheduled runs.
@@ -235,6 +238,14 @@ From GitHub's Actions tab (workflow → Run workflow), or the CLI. A manual run 
 gh workflow run daily.yml --repo anandbenny-spec/finance-terminal -f target=production
 gh workflow run daily.yml --repo anandbenny-spec/finance-terminal -f target=production -f ai=off
 gh run list --repo anandbenny-spec/finance-terminal --workflow daily.yml --limit 5
+```
+
+**On an MPC or FOMC day, start `watch` by hand at the release time** (about 10:00 India time for the RBI, 14:00 New York time for the
+Fed). Since 29 Oct 2026 GitHub starts every scheduled workflow hours late (the `timezone:` lines are honoured; the delay is GitHub's),
+so the decision documents can sit unloaded until the catch-up runs; a manual run starts at once. Leave the cron lines alone.
+
+```bash
+gh workflow run watch.yml --repo anandbenny-spec/finance-terminal -f target=production
 ```
 
 ### 5.8 Monthly check (ten minutes, the first of the month)
@@ -305,6 +316,27 @@ order by 3 desc;
 ### 5.10 Incident record: call-transcript summaries requested in error (8 to 10 Nov 2026; #351, #356)
 
 From 8 Nov 2026 `policy.ai_batch` asked for `doc_summary` outputs on earnings-call transcripts, which belong to module (c)'s tasks. The production `daily` hung and was cancelled at 30 minutes each time until the fix (#353, 10 Nov 2026). 604 summaries were requested in error; every one was rejected and none was ever shown to a visitor. Since #356 the `citation_integrity` month share counts only the Fed's and the RBI's documents, and `site.quality_summary` skips `doc_summary` outputs whose target is a call transcript, so these rows no longer skew either; the rows themselves stay in `ops.ai_request` and `core.ai_output` as the record.
+
+### 5.11 Upkeep by date
+
+Four curated files fail closed on dates that can be named now. Each row says what to edit and what happens if it is missed.
+
+| When | Trigger | File | The edit | Test it | If missed |
+|---|---|---|---|---|---|
+| **December, by about 15 Dec 2026** | NSE publishes next year's trading-holiday circular | `py/config/calendars/xnse.yaml` (its own header says to add the year in December) | a `2027:` block in the shape of `2026:` (`source` with the circular's number and date, `holidays` for weekday holidays only, `special_sessions` such as Muhurat or Budget day, with IST open and close) | start `weekly` by hand with the form in 5.7 (`weekly.yml`; the workflow has no task filter, so it runs every due task) and read `equity.prices`' annotations | `equity.prices` raises `CalendarYearError` from the first `weekly` of 2027 (Sun 3 Jan) and fails before fetching anything (`py/src/ft/jobs/tasks/equity_prices.py`, `py/src/ft/calendars.py`): no new prices, and the screener's figures age |
+| **December 2027** | the NYSE's next-year calendar | `py/config/calendars/xnys.yaml` (covers to 2027 today) | a `2028:` block in the same shape | the same manual `weekly`, reading the task that uses the calendar | the tasks that ask the NYSE calendar for 2028 fail the same way, from January 2028 |
+| **Each January** (the FOMC's Annual Organizational Matters, first meeting) | the new voting presidents | `py/config/members.yaml` | each voting president's new term (`voter`, `from`, `to`, `source`); end the outgoing voters' terms | start `watch` by hand after the January statement (5.7); the `voter_terms` and `minutes_roster` warnings are clear | no block unless a name is new to the roster (`voters_on_roster`); otherwise `api.policy_votes` shows last year's `is_voter` for the new year until the file is edited |
+| **March and September** | NSE's semi-annual Nifty 50 review | `py/config/equity/companies.yaml` and `py/config/equity/peer_groups.yaml` | a row for each entrant: its peer group and valuation family | start `weekly` by hand (5.7) and read `equity.universe`' annotations | a new entrant with no row fails `equity.universe`'s blocking `curated` check every week, and the company master stops updating |
+| **April and October** | the IMF's World Economic Outlook edition | `py/config/equity/weo_editions.yaml` | an `editions` line: `released`, `label`, `source` (the page it was read from) | start `weekly` by hand (5.7) and read `equity.valuation_inputs`' annotations | when the IMF's figures change and the file has no newer edition, `equity.valuation_inputs` fails its blocking `imf_vintage` check |
+
+### 5.12 Running out of egress
+
+Supabase's Free plan counts data egress per organisation: 5 GB a billing cycle. Production has its own organisation (9 Nov 2026), so
+dev runs do not use its allowance. When the organisation's 5 GB is used, reads from the project fail until the cycle resets: the site
+shows its labelled states ("Couldn't load this panel", "Update delayed") instead of figures, and the load may fail too. Read the figure on
+the organisation's **Usage** page in the Supabase dashboard. It resets with the billing cycle; nothing needs deleting. The public key
+can page out published data from the `api` views, which is the accepted cost of a public key; Review 02a I-1 describes the larger change
+(to consider after 18 Nov). A run that re-reads the raw bucket states its egress cost on its issue (`CLAUDE.md` §6).
 
 ## 6. Bitwarden
 
