@@ -18,6 +18,8 @@ export type TaskKey =
   | "equity.statements"
   | "equity.metrics"
   | "equity.beta"
+  | "equity.valuation"
+  | "equity.snapshot"
   | "equity.rate_reactions"
   | "policy.rate_cycles"
   | "equity.call_transcripts"
@@ -50,10 +52,13 @@ export const FEEDS = {
   // Module 2, release 2A (2A-26, #132; moved in from PREVIEW_FEEDS once production's runs left a freshness row for each task).
   // /screener (2A-18): the latest weekly snapshot, built from the metrics, prices, statements and beta.
   screener: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
+  // The screener's model-implied parts (#355): the priced-in view and any implied column come from the stored valuation runs,
+  // which equity.snapshot copies into the weekly snapshot. A failed valuation run leaves the snapshot on an older run, so both count.
+  screenerImplied: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta", "equity.valuation", "equity.snapshot"],
   // /companies/[slug] (2A-19): prices, filings, derived metrics and betas; the header and chips come from the universe.
   company: ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
   // The Valuation tab (2A-20): the stored runs and grid, built from the same filings, prices and betas plus the rates inputs.
-  valuation: ["equity.valuation_inputs", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
+  valuation: ["equity.valuation_inputs", "equity.valuation", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
   // The Rate decisions tab and the sector view (2A-25): decision-day moves and rate cycles, from the stored reactions.
   rateSensitivity: ["equity.rate_reactions", "policy.rate_cycles"],
 } as const satisfies Record<string, readonly TaskKey[]>;

@@ -233,11 +233,12 @@ def test_the_run_step_passes_the_target_and_takes_inputs_only_through_env(name):
 
 def test_the_backfill_can_limit_equity_calls_ai_to_one_task_through_env_and_no_other_workflow_sets_it():
     from ft.ai import call_summary as cs
+    from ft.ai import call_tone as ct
     from ft.ai import guidance_extraction as ge
     from ft.jobs.tasks import equity_calls_ai as eca
     wf = load("backfill")
     option = wf["on"]["workflow_dispatch"]["inputs"]["calls_ai_task"]
-    assert option["default"] == "both" and option["options"] == ["both", cs.TASK, ge.TASK]
+    assert option["default"] == "both" and option["options"] == ["both", cs.TASK, ge.TASK, ct.TASK]
     run = next(s for s in wf["jobs"]["run"]["steps"] if s.get("name") == "Run")
     assert run["env"][eca.ONLY_ENV] == "${{ inputs.calls_ai_task }}"
     for name in ("daily", "watch", "weekly", "refresh"):              # a scheduled run asks for both, as before
@@ -736,7 +737,7 @@ def test_the_warm_up_loads_nothing_and_warns_when_its_settings_are_not_whole_num
 
 INSTALL_STEP = "Install gitleaks (release archive, checksum checked)"
 GITLEAKS_FAKE_CURL = """#!{python}
-import hashlib, io, json, os, sys, tarfile
+import gzip, hashlib, io, json, os, sys, tarfile
 args = sys.argv[1:]
 url = [a for a in args if a.startswith("https://")][-1]
 out = args[args.index("-o") + 1]
@@ -744,10 +745,12 @@ heads = [args[i + 1] for i, a in enumerate(args) if a == "-H"]
 with open(os.environ["FAKE_LOG"], "a") as log:
     log.write(json.dumps({{"url": url, "token": any(h.startswith("Authorization: Bearer") for h in heads)}}) + "\\n")
 buf = io.BytesIO()
-with tarfile.open(fileobj=buf, mode="w:gz") as t:
+with tarfile.open(fileobj=buf, mode="w") as t:
     body = os.environ["FAKE_BODY"].encode()
     info = tarfile.TarInfo("gitleaks"); info.size = len(body); t.addfile(info, io.BytesIO(body))
-tgz = buf.getvalue()
+# mtime=0: "w:gz" stamps the gzip header with the current second, and this stand-in runs once for the checksums file and once
+# for the archive, so a second ticking over between the two calls made the hashes differ (the flaky failure of 10 Nov 2026, #357)
+tgz = gzip.compress(buf.getvalue(), mtime=0)
 listed = tgz if os.environ["FAKE_BODY"] == os.environ["FAKE_LISTED"] else None
 sums = (hashlib.sha256(listed if listed else b"").hexdigest() if os.environ["FAKE_BODY"] == os.environ["FAKE_LISTED"] else "0" * 64)
 sums = "{{}}  other_file.txt\\n{{}}  gitleaks_8.24.2_linux_x64.tar.gz\\n".format("f" * 64, sums)

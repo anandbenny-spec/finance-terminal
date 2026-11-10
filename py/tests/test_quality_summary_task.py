@@ -40,7 +40,9 @@ def admin(sql, *a):
 def clean():
     def wipe():
         admin("delete from core.quality_summary")
-        admin("delete from core.ai_output where scope like 'qtest:%'")
+        admin("delete from core.ai_output where scope like 'qtest:%' or document_id in (select id from core.document where external_key like '/test/qtest/%')")
+        admin("delete from core.document where external_key like '/test/qtest/%'")
+        admin("delete from core.entity where slug = 'qtest-co'")
         admin("delete from core.event where slug like 'qtest-%'")
         admin("delete from ops.alert where task_key like 'qtest.%'")
         admin("delete from core.task_freshness where task_key like 'qtest.%'")
@@ -355,3 +357,28 @@ def test_a_run_through_the_runner_as_job_writer_writes_the_rows(jr):
     assert code == 0 and tr[0] == "success" and tr[1] == len(admin("select 1 from core.quality_summary"))
     assert {c["name"] for c in tr[2]} == {"measures", "values", "unique", "other_reasons"}
     assert admin("select value from core.quality_summary where module = 'qtest' and period = 'all' and measure = 'ai_published'") == [(Decimal(1),)]
+
+
+def test_a_rejected_summary_of_a_call_transcript_is_not_counted_under_equity(jr):
+    """Issue #356: policy.ai_batch asked for call-transcript summaries in error (8-10 Nov 2026); none is shown, and no equity
+    task makes a doc_summary, so they add nothing to equity's rows. A rejected call_summary still counts."""
+    eq = Settings(("equity",), SETTINGS.drills, [])
+    eid = admin("""insert into core.entity (kind, slug, name, short_name, market, currency, is_published)
+                   values ('company', 'qtest-co', 'Qtest Ltd', 'Qtest', 'IN', 'INR', true) returning id""")[0][0]
+    doc = admin("""insert into core.document (doc_type, entity_id, title, source_id, external_key, source_url, is_published)
+                   select 'call_transcript', %s, 'transcript', s.id, '/test/qtest/t.pdf', 'https://example.invalid/t.pdf', false
+                     from core.source s where s.key = 'nse' returning id""", eid)[0][0]
+    _, before = compute(eq)
+    base = before[("equity", "all", "ai_outputs")][0]
+
+    def reject(task):
+        admin("""insert into core.ai_output (task, document_id, content, status, status_reason, model, prompt_key,
+                                             prompt_version, input_sha256, created_at)
+                 values (%s, %s, '{}', 'rejected', 'rejected: bullet 1: no verified citation', 'm', 'p', '1',
+                         decode(repeat('00', 32), 'hex'), %s)""", task, doc, at(1))
+    reject("doc_summary")
+    _, after = compute(eq)
+    assert after[("equity", "all", "ai_outputs")][0] == base
+    reject("call_summary")
+    _, after = compute(eq)
+    assert after[("equity", "all", "ai_outputs")][0] == base + 1

@@ -26,9 +26,9 @@ on:
         options: ['on', 'off']
         default: 'on'
       calls_ai_task:
-        description: 'equity.calls_ai only: ask for both tasks (the default) or just one (the other is not asked for)'
+        description: 'equity.calls_ai only: ask for both tasks (the default) or just one (the other is not asked for); call_tone asks for the tone scores only (#175)'
         type: choice
-        options: [both, call_summary, guidance_extraction]
+        options: [both, call_summary, guidance_extraction, call_tone]
         default: both
 concurrency:
   group: jobs-backfill

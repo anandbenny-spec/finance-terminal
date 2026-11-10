@@ -172,6 +172,102 @@ def test_prices_outside_the_range_give_its_two_sentences():
     assert low.delivered == Decimal("0.10")                        # the delivered figure is still shown
 
 
+# ---------------------------------------------------------------------------------------------- near cost (#354)
+def test_a_return_just_above_wacc_with_the_price_above_the_range_is_near_cost_not_above_range():
+    """#354 (Anand, 10 Nov 2026, option 1): 0.5 points over WACC, the value rising with growth, the price above the
+    value at +50%. Only the top of the range is near-cost's: a price inside it solves, one below it is below_range."""
+    c = shaped("1.04", "0.25")                                     # 12.8% on capital against 12.3%
+    d, _, _ = prepare(c, market(), SETTINGS)
+    run = reverse_dcf(c, market(), SETTINGS, price(per_share(d, R.HIGH) * 2), DELIVERED)
+    assert (run.status, run.outcome, run.result, run.inputs["reverse"]["shape"]) == \
+        ("no_solution", "return_near_cost", None, "rising")
+    assert run.reason == ("At its 3-year return on capital of 12.8%, close to its cost of capital of 12.3%, growth at "
+                          "that return earns little more than it costs, so no growth rate up to 50% a year matches "
+                          "the price.")
+    assert run.delivered == Decimal("0.10") and run.inputs["outcome"] == "return_near_cost"
+    inside = reverse_dcf(c, market(), SETTINGS, price(per_share(d, Decimal("0.3"))), DELIVERED)
+    assert (inside.outcome, inside.result) == ("solved", Decimal("0.3000"))
+    low = per_share(d, R.LOW)
+    assert low > 0
+    assert reverse_dcf(c, market(), SETTINGS, price(low / 2), DELIVERED).outcome == "below_range"
+
+
+def test_the_near_cost_margin_is_inclusive_and_comes_from_the_settings():
+    c = shaped("1.04", "0.25")
+    d, _, _ = prepare(c, market(), SETTINGS)
+    above = price(per_share(d, R.HIGH) * 2)
+    spread = d.margin * (1 - d.tax_effective) * d.sales_to_capital - d.wacc
+    assert SETTINGS.near_cost_margin == Decimal("0.01") and Decimal("0.004") < spread < Decimal("0.006")
+    at = reverse_dcf(c, market(), replace(SETTINGS, near_cost_margin=spread), above, DELIVERED)
+    under = reverse_dcf(c, market(), replace(SETTINGS, near_cost_margin=spread - Decimal("1e-12")), above, DELIVERED)
+    assert (at.outcome, under.outcome) == ("return_near_cost", "above_range")
+    assert at.inputs["settings"]["near_cost_margin"] == str(spread)
+    wide = shaped("1.09", "0.25")                                  # 13.4% against 12.3%: past the 1-point margin
+    d2, _, _ = prepare(wide, market(), SETTINGS)
+    assert reverse_dcf(wide, market(), SETTINGS, price(per_share(d2, R.HIGH) * 2), DELIVERED).outcome == "above_range"
+
+
+# Dev's eight no-solution companies in the run of 1 Nov 2026 (prices to 30 Oct 2026) and the four solved companies
+# nearest WACC or the range's top, read through the read-only dev connector on 10 Nov 2026 (#354). Only the model's
+# rates are kept, rounded to 0.01 points; revenue, the balance sheet and the price are synthetic (revenue 1,000, one
+# share, no debt, cash or minority interest), which scales the value but leaves its shape, and so the class, unchanged.
+# The price: ("top", r) is r × the value at +50% (r is dev's price ÷ its value at +50%); ("at", g) is the value at the
+# implied growth dev stored; ("any", v) where the class doesn't depend on it.
+DEV = [  # slug, EBIT margin, 3-FY effective tax, sales-to-capital, WACC, price, outcome before #354, after
+    ("adaniports", "0.4529", "0.1597", "0.3419", "0.1231", ("top", "1.91"), "above_range", "return_near_cost"),
+    ("powergrid", "0.5650", "0.0958", "0.2255", "0.1105", ("top", "1.87"), "above_range", "return_near_cost"),
+    ("tataconsum", "0.1171", "0.2349", "1.0313", "0.0880", ("top", "1.63"), "above_range", "return_near_cost"),
+    ("ultracemco", "0.1306", "0.2383", "1.1228", "0.1068", ("top", "1.43"), "above_range", "return_near_cost"),
+    ("hindalco", "0.0909", "0.2789", "1.7992", "0.1364", ("top", "1.32"), "return_below_cost", "return_below_cost"),
+    ("jswsteel", "0.1036", "0.2000", "1.2757", "0.1174", ("any", "1000"), "growth_lowers_value", "growth_lowers_value"),
+    ("ntpc", "0.1815", "0.1601", "0.4678", "0.1090", ("any", "1000"), "growth_lowers_value", "growth_lowers_value"),
+    ("tatasteel", "0.0724", "0.25168", "1.3321", "0.1134", ("any", "1000"), "growth_lowers_value",
+     "growth_lowers_value"),
+    ("reliance", "0.1158", "0.2353", "1.0710", "0.0931", ("at", "0.2976"), "solved", "solved"),
+    ("maxhealth", "0.2178", "0.1959", "0.7723", "0.0883", ("at", "0.4522"), "solved", "solved"),
+    ("asianpaint", "0.1594", "0.2660", "2.3560", "0.1269", ("at", "0.4393"), "solved", "solved"),
+    ("eichermot", "0.1821", "0.2447", "3.1144", "0.1297", ("at", "0.4367"), "solved", "solved"),
+]
+
+
+def rates(margin: str, tax: str, s2c: str, wacc: str) -> dcf_module.Drivers:
+    return dcf_module.Drivers(Decimal(1000), Decimal(margin), Decimal(tax), Decimal("0.25168"), Decimal(s2c),
+                              Decimal(wacc), Decimal("0.05310119"), ZERO, ZERO, ZERO, Decimal(1))
+
+
+def dev_price(d, values, at) -> Decimal:
+    kind, x = at
+    return {"top": lambda: values[-1] * Decimal(x), "at": lambda: per_share(d, Decimal(x)),
+            "any": lambda: Decimal(x)}[kind]()
+
+
+@pytest.mark.parametrize("slug,margin,tax,s2c,wacc,at,before,after", DEV, ids=[x[0] for x in DEV])
+def test_dev_s_cases_get_their_class_and_only_the_near_cost_ones_change(slug, margin, tax, s2c, wacc, at, before,
+                                                                        after):
+    d = rates(margin, tax, s2c, wacc)
+    roc, values, shape = R.read(d)
+    p = dev_price(d, values, at)
+    assert R.classify(d, p, SETTINGS, roc, values, shape, slug)[0] == after
+    old = replace(SETTINGS, near_cost_margin=ZERO)                 # no near-cost case: the rule before #354
+    assert R.classify(d, p, old, roc, values, shape, slug)[0] == before
+    if after == "solved":                                          # a solved figure doesn't move
+        assert R.bisect(d, p, values) == Decimal(at[1])
+    if after == "return_near_cost":
+        assert Decimal(0) < roc - d.wacc <= Decimal("0.0075")      # 0.4 to 0.7 points on dev
+        assert values[-1] > Decimal("1.3") * per_share(d, ZERO)    # growth still lifts the value: why the card's
+        #                                                            "adds little" wasn't kept (#354)
+
+
+def test_reliance_s_rates_with_a_price_above_the_top_are_near_cost_and_max_healthcare_s_are_not():
+    """Reliance solves 0.17 points above its WACC: a price beyond its value at +50% is the model's limit, not an
+    unexplained case. Max Healthcare earns 4.7 points over its WACC, so the same price stays above_range."""
+    for slug, outcome in (("reliance", "return_near_cost"), ("maxhealth", "above_range")):
+        _, margin, tax, s2c, wacc, *_ = next(x for x in DEV if x[0] == slug)
+        d = rates(margin, tax, s2c, wacc)
+        roc, values, shape = R.read(d)
+        assert R.classify(d, values[-1] * Decimal("1.1"), SETTINGS, roc, values, shape, slug)[0] == outcome
+
+
 @pytest.mark.parametrize("over,reason", [
     ({"family": "lender"}, FAMILY_NA["lender"]),
     ({"family": "insurer"}, FAMILY_NA["insurer"]),
@@ -418,6 +514,7 @@ def test_hdfc_bank_s_merger_from_the_curated_file_is_outside_its_filed_years_tod
 def test_every_sentence_2a_14_writes_passes_the_banned_words_scan():
     sentences = [R.growth_lowers_value(Decimal("0.06"), Decimal("0.12")),
                  R.return_below_cost(Decimal("0.11"), Decimal("0.12")),
+                 R.return_near_cost(Decimal("0.125"), Decimal("0.12")),
                  R.tax_fade(Decimal("0.1"), Decimal("0.25")), R.BELOW_RANGE, R.ABOVE_RANGE, OPERATING_NA,
                  KE_NOT_ABOVE_GROWTH, "Price-to-book isn't positive.", "The latest close isn't positive.",
                  "The latest close isn't stored.", "No financial year's return on equity is stored.",
@@ -429,7 +526,8 @@ def test_every_sentence_2a_14_writes_passes_the_banned_words_scan():
     found = {s: banned_words_in(s) for s in sentences if banned_words_in(s)}
     assert not found, found
     assert set(R.NO_SOLUTION) == {"growth_lowers_value", "return_below_cost", "tax_fade", "below_range",
-                                  "above_range"}
+                                  "above_range", "return_near_cost"}                  # #354 added the last
+    assert set(R.UNEXPLAINED) == {"below_range", "above_range"} and not set(R.EXPLAINED) & set(R.UNEXPLAINED)
 
 
 def test_the_lender_inputs_need_their_family_and_a_known_unit():
