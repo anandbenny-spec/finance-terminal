@@ -100,7 +100,8 @@ def test_a_stored_call_gets_a_summary_on_the_structured_route_and_each_quote_is_
     (sent,) = b["requests"]
     params = sent["params"]
     assert params["system"].startswith(PROMPT.text[:60]) and "cache_control" not in params
-    assert params["output_config"]["effort"] == "low" and params["output_config"]["format"]["type"] == "json_schema"
+    assert params["output_config"]["effort"] == "high" and params["output_config"]["format"]["type"] == "json_schema"   # v11's own (Opus)
+    assert params["model"] == "claude-opus-5-5" and params["max_tokens"] == 16_000
     assert list(params["output_config"]["format"]["schema"]["properties"]) == ["bullets"]
     block, asked = params["messages"][0]["content"][:2]
     assert block["type"] == "document" and "citations" not in block                       # no Citations API on this route
