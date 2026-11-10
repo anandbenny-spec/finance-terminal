@@ -130,11 +130,9 @@ from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TARGETS
 
-# call_tone v2 is v1's text on Sonnet 5.5 (ft/ai/call_tone.py, MODEL_OF), 20 times Haiku's price (config/ai_prices.yaml): the tone
-# gate's Sonnet round (#175, Spec 02B §5.8). This branch (claude/2b-12-tone-sonnet) is run on dev only, limited to the gate set's
-# calls (CALLS_AI_TONE_SET), and is not merged to main: main stays on v1 unless Sonnet passes and Anand approves its re-run.
-# The second round (Anand, 10 Nov 2026, 22:24-22:33 IST): v3 on Haiku, then v4 (Sonnet) and v5 (Opus), v3's text, each run on the
-# second set's calls only (tone_set=earnings_tone_2); this line moves to the next version for each run.
+# call_tone v3 on Haiku 5.5 passed the tone gate's second round (#175; 10 Nov 2026: 25 of 30 on earnings_tone_2, no reversals), so
+# it is the tone prompt. v1 (Haiku) and v2 (v1's text on Sonnet) failed the first set; v4 and v5 (v3's text on Sonnet and Opus) were
+# never needed. A tone run is still opt-in (CALLS_AI_TASK=call_tone): no scheduled run asks for tone.
 PROMPT_VERSION = {cs.TASK: "v9", ge.TASK: "v1", ct.TASK: "v3"}
 IST = "Asia/Kolkata"
 SHOWN = 12

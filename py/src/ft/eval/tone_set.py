@@ -21,6 +21,11 @@ runners (`python -m ft.eval.tone_set`, which prints the file as annotations) or 
 models failed the first set): the same rule with its own seed, leaving out the first set's 30 passages (which raters, models and
 Anand had all seen) before the thinning, so a call whose first-set passage was the smallest hash offers its next one. `SETS` holds
 each set's seed, rule version and the sets it leaves out; `--set` picks one.
+
+**Word count fix (10 Nov 2026, after the second round):** the count trims spaces, tabs and line breaks before splitting. It used to
+trim spaces only, so a passage ending in a line break counted one word too many, and `earnings_tone_2:5115-2` (39 words) was picked
+though production's passage list (`ft/ai/call_tone.passages`, at least `MIN_WORDS` words) leaves it out; the gate counted it wrong.
+Both committed sets stand as picked; a new pick no longer offers such a passage.
 """
 from __future__ import annotations
 
@@ -72,7 +77,7 @@ with calls as (
     from calls c
     join equity.call_turn t on t.document_id = c.doc and t.role = 'management' and t.section in ('opening', 'qa', 'closing')
     join core.chunk k on k.document_id = c.doc and k.char_start >= t.char_start and k.char_end <= t.char_end
-   where cardinality(regexp_split_to_array(btrim(k.body), '\\s+')) >= %(min_words)s
+   where cardinality(regexp_split_to_array(btrim(k.body, E' \\t\\r\\n'), '\\s+')) >= %(min_words)s
      and (c.doc || ':' || k.chunk_no) <> all(%(exclude)s::text[])
 )
 select slug, fiscal_label, peer_group, pat_yoy, doc, chunk_no, section, grp, h

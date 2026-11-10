@@ -192,3 +192,9 @@ def test_the_second_sets_labels_cover_it_in_order():
     for lb in doc["labels"]:
         assert set(lb) == {"id", "section", "label", "reason"} and lb["label"] in ("-2", "-1", "0", "+1", "+2")
         assert 0 < len(lb["reason"].strip()) <= 200 and "\n" not in lb["reason"] and '"' not in lb["reason"]
+
+
+def test_the_word_count_trims_line_breaks_as_production_does():
+    """Regression (#175, 10 Nov 2026): btrim() alone trims spaces, so a body ending in a line break split into one empty word more
+    than `str.split()` gives (ft/ai/call_tone.passages), and a 39-word passage was picked as a 40-word one."""
+    assert "btrim(k.body, E' \\t\\r\\n')" in ts.CANDIDATE_SQL and "btrim(k.body)" not in ts.CANDIDATE_SQL
