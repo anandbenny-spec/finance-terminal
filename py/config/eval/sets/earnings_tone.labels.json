@@ -1,0 +1,469 @@
+{
+ "set": "earnings_tone",
+ "rule_version": 1,
+ "labelled_by": "Claude Fable 5.2 (main labeller) and Claude Opus 5.5 (second rater), each blind to the other and to the model's scores; no label was set by a person",
+ "decision": "Anand, 10 Nov 2026, 19:53 IST (#175): Fable labels, Opus second-rates, instead of Spec 02B §5.8's labelling by Anand",
+ "tie_break": "where the raters' three classes differ, the main labeller's label stands (Anand, 10 Nov 2026, 21:32 IST, fixed before the model's scores were seen; he read the four passages and judged both readings defensible)",
+ "how": "each rater read the 30 passages' stored text by chunk id through the read-only dev connector and scored each on its own text and section, by the tone section of GUIDE.md; reasons are paraphrases (no transcript text in this file)",
+ "exported_at": "2026-11-10T21:34:43+05:30",
+ "complete": true,
+ "agreement": {
+  "n": 30,
+  "three_class": 26,
+  "exact": 25,
+  "tie_breaks": 4,
+  "opposite_sides": 0
+ },
+ "labels": [
+  {
+   "id": "earnings_tone:5018-8",
+   "section": "opening",
+   "label": "0",
+   "reason": "Belt-tightening on costs sits beside descriptive fleet, route and product updates with only a light growth framing; balanced overall.",
+   "fable": {
+    "label": "0",
+    "reason": "Belt-tightening on costs sits beside descriptive fleet, route and product updates with only a light growth framing; balanced overall."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "mentions belt-tightening on spending and pay, then mostly describes aircraft changes, new routes and product moves; little judgement on results"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5066-7",
+   "section": "opening",
+   "label": "+1",
+   "reason": "Describes new offerings and alliances as already bringing in work and deepening ties; favourable but promotional rather than a results claim.",
+   "fable": {
+    "label": "+1",
+    "reason": "Describes new offerings and alliances as already bringing in work and deepening ties; favourable but promotional rather than a results claim."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "describes new offerings and alliances with no real judgement on results, demand or margins; a brief note of early business is the only upbeat sign"
+   },
+   "tie_break": true
+  },
+  {
+   "id": "earnings_tone:5077-48",
+   "section": "qa",
+   "label": "0",
+   "reason": "States a planning margin assumption for newer businesses and promises later disclosure; explanatory, with no judgement on performance.",
+   "fable": {
+    "label": "0",
+    "reason": "States a planning margin assumption for newer businesses and promises later disclosure; explanatory, with no judgement on performance."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "states a modest margin assumption for new units in their early year, with a general expectation of later improvement; largely explanatory"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5090-5",
+   "section": "opening",
+   "label": "+1",
+   "reason": "Well-received launches, a small share gain, expected industry growth and a peak in one segment, framed as a plan to regain ground.",
+   "fable": {
+    "label": "+1",
+    "reason": "Well-received launches, a small share gain, expected industry growth and a peak in one segment, framed as a plan to regain ground."
+   },
+   "opus": {
+    "label": "+1",
+    "reason": "new product variants well received, slight share gains and a record in one segment, tempered by price adjustments for rivals and modest industry growth"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5104-6",
+   "section": "opening",
+   "label": "0",
+   "reason": "A peak in one activity measure is offset by admitted falls in traded volumes after rule changes and a need to rebuild one product; balanced.",
+   "fable": {
+    "label": "0",
+    "reason": "A peak in one activity measure is offset by admitted falls in traded volumes after rule changes and a need to rebuild one product; balanced."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "record activity in one segment set against lower contract counts after rule changes, a wait-and-see stance and work needed to revive one product"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5115-43",
+   "section": "qa",
+   "label": "+1",
+   "reason": "Reports growth through the whole sales funnel and expects it to go on, but qualifies it as the view for now with brand work still needed.",
+   "fable": {
+    "label": "+1",
+    "reason": "Reports growth through the whole sales funnel and expects it to go on, but qualifies it as the view for now with brand work still needed."
+   },
+   "opus": {
+    "label": "+1",
+    "reason": "describes steady growth and an improving sales trend expected to carry on, lightly hedged and noting some brands still need awareness work"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5134-4",
+   "section": "opening",
+   "label": "0",
+   "reason": "Sustainability and renewable-capacity update; a small emissions slip is expected to normalise; nothing on demand, margins or outlook.",
+   "fable": {
+    "label": "0",
+    "reason": "Sustainability and renewable-capacity update; a small emissions slip is expected to normalise; nothing on demand, margins or outlook."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "environmental update reciting green initiatives; a rise in emissions from plant outages is noted with expected easing; nothing on results"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5139-72",
+   "section": "qa",
+   "label": "+1",
+   "reason": "Clarifies that the most recent months look better than the longer-run trend shown, a gradual pickup stated with care.",
+   "fable": {
+    "label": "+1",
+    "reason": "Clarifies that the most recent months look better than the longer-run trend shown, a gradual pickup stated with care."
+   },
+   "opus": {
+    "label": "+1",
+    "reason": "clarifies that recent months run ahead of the longer trend, signalling a gradual pickup in the market"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5179-48",
+   "section": "qa",
+   "label": "0",
+   "reason": "A plain list of current and possible transmission projects with no evaluative language.",
+   "fable": {
+    "label": "0",
+    "reason": "A plain list of current and possible transmission projects with no evaluative language."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "simply lists current and possible transmission projects without any judgement"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5198-64",
+   "section": "qa",
+   "label": "0",
+   "reason": "Defends underlying sell-through growth in two acquired brands while conceding other problems still to fix; positives and negatives offset.",
+   "fable": {
+    "label": "0",
+    "reason": "Defends underlying sell-through growth in two acquired brands while conceding other problems still to fix; positives and negatives offset."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "insists underlying sales growth was delivered but concedes other unresolved problems; defensive and balanced"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5199-4",
+   "section": "opening",
+   "label": "+1",
+   "reason": "Capacity ramp-up described as going well, deliveries higher and a retail brand at its best quarter; mostly operational detail, mildly upbeat.",
+   "fable": {
+    "label": "+1",
+    "reason": "Capacity ramp-up described as going well, deliveries higher and a retail brand at its best quarter; mostly operational detail, mildly upbeat."
+   },
+   "opus": {
+    "label": "+1",
+    "reason": "new furnace scaling up smoothly, higher deliveries and a record retail quarter, amid mostly descriptive detail"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5203-68",
+   "section": "qa",
+   "label": "-1",
+   "reason": "Tempers expectations by cautioning that the new-technology projects are individually modest and not yet a material contributor.",
+   "fable": {
+    "label": "-1",
+    "reason": "Tempers expectations by cautioning that the new-technology projects are individually modest and not yet a material contributor."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "tempers expectations by saying the AI work is numerous but mostly small in size; a neutral caveat rather than a deterioration"
+   },
+   "tie_break": true
+  },
+  {
+   "id": "earnings_tone:5213-58",
+   "section": "qa",
+   "label": "+1",
+   "reason": "Favourable reception for new models and no ramp-up constraint, alongside a flat first quarter and only modest growth expected ahead.",
+   "fable": {
+    "label": "+1",
+    "reason": "Favourable reception for new models and no ramp-up constraint, alongside a flat first quarter and only modest growth expected ahead."
+   },
+   "opus": {
+    "label": "+1",
+    "reason": "warm customer reception of new vehicles and no capacity constraint, while a flat first quarter shifts expected growth to later months"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5219-50",
+   "section": "qa",
+   "label": "0",
+   "reason": "Admits volumes are a little short of plan, blames weather, and expects to make it up in coming quarters; shortfall and reassurance offset.",
+   "fable": {
+    "label": "0",
+    "reason": "Admits volumes are a little short of plan, blames weather, and expects to make it up in coming quarters; shortfall and reassurance offset."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "admits toll project build-up is slightly behind plan, blames weather, and expects to make it up shortly; shortfall and reassurance balance out"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5226-129",
+   "section": "qa",
+   "label": "0",
+   "reason": "Restates that the margin range rests on the launch plan and could be at risk if the plan changes; a neutral caveat, not a view on results.",
+   "fable": {
+    "label": "0",
+    "reason": "Restates that the margin range rests on the launch plan and could be at risk if the plan changes; a neutral caveat, not a view on results."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "restates margin guidance as plan-based and flags that changes, such as to launches, could put it at risk; conditional rather than negative"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5234-113",
+   "section": "opening",
+   "label": "0",
+   "reason": "A leadership succession announcement with praise for the outgoing chief; procedural, not about current results, demand or outlook.",
+   "fable": {
+    "label": "0",
+    "reason": "A leadership succession announcement with praise for the outgoing chief; procedural, not about current results, demand or outlook."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "leadership succession announcement and praise for the outgoing chief; nothing on results, demand or outlook"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5240-27",
+   "section": "qa",
+   "label": "0",
+   "reason": "Robust demand is set against margins that need rebuilding and a named raw-material cost risk; the two sides balance.",
+   "fable": {
+    "label": "0",
+    "reason": "Robust demand is set against margins that need rebuilding and a named raw-material cost risk; the two sides balance."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "robust demand set against margins that need rebuilding and raw-material cost risk; the two sides offset"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5267-10",
+   "section": "opening",
+   "label": "+1",
+   "reason": "Volume growth despite seasonal drags, rural strength, premium mix aiding margins and a trend expected to persist; upbeat but not a raised outlook.",
+   "fable": {
+    "label": "+1",
+    "reason": "Volume growth despite seasonal drags, rural strength, premium mix aiding margins and a trend expected to persist; upbeat but not a raised outlook."
+   },
+   "opus": {
+    "label": "+2",
+    "reason": "confident account of solid volume growth overcoming weather and calendar headwinds, better margins from premium mix, wider reach and an expected continuation"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5271-11",
+   "section": "opening",
+   "label": "0",
+   "reason": "Recites fee, trading and expense line items with their causes, without any judgement on performance or outlook.",
+   "fable": {
+    "label": "0",
+    "reason": "Recites fee, trading and expense line items with their causes, without any judgement on performance or outlook."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "recites deposit cost, fee, treasury loss and expense figures with no evaluative language"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5275-8",
+   "section": "opening",
+   "label": "0",
+   "reason": "Regulatory approvals and headline figures recited, with an accounting comparability note; only a passing favourable adjective on underlying growth.",
+   "fable": {
+    "label": "0",
+    "reason": "Regulatory approvals and headline figures recited, with an accounting comparability note; only a passing favourable adjective on underlying growth."
+   },
+   "opus": {
+    "label": "+1",
+    "reason": "approvals secured with satisfaction and profit growth called sound after adjusting for mark-to-market swings; otherwise largely figures"
+   },
+   "tie_break": true
+  },
+  {
+   "id": "earnings_tone:5279-19",
+   "section": "qa",
+   "label": "0",
+   "reason": "Flags further provisioning next year but calls the added impact small and spread out; caution and reassurance offset.",
+   "fable": {
+    "label": "0",
+    "reason": "Flags further provisioning next year but calls the added impact small and spread out; caution and reassurance offset."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "flags further provisioning ahead but stresses the hit is small, spread out and leaves buffers intact; balanced"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5283-129",
+   "section": "closing",
+   "label": "+1",
+   "reason": "Keeps the growth, margin and order-intake guidance with firm wording while acknowledging external challenges; maintained rather than raised.",
+   "fable": {
+    "label": "+1",
+    "reason": "Keeps the growth, margin and order-intake guidance with firm wording while acknowledging external challenges; maintained rather than raised."
+   },
+   "opus": {
+    "label": "+1",
+    "reason": "keeps the year's growth and margin guidance with firm wording and expects strong orders, mindful of global risks; guidance kept, not raised"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5305-6",
+   "section": "opening",
+   "label": "+2",
+   "reason": "Unqualified upbeat language throughout: rising adoption, very good early outcomes, new wins and several areas called major growth drivers.",
+   "fable": {
+    "label": "+2",
+    "reason": "Unqualified upbeat language throughout: rising adoption, very good early outcomes, new wins and several areas called major growth drivers."
+   },
+   "opus": {
+    "label": "+2",
+    "reason": "unqualified enthusiasm: strong uptake, very good outcomes, expanding engagements and rising demand across several AI service lines"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5310-36",
+   "section": "qa",
+   "label": "-1",
+   "reason": "Explains pressure on funding costs from faster-than-expected rate cuts and a costlier deposit mix, with the benefit still to come through.",
+   "fable": {
+    "label": "-1",
+    "reason": "Explains pressure on funding costs from faster-than-expected rate cuts and a costlier deposit mix, with the benefit still to come through."
+   },
+   "opus": {
+    "label": "-1",
+    "reason": "explains margin squeeze from faster loan repricing after rate cuts and a costlier deposit composition, which has yet to fully reverse"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5322-69",
+   "section": "qa",
+   "label": "0",
+   "reason": "Says companies are financially sound with many funding routes, which also explains muted bank lending to them; explanatory and balanced.",
+   "fable": {
+    "label": "0",
+    "reason": "Says companies are financially sound with many funding routes, which also explains muted bank lending to them; explanatory and balanced."
+   },
+   "opus": {
+    "label": "+1",
+    "reason": "upbeat on corporate health and funding access and expects continued growth, while downplaying corporate lending as a gauge"
+   },
+   "tie_break": true
+  },
+  {
+   "id": "earnings_tone:5340-62",
+   "section": "qa",
+   "label": "0",
+   "reason": "Gives a facility's capacity and expected output for the year, with no evaluative language.",
+   "fable": {
+    "label": "0",
+    "reason": "Gives a facility's capacity and expected output for the year, with no evaluative language."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "states plant capacity and expected output for the year without judgement"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5356-84",
+   "section": "closing",
+   "label": "0",
+   "reason": "Closing thanks from the host and management; procedure only.",
+   "fable": {
+    "label": "0",
+    "reason": "Closing thanks from the host and management; procedure only."
+   },
+   "opus": {
+    "label": "0",
+    "reason": "closing thanks from the host and management only"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5375-61",
+   "section": "qa",
+   "label": "+1",
+   "reason": "Reassures that trade-related borrower stress has eased as customers found other markets and that a rise in early stress should not turn bad.",
+   "fable": {
+    "label": "+1",
+    "reason": "Reassures that trade-related borrower stress has eased as customers found other markets and that a rise in early stress should not turn bad."
+   },
+   "opus": {
+    "label": "+1",
+    "reason": "reassures that trade-levy worries have eased as clients found other buyers and that a rise in stressed loans is short-lived, with stated confidence"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5381-8",
+   "section": "opening",
+   "label": "+1",
+   "reason": "Favourable safety profile for a new product and a government deal that defers a trade levy, told mostly factually before a handover.",
+   "fable": {
+    "label": "+1",
+    "reason": "Favourable safety profile for a new product and a government deal that defers a trade levy, told mostly factually before a handover."
+   },
+   "opus": {
+    "label": "+1",
+    "reason": "favourable drug safety data and a government deal that defers trade levies, against a pricing concession described neutrally"
+   },
+   "tie_break": false
+  },
+  {
+   "id": "earnings_tone:5403-5",
+   "section": "opening",
+   "label": "+2",
+   "reason": "Highly confident, unhedged language on demand, readiness, expansion timing, leverage reduction and integrations running ahead of plan.",
+   "fable": {
+    "label": "+2",
+    "reason": "Highly confident, unhedged language on demand, readiness, expansion timing, leverage reduction and integrations running ahead of plan."
+   },
+   "opus": {
+    "label": "+2",
+    "reason": "very confident tone: exceptional demand, expansion on schedule, deleveraging ahead and acquisitions integrating faster than planned"
+   },
+   "tie_break": false
+  }
+ ]
+}
