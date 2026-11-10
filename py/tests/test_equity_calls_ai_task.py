@@ -136,26 +136,33 @@ def source(key: str, *, suppressed: bool = False) -> int:
 
 def make_call(*, lines=LINES, role_of=None, filed: date = date(2026, 10, 20), src_key: str = "nse",
               held: bool = False, publish_doc: bool = True, status: str = "stored", with_doc: bool = True,
-              fy_end: int | None = None) -> dict:
+              fy_end: int | None = None, company: int | None = None,
+              quarter: tuple[str, date] = ("Q2 FY27", date(2026, 9, 30))) -> dict:
     """A stored call: company, event, transcript document (published, chunked), its turns and the earnings_call row.
-    `fy_end`: the company's fiscal-year end month (an `equity.company` row), which the guidance extraction needs."""
+    `fy_end`: the company's fiscal-year end month (an `equity.company` row), which the guidance extraction needs.
+    `company`: another call of a company made before (its entity id; `fy_end` is then the first call's); `quarter`: the call's
+    fiscal label and quarter end (#370's tests give a company several calls)."""
     tag = uuid.uuid4().hex[:8]
     lines = [(sp, (role_of or {}).get(i, role), t) for i, (sp, role, t) in enumerate(lines)]
     b = build(lines)
     src = source(src_key, suppressed=src_key.endswith("_suppressed"))
-    eid = q("""insert into core.entity (kind, slug, name, short_name, market, currency, is_published)
-               values ('company', %s, 'Acme Limited', 'Acme', 'IN', 'INR', true) returning id""", f"cai-{tag}")[0][0]
-    if fy_end is not None:
-        x("insert into equity.company (entity_id, fy_end_month) values (%s, %s)", eid, fy_end)
-    slug = f"cai-{tag}-call-q2-fy27"
+    label, period_end = quarter
+    if company is None:
+        eid = q("""insert into core.entity (kind, slug, name, short_name, market, currency, is_published)
+                   values ('company', %s, 'Acme Limited', 'Acme', 'IN', 'INR', true) returning id""", f"cai-{tag}")[0][0]
+        if fy_end is not None:
+            x("insert into equity.company (entity_id, fy_end_month) values (%s, %s)", eid, fy_end)
+    else:
+        eid = company
+    slug = f"cai-{tag}-call-{label.lower().replace(' ', '-')}"
     ev = q("""insert into core.event (event_type, entity_id, slug, title, starts_on, status, source_id, is_published)
-              values ('earnings_call', %s, %s, 'Acme Q2 FY27 call', %s, %s, %s, true) returning id""",
-           eid, slug, filed, status, src)[0][0]
+              values ('earnings_call', %s, %s, %s, %s, %s, %s, true) returning id""",
+           eid, slug, f"Acme {label} call", filed, status, src)[0][0]
     doc = None
     if with_doc:
         with connect(JOB) as c, c.transaction():
             saved = save_version(c, DocumentRef("call_transcript", eid, src, f"/test/cai/{tag}.pdf",
-                                                f"https://example.invalid/cai/{tag}.pdf", "Acme Q2 FY27 transcript", ev, None,
+                                                f"https://example.invalid/cai/{tag}.pdf", f"Acme {label} transcript", ev, None,
                                                 datetime(filed.year, filed.month, filed.day, 12, tzinfo=UTC)), b.extracted)
             doc = saved.document_id
             save_chunks(c, doc, b.extracted.text, chunk_text(b.extracted, root="Transcript"))
@@ -172,8 +179,9 @@ def make_call(*, lines=LINES, role_of=None, filed: date = date(2026, 10, 20), sr
         c.execute("""insert into equity.earnings_call (event_id, entity_id, fiscal_label, period_end, season_key, quarter_source,
                           call_date, call_date_source, filed_at, exchange, route, transcript_document_id, words, status_reason,
                           unknown_role_share)
-                     values (%s, %s, 'Q2 FY27', '2026-09-30', 'q2-fy27', 'text', %s, 'text', %s, 'NSE', %s, %s, %s, %s, %s)""",
-                  (ev, eid, filed, datetime(filed.year, filed.month, filed.day, 12, tzinfo=UTC),
+                     values (%s, %s, %s, %s, %s, 'text', %s, 'text', %s, 'NSE', %s, %s, %s, %s, %s)""",
+                  (ev, eid, label, period_end, label.lower().replace(" ", "-"), filed,
+                   datetime(filed.year, filed.month, filed.day, 12, tzinfo=UTC),
                    "exchange_pdf" if with_doc else "none", doc, len(b.text.split()), "quarter_conflict" if held else None,
                    round(b.unknown_share, 4)))
     return {"slug": slug, "doc": doc, "event": ev, "built": b, "entity": eid, "src": src}

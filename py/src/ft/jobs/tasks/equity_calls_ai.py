@@ -8,6 +8,14 @@ with its document published and chunked, and neither source suppressed): the doc
 version registered later (§13.3).
 - `call_summary`: for a call that lacks a published summary from the current prompt version. A new prompt version therefore asks
   again for the calls summarised under the old one, and a published summary of the current version is never asked for twice.
+  **Only each company's newest call, unless the run names a window (#370; Review 02c F3-04).** A run with no `--since` or
+  `--until` (`daily`, `weekly`, `watch`, `refresh`, a backfill without either) asks for the summary of each company's newest
+  stored call only: the call the site lists as its latest stored one (`api.earnings_calls.is_latest_stored`: by the quarter's
+  end, then the filing time; only calls a visitor can see count). So a new prompt version is no instruction to an unattended
+  run to redo the history: on Sunday the `weekly` asks for at most one summary a company. A backfill that names a window keeps
+  the old rule, every stored call filed in it, so the history is still summarised on purpose (`summary_scope`). The guidance
+  extraction and the tone scores are asked for as before, for every call: the rule is the summary's alone, and it doesn't
+  depend on the prompt version.
 - `guidance_extraction` (`ft/ai/guidance_extraction.py`, the prompt `config/prompts/guidance_extraction/v1.md`): for a call that
   has neither a published output of the current prompt version nor a draft one marked `no_targets` (a call on which nothing was
   found is final for that version). Its call needs the company's fiscal-year end month (`equity.company`), a call date and its
@@ -127,6 +135,19 @@ SHOWN = 12
 ONLY_ENV = "CALLS_AI_TASK"            # both (the default) | call_summary | guidance_extraction | call_tone: limits what a run asks for (#302)
 
 
+NEWEST, ALL = "newest", "all"         # which calls a run asks a summary for (#370): `summary_scope`
+
+
+def summary_scope(since: date | None, until: date | None) -> str:
+    """Which calls a run asks a `call_summary` for (#370; Review 02c F3-04; decided by Claude under the standing delegation of
+    24 Oct 2026, the alternative being an `ops.setting`): `all`, every stored call lacking a published summary of the current
+    prompt version, only when the run names a window (a backfill's `--since` or `--until`); otherwise `newest`, each company's
+    newest stored call. In code, not a setting: no migration and nothing to flip. No run can name calls today (`refresh` and
+    `backfill` have no such input; the task's `scope` is the tests' filter on the data), so the window is the one way to ask
+    for the history; an input naming calls, if one is added, should join it."""
+    return ALL if since is not None or until is not None else NEWEST
+
+
 def only_task(env=None) -> str | None:
     """The one task a run is limited to, or None for both. A bad value stops the run before anything is sent."""
     v = ((os.environ if env is None else env).get(ONLY_ENV) or "both").strip()
@@ -186,6 +207,7 @@ class Fetched(RunState):
     since: date | None = None                                # the run's range (a backfill), for the re-check of stored summaries
     until: date | None = None
     only: str | None = None                                  # the one task this run asks for (None: both), #302
+    summaries: str = ALL                                     # which calls it asks a summary for: NEWEST or ALL (#370)
 
 
 @dataclass
@@ -240,19 +262,24 @@ class EquityCallsAi(BatchSteps, Task):
 
     def _calls(self, db, *, doc_ids: list[int] | None = None, lacking: bool = True,
                since: date | None = None, until: date | None = None, skipped: list[str] | None = None,
-               tone: bool = True) -> list[Work]:
+               tone: bool = True, newest_only: bool = False) -> list[Work]:
         """The stored calls as targets, a summary and an extraction each. `lacking`: only those without a published summary, or
         without an extraction (published, or a draft that found nothing) from the current prompt version (what to ask for);
         otherwise every call that could be asked for (a late result looks its target up so). `skipped` collects the slugs of
         the calls that can't be extracted. `tone`: also the tone targets (`call_tone`, a published output of the current
-        prompt version lacking); `fetch` passes it only for a run limited to that task, so no other run reads the chunks."""
+        prompt version lacking); `fetch` passes it only for a run limited to that task, so no other run reads the chunks.
+        `newest_only` (#370, `summary_scope`): with `lacking`, a summary only for each company's newest stored call; the
+        extraction and tone targets are unchanged. Without `lacking` it changes nothing, so a late result for an older call
+        (a backfill's batch collected by the next `weekly`) still finds its target."""
         where = ["ev.status = 'stored'", "ev.is_published", "ec.status_reason is null", "d.is_published",
                  "d.chunked_at is not null", "(es.id is null or not es.is_suppressed)", "not ds.is_suppressed"]
         guidance = ge.TASK in PROMPT_VERSION            # a task with no prompt version listed isn't asked for
         tone = tone and ct.TASK in PROMPT_VERSION
+        newest_only = newest_only and lacking
         args: list = [PROMPT_VERSION[cs.TASK], PROMPT_VERSION.get(ge.TASK, ""), PROMPT_VERSION.get(ct.TASK, "")]   # the lateral's placeholders come first
         if lacking:
-            done = "f.has_summary and f.has_extraction" if guidance else "f.has_summary"
+            summarised = "(f.has_summary or not f.is_newest)" if newest_only else "f.has_summary"   # nothing to ask on an older call
+            done = f"{summarised} and f.has_extraction" if guidance else summarised
             where.append(f"not ({done} and f.has_tone)" if tone else f"not ({done})")
         if doc_ids is not None:
             where.append("d.id = any(%s)"); args.append(doc_ids)
@@ -266,7 +293,7 @@ class EquityCallsAi(BatchSteps, Task):
             f"""select ec.event_id, ev.slug, ec.fiscal_label, ec.call_date, (ec.filed_at at time zone '{IST}')::date,
                        d.id, d.char_count, n.name, ec.unknown_role_share,
                        (select string_agg(c.body, '' order by c.chunk_no) from core.chunk c where c.document_id = d.id),
-                       ec.entity_id, co.fy_end_month, f.has_summary, f.has_extraction, f.has_tone
+                       ec.entity_id, co.fy_end_month, f.has_summary, f.has_extraction, f.has_tone, f.is_newest
                   from equity.earnings_call ec
                   join core.event ev on ev.id = ec.event_id
                   join core.document d on d.id = ec.transcript_document_id
@@ -282,7 +309,20 @@ class EquityCallsAi(BatchSteps, Task):
                                       and (o.status = 'published' or (o.status = 'draft' and o.status_reason = 'no_targets')))
                              as has_extraction,
                            exists (select 1 from core.ai_output o where o.task = 'call_tone' and o.document_id = d.id
-                                      and o.status = 'published' and o.prompt_version = %s) as has_tone) f
+                                      and o.status = 'published' and o.prompt_version = %s) as has_tone,
+                           -- #370: the newest stored call of the company, as the site orders its calls (is_latest_stored
+                           -- in api.earnings_calls: quarter end, then filing time, then event; only calls a visitor can see)
+                           coalesce(ec.event_id = (
+                             select ec2.event_id from equity.earnings_call ec2
+                               join core.event ev2 on ev2.id = ec2.event_id
+                               join core.source es2 on es2.id = ev2.source_id and not es2.is_suppressed
+                               left join core.document d2 on d2.id = ec2.transcript_document_id
+                               left join core.source ds2 on ds2.id = d2.source_id
+                              where ec2.entity_id = ec.entity_id and ev2.status = 'stored' and ev2.is_published
+                                and (ec2.transcript_document_id is null
+                                     or (d2.is_published and ds2.id is not null and not ds2.is_suppressed))
+                              order by ec2.period_end desc nulls last, ec2.filed_at desc, ec2.event_id desc
+                              limit 1), false) as is_newest) f
                  where {' and '.join(where)}
                  order by ec.filed_at, ec.event_id""", args).fetchall()
         turns: dict[int, list[Turn]] = {}
@@ -303,13 +343,14 @@ class EquityCallsAi(BatchSteps, Task):
         summary_schema = (load_schema(cs.TASK, PROMPT_VERSION[cs.TASK])
                           if cs.route_of(PROMPT_VERSION[cs.TASK]) == "json" else None)     # v1-v5 have none
         out = []
-        for event_id, slug, label, call_date, filed, did, chars, company, share, text, entity_id, fy_end, has_s, has_x, has_t in rows:
+        for (event_id, slug, label, call_date, filed, did, chars, company, share, text, entity_id, fy_end, has_s, has_x, has_t,
+             newest) in rows:
             if text is None or len(text) != chars:
                 continue                                       # the database refuses this at commit; never send it
             title = f"{company} · {label or 'earnings call'} transcript"
             held = share is not None and float(share) > ROLE_HOLD_SHARE         # strictly greater, as the rules and the views
             call = CallDoc(did, text, title, company, label, call_date or filed, tuple(turns.get(did, ())), held, fy_end)
-            if not (lacking and has_s):
+            if not (lacking and (has_s or (newest_only and not newest))):
                 out.append(Work(cs.TASK, call, slug, event_id, entity_id, summary_schema))
             if tone and not held and not (lacking and has_t):
                 items = ct.passages(call, chunks.get(did, ()))
@@ -328,9 +369,10 @@ class EquityCallsAi(BatchSteps, Task):
     def fetch(self, ctx: Context) -> Fetched:
         db = ctx.fetcher.db
         f = Fetched("batch", budget=batch.monthly_budget(db), month_spend=batch.month_spend(db), since=ctx.since,
-                    until=ctx.until, only=only_task())
+                    until=ctx.until, only=only_task(), summaries=summary_scope(ctx.since, ctx.until))
         prompts = {t: load_prompt(t, v) for t, v in PROMPT_VERSION.items()}
-        works = [w for w in self._calls(db, since=ctx.since, until=ctx.until, skipped=f.no_guidance, tone=f.only == ct.TASK)
+        works = [w for w in self._calls(db, since=ctx.since, until=ctx.until, skipped=f.no_guidance, tone=f.only == ct.TASK,
+                                        newest_only=f.summaries == NEWEST)
                  if (f.only is None and w.task != ct.TASK) or f.only == w.task]       # tone only when the run is limited to it
         f.wanted = sum(1 for w in works if w.task == cs.TASK)
         f.wanted_guidance = sum(1 for w in works if w.task == ge.TASK)
@@ -796,9 +838,12 @@ class EquityCallsAi(BatchSteps, Task):
             "claude": f.unavailable, "skipped_targets": [o.work.target for o in f.outcomes if o.status == "skipped"],
             "budget_stopped": f.stopped == "budget"}), blocking=False))
         out.append(batches_check(f))
+        scope = ("each company's newest call only (no window named, #370)" if f.summaries == NEWEST
+                 else "every call in the run's window")
         out.append(Check("call_summaries", True,
                          f"{f.wanted} calls lacked a published summary at the start; this run: "
-                         + (", ".join(f"{n} {s}" for s, n in sorted(c.items())) or "nothing to do"), blocking=False))
+                         + (", ".join(f"{n} {s}" for s, n in sorted(c.items())) or "nothing to do")
+                         + f"; summaries asked for: {scope}", blocking=False))
         out += self._guidance_checks(tx, f)
         out += self._tone_checks(tx, f)
         return out
