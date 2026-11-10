@@ -22,6 +22,11 @@ What the files hold (Data Audit 02a findings 2–3; the saved filings in the fix
 - The basis comes from the header (`NatureOfReportStandaloneConsolidated`); the kit's dimension hints are the fallback
   (no saved file needs them).
 
+**Third use (job VC-01, the value chain card; Spec 02B §12.4):** SEBI's BRSR instances and the results filings' related-party
+rows. Additive only: `Context.typed` (typed members apart from `dims`, which still holds both), `typed_rows` (a filing's
+facts grouped by one typed dimension and the context's period), `brsr_view` (the current-year and prior-year contexts,
+their facts without dimensions, header facts, the entry-point date), and duplicates reported, never resolved.
+
 The parser refuses DTDs, entities and the network (the same settings as `ft/equity/filings.py`).
 """
 from __future__ import annotations
@@ -70,7 +75,8 @@ class Context:
     start: date | None = None
     end: date | None = None
     instant: date | None = None
-    dims: dict[str, str] = field(default_factory=dict)        # axis local name -> member local name
+    dims: dict[str, str] = field(default_factory=dict)        # axis local name -> member local name (explicit and typed)
+    typed: dict[str, str] = field(default_factory=dict)       # the typed ones only: axis local name -> the member's value
 
     @property
     def column(self) -> str | None:
@@ -106,6 +112,7 @@ class Instance:
     basis: str | None              # consolidated | standalone | None
     undefined: dict[str, int]      # context ids facts point at but the file doesn't define -> facts
     dating: Dating | None = None
+    entry_point: str | None = None  # the schemaRef's date (ISO), the taxonomy's format version (BRSR: Data Audit 08 §3.3)
 
 
 def to_date(s: str | None) -> date | None:
@@ -168,6 +175,8 @@ def parse(body: bytes) -> Instance:
                 axis = _local(sub.get("dimension", ""))
                 member = (sub.text or "").strip()
                 c.dims[axis] = _local(member) if member else "".join(sub.itertext()).strip()
+                if n == "typedMember":
+                    c.typed[axis] = c.dims[axis]
         contexts[c.id] = c
     facts: list[Fact] = []
     undefined: dict[str, int] = {}
@@ -189,23 +198,44 @@ def parse(body: bytes) -> Instance:
     inst = Instance(facts, contexts, {}, None, undefined)
     inst.header = header_of(inst)
     inst.basis = basis_of(inst)
+    inst.entry_point = entry_point_of(root)
     return inst
 
 
-def header_of(inst: Instance) -> dict[str, str]:
-    """The header facts (as text; dates as ISO), each from its first ranked name present, preferring a fact whose
-    context has no dimensions."""
+XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
+ENTRY_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})\.xsd$")
+
+
+def entry_point_of(root) -> str | None:
+    """The date in the `schemaRef`'s entry point (`in-capmkt-ent-2024-04-30.xsd` -> 2024-04-30), None if the file has no
+    schemaRef or no date in it."""
+    for el in root.iter("{http://www.xbrl.org/2003/linkbase}schemaRef"):
+        m = ENTRY_DATE_RE.search((el.get(XLINK_HREF) or "").strip())
+        if m:
+            return m.group(1)
+    return None
+
+
+def _header_facts(inst: Instance, spec: dict[str, tuple[str, ...]]) -> dict[str, str]:
+    """Each key's text from the first ranked name present, preferring a fact whose context has no dimensions."""
     by_name: dict[str, list[Fact]] = {}
     for f in inst.facts:
         by_name.setdefault(f.name, []).append(f)
     out: dict[str, str] = {}
-    for key, names in HEADER.items():
+    for key, names in spec.items():
         for n in names:
             fs = by_name.get(n)
             if fs:
                 fs = sorted(fs, key=lambda f: len(inst.contexts[f.context].dims) if f.context in inst.contexts else 0)
                 out[key] = fs[0].text
                 break
+    return out
+
+
+def header_of(inst: Instance) -> dict[str, str]:
+    """The header facts (as text; dates as ISO), each from its first ranked name present, preferring a fact whose
+    context has no dimensions."""
+    out = _header_facts(inst, HEADER)
     for k in DATE_KEYS:
         if k in out:
             d = to_date(out[k])
@@ -297,3 +327,124 @@ def facts_on(inst: Instance, name: str, axis: str, members: tuple[str, ...] | st
                 and c.dims.get(axis, "").lower() in wanted:
             out.append(f)
     return out
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Third use (VC-01): typed-dimension rows and the BRSR's contexts
+# ----------------------------------------------------------------------------------------------------------------------
+Period = tuple[str, date | None, date | None]       # ("duration", start, end) or ("instant", day, day)
+
+
+def period_of(c: Context) -> Period | None:
+    """A context's period, as a hashable key; None when it has neither dates nor an instant."""
+    if c.instant is not None:
+        return ("instant", c.instant, c.instant)
+    if c.start is not None and c.end is not None:
+        return ("duration", c.start, c.end)
+    return None
+
+
+@dataclass
+class Row:
+    """One typed member in one period: its facts by element name. An element the member states twice with different
+    values in the period lands in `conflicts` (all its facts) and not in `facts`: the reader never picks one."""
+    member: str                                   # the typed member's value, e.g. RelatedPartyTransactionDomain1
+    period: Period
+    facts: dict[str, Fact] = field(default_factory=dict)
+    conflicts: dict[str, list[Fact]] = field(default_factory=dict)
+    contexts: list[str] = field(default_factory=list)
+
+
+def _same(a: Fact, b: Fact) -> bool:
+    return (a.value, a.text) == (b.value, b.text) if a.value is not None or b.value is not None else a.text == b.text
+
+
+def _put(facts: dict[str, Fact], conflicts: dict[str, list[Fact]], f: Fact) -> None:
+    """Add a fact to a mapping of element -> fact; a second, different value for the element moves it to `conflicts`."""
+    if f.name in conflicts:
+        conflicts[f.name].append(f)
+    elif f.name not in facts:
+        facts[f.name] = f
+    elif not _same(facts[f.name], f):
+        conflicts[f.name] = [facts.pop(f.name), f]
+
+
+def _member_key(m: str) -> tuple:
+    """Natural order for members such as Domain2 before Domain10."""
+    return tuple(int(t) if t.isdigit() else t for t in re.split(r"(\d+)", m))
+
+
+def typed_rows(inst: Instance, axis: str) -> list[Row]:
+    """A filing's facts grouped into rows by one typed dimension: rows keyed by the member's value **and the context's
+    period** (a member can have a duration and two instants, as the results filings' related-party members do).
+    Only contexts whose single dimension is `axis`, a typed one, count. Facts with no value (nil, empty) are left out.
+    Ordered by member (natural order), then period."""
+    rows: dict[tuple[str, Period], Row] = {}
+    for f in inst.facts:
+        c = inst.contexts.get(f.context)
+        if c is None or set(c.dims) != {axis} or axis not in c.typed:
+            continue
+        p = period_of(c)
+        if p is None or (f.value is None and not f.text):
+            continue
+        row = rows.setdefault((c.typed[axis], p), Row(c.typed[axis], p))
+        if f.context not in row.contexts:
+            row.contexts.append(f.context)
+        _put(row.facts, row.conflicts, f)
+    return sorted(rows.values(), key=lambda r: (_member_key(r.member), r.period[0], r.period[1] or date.min))
+
+
+# The BRSR's header facts (Data Audit 08 §3.2; kit/brsr.py HEADER): NSESymbol and ScripCode from the FY 2025-26 taxonomy
+# on, ISIN likewise; before that only the name identifies the company.
+BRSR_HEADER = {
+    "name": ("NameOfTheCompany",),
+    "cin": ("CorporateIdentityNumber",),
+    "nse_symbol": ("NSESymbol",),
+    "scrip_code": ("ScripCode",),
+    "isin": ("ISIN",),
+    "fy_start": ("DateOfStartOfFinancialYear",),
+    "fy_end": ("DateOfEndOfFinancialYear",),
+    "boundary": ("ReportingBoundary",),
+    "turnover": ("Turnover",),
+}
+
+
+@dataclass
+class BrsrView:
+    """A BRSR instance read for the value chain card (VC-04 reads the fields; this holds no card logic)."""
+    header: dict[str, str]                        # BRSR_HEADER keys present; dates as ISO
+    entry_point: str | None                       # the schemaRef's date: the taxonomy's format version
+    fy: tuple[date, date]                         # the filing's own year (a 15-month year stays 15 months)
+    current_contexts: list[str]                   # undimensioned duration contexts dated exactly the year
+    prior_contexts: list[str]                     # undimensioned duration contexts ending the day before the year starts
+    current: dict[str, Fact] = field(default_factory=dict)             # undimensioned facts in the current year, as filed
+    prior: dict[str, Fact] = field(default_factory=dict)
+    conflicts: dict[str, list[Fact]] = field(default_factory=dict)     # elements with two different values (current year)
+    prior_conflicts: dict[str, list[Fact]] = field(default_factory=dict)
+
+
+def brsr_view(inst: Instance) -> BrsrView:
+    """Read a parsed BRSR instance: header facts, the current-year context from `DateOfStartOfFinancialYear` and
+    `DateOfEndOfFinancialYear`, the facts without dimensions in it, and the prior year's (used only for the restatement
+    check). Numeric facts keep their `decimals`, unit and value as filed (a fraction element can hold 59.62); text as
+    filed. An element with two different values in one year is in `conflicts` and not in `current`. Raises XbrlError for
+    an instance that isn't a BRSR (no name and no financial year in its header)."""
+    h = _header_facts(inst, BRSR_HEADER)
+    for k in ("fy_start", "fy_end"):
+        if k in h:
+            d = to_date(h[k])
+            h[k] = d.isoformat() if d else h[k]
+    start, end = to_date(h.get("fy_start")), to_date(h.get("fy_end"))
+    if start is None or end is None:
+        raise XbrlError("not a BRSR instance (no DateOfStartOfFinancialYear / DateOfEndOfFinancialYear)")
+    day_before = date.fromordinal(start.toordinal() - 1)
+    cur_ids = [c.id for c in inst.contexts.values() if not c.dims and c.instant is None and (c.start, c.end) == (start, end)]
+    prior_ids = [c.id for c in inst.contexts.values() if not c.dims and c.instant is None and c.end == day_before]
+    v = BrsrView(h, inst.entry_point, (start, end), cur_ids, prior_ids)
+    cur, pri = set(cur_ids), set(prior_ids)
+    for f in inst.facts:
+        if f.context in cur:
+            _put(v.current, v.conflicts, f)
+        elif f.context in pri:
+            _put(v.prior, v.prior_conflicts, f)
+    return v
