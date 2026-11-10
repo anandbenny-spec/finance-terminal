@@ -233,11 +233,12 @@ def test_the_run_step_passes_the_target_and_takes_inputs_only_through_env(name):
 
 def test_the_backfill_can_limit_equity_calls_ai_to_one_task_through_env_and_no_other_workflow_sets_it():
     from ft.ai import call_summary as cs
+    from ft.ai import call_tone as ct
     from ft.ai import guidance_extraction as ge
     from ft.jobs.tasks import equity_calls_ai as eca
     wf = load("backfill")
     option = wf["on"]["workflow_dispatch"]["inputs"]["calls_ai_task"]
-    assert option["default"] == "both" and option["options"] == ["both", cs.TASK, ge.TASK]
+    assert option["default"] == "both" and option["options"] == ["both", cs.TASK, ge.TASK, ct.TASK]
     run = next(s for s in wf["jobs"]["run"]["steps"] if s.get("name") == "Run")
     assert run["env"][eca.ONLY_ENV] == "${{ inputs.calls_ai_task }}"
     for name in ("daily", "watch", "weekly", "refresh"):              # a scheduled run asks for both, as before
