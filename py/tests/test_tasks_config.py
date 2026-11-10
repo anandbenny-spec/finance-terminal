@@ -21,12 +21,12 @@ def test_repo_config_loads():
                           "equity.call_transcripts", "equity.call_text", "equity.calls_ai", "equity.rate_reactions",
                           "equity.results_reactions", "equity.valuation", "equity.snapshot", "equity.guidance_scores", "equity.call_scores"}
     # the due-rule names are kept as tasks.yaml writes them (Prompt 01 A2)
-    # a daily rule may add the decision-day catch-up (#158: `every 20 hours or fomc_catch_up`; test_catch_up_rules.py)
-    assert tasks["policy.fed_documents"].rules == {"daily": "every 20 hours or fomc_catch_up", "watch": "fomc_decision_day"}
+    # a daily rule may add the decision-day catch-up (#158: `every 16 hours or fomc_catch_up`; test_catch_up_rules.py)
+    assert tasks["policy.fed_documents"].rules == {"daily": "every 16 hours or fomc_catch_up", "watch": "fomc_decision_day"}
     assert tasks["policy.rbi_documents"].rules["watch"] == "mpc_decision_day"
     assert tasks["policy.ai_batch"].rules["watch"] == "after_decision_document"
     assert tasks["policy.calendar"].min_interval == timedelta(days=25)
-    assert tasks["policy.fed_documents"].min_interval == timedelta(hours=20)
+    assert tasks["policy.fed_documents"].min_interval == timedelta(hours=16)
     assert tasks["policy.fed_documents"].overdue_after == timedelta(days=3)
     # every task is enabled since Pass 1b built policy.reactions (#70); `enabled: false` is still honoured (below)
     assert [k for k, t in tasks.items() if not t.enabled] == []
@@ -84,7 +84,7 @@ def test_sync_mirrors_the_config_into_ops_task(tmp_path):
             "select key, workflows, due_rules, run_after, min_interval, overdue_after, enabled from ops.task")}
     for key, t in tasks.items():
         assert rows[key] == (list(t.workflows), t.rules, list(t.run_after), t.min_interval, t.overdue_after, t.enabled)
-    assert rows["policy.fed_documents"][1] == {"daily": "every 20 hours or fomc_catch_up", "watch": "fomc_decision_day"}
+    assert rows["policy.fed_documents"][1] == {"daily": "every 16 hours or fomc_catch_up", "watch": "fomc_decision_day"}
     assert rows["policy.reactions"][-1] is True
 
 
@@ -96,7 +96,7 @@ def test_build_tasks_configures_registered_classes_and_names_the_rest(tmp_path):
     assert [t.key for t in tasks] == ["policy.fed_documents"]     # reactions is disabled, so it isn't built
     fed = tasks[0]
     assert fed.workflows == ("daily", "watch") and fed.rules["watch"] == "fomc_decision_day"
-    assert fed.run_after == ("policy.calendar",) and fed.min_interval == timedelta(hours=20)
+    assert fed.run_after == ("policy.calendar",) and fed.min_interval == timedelta(hours=16)
     assert sorted(missing) == ["crypto.coingecko_markets", "equity.beta", "equity.call_scores", "equity.call_text", "equity.call_transcripts", "equity.calls_ai", "equity.corporate_actions",
                                "equity.filings", "equity.guidance_scores",
                                "equity.metrics", "equity.prices", "equity.rate_reactions", "equity.results_reactions", "equity.shareholding",

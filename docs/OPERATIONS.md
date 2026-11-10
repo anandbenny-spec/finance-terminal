@@ -42,6 +42,7 @@ the private fixtures repo, which used a second token (`FIXTURES_READ_TOKEN`), be
 | `ANTHROPIC_API_KEY` | every AI step (`policy.ai_batch` and the 2B tasks) through `ft/ai/client.py` and the Batch API. Scoped to the Console's Default workspace | no; but it stops working when credits end (18 Nov) | the AI steps skip with a recorded reason, never fail the run (section 5.3) | new key in the Console (Default workspace), update the secret and Bitwarden, then disable the old key |
 | `VOYAGE_API_KEY` | embeddings in the AI steps. A MongoDB Atlas model API key; the client routes it to `ai.mongodb.com/v1` | no | as `ANTHROPIC_API_KEY`: the chunks wait for a key | new key in Atlas, update the secret and Bitwarden |
 | `HEALTHCHECKS_PING_URL` | the last step of `daily.yml` after a successful **production** run; skips quietly with no secret | no | no ping, so the dead-man check goes Down and emails | see section 3 (the monitors) |
+| `HEALTHCHECKS_WEEKLY_PING_URL` | the last steps of `weekly.yml` after a **production** run: the plain URL on success, `<URL>/fail` on failure; skips quietly with no secret (#364) | no | no ping, so the "weekly production load" check goes Down after its grace time | make a new check with the same settings, update the secret and Bitwarden |
 | `FIXTURES_DEPLOY_KEY` | `ci.yml` only: the private half of a read-only deploy key on `finance-terminal-fixtures`; the `test` job checks that repo out with it (`ssh-key:`) so the saved-page tests run | no (a deploy key has no end date) | CI's `test` job fails at the fixtures step (by design: tests must not silently skip), if the secret is missing or the key was removed from that repo. The live site is unaffected | make a new key pair, add its public half as a **read-only** deploy key on the fixtures repo, update the secret and Bitwarden, then delete the old deploy key there |
 
 ### 2.2 GitHub Actions secrets: dev (manual dev runs only)
@@ -115,7 +116,7 @@ manager can't hold its own way back in.
 | **CoinGecko** | the free Demo key for the crypto daily store | the Demo plan's call quota (10,000 calls a month; the code paces at 30 a minute and the daily snapshot makes 2 calls) | the task skips or fails alone; nothing else depends on it |
 | **SEC EDGAR** | no account: a declared User-Agent (`SEC_USER_AGENT`) | SEC's fair-access limit (under 10 requests a second) | throttling only |
 | **UptimeRobot** (free) | one **Keyword** monitor on production's `/api/health` (GET; keyword `"status":"ok"`; every 5 minutes; email, no delay, no repeat). Keyword because `/api/health` answers GET only (the free plan locks HEAD) | 50 monitors, 5-minute checks, email alerts, **non-commercial use only** | if the account is closed or the plan changes, there is no outside uptime alert. The dead-man check below still covers the daily load |
-| **Healthchecks.io** (free) | one check, "daily production load": Cron `37 6 * * *`, time zone Asia/Kolkata, grace 9 hours, email on | 20 checks | no ping, so no alert on a missed daily run. The check's ping URL is `HEALTHCHECKS_PING_URL`. To rotate it: make a new check with the same settings (or regenerate the URL if the dashboard offers it), update the secret and Bitwarden |
+| **Healthchecks.io** (free) | two checks. "daily production load": Cron `37 6 * * *`, time zone Asia/Kolkata, grace 12 hours, email on. "weekly production load" (#364): Cron `23 9 * * 0`, Asia/Kolkata, grace 12 hours, same email; its ping URL is `HEALTHCHECKS_WEEKLY_PING_URL` | 20 checks | no ping, so no alert on a missed daily run. The check's ping URL is `HEALTHCHECKS_PING_URL`. To rotate it: make a new check with the same settings (or regenerate the URL if the dashboard offers it), update the secret and Bitwarden |
 | **Bitwarden** | the master copy of the credentials that can't be read back elsewhere, and the recovery codes | account-level | keep an emergency way back in (recovery code on paper) |
 
 No custom domain is in use (the shared link is a `vercel.app` address), so there is no registrar or renewal. If one is added,
@@ -123,10 +124,13 @@ list it here with its renewal date.
 
 **What each alert means.**
 - **UptimeRobot DOWN:** `/api/health` isn't answering 200 with `"status":"ok"`: the Data API read failed, or the daily load
-  (`policy.market_series`) has no success in the last 36 hours.
-- **Healthchecks DOWN:** no successful production `daily` run by about 15:37 IST. The morning run is due at 06:37 IST, and GitHub
+  has no success in the last 36 hours, for either of its first and last tasks (`policy.market_series` and
+  `site.quality_summary`: a run that hangs midway keeps the first one fresh but never reaches the last, #364).
+- **Healthchecks "weekly production load" DOWN:** no successful production `weekly` run by its grace time (Sunday 09:23 IST plus
+  12 hours), or the run failed and pinged `/fail`, which emails at once (#364).
+- **Healthchecks DOWN:** no successful production `daily` run by about 18:37 IST. The morning run is due at 06:37 IST, and GitHub
   starts it very late: on 3 and 4 Nov 2026 it started at about 13:18 and 12:56 IST and finished by about 13:28 and 13:11, which leaves
-  about two hours inside the nine hours of grace. The weekday 16:37 IST run also pings and counts as "up", but it has started
+  about five hours inside the twelve hours of grace (raised from nine on 10 Nov 2026). The weekday 16:37 IST run also pings and counts as "up", but it has started
   hours late too (about 23:54 IST on 3 Nov), so don't rely on it. A single Down email on a late day is worth a look at the Actions
   tab before anything else: if the run is queued or running, wait.
 
@@ -193,7 +197,7 @@ states instead of errors. To switch AI off deliberately for a manual run, set th
 ### 5.4 What breaks first, and how it shows
 
 1. **The daily load fails**: the FRED key, a source's page layout changing, a database or storage problem. Shows as "Update delayed"
-   on the site, `/api/health` going degraded, and both monitors emailing. Open the Actions tab, read the failed `daily` run's
+   on the site, `/api/health` going degraded, and both monitors emailing. A `weekly` run that fails now emails the same day through its own check (it pings `/fail`). Open the Actions tab, read the failed `daily` run's
    annotations, fix or wait, then run `daily` by hand (5.7).
 2. **A new committee member.** `py/config/members.yaml` is curated by hand and fails closed: the blocking check
    `voters_on_roster` rolls the load back when a statement or the minutes name someone the roster doesn't know, so the

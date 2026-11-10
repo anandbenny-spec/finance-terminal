@@ -315,7 +315,7 @@ def test_nothing_is_replaced_when_a_blocking_check_fails(jr):
 # ---------------------------------------------------------------------------------------------- wiring
 def test_tasks_yaml_has_the_entry_and_the_task_waits_for_every_policy_task():
     t = config.load()["site.quality_summary"]
-    assert t.rules == {"daily": "every 20 hours"} and t.overdue_after == timedelta(days=3) and not t.uses_nse
+    assert t.rules == {"daily": "every 16 hours"} and t.overdue_after == timedelta(days=3) and not t.uses_nse
     assert t.module == "site" and not t.visitor_refreshable
     assert set(t.run_after) == {k for k in config.load() if k.startswith("policy.")}
     assert QualitySummary.key == "site.quality_summary" and qs.load_settings().modules == ("policy", "equity")
