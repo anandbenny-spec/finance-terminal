@@ -21,6 +21,11 @@ marker is found nowhere and is counted as across turns.
 retried once with a note, then rejected, as every extraction in `ft/ai/batch.py`):
 - the quote is found exactly once and is at most 400 code points (an output's content is readable through `api.ai_outputs`,
   so the quotes in it keep the private-text cap: §13.5);
+- `metric_text`, `period_text` and `scope_text`, the speaker's words as the model copied them, are each at most 80 characters
+  (code points, trimmed, spaces joined, as stored): a longer one drops the item (`text_too_long`), so an item carries at most
+  240 characters of the speaker's words outside the 400-character quote rule (it was 600: Review 02a F1-08; #379). The rule is
+  **in this check only**: structured outputs take no length limit, the schema is part of every request's input hash, and prompt
+  v3 is unchanged, so no unchanged input is asked again and no stored output is touched (published outputs are frozen);
 - every figure in `value`, `low` and `high` appears in the quote as written ("double-digit" for a floor of 10, and "net debt
   free" for a ceiling of 0 on net debt, are the two mappings §5.9-§5.10 name). A figure the quote doesn't hold is dropped,
   never rounded or converted;
@@ -66,6 +71,7 @@ from ft.engines.document.text import normalize_inline
 TASK = "guidance_extraction"
 METRICS_PATH = CONFIG / "equity" / "guidance_metrics.yaml"
 MAX_QUOTE = 400                       # code points: the private-text cap (Spec 02B §3.2, §13.5)
+MAX_AS_SAID = 80                      # characters (code points) in each of metric_text, period_text and scope_text (F1-08; #379)
 MAX_STATED = 12                       # stated figures per call (§13.5)
 MAX_ESTIMATED_TOKENS = 60_000         # §5.5: a transcript above this is skipped with a warning naming it
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November",
@@ -93,6 +99,7 @@ DROPS: dict[str, str] = {
     "too_long": f"quote over {MAX_QUOTE} code points",
     "malformed": "item isn't the schema's object",
     "metric": "metric isn't in the map",
+    "text_too_long": f"metric, period or scope text over {MAX_AS_SAID} characters",
     "shape": "kind, figures, unit or direction don't fit together",
     "figure_not_in_quote": "a figure isn't in the quote as written",
     "unit_scale": "figure in basis points, or a rupee amount not in crore",
@@ -371,9 +378,16 @@ def _common(raw: dict, where: Where, c: Checked, metrics: Metrics, *, target: bo
             growth is not None and growth not in (TARGET_GROWTH if target else STATED_GROWTH)):
         c.drops["malformed"] += 1
         return None
+    period_text, scope_text = _text(raw.get("period_text")), _text(raw.get("scope_text"))
+    # The three "as said" fields are the speaker's words outside the quote rule, so each is held to MAX_AS_SAID (F1-08; #379).
+    # An item with a longer one is dropped, never cut: a cut phrase would be shown as if it were whole. `_text`'s 200 only
+    # stops a huge string being carried; the length is checked on the value as it would be stored (trimmed, spaces joined).
+    if any(len(t) > MAX_AS_SAID for t in (metric_text, period_text, scope_text) if t is not None):
+        c.drops["text_too_long"] += 1
+        return None
     return {"quote": where.quote, "span": [where.start, where.end], "metric": metric, "metric_label": allowed[metric],
-            "metric_text": metric_text, "unit": unit, "period_text": _text(raw.get("period_text")), "basis": basis,
-            "growth_basis": growth, "scope_text": _text(raw.get("scope_text"))}
+            "metric_text": metric_text, "unit": unit, "period_text": period_text, "basis": basis,
+            "growth_basis": growth, "scope_text": scope_text}
 
 
 def _plausible(fy: int, call: CallDoc) -> bool:
