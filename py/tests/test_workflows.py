@@ -245,6 +245,21 @@ def test_the_backfill_can_limit_equity_calls_ai_to_one_task_through_env_and_no_o
         assert eca.ONLY_ENV not in json.dumps(load(name))
 
 
+def test_the_backfill_can_limit_a_tone_run_to_an_evaluation_set_and_no_other_workflow_sets_it():
+    from ft.jobs.tasks import equity_calls_ai as eca
+    wf = load("backfill")
+    option = wf["on"]["workflow_dispatch"]["inputs"]["tone_set"]
+    assert option["default"] == "none" and option["options"] == ["none", *sorted(eca.TONE_SETS)]
+    run = next(s for s in wf["jobs"]["run"]["steps"] if s.get("name") == "Run")
+    expr = run["env"][eca.TONE_SET_ENV]
+    base = {"secrets": {}, "env": {}, "github": {"event_name": "workflow_dispatch"}}
+    assert interpolate(expr, {**base, "inputs": {"tone_set": "none"}}) == ""
+    assert interpolate(expr, {**base, "inputs": {"tone_set": "earnings_tone"}}) == "earnings_tone"
+    assert interpolate(expr, {**base, "inputs": {}}) == ""
+    for name in ("daily", "watch", "weekly", "refresh"):
+        assert eca.TONE_SET_ENV not in json.dumps(load(name))
+
+
 def test_the_evaluator_follows_githubs_rules():
     ctx = {"secrets": {"A": "a"}, "inputs": {}, "env": {}, "github": {"event_name": "push"}}
     assert evaluate("secrets.MISSING", ctx) == "" and evaluate("inputs.target", ctx) is None
