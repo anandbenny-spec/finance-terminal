@@ -236,12 +236,13 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   credit. Three modules, one per weekly window (the plan limit resets on Mondays, 20:30 IST): (a) Fed vs RBI, polished
   to its link; (b) the Nifty 50 screener with valuation, rate sensitivity and the accuracy page; (c) the earnings-call
   analyzer for each company's latest call, plus guidance against delivery (back in scope, Anand, 2 Nov 2026, 15:03 IST;
-  Plan 04b; cut line Wed 11 Nov, 20:00 IST for scoring, #177). Jobs labelled `after-18-nov` aren't built before then,
+  Plan 04b; scoring (#177) merged 4 Nov). Jobs labelled `after-18-nov` aren't built before then,
   except those Anand pulled forward (8 Nov 2026, 00:26 IST; #30): a pulled-forward feature ships hidden (a `site.*`
   field key with no `core.field_policy` row; his flip is inserting the row), and a daytime session for a launch job may
   ignore a pulled-forward job's claim when it checks whether its lane is busy. Nothing the live site needs may depend
   on Claude: every AI feature degrades to a labelled state without a key or credits (#197).
-- **Credit pools and who runs what (Anand, 30 Oct 2026).** Cloud-session credit (until 5 Nov) funds the build chains;
+- **Credit pools and who runs what (Anand, 30 Oct 2026).** The weekly plan funds the build chains (Anand, 5 Nov 2026:
+  they never used the cloud-session credit, which ended 5 Nov);
   the plan's $100 of API credit (until 21 Nov) funds the Batch API and **headless runs**: Anand starts
   `ops/headless/run-job.sh <issue>` on his Mac (`claude --bare -p`, Sonnet, a dollar cap, its own clone in
   `~/Projects/finance-terminal/headless`, never his `app/`). A headless run takes only jobs labelled `headless`
@@ -301,9 +302,10 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   draw on one **$25 pool** of AI-run spend, dev and production together, counted from 8 Nov 2026, 00:00 IST until
   the API credit expires on 21 Nov 2026 (Anand, 8 Nov 2026, after 15:32 IST; tracker #30). Price each run first from
   `ai_prices.yaml`, record its cost on its issue and the pool's running total on #30, and ask Anand before a run that
-  would pass the pool. One exception (Anand, 9 Nov 2026, 17:37 IST): #178's Opus summary round is outside the pool, §7's
-  $5 stop and the $15 switch (#30). It replaces the per-module dev caps (D1's $2 for module 1, #24; 2B's $3, then $5,
-  Spec 02B §0 decision 4). **Production:** a run is approved only where Anand's dated
+  would pass the pool. It replaces the per-module dev caps (D1's $2 for module 1, #24; 2B's $3, then $5,
+  Spec 02B §0 decision 4). One exception (Anand, 9 Nov 2026, 17:37 IST): #178's Opus summary round is outside the pool,
+  §7's $5 stop and the $15 switch (#30); set the $15 switch back before 18 Nov. **Production:** a run is approved only
+  where Anand's dated
   approval is on its job card or tracker #30: module 1's early-link backfills (#84, #16), 2A's data backfills and first
   runs (#122, #132), 2B's backfills with its AI backfill and weekly AI runs (#184), one D4 drill after #135. Each run
   is recorded on its issue; §7's $5 stop applies. Any other production run, and any other AI spend, still needs his OK. Claude
