@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PricedInView } from "@/components/screener/PricedInView";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { pricedInVisible, splitRanked, viewOf } from "@/lib/equity/priced-in";
-import type { FieldPolicyRow, PricedInRow } from "@/lib/queries/api";
+import type { FieldPolicyRow, PricedInRow, TaskFreshnessRow } from "@/lib/queries/api";
 import { bannedWordsIn } from "@/tests/banned-words";
 import { row as screenerRow } from "@/tests/screener-rows";
 
@@ -131,8 +131,10 @@ describe("the view's switch", () => {
 });
 
 // The page: with no site.priced_in row there is no tab and ?view=priced-in shows the screener; with it, the tab and both tables.
-const page = vi.hoisted(() => ({ policies: [] as FieldPolicyRow[] }));
-vi.mock("@/lib/queries/shell", () => ({ readFreshness: () => Promise.resolve({ ok: false }) }));
+const page = vi.hoisted(() => ({ policies: [] as FieldPolicyRow[], tasks: null as TaskFreshnessRow[] | null }));
+vi.mock("@/lib/queries/shell", () => ({
+  readFreshness: () => Promise.resolve(page.tasks ? { ok: true, tasks: page.tasks } : { ok: false }),
+}));
 vi.mock("@/lib/queries/equity", () => ({
   readScreenerPage: () => Promise.resolve({ ok: true, readAt: "2026-11-08T00:00:00Z", rows: [screenerRow("tcs")], indexes: [], policies: page.policies }),
   readPricedInPage: () => Promise.resolve({ ok: true, readAt: "2026-11-08T00:00:00Z", operating, lenders }),
@@ -141,6 +143,7 @@ vi.mock("@/lib/queries/equity", () => ({
 describe("/screener", () => {
   beforeEach(() => {
     page.policies = [];
+    page.tasks = null;
   });
   const render = async (view?: string) => {
     const { default: Page } = await import("@/app/screener/page");
@@ -162,5 +165,34 @@ describe("/screener", () => {
     expect(t).toContain("Operating companies, by growth gap");
     expect(t).toContain("Lenders, by ROE gap");
     expect(await render()).toContain("Nifty 50 screener");
+  });
+  // #355: a failed equity.valuation run leaves the snapshot on an older run, so the model-implied parts must read "Update delayed".
+  const FEED_TASKS = ["equity.universe", "equity.prices", "equity.statements", "equity.metrics", "equity.beta", "equity.valuation", "equity.snapshot"];
+  const fresh = (failed: string[] = []): TaskFreshnessRow[] =>
+    FEED_TASKS.map((task_key) => ({
+      task_key,
+      last_checked_at: "2026-11-08T10:48:00Z",
+      last_success_at: "2026-11-08T10:48:00Z",
+      status: failed.includes(task_key) ? "failed" : "ok",
+    }));
+  it("says Update delayed on the priced-in view while equity.valuation's last run failed, and not when it is ok", async () => {
+    page.policies = [{ field_key: "site.priced_in", status: "shown", label: null }, ...SHOWN];
+    page.tasks = fresh(["equity.valuation"]);
+    expect(await render("priced-in")).toContain("Update delayed");
+    page.tasks = fresh();
+    expect(await render("priced-in")).not.toContain("Update delayed");
+  });
+  it("counts equity.snapshot too, and says nothing on the plain table while its implied columns are hidden", async () => {
+    page.policies = [{ field_key: "site.priced_in", status: "shown", label: null }];
+    page.tasks = fresh(["equity.snapshot"]);
+    expect(await render("priced-in")).toContain("Update delayed");
+    page.policies = [];
+    page.tasks = fresh(["equity.valuation", "equity.snapshot"]);
+    expect(await render()).not.toContain("Update delayed");
+  });
+  it("says Update delayed on the plain table once an implied column is shown and equity.valuation failed", async () => {
+    page.policies = SHOWN;
+    page.tasks = fresh(["equity.valuation"]);
+    expect(await render()).toContain("Update delayed");
   });
 });
