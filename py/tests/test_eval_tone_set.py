@@ -115,3 +115,31 @@ def test_the_committed_set_is_thirty_items_in_the_six_cells_with_the_caps():
     assert len({i["slug"] for i in items}) == 30
     assert max(Counter(i["peer_group"] for i in items).values()) <= ts.PEER_CAP
     assert len({i["season"] for i in items}) >= ts.MIN_SEASONS
+
+
+def test_the_labels_file_covers_the_set_and_applies_its_tie_break():
+    """earnings_tone.labels.json (#175; Anand, 10 Nov 2026): Fable's labels are the gold ones, Opus's the second rater's; where their
+    three classes differ the main labeller's label stands. The agreement it records is recomputed here."""
+    sets = Path(ts.__file__).resolve().parents[3] / "config" / "eval" / "sets"
+    items = json.loads((sets / "earnings_tone_items.json").read_text(encoding="utf-8"))["items"]
+    doc = json.loads((sets / "earnings_tone.labels.json").read_text(encoding="utf-8"))
+    assert doc["set"] == ts.SET_NAME and doc["rule_version"] == ts.RULE_VERSION and doc["complete"] is True
+    labels = doc["labels"]
+    assert [lb["id"] for lb in labels] == [i["id"] for i in items]
+    assert [lb["section"] for lb in labels] == [i["section"] for i in items]
+
+    def cls(s: str) -> int:
+        return -1 if int(s) <= -1 else (1 if int(s) >= 1 else 0)
+
+    for lb in labels:
+        for who in (lb, lb["fable"], lb["opus"]):
+            assert who["label"] in ("-2", "-1", "0", "+1", "+2")
+            assert 0 < len(who["reason"].strip()) <= 200 and "\n" not in who["reason"] and '"' not in who["reason"]
+        assert lb["label"] == lb["fable"]["label"] and lb["reason"] == lb["fable"]["reason"]
+        assert lb["tie_break"] is (cls(lb["fable"]["label"]) != cls(lb["opus"]["label"]))
+    a = doc["agreement"]
+    assert a["n"] == len(labels) == 30
+    assert a["three_class"] == sum(cls(lb["fable"]["label"]) == cls(lb["opus"]["label"]) for lb in labels)
+    assert a["exact"] == sum(lb["fable"]["label"] == lb["opus"]["label"] for lb in labels)
+    assert a["tie_breaks"] == sum(lb["tie_break"] for lb in labels)
+    assert a["opposite_sides"] == sum(cls(lb["fable"]["label"]) * cls(lb["opus"]["label"]) == -1 for lb in labels)
