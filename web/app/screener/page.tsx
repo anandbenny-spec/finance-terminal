@@ -16,6 +16,7 @@ import { Tabs } from "@/components/data/Tabs";
 import { Foot } from "@/components/policy/PanelFoot";
 import { PricedInView } from "@/components/screener/PricedInView";
 import { ScreenerView } from "@/components/screener/ScreenerView";
+import { fieldPolicy } from "@/components/data/Gated";
 import { pricedInVisible, viewOf } from "@/lib/equity/priced-in";
 import { FEEDS } from "@/lib/feeds";
 import { readPricedInPage, readScreenerPage } from "@/lib/queries/equity";
@@ -43,7 +44,12 @@ async function Screener({ searchParams }: { searchParams: Promise<{ view?: strin
   const view = viewOf(query.view, switchShown);
   const priced = view === "priced-in" ? await readPricedInPage() : null;
   const dataTo = data.ok ? (data.rows.map((r) => r.snapshot_date).sort().at(-1) ?? null) : null;
-  const pageFresh = panelFreshness(freshness, FEEDS.screener, dataTo, now);
+  // The model-implied parts (the priced-in view, or an implied column that is shown) also depend on equity.valuation and
+  // equity.snapshot: a failed valuation run must read "Update delayed" (#355). A plain table with those columns hidden doesn't.
+  const impliedShown =
+    data.ok && ["equity.implied_growth", "equity.implied_roe"].some((k) => (fieldPolicy(data.policies, k)?.status ?? "hidden") !== "hidden");
+  const feed = view === "priced-in" || impliedShown ? FEEDS.screenerImplied : FEEDS.screener;
+  const pageFresh = panelFreshness(freshness, feed, dataTo, now);
   const usesBeta = data.ok && data.rows.some((r) => r.beta !== null);
 
   return (
@@ -67,16 +73,16 @@ async function Screener({ searchParams }: { searchParams: Promise<{ view?: strin
               operating={priced.operating}
               lenders={priced.lenders}
               policies={data.policies}
-              footer={<Foot sources={[NSE, DAMODARAN]} tasks={FEEDS.screener} dataTo={dataTo} freshness={freshness} now={now} />}
+              footer={<Foot sources={[NSE, DAMODARAN]} tasks={feed} dataTo={dataTo} freshness={freshness} now={now} />}
             />
           ) : (
-            <Panel title="What's priced in" titleId="priced-in-error" footer={<Foot sources={[NSE]} tasks={FEEDS.screener} dataTo={null} freshness={freshness} now={now} />}>
+            <Panel title="What's priced in" titleId="priced-in-error" footer={<Foot sources={[NSE]} tasks={feed} dataTo={null} freshness={freshness} now={now} />}>
               <StateNote kind="error">Couldn&apos;t load this panel. Try again.</StateNote>
             </Panel>
           )
         ) : data.ok ? (
           data.rows.length === 0 ? (
-            <Panel title="Nifty 50 screener" titleId="screener-table" footer={<Foot sources={[NSE]} tasks={FEEDS.screener} dataTo={null} freshness={freshness} now={now} />}>
+            <Panel title="Nifty 50 screener" titleId="screener-table" footer={<Foot sources={[NSE]} tasks={feed} dataTo={null} freshness={freshness} now={now} />}>
               <StateNote kind="unavailable">The first weekly snapshot hasn&apos;t been published yet.</StateNote>
             </Panel>
           ) : (
@@ -84,11 +90,11 @@ async function Screener({ searchParams }: { searchParams: Promise<{ view?: strin
               rows={data.rows}
               indexes={data.indexes}
               policies={data.policies}
-              footer={<Foot sources={[NSE, usesBeta ? DAMODARAN : null]} tasks={FEEDS.screener} dataTo={dataTo} freshness={freshness} now={now} />}
+              footer={<Foot sources={[NSE, usesBeta ? DAMODARAN : null]} tasks={feed} dataTo={dataTo} freshness={freshness} now={now} />}
             />
           )
         ) : (
-          <Panel title="Nifty 50 screener" titleId="screener-table" footer={<Foot sources={[NSE]} tasks={FEEDS.screener} dataTo={null} freshness={freshness} now={now} />}>
+          <Panel title="Nifty 50 screener" titleId="screener-table" footer={<Foot sources={[NSE]} tasks={feed} dataTo={null} freshness={freshness} now={now} />}>
             <StateNote kind="error">Couldn&apos;t load this panel. Try again.</StateNote>
           </Panel>
         )}

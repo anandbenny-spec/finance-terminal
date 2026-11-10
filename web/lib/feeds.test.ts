@@ -53,6 +53,15 @@ describe("module 2's surfaces (2A-26, #132)", () => {
   });
 });
 
+describe("model-implied figures (#355)", () => {
+  it("counts equity.valuation in the Valuation tab, and it and equity.snapshot in the screener's implied parts", () => {
+    expect(FEEDS.valuation).toContain("equity.valuation");
+    expect(FEEDS.screenerImplied).toEqual([...FEEDS.screener, "equity.valuation", "equity.snapshot"]);
+    expect(FEEDS.screener).not.toContain("equity.valuation");
+    expect(liveTasks()).toEqual(expect.arrayContaining(["equity.valuation", "equity.snapshot"]));
+  });
+});
+
 describe("/accuracy (ACC-3, #135)", () => {
   it("has its task counting in the status bar, and is no longer a preview", () => {
     expect(FEEDS.accuracy).toEqual(["site.quality_summary"]);

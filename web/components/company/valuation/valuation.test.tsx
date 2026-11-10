@@ -7,6 +7,8 @@ import { CompanyView } from "@/components/company/CompanyView";
 import { ScenarioControls } from "@/components/company/valuation/ScenarioControls";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { gridOptions, IMF_CPI, IMF_GDP } from "@/lib/equity/valuation";
+import { FEEDS } from "@/lib/feeds";
+import type { TaskFreshnessRow } from "@/lib/queries/api";
 import type { ValuationData } from "@/lib/queries/company";
 import { bannedWordsIn } from "@/tests/banned-words";
 import { company, page } from "@/tests/company-rows";
@@ -25,7 +27,24 @@ const html = (v: ValuationData | null, over: Parameters<typeof page>[0] = {}) =>
     </TooltipProvider>,
   );
 
+const taskRows = (failed: string[] = []): TaskFreshnessRow[] =>
+  [...new Set([...FEEDS.company, ...FEEDS.valuation])].map((task_key) => ({
+    task_key, last_checked_at: "2026-11-08T10:48:00Z", last_success_at: "2026-11-08T10:48:00Z", status: failed.includes(task_key) ? "failed" : "ok",
+  }));
+const htmlFresh = (rows: TaskFreshnessRow[]) =>
+  renderToStaticMarkup(
+    <TooltipProvider>
+      <CompanyView data={page({ tab: "valuation", overview: null, valuation: valuation() })} basis="consolidated" freshness={rows} />
+    </TooltipProvider>,
+  );
+
 describe("the Valuation tab", () => {
+  // #355: the tab's figures are the stored runs, so a failed equity.valuation run must show "Update delayed" (the run's own as_of stays as the date).
+  it("says Update delayed while equity.valuation's last run failed, and not when every task is ok", () => {
+    expect(text(htmlFresh(taskRows(["equity.valuation"])))).toContain("Update delayed");
+    expect(text(htmlFresh(taskRows()))).not.toContain("Update delayed");
+  });
+
   it("is a tab in the URL, marked current", () => {
     const out = html(valuation());
     expect(out).toContain('href="/companies/tcs?tab=valuation"');
