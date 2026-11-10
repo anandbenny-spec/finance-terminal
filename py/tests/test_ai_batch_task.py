@@ -17,6 +17,7 @@ from ai_fakes import FakeClaude, FakeVoyage, claude
 from conftest import dsn
 from policy_docs import FOMC_A, FOMC_B, fed_rss
 from test_document_chunks import plain
+from test_equity_calls_ai_task import make_call
 from test_fed_documents_task import (  # noqa: F401 - s3 and roster are fixtures
     Clock,
     Sites,
@@ -609,6 +610,92 @@ def test_a_result_whose_input_changed_is_stored_stale_with_its_cost(monkeypatch)
     assert daily(task([s], fake), datetime(2050, 3, 19, 12, tzinfo=UTC)) == 0
     assert fake.create_calls == 3 and [(g[1], g[5]) for g in outputs(doc)] == [
         ("rejected", "v1"), ("superseded", "v2"), ("published", "v1")]
+
+
+@pytest.mark.db
+def test_a_call_transcript_is_neither_planned_sent_nor_embedded():
+    """policy.ai_batch is the policy module's task (the Fed's and the RBI's documents). A published, chunked earnings-call
+    transcript (equity's, another task's) is no target and its chunks wait for no embedding. Production's daily hung
+    on exactly this from 8 Nov 2026: 302 summaries nobody asked for and 32,610 chunks to embed (issue #351)."""
+    s, doc = one_statement(date(2054, 3, 4))
+    call = make_call()
+    assert q("select count(*) from core.chunk where document_id = %s", call["doc"])[0][0] > 0   # it is chunked, published
+    assert q("select is_published from core.document where id = %s", call["doc"]) == [(True,)]
+    fake, voyage = FakeClaude(["ok"], ends_after=1), FakeVoyage()
+    assert daily(task([s, call["slug"]], fake, voyage), datetime(2054, 3, 5, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    assert [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+    # Planned and sent: the statement's summary only.
+    assert fake.create_calls == 1 and sum(len(b["requests"]) for b in fake.batches.values()) == 1
+    assert q("select count(*) from ops.ai_request where document_id = %s", call["doc"]) == [(0,)]
+    assert q("select count(*) from core.ai_output where document_id = %s", call["doc"]) == [(0,)]
+    # Embedded: the statement's chunks only (the context line names the issuer: "Fed · …" or "Acme · …").
+    texts = [t for c in voyage.calls for t in c["texts"]]
+    assert texts and all(t.startswith("Fed · ") for t in texts)
+    assert q("select count(*) from core.chunk_embedding where document_id = %s", call["doc"]) == [(0,)]
+    assert q("select count(*) from core.chunk_embedding where document_id = %s", doc)[0][0] > 0
+    assert r["checks"]["embeddings"]["passed"] and '"pending": 0' in r["checks"]["embeddings"]["detail"]
+
+
+@pytest.mark.db
+def test_a_request_open_on_a_call_transcript_is_collected_stale_and_publishes_nothing(monkeypatch):
+    """Production's batch of 2 still open on 10 Nov 2026 (issue #351): its requests were sent while call transcripts were
+    targets. The next run collects the batch, stores each reply rejected as stale with its cost, publishes none of them
+    and sends nothing for the transcript again. (The first run makes the transcript's issuer a bank, as the old query did.)"""
+    s, doc = one_statement(date(2054, 5, 13))
+    call = make_call()
+    issuer = q("select slug from core.entity where id = %s", call["entity"])[0][0]
+    slugs = [s, call["slug"]]
+    fake = FakeClaude(["ok"], ends_after=None)
+    with monkeypatch.context() as m:
+        m.setitem(ai_batch.BANK_TZ, issuer, NY)
+        assert daily(task(slugs, fake), datetime(2054, 5, 14, 12, tzinfo=UTC)) == 0
+    assert batch_requests([call["doc"]]) == [("doc_summary", "pending", "", True)]
+    assert [len(b["requests"]) for b in fake.batches.values()] == [2]    # the statement's and the transcript's
+    fake.ends_after = 1
+    assert daily(task(slugs, fake), datetime(2054, 5, 15, 12, tzinfo=UTC)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    assert fake.create_calls == 1                                         # nothing new is sent for either
+    assert [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]
+    got = outputs(call["doc"])
+    assert [(g[0], g[1]) for g in got] == [("doc_summary", "rejected")]
+    assert got[0][2].startswith("stale:") and got[0][4] > 0               # billed, so its cost is kept
+    status, reason, in_batch = batch_requests([call["doc"]])[0][1:]
+    assert (status, reason.startswith("stale:"), in_batch) == ("rejected", True, True)
+    assert q("select count(*) from core.ai_output where document_id = %s and status = 'published'", call["doc"]) == [(0,)]
+    assert as_anon("select count(*) from api.ai_outputs where document_id = %s", call["doc"]) == [(0,)]
+    assert '"stale": 1' in r["checks"]["batches"]["detail"] and r["checks"]["batches"]["passed"]
+    assert q("select count(*) from ops.alert where dedupe_key = %s and resolved_at is null",
+             f"ai_rejected:doc_summary:{call['doc']}") == [(0,)]          # stale isn't a citation rejection
+    # And again: the transcript stays out of every run.
+    assert daily(task(slugs, fake), datetime(2054, 5, 16, 12, tzinfo=UTC)) == 0
+    assert fake.create_calls == 1 and len(outputs(call["doc"])) == 1 and last_run()["checks"]["batches"]["passed"]
+
+
+@pytest.mark.db
+def test_a_run_that_dies_after_storing_replies_keeps_their_spend_in_the_months_total(monkeypatch):
+    """The $15 switch counts what a run stored before it died (issue #351: production's daily was cancelled at the
+    30-minute limit, after its replies were stored). Each billed reply goes on its run's `ai_cost_usd` as it is stored,
+    in a committed transaction of its own, so a run that never reaches its load still leaves its spend in
+    `month_spend`."""
+    s, doc = one_statement(date(2054, 8, 12))
+    month = "select coalesce(sum(ai_cost_usd), 0) from ops.task_run where started_at >= date_trunc('month', now())"
+    before = q(month)[0][0]
+
+    def never_finishes(self, db, f, docs):
+        raise RuntimeError("cancelled at the limit")
+    monkeypatch.setattr(AiBatch, "_embed", never_finishes)
+    daily(task([s], FakeClaude(["ok"])), datetime(2054, 8, 13, 12, tzinfo=UTC))
+    r = last_run()
+    assert r["status"] == "failed" and "cancelled at the limit" in r["error"]
+    assert [(g[0], g[1]) for g in outputs(doc)] == [("doc_summary", "published")]    # stored before the run died
+    cost = outputs(doc)[0][4]
+    assert cost > 0 and r["cost"] == cost.quantize(Decimal("0.0001"))
+    assert q(month)[0][0] - before == r["cost"]
+    with connect(JOB) as c:
+        assert ai_batch.batch.month_spend(c) == q(month)[0][0]
 
 
 @pytest.mark.db

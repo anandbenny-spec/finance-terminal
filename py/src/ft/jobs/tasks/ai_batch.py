@@ -21,7 +21,8 @@ reads in full has no target, and its published AI output and rows are retired (`
   summary and "what changed" are up within about half an hour; and their chunks' embeddings. A poll that leaves a
   target unfinished (the API refused or failed) fails, so the next poll tries again while the window is open; the
   targets it finished are skipped then.
-- daily, refresh and backfill: every published document's targets that still need a request, through the Batch API
+- daily, refresh and backfill: every published policy document's targets that still need a request (the Fed's and the
+  RBI's: another module's documents, a call transcript, are no target of this task), through the Batch API
   (Architecture 03 §1.3): submitted, then polled for up to 15 minutes in the run, otherwise collected by the next run.
   Each run first reads the batches still open (from any run) and collects the ended ones; a reply that needs its
   retry, or a request that errored or expired in an earlier run's batch, goes into a new batch in the same run while
@@ -29,8 +30,8 @@ reads in full has no target, and its published AI output and rows are retired (`
   published document still missing an output, the 2018 baselines included, except the decision documents of a
   meeting whose watch window is open (with real time on, they're the watch's: a batch would hold them for an hour and
   the watch never sends twice). Watch with the real-time switch off uses this path too, without polling (the next
-  run collects). Each run reads only this task's batches. These runs also embed every published document's chunks
-  that lack an embedding.
+  run collects). Each run reads only this task's batches. These runs also embed the chunks of every published
+  policy document that lack an embedding.
 
 **Never twice, never lost.** Each request is keyed by its input hash (ft/ai/client.py) in ops.ai_request, written
 'pending' before it's sent. Each billed reply is stored at once, in its own small transaction on the fetch's
@@ -57,8 +58,9 @@ arrives; a batch's total goes on ops.ai_batch.cost_usd once it's collected. The 
 **Batch ids.** The Batch API takes only `^[a-zA-Z0-9_-]{1,64}$`, so each request goes with its stored custom_id's `:`
 replaced (`client.batch_custom_id`), and a result maps back through its batch's own ops.ai_request rows. A result
 whose request no longer matches a target that can be built now (a new prompt version or document version since it
-was sent, or a document unpublished meanwhile) is still billed: it's stored rejected ("stale: …", outside the
-citation_integrity count) with its cost, and sent again only if that same input comes back. A reply the database
+was sent, a document unpublished meanwhile, or one that isn't this task's: a call transcript) is still billed: it's
+stored rejected ("stale: …", outside the citation_integrity count) with its cost, and sent again only if that same
+input comes back. A reply the database
 refuses (a character it can't hold) is stored bare, with its cost, as a failed attempt, so one bad reply never stalls
 the rest of the batch.
 
@@ -260,10 +262,19 @@ class AiBatch(BatchSteps, Task):
         self._parsed_stances: dict[int, extraction.Parsed] = {}
 
     # ------------------------------------------------------------------ reading what's there
+    @staticmethod
+    def _policy_banks() -> list[str]:
+        """The entities whose documents this task handles: the Fed and the RBI, as `BANK_TZ` keys them (read when
+        called). Another module's documents, an earnings-call transcript for one, belong to other tasks: they are
+        never summarised, extracted from or embedded here (production's daily hung from 8 Nov 2026 on 32,610 call
+        transcript chunks and 302 summaries nobody asked for; issue #351)."""
+        return sorted(BANK_TZ)
+
     def _docs(self, db, *, ids: list[int] | None = None, event_id: int | None = None,
               doc_types: tuple[str, ...] | None = None) -> list[Doc]:
         where, args = ["d.is_published", "d.chunked_at is not null",
-                       "not exists (select 1 from core.document v where v.supersedes_id = d.id and v.is_published)"], []
+                       "not exists (select 1 from core.document v where v.supersedes_id = d.id and v.is_published)",
+                       "n.slug = any(%s)"], [self._policy_banks()]
         if ids is not None:
             where.append("d.id = any(%s)"); args.append(ids)
         elif self.scope is not None:
@@ -724,8 +735,10 @@ class AiBatch(BatchSteps, Task):
 
     # ------------------------------------------------------------------ embeddings
     def _embed(self, db, f: Fetched, docs: list[Doc] | None) -> None:
-        """Embed published chunks that lack an embedding (watch: only the meeting's documents)."""
-        where, args = ["d.is_published", "e.document_id is null"], [EMBED_MODEL_KEY]
+        """Embed the Fed's and the RBI's published chunks that lack an embedding (watch: only the meeting's
+        documents)."""
+        where, args = ["d.is_published", "e.document_id is null", "n.slug = any(%s)"], [EMBED_MODEL_KEY,
+                                                                                         self._policy_banks()]
         if docs is not None:
             where.append("d.id = any(%s)"); args.append([d.document_id for d in docs])
         elif self.scope is not None:
