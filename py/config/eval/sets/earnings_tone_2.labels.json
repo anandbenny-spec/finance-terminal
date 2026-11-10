@@ -1,0 +1,191 @@
+{
+ "set": "earnings_tone_2",
+ "rule_version": 2,
+ "labelled_by": "Claude Fable 5.2 alone, blind to the models' scores; no second rater (every other Claude model is a candidate); no label was set by a person",
+ "decision": "Anand, 10 Nov 2026, 22:24-22:33 IST (#175): the tone gate's second round, labelled by Fable (option B), prompt v3, models Haiku then Sonnet then Opus",
+ "how": "the labeller read the 30 passages' stored text by chunk id through the read-only dev connector and scored each on its own text and section, by the tone section of GUIDE.md with prompt v3's three rules; reasons are paraphrases (no transcript text in this file)",
+ "exported_at": "2026-11-10T22:42:41+05:30",
+ "complete": true,
+ "labels": [
+  {
+   "id": "earnings_tone_2:5027-121",
+   "section": "qa",
+   "label": "0",
+   "reason": "A long-range vision of cross-border grid linking, with a diplomatic hurdle noted; no judgement on results, demand, margins or the near outlook."
+  },
+  {
+   "id": "earnings_tone_2:5046-84",
+   "section": "qa",
+   "label": "0",
+   "reason": "Reassurance that the company's component supplies are not what is holding up a customer's programme; a delivery-status clarification, not a view on results or outlook."
+  },
+  {
+   "id": "earnings_tone_2:5077-58",
+   "section": "qa",
+   "label": "0",
+   "reason": "Explains why a low-profit activity is not being pursued; a strategic stance on a business they are not in, not a judgement on their own performance."
+  },
+  {
+   "id": "earnings_tone_2:5090-11",
+   "section": "opening",
+   "label": "0",
+   "reason": "Procedural account of why the accounts were late, then an input-cost picture described as mixed, with rises in some materials offset by easing in others."
+  },
+  {
+   "id": "earnings_tone_2:5115-2",
+   "section": "opening",
+   "label": "0",
+   "reason": "Only a list of participants' names and titles; no management language to score."
+  },
+  {
+   "id": "earnings_tone_2:5128-21",
+   "section": "qa",
+   "label": "+1",
+   "reason": "Leadership change framed with enthusiasm and an expectation of future growth, synergies and efficiency gains; forward-looking optimism but nothing delivered yet."
+  },
+  {
+   "id": "earnings_tone_2:5134-39",
+   "section": "qa",
+   "label": "0",
+   "reason": "Trade-duty headwind met with belief in eventual relief, but timing admitted as unknowable and the situation called early; hope and uncertainty roughly offset."
+  },
+  {
+   "id": "earnings_tone_2:5139-12",
+   "section": "opening",
+   "label": "0",
+   "reason": "A newly returned leader's greeting and thanks; pleasantries with no judgement on results, demand, margins or outlook."
+  },
+  {
+   "id": "earnings_tone_2:5199-39",
+   "section": "qa",
+   "label": "+1",
+   "reason": "Borrowings reduced through tight cash management and further cost and cash improvement expected, qualified by temporary pressures from maintenance and ramp-up."
+  },
+  {
+   "id": "earnings_tone_2:5204-53",
+   "section": "qa",
+   "label": "-1",
+   "reason": "Admits demand shrank late in the period, utilisation suffered and a mix headwind lies ahead, softened by a plan to rebuild margins through named levers."
+  },
+  {
+   "id": "earnings_tone_2:5210-77",
+   "section": "qa",
+   "label": "0",
+   "reason": "Commentary on a rival product category: small today, prone to price erosion, and being watched; an industry assessment, not a view on own results or outlook."
+  },
+  {
+   "id": "earnings_tone_2:5213-59",
+   "section": "qa",
+   "label": "0",
+   "reason": "A hand-off that relays an analyst's question to a colleague; procedural, with no judgement expressed."
+  },
+  {
+   "id": "earnings_tone_2:5214-114",
+   "section": "qa",
+   "label": "0",
+   "reason": "Brief clarification of a one-off levy that inflated a cost line plus a stated expectation of a further fall; factual, with no evaluative language."
+  },
+  {
+   "id": "earnings_tone_2:5219-29",
+   "section": "qa",
+   "label": "0",
+   "reason": "Explains when an acquired unit entered the accounts and why comparisons differ; purely factual."
+  },
+  {
+   "id": "earnings_tone_2:5234-76",
+   "section": "opening",
+   "label": "0",
+   "reason": "Describes how a minority-stake venture fund operates and declines to commit either way on a suggestion; descriptive and non-committal."
+  },
+  {
+   "id": "earnings_tone_2:5238-4",
+   "section": "opening",
+   "label": "+2",
+   "reason": "Order intake described as the best ever, with growth called robust and spread across home and overseas markets; confident and unqualified."
+  },
+  {
+   "id": "earnings_tone_2:5240-7",
+   "section": "opening",
+   "label": "0",
+   "reason": "All-time-high revenue and sequential operating gains are set against lower yearly profit, cost pressure and investment losses; positives and negatives offset."
+  },
+  {
+   "id": "earnings_tone_2:5243-20",
+   "section": "qa",
+   "label": "+1",
+   "reason": "Reaffirms a moderate growth aim and voices ambition to lift market share soon, while noting recent pricing moves need time to settle; hedged optimism."
+  },
+  {
+   "id": "earnings_tone_2:5266-8",
+   "section": "opening",
+   "label": "+1",
+   "reason": "Service initiatives are said to have delivered good results and worked well for the product range; positive judgement, but confined to these offerings."
+  },
+  {
+   "id": "earnings_tone_2:5269-39",
+   "section": "qa",
+   "label": "-1",
+   "reason": "Rule change judged neutral, but management flags slower small-depositor growth, higher outflow assumptions and a system trend running against its funding aim."
+  },
+  {
+   "id": "earnings_tone_2:5275-13",
+   "section": "opening",
+   "label": "+1",
+   "reason": "Lending units summed up as having a very good quarter with sound asset quality, tempered by mention of tougher competition, attrition and a steady-not-stellar label."
+  },
+  {
+   "id": "earnings_tone_2:5280-8",
+   "section": "opening",
+   "label": "0",
+   "reason": "A progress report on technology adoption, staffing and rollout dates; a factual update without a judgement on results, demand or margins."
+  },
+  {
+   "id": "earnings_tone_2:5287-26",
+   "section": "qa",
+   "label": "0",
+   "reason": "Explains that a pricing-structure change depends on regulators and cannot be done alone; procedural and regulatory, no tone on performance."
+  },
+  {
+   "id": "earnings_tone_2:5290-8",
+   "section": "opening",
+   "label": "+1",
+   "reason": "Market leadership, rising shares and continued core growth are claimed, but with a fading key product and possible timing gaps before new launches fill in."
+  },
+  {
+   "id": "earnings_tone_2:5305-3",
+   "section": "opening",
+   "label": "+2",
+   "reason": "Management calls the period outstanding on every measure, with top-line growth praised without qualification despite a tight market backdrop."
+  },
+  {
+   "id": "earnings_tone_2:5324-2",
+   "section": "opening",
+   "label": "0",
+   "reason": "A filing cover letter with addresses and links; no management commentary on performance."
+  },
+  {
+   "id": "earnings_tone_2:5327-3",
+   "section": "opening",
+   "label": "-2",
+   "reason": "Reports losses, calls the year among the hardest for the industry and concedes an operational failure that hit results badly; no offset on performance."
+  },
+  {
+   "id": "earnings_tone_2:5357-8",
+   "section": "opening",
+   "label": "+1",
+   "reason": "Mostly recited figures, but performance and profitability are judged favourably and investor appetite is highlighted; weather difficulties noted yet outweighed."
+  },
+  {
+   "id": "earnings_tone_2:5375-5",
+   "section": "opening",
+   "label": "0",
+   "reason": "A recital of lending, income, profit and asset-quality figures with comparisons; almost no evaluative language from management."
+  },
+  {
+   "id": "earnings_tone_2:5381-32",
+   "section": "qa",
+   "label": "0",
+   "reason": "Outlines where sales capability exists or must be built for a launch and declines to detail spending; factual, plus contact boilerplate."
+  }
+ ]
+}

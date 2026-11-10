@@ -143,3 +143,52 @@ def test_the_labels_file_covers_the_set_and_applies_its_tie_break():
     assert a["exact"] == sum(lb["fable"]["label"] == lb["opus"]["label"] for lb in labels)
     assert a["tie_breaks"] == sum(lb["tie_break"] for lb in labels)
     assert a["opposite_sides"] == sum(cls(lb["fable"]["label"]) * cls(lb["opus"]["label"]) == -1 for lb in labels)
+
+
+def test_the_payload_goes_out_in_parts_that_join_back():
+    body = json.dumps(ts.payload(ts.pick(table()), "dev", "earnings_tone_2"), separators=(",", ":"))
+    lines = ts.annotations(body)
+    assert len(lines) == -(-len(body) // ts.ANNOTATION_CHARS) > 1
+    parts = [line.split("::", 2)[2] for line in lines]
+    assert all(len(p) <= ts.ANNOTATION_CHARS for p in parts) and json.loads("".join(parts))["set"] == "earnings_tone_2"
+    assert lines[0].startswith(f"::notice title=tone items (1 of {len(lines)})::")
+
+
+def test_the_second_set_has_its_own_seed_and_leaves_out_the_first_sets_passages():
+    spec = ts.SETS["earnings_tone_2"]
+    assert spec["seed"] != ts.SEED and spec["rule_version"] == 2 and spec["excludes"] == (ts.SET_NAME,)
+    first = json.loads(ts.items_file(ts.SET_NAME).read_text(encoding="utf-8"))["items"]
+    assert ts.excluded("earnings_tone_2") == sorted(f"{i['document_id']}:{i['chunk_no']}" for i in first) and ts.excluded(ts.SET_NAME) == []
+    assert "<> all(%(exclude)s::text[])" in ts.CANDIDATE_SQL
+    p = ts.payload([], "dev", "earnings_tone_2")
+    assert (p["seed"], p["rule_version"], p["excludes"]) == ("earnings_tone-2", 2, ["earnings_tone"])
+    assert "excludes" not in ts.payload([], "dev")
+    c = ts.Cand("a", "Q1 FY26", "x", 0.0, 7, 3, "qa", "answers", "0", "earnings_tone_2")
+    assert c.id == "earnings_tone_2:7-3"
+
+
+def test_the_committed_second_set_is_thirty_items_in_the_six_cells_with_the_caps_and_none_from_the_first():
+    doc = json.loads(ts.items_file("earnings_tone_2").read_text(encoding="utf-8"))
+    assert (doc["set"], doc["seed"], doc["rule_version"], doc["excludes"]) == ("earnings_tone_2", "earnings_tone-2", 2, ["earnings_tone"])
+    items = doc["items"]
+    assert len(items) == 30 and len({i["id"] for i in items}) == 30
+    for it in items:
+        assert set(it) <= {"id", "document_id", "chunk_no", "section", "group", "stratum", "slug", "season", "peer_group"}
+        assert it["id"] == f"earnings_tone_2:{it['document_id']}-{it['chunk_no']}"
+    assert Counter((i["stratum"], i["group"]) for i in items) == {(s, g): 5 for s in ts.STRATA for g in ts.GROUPS}
+    assert len({i["slug"] for i in items}) == 30
+    assert max(Counter(i["peer_group"] for i in items).values()) <= ts.PEER_CAP
+    assert len({i["season"] for i in items}) >= ts.MIN_SEASONS
+    assert not {f"{i['document_id']}:{i['chunk_no']}" for i in items} & set(ts.excluded("earnings_tone_2"))
+
+
+def test_the_second_sets_labels_cover_it_in_order():
+    """earnings_tone_2.labels.json (#175's second round; Anand, 10 Nov 2026): Claude Fable's labels alone, ids and sections in the
+    set's order, each a rubric score with a one-line reason."""
+    items = json.loads(ts.items_file("earnings_tone_2").read_text(encoding="utf-8"))["items"]
+    doc = json.loads((ts.SETS_DIR / "earnings_tone_2.labels.json").read_text(encoding="utf-8"))
+    assert doc["set"] == "earnings_tone_2" and doc["rule_version"] == 2 and doc["complete"] is True
+    assert [(lb["id"], lb["section"]) for lb in doc["labels"]] == [(i["id"], i["section"]) for i in items]
+    for lb in doc["labels"]:
+        assert set(lb) == {"id", "section", "label", "reason"} and lb["label"] in ("-2", "-1", "0", "+1", "+2")
+        assert 0 < len(lb["reason"].strip()) <= 200 and "\n" not in lb["reason"] and '"' not in lb["reason"]
