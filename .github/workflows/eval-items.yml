@@ -11,6 +11,11 @@ on:
         type: choice
         options: [dev, production]
         default: dev
+      tone_set:
+        description: 'none: the policy sets (ft/eval/labelling.py); otherwise the tone gate set to pick (ft/eval/tone_set.py; #175)'
+        type: choice
+        options: [none, earnings_tone, earnings_tone_2]
+        default: none
 concurrency:
   group: eval-items
   cancel-in-progress: false
@@ -35,6 +40,13 @@ jobs:
           cache-dependency-glob: py/uv.lock
       - run: uv sync --locked --extra jobs
       - name: Choose
+        if: ${{ !inputs.tone_set || inputs.tone_set == 'none' }}
         run: uv run --locked python -m ft.eval.labelling --target "$FT_TARGET"
         env:
+          JOB_DATABASE_URL: ${{ env.FT_TARGET == 'production' && secrets.JOB_DATABASE_URL || env.FT_TARGET == 'dev' && secrets.DEV_JOB_DATABASE_URL || '' }}
+      - name: Choose the tone set
+        if: ${{ inputs.tone_set && inputs.tone_set != 'none' }}
+        run: uv run --locked python -m ft.eval.tone_set --target "$FT_TARGET" --set "$INPUT_TONE_SET"
+        env:
+          INPUT_TONE_SET: ${{ inputs.tone_set }}
           JOB_DATABASE_URL: ${{ env.FT_TARGET == 'production' && secrets.JOB_DATABASE_URL || env.FT_TARGET == 'dev' && secrets.DEV_JOB_DATABASE_URL || '' }}
