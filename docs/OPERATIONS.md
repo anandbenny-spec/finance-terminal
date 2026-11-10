@@ -238,10 +238,65 @@ gh run list --repo anandbenny-spec/finance-terminal --workflow daily.yml --limit
 - The two monitors' emails: any Down since last month? Open both dashboards: green.
 - Actions tab: the latest `daily`, `weekly` and `keepalive-db` runs are green, and none of the scheduled workflows shows "disabled".
 - `PRODUCTION_SCHEDULES` is still `on`.
-- Supabase: no pause warning; the Usage page is below the caps. Vercel: the latest production deployment is Ready.
+- Supabase: no pause warning; the Usage page is below the caps, and the raw bucket is under 850 MB (section 5.9). Vercel: the latest production deployment is Ready.
 - The admin refresh token (section 4) is still listed on its GitHub page, with a recent "Last used".
 - Credits: the Anthropic Console's balance, if AI outputs are wanted to keep updating.
 - A calendar entry for the next 60-day mark, in case `keep-alive` itself has stopped.
+
+### 5.9 When the bucket nears 850 MB
+
+The raw bucket holds every stored source file: earnings-call PDFs, NSE replies, filings, and the Fed and RBI documents.
+Supabase's Free plan allows 1 GB of file storage per project. The build set a stop at **850 MB** (`raw_storage_stop_mb` in
+`py/config/equity/calls.yaml`, 85% of the cap; Plan 04b P5, #265). Nothing else watches the size.
+
+**What the stop does, and what it doesn't.** The `raw_storage` check of `equity.call_transcripts` (a `weekly` task) compares
+the bucket with the stop. It is a warning, not a brake: over the stop the run still succeeds and still stores files. The only
+trace is an open alert, `check:equity.call_transcripts:raw_storage`, on the admin Health page (`/admin/health`) and in
+`ops.alert`. It sends no email, and `/api/health` does not read it, so both monitors stay green (section 5.1). The hard limit
+is Supabase's own cap: at it, writes can be refused and the daily load fails too (section 3, Supabase row). So 850 MB is a
+prompt to act, not the point where harm is prevented.
+
+**How fast it grows** (production, measured 8 Nov 2026; measure again rather than trust this). The bucket held 269 MB before
+the earnings-call history was loaded and 676 MiB after it: about 300 calls, about 400 MB. Each results season (four a year)
+adds roughly 70 MB, and the weekly runs add small files between seasons. From 676 MiB, 850 MB is about two seasons away. The
+dashboard's Usage page read 0.43 GB on the same day; the gap was not explained, so take the larger figure.
+
+**Read the size** (production's SQL editor; read-only), in the monthly check (5.8) and whenever the alert above is open:
+
+```sql
+select bucket_id, count(*) as objects, round(sum((metadata->>'size')::bigint) / 1048576.0, 1) as mib
+from storage.objects
+group by bucket_id
+order by 3 desc;
+```
+
+**The three exits.** Each is the owner's decision (`CLAUDE.md` §7); a session does not take one alone.
+
+1. **Cloudflare R2.** New raw files go to R2. Every stored object is copied, checked by hash and kept in Supabase as well.
+   - *State:* built, parked and unmerged: branch `claude/2b-01-r2` (#164). Merging it changes nothing until a target's line in
+     `py/config/storage.yaml` (the branch adds the file) is flipped, and that happens only after the copy verifies with
+     0 mismatches.
+   - *Needs:* a Cloudflare account and buckets, two bucket-scoped tokens, and eight GitHub secrets (`R2_ENDPOINT`,
+     `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and the same four with a `DEV_` prefix), possibly a payment
+     method. A session merges `main` into the branch first: it was 9 days behind on 8 Nov, and `ft/storage.py` is on every
+     job's path.
+   - *Buys:* new files stop counting against the 1 GB. *The catch:* one more service to keep alive with no subscription,
+     which is why it was parked (30 Oct and 8 Nov 2026). Deleting the Supabase copies afterwards is a separate, irreversible
+     decision.
+2. **A higher stop.** Raise `raw_storage_stop_mb` in `py/config/equity/calls.yaml` in a pull request.
+   - *Needs:* the owner's word, with the reason written next to the line (it loosens a check).
+   - *Buys:* about one more season at the 8 Nov rate. *The catch:* it only moves the warning. Supabase's 1 GB cap stays, and
+     the daily load shares the bucket, so leave room for it.
+3. **Supabase Pro.** Move production's organisation to a paid plan.
+   - *Needs:* the owner's decision (a paid plan) and no code. Production has had its own organisation since 9 Nov 2026, so it
+     applies to that one, not dev's.
+   - *Buys:* a larger allowance, so the stop can then be raised as in exit 2. *The catch:* a running cost.
+
+**Do not** delete objects or `core.raw_file` rows to make room: `job_writer` cannot, source data is never deleted
+(`CLAUDE.md` §3), and deleting stored objects is irreversible (§7). Do not point `ft/storage.py` at another store by hand.
+
+**After an exit,** read the size again with the query above, start `weekly` by hand (5.7), and check that the
+`raw_storage` alert closes: the next run that passes the check resolves it.
 
 ## 6. Bitwarden
 
