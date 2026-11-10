@@ -304,7 +304,7 @@ check "A48 the test rows are gone" \
   "$(as_pg "select (select count(*) from core.entity where slug like 'eq24%')+(select count(*) from equity.price_daily)+(select count(*) from equity.company)+(select count(*) from equity.peer_group where key like 'eq24%')")" '^0$'
 check "A49 the field policy rows are as seeded (the flips were rolled back)" \
   "$(as_pg "select string_agg(field_key||'='||status, ' ' order by field_key) from core.field_policy where field_key like 'equity.%'")" \
-  '^equity\.beta=labelled equity\.cost_of_debt=labelled equity\.dcf_scenario=hidden equity\.ebit_derived=labelled equity\.guidance_outcome=hidden equity\.implied_growth=hidden equity\.implied_roe=hidden equity\.nim_proxy=labelled equity\.peer_group=labelled equity\.rate_sensitivity=hidden equity\.remarks_change=hidden equity\.results_move=hidden equity\.roa=labelled$'
+  '^equity\.beta=labelled equity\.brsr_values=hidden equity\.cost_of_debt=labelled equity\.dcf_scenario=hidden equity\.ebit_derived=labelled equity\.group_companies=hidden equity\.guidance_outcome=hidden equity\.implied_growth=hidden equity\.implied_roe=hidden equity\.nim_proxy=labelled equity\.peer_group=labelled equity\.rate_sensitivity=hidden equity\.remarks_change=hidden equity\.results_move=hidden equity\.roa=labelled equity\.rpt_counterparties=hidden equity\.segments=hidden$'
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
