@@ -28,6 +28,12 @@ standard deviation, **held when n < `MIN_PASSAGES` (8)**. The opening's mean and
 answers' the `qa` section's; the closing counts in the call's mean only. The change against the previous call (the immediately
 preceding fiscal quarter's) is delta = this mean - the previous mean, SE = sqrt(sd1^2 / n1 + sd2^2 / n2): **more positive** if
 delta > 2 SE, **more negative** if delta < -2 SE, otherwise **little changed**; no label when the previous call is missing or held.
+
+**Which model scores it** (#175, the tone gate's Sonnet round, 10 Nov 2026; `MODEL_OF`). A prompt version names the prompt and the
+model that runs it. v1 runs on the task's model (Haiku 5.5). **v2 is v1's text, unchanged, on Sonnet 5.5**: Spec 02B §5.8's "If Haiku
+fails" step, after Haiku's v1 scored 21 of 30 on the `earnings_tone` set (24 needed). Sonnet's batch price is 20 times Haiku's
+(`config/ai_prices.yaml`), so a run under v2 is priced first, and the gate's run is limited to the set's 30 calls
+(`CALLS_AI_TONE_SET`, ft/jobs/tasks/equity_calls_ai.py).
 """
 from __future__ import annotations
 
@@ -38,7 +44,7 @@ from dataclasses import dataclass, field
 from decimal import ROUND_HALF_EVEN, Decimal
 
 from ft.ai.call_summary import CallDoc, Turn, _when
-from ft.ai.client import Prompt, Reply, Request, Source
+from ft.ai.client import SONNET, Prompt, Reply, Request, Source
 
 TASK = "call_tone"
 RULE_VERSION = "1"
@@ -49,6 +55,7 @@ MAX_QUOTE = 300                       # characters (the spec's cap; the private-
 SCORES = (-2, -1, 0, 1, 2)
 SECTIONS = ("opening", "qa", "closing")
 SIGMAS = 2                            # the change is called when |delta| exceeds this many standard errors
+MODEL_OF = {"v2": SONNET}             # the model of a prompt version that doesn't run on the task's (Haiku 5.5); v2 is v1's text on Sonnet 5.5
 DROPS: dict[str, str] = {
     "malformed": "evidence item isn't the schema's object",
     "unknown_passage": "evidence names a passage that isn't in the list",
@@ -109,6 +116,11 @@ def listing(items: Sequence[Passage]) -> str:
     return "\n\n".join(parts)
 
 
+def model_of(version: str) -> str | None:
+    """The model a prompt version names (`MODEL_OF`), or None for the task's own (Haiku 5.5)."""
+    return MODEL_OF.get(version)
+
+
 def tone_request(call: CallDoc, items: Sequence[Passage], prompt: Prompt, schema: dict, *, note: str | None = None) -> Request:
     if not items:
         raise ValueError(f"{call.title}: no management passage to score")
@@ -116,7 +128,7 @@ def tone_request(call: CallDoc, items: Sequence[Passage], prompt: Prompt, schema
     src = Source(call.document_id, listing(items), call.title, context=f"{call.company} · Earnings call{quarter} · {_when(call.day)}")
     instruction = (f"Score each of the {len(items)} numbered management passages above ({call.title}), following the rubric. "
                    f"Give every passage exactly one score, then the evidence quotes.")
-    return Request(TASK, prompt, (src,), instruction, schema=schema, note=note if note else None)
+    return Request(TASK, prompt, (src,), instruction, model=model_of(prompt.version), schema=schema, note=note if note else None)
 
 
 # ---------------------------------------------------------------------------------------------- checking a reply

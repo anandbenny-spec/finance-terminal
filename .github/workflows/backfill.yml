@@ -30,6 +30,11 @@ on:
         type: choice
         options: [both, call_summary, guidance_extraction, call_tone]
         default: both
+      tone_set:
+        description: 'equity.calls_ai with calls_ai_task=call_tone only: limit the run to an evaluation set''s calls (#175, the tone gate''s Sonnet round)'
+        type: choice
+        options: [none, earnings_tone]
+        default: none
 concurrency:
   group: jobs-backfill
   cancel-in-progress: false
@@ -62,6 +67,7 @@ jobs:
           INPUT_SINCE: ${{ inputs.since }}
           INPUT_UNTIL: ${{ inputs.until }}
           CALLS_AI_TASK: ${{ inputs.calls_ai_task }}
+          CALLS_AI_TONE_SET: ${{ inputs.tone_set != 'none' && inputs.tone_set || '' }}
           JOB_DATABASE_URL: ${{ env.FT_TARGET == 'production' && secrets.JOB_DATABASE_URL || env.FT_TARGET == 'dev' && secrets.DEV_JOB_DATABASE_URL || '' }}
           STORAGE_ENDPOINT: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_ENDPOINT || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_ENDPOINT || '' }}
           STORAGE_ACCESS_KEY_ID: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_ACCESS_KEY_ID || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_ACCESS_KEY_ID || '' }}

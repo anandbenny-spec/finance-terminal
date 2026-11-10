@@ -1,5 +1,6 @@
 """Tone of an earnings call (Spec 02B §5.7; job 2B-12, #175): the management passages, the request, the checks on a reply, the
 aggregation and the change label. Synthetic text only."""
+import json
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal
@@ -9,6 +10,7 @@ import pytest
 from ft.ai import call_tone as ct
 from ft.ai.call_summary import CallDoc, Turn
 from ft.ai.client import TASKS, load_prompt, load_schema
+from ft.jobs.tasks import equity_calls_ai as eca
 
 WORDS = " ".join(f"word{i}" for i in range(45))              # 45 words: a passage
 SHORT = "Thank you all for joining us today."                # a few words: not a passage
@@ -233,3 +235,32 @@ def test_a_failed_check_gives_the_batch_steps_its_reasons_and_a_retry_note():
 
 def test_the_quotes_are_counted_by_how_they_were_found_for_the_citation_integrity_check():
     assert ct.Checked(None).mapping == {}
+
+
+def test_v2_is_v1s_text_unchanged_on_sonnet():
+    """#175, the tone gate's Sonnet round (Spec 02B §5.8): no rubric or prompt change after the model has run on the set, so the
+    text sent under v2 is v1's; only the model differs."""
+    from ft.ai.client import HAIKU, SONNET
+    v1, v2 = load_prompt(ct.TASK, "v1"), load_prompt(ct.TASK, "v2")
+    assert v2.text == v1.text and load_schema(ct.TASK, "v2") == load_schema(ct.TASK, "v1")
+    assert ct.model_of("v1") is None and ct.model_of("v2") == SONNET
+    call, chunks = call_with(("Rao", "management", "opening", WORDS), ("Rao", "management", "qa", WORDS))
+    items = ct.passages(call, chunks)
+    assert ct.tone_request(call, items, v1, load_schema(ct.TASK, "v1")).model_id == HAIKU
+    req = ct.tone_request(call, items, v2, load_schema(ct.TASK, "v2"))
+    assert req.model_id == SONNET and req.input_sha256 != ct.tone_request(call, items, v1, load_schema(ct.TASK, "v1")).input_sha256
+
+
+def test_the_tone_set_names_its_documents_and_refuses_any_other_use():
+    items = json.loads(eca.TONE_SETS["earnings_tone"].read_text(encoding="utf-8"))["items"]
+    want = sorted({int(i["document_id"]) for i in items})
+    env = {eca.TONE_SET_ENV: "earnings_tone"}
+    assert len(want) == 30 and eca.tone_set_documents(ct.TASK, "dev", env) == want
+    assert eca.tone_set_documents(ct.TASK, "dev", {}) is None and eca.tone_set_documents(None, "production", {eca.TONE_SET_ENV: " "}) is None
+    with pytest.raises(ValueError, match="must be empty or one of"):
+        eca.tone_set_documents(ct.TASK, "dev", {eca.TONE_SET_ENV: "policy_hawk_dove"})
+    for only in (None, "call_summary", "guidance_extraction"):
+        with pytest.raises(ValueError, match="needs CALLS_AI_TASK=call_tone"):
+            eca.tone_set_documents(only, "dev", env)
+    with pytest.raises(ValueError, match="runs on dev only"):
+        eca.tone_set_documents(ct.TASK, "production", env)
