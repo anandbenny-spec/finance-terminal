@@ -157,8 +157,9 @@ export function PricedInView({
             Operating companies. A reverse discounted cash flow solves for the revenue growth, held for years 1 to 5, that makes the model&apos;s value per share equal the latest close. After
             year 5 growth fades in a straight line to the terminal rate, the risk-free rate in rupees, by year 10. Every other assumption is the one the Valuation tab shows: the EBIT margin and
             the sales-to-capital ratio from the last three filed years, tax moving from the company&apos;s recent rate to the marginal rate, discounting at the cost of capital, and no excess
-            returns after year 10. Where faster growth would lower the model&apos;s value, because the return on capital is below the cost of capital, or where the price implies growth outside
-            the range the solver searches, no figure is shown and the reason is listed below the table.
+            returns after year 10. Where faster growth would lower the model&apos;s value, because the return on capital is below the cost of capital, where the return on capital is so
+            close to the cost of capital that growth earns little more than it costs, or where the price implies growth outside the range the solver searches, no figure is shown and the
+            reason is listed below the table.
           </p>
           <p>
             Delivered means the filed figure: the 5-year revenue CAGR for an operating company, and the average of the last five fiscal years&apos; ROE for a lender. The gap is implied minus
