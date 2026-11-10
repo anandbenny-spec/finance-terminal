@@ -49,6 +49,7 @@ SETS = {
     "earnings_tone_2": {"seed": "earnings_tone-2", "rule_version": 2, "excludes": (SET_NAME,)},
 }
 SETS_DIR = Path(__file__).resolve().parents[3] / "config" / "eval" / "sets"
+ANNOTATION_CHARS = 3900  # an annotation's message is cut at 4,096 characters, so the payload goes out in parts
 MAX_NODES = 200_000      # a bound on the search; the data never needs more than a few hundred
 
 CANDIDATE_SQL = """
@@ -245,6 +246,12 @@ def annotation(title: str, message: str) -> str:
     return f"::notice title={title}::{message.replace('%', '%25').replace(chr(13), '%0D').replace(chr(10), '%0A')}"
 
 
+def annotations(body: str) -> list[str]:
+    """The payload as notices of at most ANNOTATION_CHARS each (GitHub cuts a message at 4,096); joined in order they give it back."""
+    parts = [body[i:i + ANNOTATION_CHARS] for i in range(0, len(body), ANNOTATION_CHARS)] or [""]
+    return [annotation(f"tone items ({n} of {len(parts)})", part) for n, part in enumerate(parts, 1)]
+
+
 def main(argv: list[str] | None = None, *, env=None, out=print) -> int:
     p = argparse.ArgumentParser(prog="python -m ft.eval.tone_set", description=__doc__.split("\n\n")[0])
     p.add_argument("--target", choices=("dev", "production"), default="dev", help="logged; the workflow picks the credentials")
@@ -265,7 +272,8 @@ def main(argv: list[str] | None = None, *, env=None, out=print) -> int:
         out(f"::error title=tone items::not enough candidates: {e}")
         return 1
     body = json.dumps(payload(chosen, f"{args.target}", args.set), ensure_ascii=False, separators=(",", ":"))
-    out(annotation("tone items", body))
+    for line in annotations(body):
+        out(line)
     return 0
 
 

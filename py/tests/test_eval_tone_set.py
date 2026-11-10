@@ -143,3 +143,25 @@ def test_the_labels_file_covers_the_set_and_applies_its_tie_break():
     assert a["exact"] == sum(lb["fable"]["label"] == lb["opus"]["label"] for lb in labels)
     assert a["tie_breaks"] == sum(lb["tie_break"] for lb in labels)
     assert a["opposite_sides"] == sum(cls(lb["fable"]["label"]) * cls(lb["opus"]["label"]) == -1 for lb in labels)
+
+
+def test_the_payload_goes_out_in_parts_that_join_back():
+    body = json.dumps(ts.payload(ts.pick(table()), "dev", "earnings_tone_2"), separators=(",", ":"))
+    lines = ts.annotations(body)
+    assert len(lines) == -(-len(body) // ts.ANNOTATION_CHARS) > 1
+    parts = [line.split("::", 2)[2] for line in lines]
+    assert all(len(p) <= ts.ANNOTATION_CHARS for p in parts) and json.loads("".join(parts))["set"] == "earnings_tone_2"
+    assert lines[0].startswith(f"::notice title=tone items (1 of {len(lines)})::")
+
+
+def test_the_second_set_has_its_own_seed_and_leaves_out_the_first_sets_passages():
+    spec = ts.SETS["earnings_tone_2"]
+    assert spec["seed"] != ts.SEED and spec["rule_version"] == 2 and spec["excludes"] == (ts.SET_NAME,)
+    first = json.loads(ts.items_file(ts.SET_NAME).read_text(encoding="utf-8"))["items"]
+    assert ts.excluded("earnings_tone_2") == sorted(f"{i['document_id']}:{i['chunk_no']}" for i in first) and ts.excluded(ts.SET_NAME) == []
+    assert "<> all(%(exclude)s::text[])" in ts.CANDIDATE_SQL
+    p = ts.payload([], "dev", "earnings_tone_2")
+    assert (p["seed"], p["rule_version"], p["excludes"]) == ("earnings_tone-2", 2, ["earnings_tone"])
+    assert "excludes" not in ts.payload([], "dev")
+    c = ts.Cand("a", "Q1 FY26", "x", 0.0, 7, 3, "qa", "answers", "0", "earnings_tone_2")
+    assert c.id == "earnings_tone_2:7-3"
