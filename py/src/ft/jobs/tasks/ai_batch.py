@@ -832,8 +832,12 @@ class AiBatch(BatchSteps, Task):
         month = tx.execute(
             """select count(*) filter (where r.status = 'rejected' and r.reject_reason like 'rejected:%%'),
                       count(*) filter (where r.status = 'succeeded' or r.reject_reason like 'rejected:%%')
-                 from ops.ai_request r where r.ai_task = any(%s) and r.created_at >= date_trunc('month', now())""",
-            (list(AI_TASKS),)).fetchone()
+                 from ops.ai_request r where r.ai_task = any(%s) and r.created_at >= date_trunc('month', now())
+                  -- only this task's own population: requests for another module's documents (the 603 call-transcript
+                  -- summaries asked for in error from 8 Nov 2026; issue #356) are not the Fed's and the RBI's
+                  and not exists (select 1 from core.document d join core.entity n on n.id = d.entity_id
+                                   where d.id = r.document_id and n.slug <> all(%s))""",
+            (list(AI_TASKS), self._policy_banks())).fetchone()
         rate = Decimal(month[0]) / Decimal(month[1]) if month[1] else Decimal(0)
         detail = {"run": dict(sorted(c.items())), "citations": dict(sorted(mapping.items())),
                   "month": {"rejected": month[0], "targets": month[1], "rate": f"{rate:.3f}"},

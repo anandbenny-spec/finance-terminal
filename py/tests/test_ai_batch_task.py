@@ -188,6 +188,32 @@ def two_statements(prev_day: date, day: date):
     return (s0, s1), old, new
 
 
+@pytest.mark.db
+def test_rejected_call_transcript_requests_stay_out_of_the_months_integrity_share():
+    """Issue #356: the 603 call-transcript summaries asked for in error (8-10 Nov 2026) are another module's population, so
+    they never push the policy banks' month share to the 10% warning."""
+    (s0, s1), *_ = two_statements(date(2046, 4, 25), date(2046, 5, 9))
+    eid = q("""insert into core.entity (kind, slug, name, short_name, market, currency, is_published)
+               values ('company', 'ab356-co', 'Ab356 Ltd', 'Ab356', 'IN', 'INR', true) returning id""")[0][0]
+    try:
+        tdoc = q("""insert into core.document (doc_type, entity_id, title, source_id, external_key, source_url)
+                    select 'call_transcript', %s, 'transcript', s.id, '/test/ab356/t.pdf', 'https://example.invalid/t.pdf'
+                      from core.source s where s.key = 'nse' returning id""", eid)[0][0]
+        for i in range(30):
+            x("""insert into ops.ai_request (custom_id, ai_task, document_id, input_sha256, model, prompt_version, status,
+                                              reject_reason)
+                 values (%s, 'doc_summary', %s, decode(repeat('00', 32), 'hex'), 'm', 'v1', 'rejected',
+                         'rejected: bullet 1: no verified citation')""", f"ab356:{i}", tdoc)
+        _, code = watch_once(task([s0, s1], FakeClaude(["ok"]), FakeVoyage()), decision_day(date(2046, 5, 9)))
+        assert code == 0
+        ci = last_run()["checks"]["citation_integrity"]
+        assert ci["passed"] and json.loads(ci["detail"])["month"]["rejected"] == 0
+    finally:
+        x("delete from ops.ai_request where custom_id like 'ab356:%%'")
+        x("delete from core.document where external_key = '/test/ab356/t.pdf'")
+        x("delete from core.entity where slug = 'ab356-co'")
+
+
 # ---------------------------------------------------------------------------------------------- decision day
 @pytest.mark.db
 def test_decision_day_publishes_cited_summaries_and_embeddings_in_real_time():

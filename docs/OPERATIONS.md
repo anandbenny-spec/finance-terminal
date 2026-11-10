@@ -298,6 +298,10 @@ order by 3 desc;
 **After an exit,** read the size again with the query above, start `weekly` by hand (5.7), and check that the
 `raw_storage` alert closes: the next run that passes the check resolves it.
 
+### 5.10 Incident record: call-transcript summaries requested in error (8 to 10 Nov 2026; #351, #356)
+
+From 8 Nov 2026 `policy.ai_batch` asked for `doc_summary` outputs on earnings-call transcripts, which belong to module (c)'s tasks. The production `daily` hung and was cancelled at 30 minutes each time until the fix (#353, 10 Nov 2026). 604 summaries were requested in error; every one was rejected and none was ever shown to a visitor. Since #356 the `citation_integrity` month share counts only the Fed's and the RBI's documents, and `site.quality_summary` skips `doc_summary` outputs whose target is a call transcript, so these rows no longer skew either; the rows themselves stay in `ops.ai_request` and `core.ai_output` as the record.
+
 ## 6. Bitwarden
 
 **What Bitwarden holds.** Every credential that cannot be read back from somewhere else, plus the recovery codes:
