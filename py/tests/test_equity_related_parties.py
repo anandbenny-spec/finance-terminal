@@ -492,3 +492,51 @@ def test_the_production_guard_holds_a_scheduled_first_run_and_a_missing_table():
     assert not equity_due(Db(False, False), t.key, "weekly", Due(True, ""), requires=t.requires).due
     assert not equity_due(Db(True, False), t.key, "weekly", Due(True, ""), requires=t.requires).due
     assert equity_due(Db(True, False), t.key, "refresh", Due(True, ""), requires=t.requires).due
+
+
+def test_load_sends_its_writes_in_pipelined_batches_not_one_round_trip_per_row():
+    """Production's first run (11 Nov 2026, #190) sent one round trip per row from a US runner to Mumbai and passed the
+    workflow's 30 minutes. The reads stay one per filing; the writes go as pipelined `executemany` batches, deletes first."""
+    from ft.jobs.tasks.equity_related_parties import Fetched, Item
+
+    class Cur:
+        def __init__(self, tx):
+            self.tx = tx
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def executemany(self, sql, rows):
+            self.tx.batches.append((sql.split()[0], len(list(rows))))
+
+    class Res:
+        def fetchall(self):
+            return []
+
+    class Tx:
+        def __init__(self):
+            self.executes, self.batches = [], []
+
+        def execute(self, sql, params=None):
+            self.executes.append(sql.split()[0])
+            return Res()
+
+        def cursor(self):
+            return Cur(self)
+
+    def item(i, basis):
+        rows = [rp.RptRow(n, f"C{n}", None, "Sale of goods or services", "Co", "company", Decimal(n)) for n in range(1, 301)]
+        parsed = rp.Parsed(company="Co", basis=basis, period_start=D(2025, 10, 1), period_end=D(2026, 3, 31),
+                           fy_end=D(2026, 3, 31), rows=rows,
+                           segments=rp.Segments([rp.SegRow(1, "multi", "S", Decimal(5))]))
+        filing = rp.Filing(basis, D(2026, 3, 31), D(2025, 4, 1), D(2026, 3, 31), True)
+        return Item(i, i, f"zr-{i}", 100 + i, filing, D(2026, 3, 31), parsed)
+
+    tx = Tx()
+    n = EquityRelatedParties().load(tx, Fetched(items=[item(1, "standalone"), item(2, "consolidated")]), None)
+    assert n == 601                                                 # 300 + 300 related-party rows and the one segment row
+    assert tx.executes == ["select", "select", "select"]            # reads only: two filings, and the consolidated year-end's segments
+    assert tx.batches == [("delete", 2), ("delete", 1), ("insert", 600), ("insert", 1)]

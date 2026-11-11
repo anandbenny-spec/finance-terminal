@@ -35,6 +35,7 @@ Checks, B blocking, W warning:
 from __future__ import annotations
 
 import calendar
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
@@ -120,7 +121,8 @@ class EquityRelatedParties(Task):
         out = Fetched()
         out.no_year_end = [r[0] for r in f.db.execute(UNIVERSE_WITHOUT_YEAR).fetchall()]
         seen: dict[tuple[int, str], set[date]] = {}
-        for doc_id, entity_id, slug, event_id, basis, period_end, fy_start, fy_end, raw_id, selected in rows:
+        t0 = time.monotonic()
+        for n, (doc_id, entity_id, slug, event_id, basis, period_end, fy_start, fy_end, raw_id, selected) in enumerate(rows, 1):
             filing = rp.Filing(basis, period_end, fy_start, fy_end, period_end == selected)
             item = Item(doc_id, entity_id, slug, event_id, filing, selected)
             seen.setdefault((entity_id, slug), set()).add(period_end)
@@ -133,6 +135,8 @@ class EquityRelatedParties(Task):
                 except rp.RptError as e:
                     item.error = e
             out.items.append(item)
+            if n % 25 == 0 or n == len(rows):                 # counts and seconds only: the run log is public
+                print(f"  equity.related_parties: read {n} of {len(rows)} files, {time.monotonic() - t0:.0f} s")
         for (_, slug), ends in sorted(seen.items(), key=lambda kv: kv[0][1]):
             if len(ends) < 2:
                 out.no_half.append(f"{slug}: only the {max(ends).isoformat()} filing is stored (the year's other half-year isn't)")
@@ -140,8 +144,16 @@ class EquityRelatedParties(Task):
 
     # ------------------------------------------------------------------ load (one transaction)
     def load(self, tx, f: Fetched, task_run_id) -> int:
+        """A US runner talks to Mumbai: one round trip per row took production's first run past the workflow's 30 minutes
+        (11 Nov 2026, #190). The reads stay one per filing; the writes are collected and sent as pipelined `executemany`
+        batches (as `equity.metrics` does, #117), the deletes before the inserts."""
         n = 0
-        for it in f.items:
+        t0 = time.monotonic()
+        del_rpt: list[tuple] = []
+        ins_rpt: list[tuple] = []
+        del_seg: list[tuple] = []
+        ins_seg: list[tuple] = []
+        for i, it in enumerate(f.items, 1):
             want_rpt = [(r.line_no, r.counterparty, r.relationship, r.txn_type, r.entering_party, r.entered_by, r.value,
                          it.parsed.period_start, it.parsed.period_end) for r in (it.parsed.rows if it.parsed else [])]
             have = [tuple(r) for r in tx.execute(
@@ -150,13 +162,8 @@ class EquityRelatedParties(Task):
                     where results_event_id = %s and basis = %s order by line_no""",
                 (it.event_id, it.filing.basis)).fetchall()]
             if have != want_rpt:
-                tx.execute("delete from equity.rpt_line where results_event_id = %s and basis = %s",
-                           (it.event_id, it.filing.basis))
-                for w in want_rpt:
-                    tx.execute("""insert into equity.rpt_line (results_event_id, basis, line_no, counterparty, relationship,
-                                  txn_type, entering_party, entered_by, value_in_period, period_start, period_end)
-                                  values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                               (it.event_id, it.filing.basis, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8]))
+                del_rpt.append((it.event_id, it.filing.basis))
+                ins_rpt.extend((it.event_id, it.filing.basis, *w) for w in want_rpt)
                 n += len(want_rpt)
             seg = it.parsed.segments if it.parsed else None
             if it.filing.year_end and it.filing.basis == "consolidated":
@@ -168,13 +175,27 @@ class EquityRelatedParties(Task):
                         where results_event_id = %s and basis = 'consolidated' order by line_no""",
                     (it.event_id,)).fetchall()]
                 if have_seg != want_seg:
-                    tx.execute("delete from equity.segment_revenue where results_event_id = %s and basis = 'consolidated'",
-                               (it.event_id,))
-                    for w in want_seg:
-                        tx.execute("""insert into equity.segment_revenue (results_event_id, basis, line_no, reporting,
-                                      description, revenue, period_start, period_end)
-                                      values (%s, 'consolidated', %s, %s, %s, %s, %s, %s)""", (it.event_id, *w))
+                    del_seg.append((it.event_id,))
+                    ins_seg.extend((it.event_id, *w) for w in want_seg)
                     n += len(want_seg)
+            if i % 25 == 0 or i == len(f.items):                  # counts and seconds only: the run log is public
+                print(f"  equity.related_parties: compared {i} of {len(f.items)} filings, {time.monotonic() - t0:.0f} s")
+        with tx.cursor() as cur:
+            if del_rpt:
+                cur.executemany("delete from equity.rpt_line where results_event_id = %s and basis = %s", del_rpt)
+            if del_seg:
+                cur.executemany("delete from equity.segment_revenue where results_event_id = %s and basis = 'consolidated'",
+                                del_seg)
+            if ins_rpt:
+                cur.executemany("""insert into equity.rpt_line (results_event_id, basis, line_no, counterparty, relationship,
+                                   txn_type, entering_party, entered_by, value_in_period, period_start, period_end)
+                                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", ins_rpt)
+            if ins_seg:
+                cur.executemany("""insert into equity.segment_revenue (results_event_id, basis, line_no, reporting,
+                                   description, revenue, period_start, period_end)
+                                   values (%s, 'consolidated', %s, %s, %s, %s, %s, %s)""", ins_seg)
+        print(f"  equity.related_parties: wrote {len(ins_rpt)} related-party rows and {len(ins_seg)} segment rows, "
+              f"{time.monotonic() - t0:.0f} s")
         return n
 
     # ------------------------------------------------------------------ checks

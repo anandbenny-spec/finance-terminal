@@ -7,6 +7,7 @@
 // unchanged paragraphs. Every word is one the stored diff holds; topics come from the documents' own structure.
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
+import { CitationChip } from "@/components/ai/CitationChip";
 import { formatAxisNumber } from "@/lib/format";
 import { previewKeyChanges, type KeyChanges as Model, type KeySide } from "@/lib/policy/keychanges";
 
@@ -30,6 +31,20 @@ function Side({ side, label, doc, absent }: { side: KeySide; label: string; doc:
       {side ? (
         <p className="break-words text-ui text-ink-1">
           <Words side={side} />
+          {side.cite && (
+            <>
+              {" "}
+              <CitationChip citation={side.cite.citation} />
+              {side.cite.page && (
+                <>
+                  {" "}
+                  <a href={side.cite.page.url} title={side.cite.page.title} className="whitespace-nowrap font-mono text-meta text-ink-3 underline hover:text-ink-1" rel="noreferrer" target="_blank">
+                    {side.cite.page.label} ↗
+                  </a>
+                </>
+              )}
+            </>
+          )}
           {side.para !== null && (
             <>
               {" "}

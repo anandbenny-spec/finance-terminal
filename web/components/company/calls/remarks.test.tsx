@@ -6,11 +6,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { CompanyView } from "@/components/company/CompanyView";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { MAX_SIDE, newSpeakerNote, remarksKeyChanges, similarityText, wordsChangedText } from "@/lib/equity/remarks";
+import { MAX_SIDE, newSpeakerNote, remarksKeyChanges, remarksSource, similarityText, wordsChangedText } from "@/lib/equity/remarks";
 import type { RemarksChangeRow } from "@/lib/queries/api";
 import type { CallsTabData } from "@/lib/queries/calls";
 import { bannedCallWordsIn } from "@/tests/banned-words";
-import { SHOWN, calls } from "@/tests/call-rows";
+import { SHOWN, call, calls } from "@/tests/call-rows";
 import { page } from "@/tests/company-rows";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => undefined }) }));
@@ -24,13 +24,16 @@ const html = (c: CallsTabData | null) =>
   );
 
 const RELEASED = [...SHOWN, { field_key: "equity.remarks_change", status: "labelled" as const, label: "derived" }];
+// A stored pair side after the scoring task's verification (remarks-3, #414): a quote of the stored transcript by code-point range.
+const vside = (text: string, over: Record<string, unknown> = {}) => ({ text, document_id: 501, start: 100, end: 100 + text.length, page: 7, page_last: 7, verified: true, ...over });
 const pair = (i: number, over: Record<string, unknown> = {}) => ({
   kind: "changed",
   changed_words: 10 - i,
-  old: { text: `Old sentence number ${i}.`, spans: [[0, 10]] },
-  new: { text: `New sentence number ${i}.`, spans: [[0, 10]] },
+  old: vside(`Old sentence number ${i}.`, { document_id: 500 }),
+  new: vside(`New sentence number ${i}.`),
   ...over,
 });
+const SOURCES = { now: remarksSource(call(), "Q2 FY27"), before: remarksSource(call({ call_slug: "q1-fy27", fiscal_label: "Q1 FY27", transcript_document_id: 500, official_url: "https://example.test/tcs-q1.pdf" }), "Q1 FY27") };
 function row(over: Partial<RemarksChangeRow> = {}): RemarksChangeRow {
   return {
     company_slug: "tcs", call_slug: "q2-fy27", fiscal_label: "Q2 FY27", period_end: "2026-09-30", filed_at: "2026-10-12T09:00:00+05:30", exchange: "NSE",
@@ -38,7 +41,8 @@ function row(over: Partial<RemarksChangeRow> = {}): RemarksChangeRow {
     words_removed: 30, similarity: 0.8293, new_speakers: [], label: null, pairs: [pair(1), pair(2)], policy_label: "derived", ...over,
   };
 }
-const tab = (over: Partial<CallsTabData> = {}) => calls({ policies: RELEASED, remarks: [row()], ...over });
+const tab = (over: Partial<CallsTabData> = {}) =>
+  calls({ policies: RELEASED, remarks: [row()], calls: [call(), call({ call_slug: "q1-fy27", fiscal_label: "Q1 FY27", transcript_document_id: 500, official_url: "https://example.test/tcs-q1.pdf", is_newest: false, is_latest_stored: false, is_default: false })], ...over });
 
 describe("the Opening remarks panel", () => {
   it("is held back while the field is hidden: the note, no figure and no sentence", () => {
@@ -62,8 +66,8 @@ describe("the Opening remarks panel", () => {
 
   it("shows at most five pairs, each side cut to 400 characters by code point", () => {
     const long = "é".repeat(450);
-    const many = Array.from({ length: 7 }, (_, i) => pair(i, i === 0 ? { new: { text: long } } : {}));
-    const model = remarksKeyChanges(many);
+    const many = Array.from({ length: 7 }, (_, i) => pair(i, i === 0 ? { new: vside(long, { end: 100 + 400 }) } : {}));
+    const model = remarksKeyChanges(many, SOURCES);
     expect(model.changedSentences).toBe(5);
     const side = model.groups[0].rows[0].now?.ops[0].text ?? "";
     expect(Array.from(side).length).toBe(MAX_SIDE);
@@ -71,9 +75,9 @@ describe("the Opening remarks panel", () => {
   });
 
   it("reads an added and a removed sentence as such", () => {
-    const m = remarksKeyChanges([pair(1, { old: null }), pair(2, { new: null }), { kind: "same" }, "nonsense", null]);
+    const m = remarksKeyChanges([pair(1, { old: null }), pair(2, { new: null }), { kind: "same" }, "nonsense", null], SOURCES);
     expect(m.groups[0].rows.map((r) => r.kind)).toEqual(["added", "removed"]);
-    expect(remarksKeyChanges("not an array").groups).toEqual([]);
+    expect(remarksKeyChanges("not an array", SOURCES).groups).toEqual([]);
   });
 
   it("names a new speaker, and says nothing when there is none", () => {
@@ -106,6 +110,49 @@ describe("the Opening remarks panel", () => {
     const panel = out.slice(out.indexOf("panel-call-remarks"), out.indexOf("panel-call-guidance"));
     expect(panel).not.toMatch(/text-(gain|loss)|bg-(gain|loss)|#[0-9a-f]{3,6}\b/i);
     expect(bannedCallWordsIn(text(panel))).toEqual([]);
+  });
+});
+
+describe("verified quotes (#414)", () => {
+  it("shows each verified side as a quote with its citation chip and a page link at the source", () => {
+    const out = html(tab());
+    const panel = out.slice(out.indexOf("panel-call-remarks"), out.indexOf("panel-call-guidance"));
+    expect(text(panel)).toContain("p. 7 ↗");
+    expect(panel).toContain('href="https://example.test/tcs-q2.pdf#page=7"');
+    expect(panel).toContain('href="https://example.test/tcs-q1.pdf#page=7"');
+    expect(panel).toContain("Source 1: show the cited passage");
+    expect(panel).toContain("Source 4: show the cited passage");
+  });
+
+  it("shows nothing for a side that is not verified, or that sits outside the limits", () => {
+    const m = remarksKeyChanges(
+      [
+        pair(1, { old: { text: "Older, unverified words.", spans: [[0, 10]] } }),       // stored before #414: text and spans only
+        pair(2, { old: vside("Not verified.", { verified: false }), new: vside("Over the limit.", { end: 100 + 401 }) }),
+        pair(3, { old: vside("No document.", { document_id: null }), new: vside("Negative start.", { start: -1 }) }),
+      ],
+      SOURCES,
+    );
+    expect(m.groups).toHaveLength(1);
+    expect(m.groups[0].rows).toHaveLength(1);
+    expect(m.groups[0].rows[0].before).toBeNull();
+    expect(m.groups[0].rows[0].kind).toBe("added");
+    expect(text(html(tab({ remarks: [row({ pairs: [pair(1, { old: { text: "Leaked free text.", spans: [[0, 5]] }, new: { text: "Leaked free text too.", spans: [[0, 5]] } })] })] })))).not.toContain("Leaked free text");
+  });
+
+  it("links a page only for the call's own transcript, and not where the address is a company-website page", () => {
+    const other = remarksKeyChanges([pair(1, { new: vside("From another document.", { document_id: 999 }) })], SOURCES);
+    expect(other.groups[0].rows[0].now?.cite?.page).toBeNull();
+    const site = remarksSource(call({ status: "on_company_website", official_url: "https://example.test/ir" }), "Q2 FY27");
+    expect(site.url).toBeNull();
+    expect(remarksKeyChanges([pair(1)], { now: site, before: SOURCES.before }).groups[0].rows[0].now?.cite?.page).toBeNull();
+    const insecure = remarksSource(call({ official_url: "http://example.test/t.pdf" }), "Q2 FY27");
+    expect(insecure.url).toBeNull();
+  });
+
+  it("keeps no transcript text beyond the quotes: every quote is at most 400 characters", () => {
+    const rows = remarksKeyChanges(Array.from({ length: 5 }, (_, i) => pair(i)), SOURCES).groups[0].rows;
+    for (const r of rows) for (const s of [r.before, r.now]) expect(Array.from(s?.ops[0].text ?? "").length).toBeLessThanOrEqual(MAX_SIDE);
   });
 });
 

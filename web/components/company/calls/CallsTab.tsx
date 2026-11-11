@@ -32,7 +32,7 @@ import {
   partialLine,
   summaryLists,
 } from "@/lib/equity/calls";
-import { REMARKS_FIELD, REMARKS_HELD, newSpeakerNote, remarksBars, remarksKeyChanges, similarityText, wordsChangedText } from "@/lib/equity/remarks";
+import { REMARKS_FIELD, REMARKS_HELD, newSpeakerNote, remarksBars, remarksKeyChanges, remarksSource, similarityText, wordsChangedText } from "@/lib/equity/remarks";
 import { GUIDANCE_HELD, guidanceGroups, hitRate, unattributedLine } from "@/lib/equity/guidance";
 import { PREVIEW_FEEDS } from "@/lib/feeds";
 import { dateInZone, formatDate } from "@/lib/format";
@@ -175,7 +175,10 @@ function OpeningRemarks({
           {speakers && <p className="text-data text-ink-1">{speakers}</p>}
           {strip && <RemarksStrip bars={strip.bars} withoutBar={strip.withoutBar} total={strip.total} companyName={name} />}
           <KeyChanges
-            model={remarksKeyChanges(row.pairs)}
+            model={remarksKeyChanges(row.pairs, {
+              now: remarksSource(call, row.fiscal_label),
+              before: remarksSource(data.calls.find((c) => c.call_slug === row.base_call_slug), row.base_fiscal_label),
+            })}
             before={{ href: callHref(companySlug, row.base_call_slug), date: row.base_fiscal_label }}
             now={{ href: callHref(companySlug, row.call_slug), date: row.fiscal_label }}
             limit={5}
