@@ -201,6 +201,16 @@ def test_the_period_end_is_secs_report_date(ticker):
 
 
 @needs_fixtures
+def test_a_forward_looking_line_never_sets_the_period():
+    """Dev run 3 (11 Nov 2026): P&G's FY2019 10-K tags a few figures for the year to 30 Jun 2020. The fixtures hold the
+    same shape: Nvidia's FY2014 10-K (one fact for the quarter to 27 Apr 2014) and Walmart's 2011 and 2012 10-Ks."""
+    nvda = statements("NVDA").filings["0001045810-14-000030"]
+    assert (nvda.form, nvda.period_end) == ("10-K", D(2014, 1, 26))
+    wmt = statements("WMT").filings
+    assert (wmt["0001193125-11-083157"].period_end, wmt["0001193125-12-134679"].period_end) == (D(2011, 1, 31), D(2012, 1, 31))
+
+
+@needs_fixtures
 def test_current_debt_is_one_filed_line_or_held():
     def latest(ticker):
         s = statements(ticker)

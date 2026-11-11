@@ -23,8 +23,9 @@ which imports its rules from here, its tests unchanged. The rules (Data Audit 02
 that filing filed them (a later filing's restated comparative never rewrites an earlier filing's row, as India's
 results filings): `quarter` (the three months; a 10-K's from the year less the nine months, unless it files the
 quarter), the year to date (`half_year`, `nine_months`, `year`) and `instant` (the balance sheet at the period end,
-with the cover page's shares). The period end is the latest end of the filing's own durations (it equals SEC's
-`reportDate` for every one of the 219 filings the saved submissions list); the task checks it against SEC where SEC's
+with the cover page's shares). The period end is the latest end of the filing's own durations that carries at least a fifth of its
+busiest end's facts (it equals SEC's `reportDate` for every one of the 219 filings the saved submissions list; a
+forward-looking line never sets it); the task checks it against SEC where SEC's
 list holds the filing. The column map and the tag chains are `py/config/equity/us_tags.yaml`. A column whose meaning
 isn't filed is null, never computed from other lines, except the quarter differences above and the equity fills;
 `tags` names the element behind each value or why it is held.
@@ -51,6 +52,7 @@ SHARES_TAG = "EntityCommonStockSharesOutstanding"
 YTD_KIND = {"Q": "quarter", "6M": "half_year", "9M": "nine_months", "FY": "year"}
 PRIOR_KIND = {"6M": "Q", "9M": "6M", "FY": "9M"}                         # the year to date before each
 MONEY, PER_SHARE, SHARES = "USD", "USD/shares", "shares"
+PERIOD_SHARE = 5                 # a period end carries at least a fifth of the busiest end's facts
 ZERO = Decimal(0)
 
 
@@ -325,9 +327,15 @@ class Filing:
 
     @property
     def period_end(self) -> dt.date | None:
-        """The latest end of the filing's own durations (a quarter to a year): its report date."""
-        ends = [f.end for f in self.durations() if f.kind in YTD_KIND]
-        return max(ends) if ends else None
+        """The filing's report date: the latest end of its durations (a quarter to a year) that carries at least a
+        fifth as many facts as its busiest end. A forward-looking line (P&G's FY2019 10-K tags a few figures for the
+        year to 30 Jun 2020: dev run 3, 11 Nov 2026; Nvidia's and Walmart's 2011-14 10-Ks in the fixtures) has a
+        handful of facts and never sets the period."""
+        ends = Counter(f.end for f in self.durations() if f.kind in YTD_KIND)
+        if not ends:
+            return None
+        busiest = max(ends.values())
+        return max(e for e, n in ends.items() if n * PERIOD_SHARE >= busiest)
 
     def link(self) -> str:
         return f"https://www.sec.gov/Archives/edgar/data/{self.cik}/{self.accn.replace('-', '')}/{self.accn}-index.htm"
