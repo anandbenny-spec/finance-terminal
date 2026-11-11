@@ -494,12 +494,12 @@ def test_a_stored_close_that_comes_back_different_blocks_the_run_and_writes_noth
     before = len(stored(ids["ZZZ"]))
     stock.traded[date(2026, 11, 3)] += D("1.00")                    # Yahoo's history moved with no split to explain it
     code, tr = prices_run(Yahoo([stock], today=date(2026, 11, 6)), workflow="weekly")
-    assert tr[0] == "failed" and checks(tr)["overlap"] == (False, True)
+    assert tr[0] == "checks_failed" and checks(tr)["overlap"] == (False, True)
     assert "ZZZ 2026-11-03: stored" in detail(tr, "overlap")
     assert len(stored(ids["ZZZ"])) == before
     # a backfill that re-reads a stored day with another value is named too, and nothing is written over
     code, tr = prices_run(Yahoo([stock], today=date(2026, 11, 3)), since=date(2026, 10, 1))
-    assert tr[0] == "failed" and checks(tr)["unchanged"] == (False, True) and "ZZZ 2026-11-03" in detail(tr, "unchanged")
+    assert tr[0] == "checks_failed" and checks(tr)["unchanged"] == (False, True) and "ZZZ 2026-11-03" in detail(tr, "unchanged")
 
 
 @pytest.mark.db
@@ -508,11 +508,11 @@ def test_a_missing_session_or_a_bar_on_a_holiday_blocks_the_backfill(s3):
     stock = Stock("ZZZ", walk(date(2026, 10, 1), date(2026, 11, 13), D("300")))
     _, tr = prices_run(Yahoo([stock], today=date(2026, 11, 6), skip=("ZZZ", date(2026, 10, 14))),
                        since=date(2026, 10, 1))
-    assert tr[0] == "failed" and checks(tr)["sessions_present"] == (False, True)
+    assert tr[0] == "checks_failed" and checks(tr)["sessions_present"] == (False, True)
     assert "ZZZ (1: 2026-10-14)" in detail(tr, "sessions_present")
     _, tr = prices_run(Yahoo([stock], today=date(2026, 11, 6), extra=("ZZZ", date(2026, 10, 10))),
                        since=date(2026, 10, 1))             # a Saturday
-    assert tr[0] == "failed" and checks(tr)["calendar_proven"] == (False, True)
+    assert tr[0] == "checks_failed" and checks(tr)["calendar_proven"] == (False, True)
     assert q("select count(*) from equity.price_daily where entity_id in (select id from core.entity where slug like 't3u-%')") == [(0,)]
 
 
@@ -521,9 +521,9 @@ def test_a_ticker_yahoo_refuses_fails_the_run(s3):
     make("ZZZ", "QQQQ")
     stock = Stock("ZZZ", walk(date(2026, 10, 1), date(2026, 11, 13), D("300")))
     _, tr = prices_run(Yahoo([stock], today=date(2026, 11, 6)), since=date(2026, 10, 1))
-    assert tr[0] == "failed" and checks(tr)["charts_read"] == (False, True) and "QQQQ" in detail(tr, "charts_read")
+    assert tr[0] == "checks_failed" and checks(tr)["charts_read"] == (False, True) and "QQQQ" in detail(tr, "charts_read")
     _, tr = prices_run(Yahoo([stock], today=date(2026, 11, 6), status=429), since=date(2026, 10, 1))
-    assert tr[0] == "failed"
+    assert tr[0] == "checks_failed"
 
 
 @pytest.mark.db
