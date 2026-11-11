@@ -18,6 +18,23 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [{ source: "/favicon.ico", destination: "/icon" }];
   },
+  // Security headers on every route (#367, R4; Review 02a F1-05). `DENY` and not `SAMEORIGIN`: nothing on the site frames
+  // its own pages, and the admin page's session is kept in the browser, so framing it is the realistic gap. There is no
+  // Content-Security-Policy on purpose: a real one needs nonces for Next's inline scripts and ships report-only first
+  // (Review 02a I-5, after 18 Nov). Vercel adds Strict-Transport-Security by itself. web/next-config.test.ts covers this.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
+        ],
+      },
+    ];
+  },
   turbopack: {
     rules: {
       "*.css": {
