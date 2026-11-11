@@ -240,6 +240,10 @@ gh workflow run daily.yml --repo anandbenny-spec/finance-terminal -f target=prod
 gh run list --repo anandbenny-spec/finance-terminal --workflow daily.yml --limit 5
 ```
 
+A manual run never stands in for the next scheduled one (#386): a scheduled `daily` or `weekly` counts only the successes
+of runs GitHub started on its schedule, so a task run by hand (a `backfill`, a `refresh`, or a `daily` or `weekly`
+started here) still runs at its next scheduled time.
+
 **On an MPC or FOMC day, start `watch` by hand at the release time** (about 10:00 India time for the RBI, 14:00 New York time for the
 Fed). Since 29 Oct 2026 GitHub starts every scheduled workflow hours late (the `timezone:` lines are honoured; the delay is GitHub's),
 so the decision documents can sit unloaded until the catch-up runs; a manual run starts at once. Leave the cron lines alone.
