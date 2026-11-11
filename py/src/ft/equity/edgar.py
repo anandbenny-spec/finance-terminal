@@ -406,6 +406,8 @@ def _ix_number(el) -> Decimal | None:
     scale = el.get("scale")
     if scale:
         v = v.scaleb(int(scale))
+    if v == v.to_integral_value():
+        v = v.quantize(Decimal(1))
     return -v if el.get("sign") == "-" else v
 
 

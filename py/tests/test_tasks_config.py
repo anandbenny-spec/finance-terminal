@@ -20,7 +20,7 @@ def test_repo_config_loads():
                           "equity.statements", "equity.shareholding", "equity.brsr", "equity.related_parties", "equity.segment_changes", "equity.metrics", "equity.beta",
                           "equity.call_transcripts", "equity.call_text", "equity.calls_ai", "equity.rate_reactions",
                           "equity.results_reactions", "equity.valuation", "equity.snapshot", "equity.guidance_scores", "equity.call_scores",
-                          "us.filings", "us.universe"}
+                          "us.universe", "us.prices", "us.corporate_actions", "us.filings"}
     # the due-rule names are kept as tasks.yaml writes them (Prompt 01 A2)
     # a daily rule may add the decision-day catch-up (#158: `every 16 hours or fomc_catch_up`; test_catch_up_rules.py)
     assert tasks["policy.fed_documents"].rules == {"daily": "every 16 hours or fomc_catch_up", "watch": "fomc_decision_day"}
@@ -104,7 +104,8 @@ def test_build_tasks_configures_registered_classes_and_names_the_rest(tmp_path):
                                "equity.shareholding", "equity.snapshot", "equity.statements", "equity.universe",
                                "equity.valuation", "equity.valuation_inputs",
                                "policy.ai_batch", "policy.calendar", "policy.market_series",
-                               "policy.rate_cycles", "policy.rbi_documents", "site.quality_summary", "us.filings", "us.universe"]
+                               "policy.rate_cycles", "policy.rbi_documents", "site.quality_summary", "us.corporate_actions",
+                               "us.filings", "us.prices", "us.universe"]
 
 
 def test_trigger_and_project_ref():
