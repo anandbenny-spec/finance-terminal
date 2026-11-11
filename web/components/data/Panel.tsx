@@ -32,6 +32,7 @@ export function Panel({
   span = 12,
   variant = "default",
   label,
+  tour,
   className,
   children,
 }: {
@@ -48,11 +49,14 @@ export function Panel({
   variant?: "default" | "flush" | "prose";
   /** An accessible name for a panel without a title bar (the StatRow). */
   label?: string;
+  /** The guided tour's fixed target id (`data-tour`, lib/tour.ts; #91). */
+  tour?: string;
   className?: string;
   children: ReactNode;
 }) {
   return (
     <section
+      data-tour={tour}
       aria-labelledby={title ? titleId : undefined}
       aria-label={title ? undefined : label}
       className={cn(

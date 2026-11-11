@@ -30,6 +30,11 @@ const html = (policies: FieldPolicyRow[], data = rows) =>
   );
 
 describe("ScreenerView", () => {
+  it("carries the guided tour's target on the table panel (#91)", () => {
+    expect(html(SHOWN)).toContain('data-tour="screener-table"');
+    expect(html([], [])).toContain('data-tour="screener-table"'); // and with no rows
+  });
+
   it("orders the index buttons numerically: 50, 100, 200", () => {
     const members = ["nifty-200", "nifty-100", "nifty-50"].map((slug) => ({ index_slug: slug, index_name: `Nifty ${slug.slice(6)}` }) as IndexMemberRow);
     const idx = indexesOf(members);
