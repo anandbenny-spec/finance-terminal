@@ -190,3 +190,9 @@ us.corporate_actions:
   run_after: [us.prices]
   overdue_after: 10 days
   uses_nse: false
+us.filings:
+  description: The Dow 30's statements from SEC EDGAR's company facts (each 10-K and 10-Q registered with its quarter, year to date and balance sheet, checked before its figures are stored), unpublished until the US slice goes live
+  workflows: {weekly: every 6 days}
+  run_after: [us.universe]
+  overdue_after: 10 days
+  uses_nse: false

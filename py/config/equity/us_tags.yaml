@@ -1,0 +1,99 @@
+# The US statements' column map: SEC EDGAR company facts (us-gaap) -> equity.financials (Spec 02A.1 §5.2; job US-02,
+# issue #401). Read by ft/equity/edgar.py for the task us.filings (py/src/ft/jobs/tasks/equity_us_filings.py).
+#
+# The rules are Data Audit 02 rows D1-D3, red flag 10 and 02a finding 14 (ported from the engine test's helper,
+# py/tests/equity_edgar.py, whose own field chains stay in that file for its tests):
+# - each column's `chain` is tried in order for each filing's period, the primary first: the first tag of the chain
+#   that is still current (one whose latest period is within 400 days of the newest such tag's, with at least four
+#   periods) moves to the front, the rest fill only the periods it lacks (red flag 10's revenue tag changes);
+# - `{tag, nci: plus|minus}`: an equity fill adjusted by MinorityInterest at the same date in the same filing; a period
+#   without that figure is skipped when the company files MinorityInterest at all (finding 14: GEV 2022);
+# - money in USD only, per-share figures in USD/shares; a fact in another unit is never read (the currency guard);
+# - a column whose meaning isn't filed is null, never computed from other lines (Spec 02A.1 §5.2), except a 10-K's
+#   quarter (the year less the nine months, unless the quarter is filed) and quarterly cash flow (each year to date
+#   less the one before it), both labelled "derived" in the row's tags.
+#
+# Where a chain is tighter than the helper's (decided by Claude, standing delegation, 24 Oct 2026; recorded on #401):
+# - pat_owners is NetIncomeLoss only: the helper's fallbacks ProfitLoss (which includes non-controlling interests) and
+#   NetIncomeLossAvailableToCommonStockholdersBasic (after preferred dividends) mean something else, so they are pat
+#   and nothing;
+# - finance_cost leaves out InterestPaidNet (cash paid, a cash-flow line; the helper's own test assumption);
+# - cfo leaves out the continuing-operations-only tag; capex is the property, plant and equipment tag, then the
+#   productive-assets one (E1's NVDA and GEV);
+# - borrowings_current: SEC's filers split current debt into captions (term debt due within a year, commercial paper,
+#   short-term borrowings). A filed total (DebtCurrent) is used; else a single non-zero caption is the whole of it;
+#   where two or more are filed and no total, the field is held with the parts named in `tags` (adding them would be
+#   computing from other lines: an open question for Anand on #401).
+from: 2019-01-01
+
+columns:
+  # ------------------------------------------------------------------ profit and loss (durations)
+  revenue:
+    kind: flow
+    chain: [Revenues, RevenueFromContractWithCustomerExcludingAssessedTax, RevenueFromContractWithCustomerIncludingAssessedTax,
+            SalesRevenueNet, RevenuesNetOfInterestExpense, SalesRevenueGoodsNet, OperatingLeasesIncomeStatementLeaseRevenue,
+            RealEstateRevenueNet, InterestAndDividendIncomeOperating]
+  operating_income: {kind: flow, chain: [OperatingIncomeLoss]}
+  finance_cost: {kind: flow, chain: [InterestExpense, InterestExpenseNonoperating, InterestExpenseDebt]}
+  pbt:
+    kind: flow
+    chain: [IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest,
+            IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments]
+  tax: {kind: flow, chain: [IncomeTaxExpenseBenefit]}
+  pat: {kind: flow, chain: [ProfitLoss]}
+  pat_owners: {kind: flow, chain: [NetIncomeLoss]}
+  pat_nci: {kind: flow, chain: [NetIncomeLossAttributableToNoncontrollingInterest]}
+  eps_basic: {kind: per_share, chain: [EarningsPerShareBasic]}
+  eps_diluted: {kind: per_share, chain: [EarningsPerShareDiluted]}
+  # ------------------------------------------------------------------ cash flow (filed as the year to date)
+  cfo: {kind: cash_flow, chain: [NetCashProvidedByUsedInOperatingActivities]}
+  cfi: {kind: cash_flow, chain: [NetCashProvidedByUsedInInvestingActivities]}
+  cff: {kind: cash_flow, chain: [NetCashProvidedByUsedInFinancingActivities]}
+  capex: {kind: cash_flow, chain: [PaymentsToAcquirePropertyPlantAndEquipment, PaymentsToAcquireProductiveAssets]}
+  # ------------------------------------------------------------------ balance sheet (the period end)
+  total_assets: {kind: instant, chain: [Assets]}
+  cash:
+    kind: instant
+    # the second is cash including restricted cash (its tag says so in the row): the helper's chain, E1's GEV
+    chain: [CashAndCashEquivalentsAtCarryingValue, CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents, Cash]
+  total_equity:
+    kind: instant
+    chain: [StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest, {tag: StockholdersEquity, nci: plus}]
+  equity_owners:
+    kind: instant
+    chain: [StockholdersEquity, {tag: StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest, nci: minus}]
+  nci: {kind: instant, chain: [MinorityInterest]}
+  borrowings_current:
+    kind: instant
+    chain: [DebtCurrent]
+    parts: [LongTermDebtCurrent, ShortTermBorrowings, CommercialPaper, LongTermDebtAndCapitalLeaseObligationsCurrent,
+            OtherShortTermBorrowings]
+  # LongTermDebt is left out: it includes the part due within a year
+  borrowings_noncurrent: {kind: instant, chain: [LongTermDebtNoncurrent, LongTermDebtAndCapitalLeaseObligations]}
+
+# The year-end check (B): total assets = total liabilities + temporary equity + total equity, within the tolerance. A
+# filer with no total-liabilities line (Walmart) is checked against its filed balance sheet total instead, and the
+# check says so. Temporary equity: the total if filed, else the sum of the parts filed.
+balance_check:
+  liabilities: Liabilities
+  total: LiabilitiesAndStockholdersEquity
+  temporary_equity_total: TemporaryEquityCarryingAmountIncludingPortionAttributableToNoncontrollingInterests
+  temporary_equity: [TemporaryEquityCarryingAmountAttributableToParent, RedeemableNoncontrollingInterestEquityCarryingAmount]
+  tolerance: 0.005
+
+# Multi-class issuers (us_companies.yaml's multi_class): shares are read from the latest filing's cover page per class
+# and summed in the reference class, each class times its ratio. A class with no ratio here holds the field, naming
+# the class (the task warns), so a ratio is added here from the issuer's 10-K with its source, never guessed.
+share_classes:
+  GOOGL:
+    note: "Class A, Class B and Class C share alike in dividends and liquidation, differing only in votes (Alphabet's 10-K, net income per share note), so each counts as one share (E1's cover-page total, 12.23 bn)"
+    ratios: {CommonClassAMember: 1, CommonClassBMember: 1, CapitalClassCMember: 1}
+  NKE:
+    note: "Class A converts into Class B one for one and both share alike in earnings (NIKE's 10-K, earnings per share note), so each counts as one share"
+    ratios: {CommonClassAMember: 1, CommonClassBMember: 1}
+  V:
+    note: "Visa's class B-1, B-2 and C common stock convert into class A at rates its 10-K states and that change over time; until they are curated here with their source, the shares are held"
+    ratios: {CommonClassAMember: 1}
+
+# A company that can't have 3 fiscal years and 8 quarters of revenue and net income, with the reason (none so far).
+coverage_exceptions: {}
