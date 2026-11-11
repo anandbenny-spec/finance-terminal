@@ -44,10 +44,11 @@ describe("module 2's surfaces (2A-26, #132)", () => {
 
   // 2B-19 (#182) adds the card's one preview surface, `calls`, until 2B-22 moves it into FEEDS; DD-02 (#410) adds `segmentChanges`
   // until its task has a freshness row on production. Nothing else may sit there, and no preview task counts in the status bar.
-  it("holds only the Earnings calls and segment-changes previews in PREVIEW_FEEDS, out of the status bar's count", () => {
-    expect(Object.keys(PREVIEW_FEEDS)).toEqual(["calls", "segmentChanges"]);
-    for (const task of [...PREVIEW_FEEDS.calls, ...PREVIEW_FEEDS.segmentChanges]) expect(liveTasks()).not.toContain(task);
+  it("holds only the Earnings calls, segment-changes and value-chain previews in PREVIEW_FEEDS, out of the status bar's count", () => {
+    expect(Object.keys(PREVIEW_FEEDS)).toEqual(["calls", "segmentChanges", "valueChain"]);
+    for (const task of [...PREVIEW_FEEDS.calls, ...PREVIEW_FEEDS.segmentChanges, ...PREVIEW_FEEDS.valueChain]) expect(liveTasks()).not.toContain(task);
     expect(PREVIEW_FEEDS.segmentChanges).toEqual(["equity.segment_changes"]);
+    expect(PREVIEW_FEEDS.valueChain).toEqual(["equity.brsr", "equity.related_parties"]);
   });
 
   it("counts only tasks that exist: module 1's, the accuracy projection and module 2's data tasks", () => {

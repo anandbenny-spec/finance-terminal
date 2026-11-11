@@ -14,6 +14,7 @@ import { RateDecisionsTab } from "@/components/company/RateDecisionsTab";
 import { PromoterPanel } from "@/components/company/PromoterPanel";
 import { SegmentChangesPanel } from "@/components/company/SegmentChangesPanel";
 import { StatementTable } from "@/components/company/StatementTable";
+import { ValueChainPanel } from "@/components/company/value-chain/ValueChainPanel";
 import { TabError } from "@/components/company/TabError";
 import { ValuationTab } from "@/components/company/valuation/ValuationTab";
 import { Freshness } from "@/components/data/Freshness";
@@ -131,6 +132,7 @@ function Overview({ data, freshness }: { data: Ok; freshness: TaskFreshnessRow[]
         lender={isLender(company.valuation_family)}
         footer={<Foot sources={[sourceLineFor(peerRows[0]?.source_key)]} tasks={TASKS} dataTo={peerTo} freshness={freshness} now={now} />}
       />
+      <ValueChainPanel slug={company.slug} name={company.short_name ?? company.name} family={company.valuation_family} data={overview.valueChain} freshness={freshness} now={now} />
     </div>
   );
 }

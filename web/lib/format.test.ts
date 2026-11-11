@@ -9,6 +9,9 @@ import {
   NOT_AVAILABLE,
   NOT_AVAILABLE_LABEL,
   formatAxisChange,
+  formatCountChangeWords,
+  formatFiledShare,
+  formatShareChangeWords,
   formatAxisShare,
   formatShare,
   formatShareChange,
@@ -359,5 +362,32 @@ describe("shares of a text (ChangeStrip, #89)", () => {
     expect(formatAxisShare(60)).toBe("+60%");
     expect(formatAxisShare(-60)).toBe("−60%");
     expect(formatAxisShare(0)).toBe("0%");
+  });
+});
+
+describe("the value chain card's figures (VC-06, #191)", () => {
+  it("writes a BRSR share as filed: the decimals it carries, none added, none dropped", () => {
+    expect(formatFiledShare(90.4)).toBe("90.4%");
+    expect(formatFiledShare(0.07)).toBe("0.07%");
+    expect(formatFiledShare(96)).toBe("96%");
+    expect(formatFiledShare(12.9645)).toBe("12.9645%");
+    expect(formatFiledShare(0)).toBe("0%");
+    expect(formatFiledShare(null)).toBe(NOT_AVAILABLE);
+  });
+
+  it("says a change in a share in words, unsigned, with no colour", () => {
+    expect(formatShareChangeWords(3.24)).toBe("up 3.2 pp");
+    expect(formatShareChangeWords(-1)).toBe("down 1.0 pp");
+    expect(formatShareChangeWords(0)).toBe("unchanged");
+    expect(formatShareChangeWords(0.04)).toBe("unchanged");
+    expect(formatShareChangeWords(undefined)).toBe(NOT_AVAILABLE);
+  });
+
+  it("says a change in a count in words, grouped as India groups", () => {
+    expect(formatCountChangeWords(120)).toBe("up 120");
+    expect(formatCountChangeWords(-3)).toBe("down 3");
+    expect(formatCountChangeWords(1234567)).toBe("up 12,34,567");
+    expect(formatCountChangeWords(0)).toBe("unchanged");
+    expect(() => formatCountChangeWords(1.5)).toThrow(RangeError);
   });
 });
