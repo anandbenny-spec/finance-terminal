@@ -37,7 +37,8 @@ describe("the company page's reads", () => {
     store = { ...HEADER, company_prices: [], company_metrics: [], peer_comps: [] };
     const out = await readCompanyPage("tcs", "overview");
     expect(out.ok && out.tabFailed).toBe(false);
-    expect(out.ok && out.overview).toEqual({ prices: [], metrics: [], peers: [] });
+    // The value chain panel's reads fail on their own (view 0034 not in this store): each part null, the tab unaffected (VC-06, #191).
+    expect(out.ok && out.overview).toEqual({ prices: [], metrics: [], peers: [], valueChain: { rows: null, products: null, policies: null } });
   });
 
   it.each(["companies", "company_corporate_actions", "index_members"])("is { ok: false } when the header's %s read throws", async (view) => {
