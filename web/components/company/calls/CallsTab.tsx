@@ -6,7 +6,8 @@
 // page: tests/banned-words.ts. The pages are India only, so no market edge. Server-rendered; the tables are client components.
 import type { ReactNode } from "react";
 import { AIBlock } from "@/components/ai/AIBlock";
-import { CallsTable, FiguresTable, GuidanceTable } from "@/components/company/calls/CallTables";
+import { KeyChanges } from "@/components/ai/KeyChanges";
+import { CallsTable, FiguresTable, GuidanceTable, callHref } from "@/components/company/calls/CallTables";
 import { TabError } from "@/components/company/TabError";
 import { Gated, fieldPolicy } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
@@ -30,10 +31,11 @@ import {
   partialLine,
   summaryLists,
 } from "@/lib/equity/calls";
+import { REMARKS_FIELD, REMARKS_HELD, newSpeakerNote, remarksKeyChanges, similarityText, wordsChangedText } from "@/lib/equity/remarks";
 import { GUIDANCE_HELD, guidanceGroups, hitRate, unattributedLine } from "@/lib/equity/guidance";
 import { PREVIEW_FEEDS } from "@/lib/feeds";
 import { dateInZone, formatDate } from "@/lib/format";
-import type { EarningsCallRow, TaskFreshnessRow } from "@/lib/queries/api";
+import type { EarningsCallRow, RemarksChangeRow, TaskFreshnessRow } from "@/lib/queries/api";
 import type { CompanyPageData } from "@/lib/queries/company";
 
 type Ok = Extract<CompanyPageData, { ok: true }>;
@@ -128,6 +130,59 @@ function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<O
   );
 }
 
+/** Call › Opening remarks (2B-19d, #388; Spec 02B §5.13, §8): how much of management's opening wording changed against the previous quarter's. Derived, not AI; words, never colour. */
+function OpeningRemarks({
+  data,
+  call,
+  companySlug,
+  name,
+  foot,
+}: {
+  data: NonNullable<Ok["calls"]>;
+  call: EarningsCallRow;
+  companySlug: string;
+  name: string;
+  foot: ReactNode;
+}) {
+  const policy = fieldPolicy(data.policies, REMARKS_FIELD);
+  const released = policy !== null && policy.status !== "hidden";
+  const row: RemarksChangeRow | null = data.remarks?.find((r) => r.call_slug === call.call_slug) ?? null;
+  const speakers = row ? newSpeakerNote(row) : null;
+  return (
+    <Panel
+      title="Opening remarks"
+      titleId="panel-call-remarks"
+      subtitle={`How much did the wording of ${name}'s opening remarks change from the previous quarter's call?`}
+      qualifier={released && policy?.status === "labelled" && policy.label ? <Qualifier>{policy.label}</Qualifier> : undefined}
+      footer={foot}
+    >
+      {!released ? (
+        <StateNote kind="held">{REMARKS_HELD}</StateNote>
+      ) : !data.remarks ? (
+        <StateNote kind="error">Couldn&apos;t load this panel. Try again.</StateNote>
+      ) : !row ? (
+        <StateNote kind="empty">No comparison with an earlier call&apos;s opening remarks is published for this call.</StateNote>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <Stat
+            label="Wording unchanged"
+            value={similarityText(row)}
+            context={`${wordsChangedText(row)}, against the ${row.base_fiscal_label} opening remarks`}
+            asOf="Numbers in the text are masked before comparing."
+          />
+          {speakers && <p className="text-data text-ink-1">{speakers}</p>}
+          <KeyChanges
+            model={remarksKeyChanges(row.pairs)}
+            before={{ href: callHref(companySlug, row.base_call_slug), date: row.base_fiscal_label }}
+            now={{ href: callHref(companySlug, row.call_slug), date: row.fiscal_label }}
+            limit={5}
+          />
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshnessRow[] | null }) {
   const { company, calls } = data;
   if (!calls) return <TabError title="Earnings calls" titleId="calls-error" />;
@@ -167,6 +222,7 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
       <FiguresTable rows={rowsOf} caption={caption} figureHeader={figureHeader} empty={empty} />
     );
   const name = company.short_name ?? company.name;
+  const remarksReleased = (fieldPolicy(calls.policies, REMARKS_FIELD)?.status ?? "hidden") !== "hidden";
 
   return (
     <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-12">
@@ -177,7 +233,13 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
         variant="flush"
         footer={foot(rows[0] ?? null)}
       >
-        <CallsTable rows={rows} companySlug={company.slug} selected={call.call_slug} caption={`${company.name}: published earnings calls, newest first`} />
+        <CallsTable
+          rows={rows}
+          companySlug={company.slug}
+          selected={call.call_slug}
+          caption={`${company.name}: published earnings calls, newest first`}
+          remarks={remarksReleased && calls.remarks ? new Map(calls.remarks.map((r) => [r.call_slug, r])) : undefined}
+        />
       </Panel>
 
       <Panel
@@ -192,6 +254,8 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
 
       {stored && (
         <>
+          <OpeningRemarks data={calls} call={call} companySlug={company.slug} name={name} foot={foot(call)} />
+
           <Panel
             title="Guidance given on this call"
             titleId="panel-call-guidance"

@@ -628,6 +628,33 @@ export type EarningsCallRow = {
   is_default: boolean;
 };
 
+/**
+ * api.remarks_changes (0036, #388): one row per earnings call with a previous call; how much of the opening remarks' wording changed.
+ * No row while field policy `equity.remarks_change` is hidden. `pairs` is the stored jsonb: at most 5 pairs, each side at most 400
+ * characters; read it only through lib/equity/remarks.ts.
+ */
+export type RemarksChangeRow = {
+  company_slug: string;
+  call_slug: string;
+  fiscal_label: string;
+  period_end: string | null;
+  filed_at: string | null;
+  exchange: string | null;
+  base_call_slug: string;
+  base_fiscal_label: string;
+  base_period_end: string | null;
+  words_base: number;
+  words_new: number;
+  words_added: number;
+  words_removed: number;
+  /** A fraction, 0 to 1: the share of the wording unchanged (numbers masked). */
+  similarity: number;
+  new_speakers: string[];
+  label: "largely_rewritten" | "new_speaker" | null;
+  pairs: unknown;
+  policy_label: string | null;
+};
+
 /** api.call_figures (0029): a target (kind 'target') or a figure management stated (kind 'stated') on a call, with its quote's page. */
 export type CallFigureRow = {
   kind: "target" | "stated";
@@ -792,6 +819,7 @@ export type ApiDatabase = {
       company_rate_cycles: View<CompanyRateCycleRow>;
       earnings_calls: View<EarningsCallRow>;
       call_figures: View<CallFigureRow>;
+      remarks_changes: View<RemarksChangeRow>;
       earnings_latest: View<EarningsListRow & UnattributedRow>;
       citation_pages: View<CitationPageRow>;
       call_guidance: View<CallGuidanceRow>;
