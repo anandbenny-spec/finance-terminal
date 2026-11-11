@@ -151,7 +151,8 @@ class EquityBrsr(DocumentJob):
         codes: dict[int, str] = {}
         for entity_id, scheme, value in db.execute(
                 """select entity_id, scheme, value from core.entity_identifier
-                    where scheme in ('nse_symbol', 'bse_code') order by lower(valid) desc nulls last""").fetchall():
+                    where scheme in ('nse_symbol', 'bse_code') and entity_id in (select id from core.entity where market = 'IN')
+                    order by lower(valid) desc nulls last""").fetchall():
             if scheme == "nse_symbol":
                 symbols.setdefault(entity_id, []).append(value)
             else:
