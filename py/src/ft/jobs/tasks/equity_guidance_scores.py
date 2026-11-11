@@ -121,7 +121,8 @@ class EquityGuidanceScores(Task):
                       from equity.guidance g
                       join core.ai_output o on o.id = g.ai_output_id and o.task = 'guidance_extraction'
                                            and o.status = 'published'
-                     where g.speaker_role = 'management' and g.duplicate_of is null {where}
+                     where g.speaker_role = 'management' and g.duplicate_of is null
+                       and g.entity_id in (select id from core.entity where market = 'IN') {where}
                      order by g.id""", args).fetchall():
             s = sc.Statement(*r[:22])
             f.statements.setdefault(s.entity_id, []).append(s)

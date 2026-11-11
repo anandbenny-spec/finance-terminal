@@ -1,0 +1,68 @@
+# The Dow 30: the US slice's company master (Spec 02A.1 §5.1; job US-01, issue #400). Curated, and labelled curated.
+# Loaded by the task us.universe (py/src/ft/jobs/tasks/equity_us_universe.py), which creates each company unpublished
+# (core.entity market US, currency USD, slug us-<ticker>) and never publishes one: the go-live flip is Anand's SQL after
+# US-08's judge passes the slice (Spec 02A.1 §3, §8). The file's bytes are stored as the Dow snapshot's raw file.
+#
+# The list: the audit kit's curated Dow 30 (config/curated/dow30.csv, verified 19 Oct 2026; Data Audit 02a finding 18),
+# confirmed on 11 Nov 2026 against S&P Dow Jones Indices' press releases. The last change: Alphabet (GOOGL) in for
+# Verizon, effective before the open on 29 Jun 2026, and Honeywell staying as Honeywell Technologies Inc. after the
+# Honeywell Aerospace spin-off (release "Alphabet Set to Join and Honeywell International to Remain in Dow Jones
+# Industrial Average", 23 Jun 2026: https://press.spglobal.com/2026-06-23-Alphabet-Set-to-Join-and-Honeywell-International-to-Remain-in-Dow-Jones-Industrial-Average).
+# S&P Global's news release archive (press.spglobal.com, read 11 Nov 2026) lists no Dow Jones Industrial Average
+# change from 4 Oct 2026 to its newest release, of 6 Nov 2026.
+# A later change is a new `as_of` and a new snapshot; a company that leaves keeps its rows.
+#
+# Per company:
+# - ticker, cik, exchange: from SEC's company_tickers_exchange.json (the fixture saved by the audit kit, Oct 2026);
+#   the task checks each against SEC's submissions on every run (the ticker is blocking, the exchange a warning).
+# - predecessor_ciks: CIKs whose filings hold the company's earlier history (curated; US-02 merges their facts).
+#   Disney: The Walt Disney Company's filings up to its March 2019 reorganisation sit under CIK 1001039 (now TWDC
+#   Enterprises 18 Corp., formerly WALT DISNEY CO/; EDGAR's filing header, read 11 Nov 2026).
+# - fy_end_month: the month the fiscal year ends (a 52/53-week year ending in the first days of a month counts as the
+#   month before). sic: SEC's Standard Industrial Classification code. Both were read from SEC's submissions for AAPL,
+#   AMGN, GOOGL, JPM, MSFT, NVDA and WMT (Oct and 11 Nov 2026); the rest were entered by the build session from SEC's
+#   company records as it knew them. The task checks every one against SEC on every run: a mismatch is a warning
+#   naming the company, and the YAML is corrected from it. Neither is shown to visitors.
+# - peer_group: a key of us_peer_groups.yaml. valuation_family: lender (banks and card lenders), insurer, mixed (the
+#   consolidated figures hold a material lending or insurance arm: valuation shows N/A), else operating; the note says why.
+# - multi_class: more than one class of common stock on the cover page (US-02 sums the classes).
+index: dow-jones
+as_of: 2026-11-11
+companies:
+  - {ticker: AAPL, name: "Apple Inc.", short_name: Apple, cik: 320193, exchange: NASDAQ, fy_end_month: 9, sic: 3571, peer_group: us-hardware, valuation_family: operating}
+  - {ticker: AMGN, name: "Amgen Inc.", short_name: Amgen, cik: 318154, exchange: NASDAQ, fy_end_month: 12, sic: 2836, peer_group: us-pharma, valuation_family: operating}
+  - {ticker: AMZN, name: "Amazon.com, Inc.", short_name: Amazon, cik: 1018724, exchange: NASDAQ, fy_end_month: 12, sic: 5961, peer_group: us-retail, valuation_family: operating}
+  - {ticker: AXP, name: "American Express Company", short_name: American Express, cik: 4962, exchange: NYSE, fy_end_month: 12, sic: 6199, peer_group: us-banks, valuation_family: lender,
+     family_note: "A bank holding company that lends to its card members (Spec 02A.1 §5.1)."}
+  - {ticker: BA, name: "The Boeing Company", short_name: Boeing, cik: 12927, exchange: NYSE, fy_end_month: 12, sic: 3721, peer_group: us-industrials, valuation_family: operating}
+  - {ticker: CAT, name: "Caterpillar Inc.", short_name: Caterpillar, cik: 18230, exchange: NYSE, fy_end_month: 12, sic: 3531, peer_group: us-industrials, valuation_family: mixed,
+     family_note: "Its Financial Products segment (Cat Financial) lends to customers and dealers and carries most of the group's debt, so the consolidated figures hold a material lending arm."}
+  - {ticker: CRM, name: "Salesforce, Inc.", short_name: Salesforce, cik: 1108524, exchange: NYSE, fy_end_month: 1, sic: 7372, peer_group: us-software, valuation_family: operating}
+  - {ticker: CSCO, name: "Cisco Systems, Inc.", short_name: Cisco, cik: 858877, exchange: NASDAQ, fy_end_month: 7, sic: 3576, peer_group: us-hardware, valuation_family: operating}
+  - {ticker: CVX, name: "Chevron Corporation", short_name: Chevron, cik: 93410, exchange: NYSE, fy_end_month: 12, sic: 2911, peer_group: us-energy, valuation_family: operating}
+  - {ticker: DIS, name: "The Walt Disney Company", short_name: Disney, cik: 1744489, predecessor_ciks: [1001039], exchange: NYSE, fy_end_month: 9, sic: 7990, peer_group: us-leisure, valuation_family: operating}
+  - {ticker: GOOGL, name: "Alphabet Inc.", short_name: Alphabet, cik: 1652044, exchange: NASDAQ, fy_end_month: 12, sic: 7370, peer_group: us-software, valuation_family: operating, multi_class: true}
+  - {ticker: GS, name: "The Goldman Sachs Group, Inc.", short_name: Goldman Sachs, cik: 886982, exchange: NYSE, fy_end_month: 12, sic: 6211, peer_group: us-banks, valuation_family: lender,
+     family_note: "A bank holding company (Spec 02A.1 §5.1)."}
+  - {ticker: HD, name: "The Home Depot, Inc.", short_name: Home Depot, cik: 354950, exchange: NYSE, fy_end_month: 1, sic: 5211, peer_group: us-retail, valuation_family: operating}
+  - {ticker: HON, name: "Honeywell Technologies Inc.", short_name: Honeywell, cik: 773840, exchange: NASDAQ, fy_end_month: 12, sic: 3724, peer_group: us-industrials, valuation_family: operating}
+  - {ticker: IBM, name: "International Business Machines Corporation", short_name: IBM, cik: 51143, exchange: NYSE, fy_end_month: 12, sic: 3570, peer_group: us-software, valuation_family: mixed,
+     family_note: "Its Financing segment lends to clients and business partners and carries a material share of the group's debt, so the consolidated figures hold a material lending arm."}
+  - {ticker: JNJ, name: "Johnson & Johnson", short_name: Johnson & Johnson, cik: 200406, exchange: NYSE, fy_end_month: 12, sic: 2834, peer_group: us-pharma, valuation_family: operating}
+  - {ticker: JPM, name: "JPMorgan Chase & Co.", short_name: JPMorgan Chase, cik: 19617, exchange: NYSE, fy_end_month: 12, sic: 6021, peer_group: us-banks, valuation_family: lender,
+     family_note: "A bank holding company (Spec 02A.1 §5.1)."}
+  - {ticker: KO, name: "The Coca-Cola Company", short_name: Coca-Cola, cik: 21344, exchange: NYSE, fy_end_month: 12, sic: 2080, peer_group: us-consumer, valuation_family: operating}
+  - {ticker: MCD, name: "McDonald's Corporation", short_name: McDonald's, cik: 63908, exchange: NYSE, fy_end_month: 12, sic: 5812, peer_group: us-leisure, valuation_family: operating}
+  - {ticker: MMM, name: "3M Company", short_name: 3M, cik: 66740, exchange: NYSE, fy_end_month: 12, sic: 3841, peer_group: us-industrials, valuation_family: operating}
+  - {ticker: MRK, name: "Merck & Co., Inc.", short_name: Merck, cik: 310158, exchange: NYSE, fy_end_month: 12, sic: 2834, peer_group: us-pharma, valuation_family: operating}
+  - {ticker: MSFT, name: "Microsoft Corporation", short_name: Microsoft, cik: 789019, exchange: NASDAQ, fy_end_month: 6, sic: 7372, peer_group: us-software, valuation_family: operating}
+  - {ticker: NKE, name: "NIKE, Inc.", short_name: Nike, cik: 320187, exchange: NYSE, fy_end_month: 5, sic: 3021, peer_group: us-consumer, valuation_family: operating, multi_class: true}
+  - {ticker: NVDA, name: "NVIDIA Corporation", short_name: Nvidia, cik: 1045810, exchange: NASDAQ, fy_end_month: 1, sic: 3674, peer_group: us-hardware, valuation_family: operating}
+  - {ticker: PG, name: "The Procter & Gamble Company", short_name: Procter & Gamble, cik: 80424, exchange: NYSE, fy_end_month: 6, sic: 2840, peer_group: us-consumer, valuation_family: operating}
+  - {ticker: SHW, name: "The Sherwin-Williams Company", short_name: Sherwin-Williams, cik: 89800, exchange: NYSE, fy_end_month: 12, sic: 2851, peer_group: us-chemicals, valuation_family: operating}
+  - {ticker: TRV, name: "The Travelers Companies, Inc.", short_name: Travelers, cik: 86312, exchange: NYSE, fy_end_month: 12, sic: 6331, peer_group: us-insurance, valuation_family: insurer,
+     family_note: "A property and casualty insurer (Spec 02A.1 §5.1)."}
+  - {ticker: UNH, name: "UnitedHealth Group Incorporated", short_name: UnitedHealth, cik: 731766, exchange: NYSE, fy_end_month: 12, sic: 6324, peer_group: us-health-benefits, valuation_family: mixed,
+     family_note: "UnitedHealthcare, its health benefits (insurance) business, is most of consolidated revenue beside Optum's services, so the consolidated figures hold a material insurance arm."}
+  - {ticker: V, name: "Visa Inc.", short_name: Visa, cik: 1403161, exchange: NYSE, fy_end_month: 9, sic: 7389, peer_group: us-payments, valuation_family: operating, multi_class: true}
+  - {ticker: WMT, name: "Walmart Inc.", short_name: Walmart, cik: 104169, exchange: NASDAQ, fy_end_month: 1, sic: 5331, peer_group: us-retail, valuation_family: operating}

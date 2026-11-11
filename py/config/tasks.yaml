@@ -173,3 +173,8 @@ equity.call_scores:
   run_after: [equity.calls_ai]
   overdue_after: 10 days
   uses_nse: false
+us.universe:
+  description: The Dow 30's company master (curated, unpublished until the US slice goes live), Dow membership and US peer groups, checked against SEC's submissions
+  workflows: {weekly: every 6 days}
+  overdue_after: 10 days
+  uses_nse: false

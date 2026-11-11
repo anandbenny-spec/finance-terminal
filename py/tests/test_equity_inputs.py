@@ -463,3 +463,21 @@ def test_the_guard_holds_the_task_until_it_has_a_recorded_run():
         t.rules = {"weekly": "every 6 days"}
         d = t.due(c, "weekly", NOW)
         assert not d.due and "first recorded run" in d.reason
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_us_peer_group_is_not_checked_against_betaindia(s3):
+    """US-01 (#400): the Dow 30's groups (market US) carry Damodaran's US industry names, which betaIndia needn't list;
+    India's check reads India's groups only, so a US group never fails this task."""
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        c.execute("""insert into equity.peer_group (key, market, label, damodaran_industry, source_note)
+                     values ('us-inputs-test', 'US', 'US inputs test', 'An Industry Only Damodaran US Lists', 'test')
+                     on conflict (key) do nothing""")
+    try:
+        code, tr = go(Sources())
+        assert code == 0 and tr[0] == "success", tr
+        assert checks(tr)["beta_peer_groups"]["passed"]
+        assert "us-inputs-test" not in checks(tr)["beta_peer_groups"]["detail"]
+    finally:
+        q("delete from equity.peer_group where key = 'us-inputs-test' returning key")

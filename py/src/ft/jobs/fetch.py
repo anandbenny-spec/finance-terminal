@@ -93,6 +93,9 @@ SITES: tuple[Site, ...] = (
     # Akamai: plain requests get 403, so Chrome's fingerprint; Data Audit 02a finding 13). Both named in Spec 02A §2.
     Site("damodaran", ("pages.stern.nyu.edu",), 2.0),
     Site("imf", ("imf.org",), 1.5, impersonate="chrome"),
+    # SEC EDGAR (data.sec.gov, www.sec.gov): under 10 requests a second, each with the declared User-Agent its caller
+    # passes from the SEC_USER_AGENT secret (SEC's fair-access rules; Architecture 02 §1.5; Spec 02A.1 §2, US-01).
+    Site("sec", ("sec.gov",), 0.15),
 )
 
 # Earnings-call transcripts the companies host themselves, reached only from a link in their own exchange filing or a

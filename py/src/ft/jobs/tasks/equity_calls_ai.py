@@ -305,7 +305,7 @@ class EquityCallsAi(BatchSteps, Task):
         extraction and tone targets are unchanged. Without `lacking` it changes nothing, so a late result for an older call
         (a backfill's batch collected by the next `weekly`) still finds its target."""
         where = ["ev.status = 'stored'", "ev.is_published", "ec.status_reason is null", "d.is_published",
-                 "d.chunked_at is not null", "(es.id is null or not es.is_suppressed)", "not ds.is_suppressed"]
+                 "d.chunked_at is not null", "(es.id is null or not es.is_suppressed)", "not ds.is_suppressed", "n.market = 'IN'"]
         guidance = ge.TASK in PROMPT_VERSION            # a task with no prompt version listed isn't asked for
         tone = tone and ct.TASK in PROMPT_VERSION
         newest_only = newest_only and lacking

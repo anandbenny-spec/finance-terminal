@@ -1,0 +1,59 @@
+# The Dow 30's peer groups (Spec 02A.1 §5.1; job US-01, issue #400). Curated, and labelled curated wherever shown
+# (equity.peer_group, market US). Each group maps to one Damodaran US industry (the "Industry Name" column of his
+# betas.xls, US firms; the fixture copy of 5 Jan 2026 holds every name used here), which US-04 uses for bottom-up betas.
+# Grouped by line of business from each company's 10-K business description; GICS is never shown or used. A group of
+# fewer than three shows "Too few peers in the Dow 30 for a median". Keys start with `us-`, so none can equal India's.
+# A member whose own Damodaran industry differs from its group's is named in the group's note.
+groups:
+  us-software:
+    label: Software and internet services
+    damodaran_industry: Software (System & Application)
+    source_note: "Curated (US-01, 11 Nov 2026): Microsoft, Salesforce, IBM and Alphabet, whose revenue is mostly software, cloud and internet services. Alphabet's own Damodaran industry would be Software (Internet); IBM's segments also include consulting and infrastructure."
+  us-hardware:
+    label: Computer hardware, networking and chips
+    damodaran_industry: Computers/Peripherals
+    source_note: "Curated (US-01, 11 Nov 2026): Apple, Cisco and Nvidia, which sell devices, network equipment and chips. Cisco's own Damodaran industry would be Telecom. Equipment and Nvidia's Semiconductor."
+  us-retail:
+    label: Retailers
+    damodaran_industry: Retail (General)
+    source_note: "Curated (US-01, 11 Nov 2026): Walmart, Amazon and Home Depot. Home Depot's own Damodaran industry would be Retail (Building Supply); Amazon's revenue also includes its cloud business."
+  us-consumer:
+    label: Consumer brands
+    damodaran_industry: Household Products
+    source_note: "Curated (US-01, 11 Nov 2026): Procter & Gamble, Coca-Cola and Nike. Coca-Cola's own Damodaran industry would be Beverage (Soft) and Nike's Shoe."
+  us-leisure:
+    label: Restaurants and entertainment
+    damodaran_industry: Entertainment
+    source_note: "Curated (US-01, 11 Nov 2026): Disney and McDonald's. McDonald's own Damodaran industry would be Restaurant/Dining."
+  us-pharma:
+    label: Pharmaceuticals and biotechnology
+    damodaran_industry: Drugs (Pharmaceutical)
+    source_note: "Curated (US-01, 11 Nov 2026): Johnson & Johnson, Merck and Amgen. Amgen's own Damodaran industry would be Drugs (Biotechnology)."
+  us-health-benefits:
+    label: Health benefits and services
+    damodaran_industry: Healthcare Support Services
+    source_note: "Curated (US-01, 11 Nov 2026): UnitedHealth Group (health benefits and Optum's services)."
+  us-industrials:
+    label: Industrial and aerospace manufacturers
+    damodaran_industry: Machinery
+    source_note: "Curated (US-01, 11 Nov 2026): Caterpillar, Honeywell, 3M and Boeing. Boeing's own Damodaran industry would be Aerospace/Defense, and 3M's and Honeywell's Diversified."
+  us-energy:
+    label: Integrated oil and gas
+    damodaran_industry: Oil/Gas (Integrated)
+    source_note: "Curated (US-01, 11 Nov 2026): Chevron."
+  us-chemicals:
+    label: Paints and coatings
+    damodaran_industry: Chemical (Specialty)
+    source_note: "Curated (US-01, 11 Nov 2026): Sherwin-Williams."
+  us-banks:
+    label: Banks, investment banks and card lenders
+    damodaran_industry: Bank (Money Center)
+    source_note: "Curated (US-01, 11 Nov 2026): JPMorgan Chase, Goldman Sachs and American Express, all valued as lenders. Goldman Sachs' own Damodaran industry would be Brokerage & Investment Banking and American Express's Financial Svcs. (Non-bank & Insurance)."
+  us-payments:
+    label: Payment networks
+    damodaran_industry: Financial Svcs. (Non-bank & Insurance)
+    source_note: "Curated (US-01, 11 Nov 2026): Visa, which runs a payments network and lends nothing to cardholders."
+  us-insurance:
+    label: Property and casualty insurance
+    damodaran_industry: Insurance (Prop/Cas.)
+    source_note: "Curated (US-01, 11 Nov 2026): Travelers."

@@ -140,7 +140,7 @@ class EquityCallTranscripts(DocumentJob):
         rows = db.execute(
             """select c.entity_id, e.slug, c.nse_symbol, c.isin, c.bse_code, c.listed_on
                  from equity.company c join core.entity e on e.id = c.entity_id
-                where c.nse_symbol is not null order by e.slug""").fetchall()
+                where c.nse_symbol is not null and e.market = 'IN' order by e.slug""").fetchall()
         ids = [r[0] for r in rows]
         sym: dict[int, set[str]] = {i: set() for i in ids}
         isn: dict[int, set[str]] = {i: set() for i in ids}
@@ -277,7 +277,7 @@ class EquityCallTranscripts(DocumentJob):
             self.storage_host = self.storage._s3.meta.endpoint_url or ""
         except Exception:                                      # noqa: BLE001 - only the storage checks use it
             self.storage, self.storage_host = None, ""
-        names = dict(db.execute("select id, name from core.entity where kind = 'company'").fetchall())
+        names = dict(db.execute("select id, name from core.entity where kind = 'company' and market = 'IN'").fetchall())
         by_entity: dict[int, str] = {}                         # the quarter of each company's newest call (weekly runs, #285)
         stored: dict[int, dict[str, pl.StoredCall]] = {}       # the calls in the database by quarter (not a backfill)
         if ctx.workflow != "backfill":
