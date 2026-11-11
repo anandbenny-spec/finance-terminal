@@ -25,6 +25,7 @@ export type TaskKey =
   | "equity.call_transcripts"
   | "equity.call_text"
   | "equity.calls_ai"
+  | "equity.segment_changes"
   | "site.quality_summary";
 
 /** Live surfaces and their feeding tasks. */
@@ -96,6 +97,9 @@ export function liveTasks(feeds: Record<string, readonly TaskKey[]> = FEEDS): Ta
 export const PREVIEW_FEEDS = {
   // The company page's Earnings calls tab (2B-19): transcripts found, their text and turns, and the AI summary and figures.
   calls: ["equity.call_transcripts", "equity.call_text", "equity.calls_ai"],
+  // The Financials tab's "Segment changes" panel (DD-02, #410), hidden behind equity.segment_changes until DD-03's judge passes it
+  // and Anand flips it; it moves into FEEDS once production's run of equity.segment_changes has left a freshness row.
+  segmentChanges: ["equity.segment_changes"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 
 export type PreviewSurface = keyof typeof PREVIEW_FEEDS;
