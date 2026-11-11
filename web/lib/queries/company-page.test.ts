@@ -96,3 +96,37 @@ describe("the Earnings calls tab's guidance record", () => {
     await expect(readCallsTab(db, "tcs", undefined)).rejects.toThrow();
   });
 });
+
+describe("the Earnings calls tab's opening-remarks read (#388)", () => {
+  const CALLS: Store = {
+    earnings_calls: [call() as unknown as Row],
+    field_policy: SHOWN as unknown as Row[],
+    ai_outputs: [],
+    call_figures: [],
+    ai_citations: [],
+    citation_pages: [],
+    call_guidance: [],
+    guidance_hit_rates: [],
+  };
+  it("reads the company's rows against the exact count", async () => {
+    const rows = [
+      {
+        company_slug: "tcs", call_slug: "q2-fy27", fiscal_label: "Q2 FY27", period_end: "2026-09-30", filed_at: null, exchange: "NSE",
+        base_call_slug: "q1-fy27", base_fiscal_label: "Q1 FY27", base_period_end: "2026-06-30", words_base: 200, words_new: 210,
+        words_added: 40, words_removed: 30, similarity: 0.8, new_speakers: [], label: null, pairs: [], policy_label: null,
+      },
+    ];
+    const { db, seen } = fakeClient({ ...CALLS, remarks_changes: rows as unknown as Row[] });
+    const out = await readCallsTab(db, "tcs", undefined);
+    expect(out.remarks).toHaveLength(1);
+    const read = seen.filter((s) => s.view === "remarks_changes");
+    expect(read).toHaveLength(1);
+    expect(read[0].countExact).toBe(true);
+  });
+  it("is null when its own read throws, and the rest of the tab still reads", async () => {
+    const out = await readCallsTab(fakeClient({ ...CALLS }).db, "tcs", undefined);
+    expect(out.remarks).toBeNull();
+    expect(out.guidance).not.toBeNull();
+    expect(out.calls).toHaveLength(1);
+  });
+});

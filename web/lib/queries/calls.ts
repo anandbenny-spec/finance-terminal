@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { cacheLife, cacheTag } from "next/cache";
 import { selectCall } from "@/lib/equity/calls";
 import { guidanceFiguresOpen, unattributedAll } from "@/lib/equity/guidance";
-import type { AiCitationRow, AiOutputRow, ApiDatabase, CallFigureRow, CallGuidanceRow, CitationPageRow, GuidanceHitRateRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
+import type { AiCitationRow, AiOutputRow, ApiDatabase, CallFigureRow, CallGuidanceRow, RemarksChangeRow, CitationPageRow, GuidanceHitRateRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
 import { readFieldPolicy } from "@/lib/queries/policy";
 import { readAll } from "@/lib/queries/read";
 import { publicClient } from "@/lib/supabase/public";
@@ -49,6 +49,8 @@ export type CallsTabData = {
   pages: CitationPageRow[];
   /** The Guidance record panel's rows (company-wide, not the selected call's); null when its own reads failed (#328), and the panel then says so. */
   guidance: GuidanceRecordData | null;
+  /** api.remarks_changes for this company, every call (#388); null when its own read failed, and the panel then says so. Empty while the field is hidden. */
+  remarks: RemarksChangeRow[] | null;
   /** With no call: the company's earnings_latest row, whose window says what the transcript discovery covered. */
   latest: EarningsLatestRow | null;
 };
@@ -58,6 +60,22 @@ export async function readCompanyCalls(db: Db, slug: string): Promise<EarningsCa
     db
       .from("earnings_calls")
       .select(CALL_COLUMNS, { count: "exact" })
+      .eq("company_slug", slug)
+      .order("period_end", { ascending: false })
+      .order("call_slug")
+      .range(from, to),
+  );
+}
+
+const REMARKS_COLUMNS =
+  "company_slug, call_slug, fiscal_label, period_end, filed_at, exchange, base_call_slug, base_fiscal_label, base_period_end, words_base, words_new, words_added, words_removed, similarity, new_speakers, label, pairs, policy_label";
+
+/** The company's opening-remarks comparisons (#388): one row per call with a previous call, read whole against the exact count. */
+export async function readRemarksChanges(db: Db, slug: string): Promise<RemarksChangeRow[]> {
+  return readAll<RemarksChangeRow>("api.remarks_changes", (from, to) =>
+    db
+      .from("remarks_changes")
+      .select(REMARKS_COLUMNS, { count: "exact" })
       .eq("company_slug", slug)
       .order("period_end", { ascending: false })
       .order("call_slug")
@@ -148,12 +166,17 @@ export async function readGuidanceRecord(db: Db, slug: string): Promise<Guidance
 
 /** The tab's reads: the company's calls, the selected one's summary, figures, citations and pages (§13.7). */
 export async function readCallsTab(db: Db, slug: string, call: string | undefined): Promise<CallsTabData> {
-  const [calls, policies, record] = await Promise.all([
+  const [calls, policies, record, remarks] = await Promise.all([
     readCompanyCalls(db, slug),
     readFieldPolicy(db),
     // The guidance record fails on its own (#328): its views have timed out when the calls list had loaded fine.
     readGuidanceRecord(db, slug).catch((error: unknown) => {
       console.error(`[company] ${slug} guidance record read failed: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }),
+    // The opening-remarks read fails on its own too (#388): the rest of the tab renders.
+    readRemarksChanges(db, slug).catch((error: unknown) => {
+      console.error(`[company] ${slug} remarks changes read failed: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }),
   ]);
@@ -169,7 +192,7 @@ export async function readCallsTab(db: Db, slug: string, call: string | undefine
         .order("company_slug")
         .range(from, to),
     );
-    return { calls, selected, policies, summary: null, figures: [], citations: [], pages: [], guidance, latest: latest[0] ?? null };
+    return { calls, selected, policies, summary: null, figures: [], citations: [], pages: [], guidance, remarks, latest: latest[0] ?? null };
   }
   const outputIds = [selected.summary_output_id, selected.figures_output_id].filter((n): n is number => n !== null);
   const [summary, figures, citations, pages] = await Promise.all([
@@ -178,7 +201,7 @@ export async function readCallsTab(db: Db, slug: string, call: string | undefine
     readOutputCitations(db, outputIds),
     readOutputPages(db, outputIds),
   ]);
-  return { calls, selected, policies, summary, figures, citations, pages, guidance, latest: null };
+  return { calls, selected, policies, summary, figures, citations, pages, guidance, remarks, latest: null };
 }
 
 const LIST_COLUMNS =
