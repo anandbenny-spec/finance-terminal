@@ -6,6 +6,7 @@ quarterly figures, its derived fourth quarters and differenced cash flows). The 
 test database with a mock SEC (the saved files; a made inline XBRL cover page for Alphabet) and a mock object store.
 """
 import copy
+import functools
 import gzip
 import itertools
 import json
@@ -41,12 +42,15 @@ START = date(2019, 1, 1)
 D = date
 
 
+@functools.cache
 def read(cik: int) -> dict:
+    """A saved company facts file (read once per session: callers that change it copy it first)."""
     return json.loads(gzip.decompress((EDGAR / f"companyfacts_CIK{cik:010d}.json.gz").read_bytes()))
 
 
-def statements(ticker: str, tags: E.TagConfig | None = None) -> E.Statements:
-    return E.Statements([(c, read(c)) for c in [CIK[ticker], *PRED.get(ticker, [])]], tags or E.load_tags())
+@functools.cache
+def statements(ticker: str) -> E.Statements:
+    return E.Statements([(c, read(c)) for c in [CIK[ticker], *PRED.get(ticker, [])]], E.load_tags())
 
 
 def window(s: E.Statements) -> list[E.Filing]:
