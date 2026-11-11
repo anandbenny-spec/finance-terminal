@@ -31,6 +31,7 @@ held back until its judge passes):
 """
 from __future__ import annotations
 
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
@@ -176,7 +177,11 @@ class EquitySegmentChanges(Task):
         out = Fetched()
         out.no_consolidated = [r[0] for r in f.db.execute(WITHOUT_CONSOLIDATED).fetchall()]
         by_company: dict[tuple[int, str], list[Item]] = {}
-        for doc_id, entity_id, slug, event_id, period_end, fy_start, raw_id, last in f.db.execute(SELECT).fetchall():
+        rows = f.db.execute(SELECT).fetchall()
+        t0 = time.monotonic()
+        for n, (doc_id, entity_id, slug, event_id, period_end, fy_start, raw_id, last) in enumerate(rows, 1):
+            if n % 50 == 0 or n == len(rows):              # counts and seconds only: the run log is public
+                print(f"  equity.segment_changes: at file {n} of {len(rows)}, {time.monotonic() - t0:.0f} s")
             if period_end not in {last, *(sg.quarter_end_before(last, i) for i in range(1, sg.HISTORY))}:
                 continue                                   # not one of the six quarter ends
             item = Item(doc_id, entity_id, slug, event_id, period_end, fy_start)
@@ -195,47 +200,66 @@ class EquitySegmentChanges(Task):
 
     # ------------------------------------------------------------------ load (one transaction)
     def load(self, tx, f: Fetched, task_run_id) -> int:
-        n = 0
+        """Production's runner talks to Mumbai from the US, so a round trip per row is too slow (VC-05's first production run,
+        #190): the stored rows are read in two queries, compared here, and the writes go as pipelined `executemany`
+        batches, the deletes before the inserts."""
+        t0 = time.monotonic()
+        ids = sorted({it.entity_id for it in f.items})
+        stored: dict[int, list[tuple]] = {}               # event -> its rows, in line order
+        quarter_events: dict[tuple[int, date], set[int]] = {}
+        for ev, eid, pe, *row in tx.execute(
+                """select results_event_id, entity_id, period_end, line_no, entity_id, document_id, period_end, reporting,
+                          description, revenue, parser_version
+                     from equity.segment_lineup where entity_id = any(%s) and basis = 'consolidated'
+                    order by results_event_id, line_no""", (ids,)).fetchall():
+            stored.setdefault(ev, []).append(tuple(row))
+            quarter_events.setdefault((eid, pe), set()).add(ev)
+        del_lu: set[int] = set()
+        ins_lu: list[tuple] = []
         for it in f.items:
-            # a quarter's rows come from its chosen filing's announcement only (an earlier announcement's are removed)
-            gone = tx.execute("""delete from equity.segment_lineup where entity_id = %s and period_end = %s
-                                  and results_event_id <> %s""", (it.entity_id, it.period_end, it.event_id))
-            n += gone.rowcount or 0
+            for other in quarter_events.get((it.entity_id, it.period_end), set()) - {it.event_id}:
+                del_lu.add(other)                         # a quarter's rows come from its chosen announcement only
             want = [(ln.line_no, it.entity_id, it.document_id, it.period_end, it.lineup.reporting, ln.description, ln.revenue,
                      sg.PARSER_VERSION) for ln in (it.lineup.lines if it.lineup else [])]
-            have = [tuple(r) for r in tx.execute(
-                """select line_no, entity_id, document_id, period_end, reporting, description, revenue, parser_version
-                     from equity.segment_lineup where results_event_id = %s and basis = 'consolidated' order by line_no""",
-                (it.event_id,)).fetchall()]
-            if have != want:
-                tx.execute("delete from equity.segment_lineup where results_event_id = %s and basis = 'consolidated'",
-                           (it.event_id,))
-                for w in want:
-                    tx.execute("""insert into equity.segment_lineup (results_event_id, basis, line_no, entity_id, document_id,
-                                  period_end, reporting, description, revenue, parser_version)
-                                  values (%s, 'consolidated', %s, %s, %s, %s, %s, %s, %s, %s)""", (it.event_id, *w))
-                n += max(len(want), 1)
-        for ev in f.evaluations:
-            if ev.period_end is None:
-                continue
+            if stored.get(it.event_id, []) != want:
+                if it.event_id in stored:
+                    del_lu.add(it.event_id)
+                ins_lu.extend((it.event_id, *w) for w in want)
+        evs = [ev for ev in f.evaluations if ev.period_end is not None]
+        have_c: dict[tuple[int, date], list[tuple]] = {}
+        for eid, pe, *row in tx.execute(
+                """select entity_id, period_end, change_no, kind, segments_before, segments_after, revenue_ratio, latest_event_id,
+                          previous_event_id, previous_period_end, rule_version
+                     from equity.segment_change where entity_id = any(%s) order by entity_id, period_end, change_no""",
+                ([ev.entity_id for ev in evs],)).fetchall():
+            have_c.setdefault((eid, pe), []).append(tuple(row))
+        del_c: list[tuple] = []
+        ins_c: list[tuple] = []
+        for ev in evs:
             changes = ev.outcome.changes if ev.outcome else []
             want_c = [(i, c.kind, c.before, c.after, c.revenue_ratio, ev.latest_event_id, ev.previous_event_id,
                        sg.quarter_end_before(ev.period_end), sg.RULE_VERSION) for i, c in enumerate(changes, 1)]
-            have_c = [tuple(r) for r in tx.execute(
-                """select change_no, kind, segments_before, segments_after, revenue_ratio, latest_event_id, previous_event_id,
-                          previous_period_end, rule_version
-                     from equity.segment_change where entity_id = %s and period_end = %s order by change_no""",
-                (ev.entity_id, ev.period_end)).fetchall()]
-            if have_c != want_c:
-                tx.execute("delete from equity.segment_change where entity_id = %s and period_end = %s",
-                           (ev.entity_id, ev.period_end))
-                for w in want_c:
-                    tx.execute("""insert into equity.segment_change (entity_id, period_end, change_no, kind, segments_before,
-                                  segments_after, revenue_ratio, latest_event_id, previous_event_id, previous_period_end,
-                                  rule_version) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                               (ev.entity_id, ev.period_end, *w))
-                n += max(len(want_c), 1)
-        return n
+            if have_c.get((ev.entity_id, ev.period_end), []) != want_c:
+                if (ev.entity_id, ev.period_end) in have_c:
+                    del_c.append((ev.entity_id, ev.period_end))
+                ins_c.extend((ev.entity_id, ev.period_end, *w) for w in want_c)
+        with tx.cursor() as cur:
+            if del_lu:
+                cur.executemany("delete from equity.segment_lineup where results_event_id = %s and basis = 'consolidated'",
+                                [(e,) for e in sorted(del_lu)])
+            if del_c:
+                cur.executemany("delete from equity.segment_change where entity_id = %s and period_end = %s", del_c)
+            if ins_lu:
+                cur.executemany("""insert into equity.segment_lineup (results_event_id, basis, line_no, entity_id, document_id,
+                                   period_end, reporting, description, revenue, parser_version)
+                                   values (%s, 'consolidated', %s, %s, %s, %s, %s, %s, %s, %s)""", ins_lu)
+            if ins_c:
+                cur.executemany("""insert into equity.segment_change (entity_id, period_end, change_no, kind, segments_before,
+                                   segments_after, revenue_ratio, latest_event_id, previous_event_id, previous_period_end,
+                                   rule_version) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", ins_c)
+        print(f"  equity.segment_changes: replaced {len(del_lu)} quarters' line-ups ({len(ins_lu)} rows) and "     # counts only:
+              f"{len(del_c)} companies' flags ({len(ins_c)} rows), {time.monotonic() - t0:.0f} s")      # the log is public
+        return len(ins_lu) + len(ins_c) + len(del_lu) + len(del_c)      # rows inserted, and quarters or companies cleared
 
     # ------------------------------------------------------------------ checks
     def checks(self, tx, f: Fetched, task_run_id) -> list[Check]:

@@ -439,7 +439,8 @@ def checks(tr):
 
 def seed(edit=None, standalone=True):
     """Reliance's six quarters to Dec 2020 and Maruti's latest five, as 2A's equity.filings leaves them (consolidated filings,
-    and Reliance's Dec 2020 standalone one, which must never be read)."""
+    and Reliance's Dec 2020 standalone one, which must never be read). A raw file another test already registered (the same
+    bytes, so the same object key) is reused."""
     go()                                            # a task run to hang the raw files on
     st = storage()
     plan = [("RELIANCE", "zs-reliance", "INE002A01018", [(pe, "consolidated") for pe in RELIANCE_QS])]
@@ -462,7 +463,8 @@ def seed(edit=None, standalone=True):
                 put = st.put(body, source="nse", media_type="application/xml", ext="xml")
                 rf = c.execute("""insert into core.raw_file (object_key, source_id, source_url, sha256, bytes, media_type, fetched_at, task_run_id)
                                   values (%s, (select id from core.source where key = 'nse'), %s, %s, %s, 'application/xml', now(),
-                                          (select max(id) from ops.task_run)) returning id""",
+                                          (select max(id) from ops.task_run))
+                                  on conflict (object_key) do update set object_key = excluded.object_key returning id""",
                                (put.object_key, f"https://example.test/zs/{name}", put.sha256, put.bytes)).fetchone()[0]
                 ev = c.execute("""insert into core.event (event_type, entity_id, slug, title, starts_on, occurs_at, status, source_id, is_published)
                                   values ('results_filing', %s, %s, 'results', %s, %s, 'filed', (select id from core.source where key = 'nse'), true)
