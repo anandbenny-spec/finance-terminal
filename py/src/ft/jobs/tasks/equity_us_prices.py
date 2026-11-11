@@ -114,6 +114,7 @@ class Fetched:
 @register
 class UsPrices(Task):
     key = "us.prices"
+    slug_like = "us-%"                  # the US master's slugs; tests point this at their own companies
 
     def __init__(self):
         self.result: dict = {}
@@ -135,7 +136,8 @@ class UsPrices(Task):
                       (select max(p.trade_date) from equity.price_daily p
                         where p.entity_id = c.entity_id and p.exchange = c.price_exchange)
                  from equity.company c join core.entity e on e.id = c.entity_id
-                where e.kind = 'company' and e.market = 'US' order by e.slug""").fetchall()}
+                where e.kind = 'company' and e.market = 'US' and e.slug like %s order by e.slug""",
+            (self.slug_like,)).fetchall()}
         if not companies:
             raise RuntimeError("no US company in the master: us.universe runs first")
         end = min(ctx.until or date.max, last_closed_session(ctx.now))

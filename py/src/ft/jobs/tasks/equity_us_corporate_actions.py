@@ -166,6 +166,7 @@ def ratio_factor(numerator: Decimal, denominator: Decimal) -> Decimal:
 @register
 class UsCorporateActions(Task):
     key = "us.corporate_actions"
+    slug_like = "us-%"                  # the US master's slugs; tests point this at their own companies
 
     def __init__(self):
         self.result: dict = {}
@@ -188,7 +189,8 @@ class UsCorporateActions(Task):
                         order by lower(i.valid) desc nulls last limit 1),
                       c.price_exchange
                  from equity.company c join core.entity e on e.id = c.entity_id
-                where e.kind = 'company' and e.market = 'US' order by e.slug""").fetchall()}
+                where e.kind = 'company' and e.market = 'US' and e.slug like %s order by e.slug""",
+            (self.slug_like,)).fetchall()}
         if not companies:
             raise RuntimeError("no US company in the master: us.universe runs first")
         out = Fetched((start, end), today, companies, reviews=ac.load_reviews(REVIEW_FILE))
