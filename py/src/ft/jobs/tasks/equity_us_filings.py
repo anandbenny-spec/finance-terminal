@@ -351,21 +351,28 @@ class UsFilings(Task):
         out.append(Check("period_end", not bad, ("differs from SEC: " + _names(bad)) if bad else
                          f"{checked} filings' period ends and forms equal SEC's ({unlisted} not in SEC's recent list)"))
 
-        bad, n10k, partial = [], 0, []
+        bad, n10k, partial, skipped, twice = [], 0, [], [], []
         for x in ok:
             for b in x.built:
                 if b.balance is None:
                     continue
-                n10k += 1
                 tied, how = b.balance
+                if tied is None:
+                    skipped.append(f"{x.c.ticker} {b.period_end}: {how}")
+                    continue
+                n10k += 1
                 if not tied:
                     bad.append(f"{x.c.ticker} {b.period_end}: {how}")
                 elif "no total-liabilities line" in how:
                     partial.append(x.c.ticker)
+                if tied and "values at the date" in how:
+                    twice.append(f"{x.c.ticker} {b.period_end}: {how}")
         out.append(Check("balance_sheet", not bad, ("doesn't tie within 0.5%: " + _names(bad, 40)) if bad else
                          f"{n10k} year ends tie within 0.5%"
                          + (f" ({', '.join(sorted(set(partial)))}: no total-liabilities line, so against the balance "
-                            "sheet total)" if partial else "")))
+                            "sheet total)" if partial else "")
+                         + (f"; {_names(twice)}" if twice else "")
+                         + (f"; not checked: {_names(skipped)}" if skipped else "")))
 
         out.append(self._coverage(tx, f, ok))
 

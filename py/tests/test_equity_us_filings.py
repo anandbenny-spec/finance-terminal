@@ -270,6 +270,29 @@ def test_money_in_another_currency_is_never_read_and_equity_fills_adjust_for_nci
     assert (none.values["total_equity"], none.tags["total_equity"], none.values["equity_owners"]) == (30, "StockholdersEquity", 30)
 
 
+def test_the_year_end_check_names_what_it_cant_read():
+    """Dev run 2 (11 Nov 2026): Disney's FY2023 and P&G's FY2020 year ends had no single total-assets figure."""
+    y = lambda v, accn="0000000002-26-000001", form="10-K": fact(v, "2026-06-30", "2025-07-01", accn=accn, form=form)
+    i = lambda v, accn="0000000002-26-000001", form="10-K", end="2026-06-30": fact(v, end, accn=accn, form=form)
+    cf = facts({
+        "NetIncomeLoss": {"USD": [y(5), y(5, "0000000002-26-000002"), y(5, "0000000002-26-000003", "10-K/A"),
+                                  y(5, "0000000002-26-000004", "10-K/A")]},
+        "Assets": {"USD": [i(100), i(120), i(100, "0000000002-26-000002"), i(90, "0000000002-26-000004", "10-K/A", "2025-06-30")]},
+        "Liabilities": {"USD": [i(60), i(60, "0000000002-26-000002")]},
+        "StockholdersEquity": {"USD": [i(40), i(30, "0000000002-26-000002")]},
+    })
+    s = E.Statements([(1, cf)], E.load_tags())
+    two = s.build(s.filings["0000000002-26-000001"])           # 100 and 120: only 100 ties with 60 + 40
+    assert two.balance[0] is True and "Assets has 2 values at the date in 10-K 0000000002-26-000001: 100, 120" in two.balance[1]
+    assert "total_assets" not in two.rows[-1].values                        # the column still holds the field
+    assert s.build(s.filings["0000000002-26-000002"]).balance == (
+        False, "assets 100 vs liabilities 60 + temporary equity 0 + equity 30")
+    assert s.build(s.filings["0000000002-26-000003"]).balance == (
+        None, "10-K/A 0000000002-26-000003 presents no balance sheet (no total assets): not checked")
+    assert s.build(s.filings["0000000002-26-000004"]).balance == (
+        False, "no total-assets figure at the year end (10-K/A 0000000002-26-000004; Assets filed at 2025-06-30)")
+
+
 def test_two_values_for_one_period_in_one_filing_are_held():
     cf = facts({"NetIncomeLoss": {"USD": [fact(10, "2026-06-30", "2026-04-01"), fact(11, "2026-06-30", "2026-04-01")]},
                 "IncomeTaxExpenseBenefit": {"USD": [fact(3, "2026-06-30", "2026-04-01")]}})
