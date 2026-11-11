@@ -251,6 +251,11 @@ def test_split_kinds_and_their_factors():
         return yp.Split(date(2026, 1, 5), D(n), D(m), f"{n}:{m}")
     assert [split_kind(s(4, 1)), split_kind(s(1, 10)), split_kind(s("1.2", 1)), split_kind(s(1, 1))] == [
         "split", "consolidation", "other", "other"]
+    assert [split_kind(s(3, 2)), split_kind(s(20, 1)), split_kind(s(30, 20)), split_kind(s(1, 50))] == [
+        "split", "split", "split", "consolidation"]
+    # Yahoo's spin-offs as the first dev backfill found them (11 Nov 2026): never a split or a reverse split
+    assert {split_kind(s(n, m)) for n, m in ((1048, 1000), (1046, 1000), (1196, 1000), (1061, 1000), (1907, 2000),
+                                             (1, 100))} == {"other"}
     assert ratio_factor(D(4), D(1)) == D("0.25") and ratio_factor(D(10), D(1)) == D("0.1")
     assert ratio_factor(D(1), D(10)) == D(10) and ratio_factor(D(3), D(2)) == D("0.666666666667")
 
@@ -541,7 +546,11 @@ def test_a_split_before_the_first_stored_price_is_source_adjusted_and_an_odd_rat
     f = factors()
     assert f["t3u-zzz-split-2026-10-01"] == (D("1"), "source_adjusted", "applied", None)
     assert f["t3u-yyy-other-2026-10-15"][:3] == (None, "ratio", "held")
-    assert "not a whole-number ratio" in f["t3u-yyy-other-2026-10-15"][3]
+    assert "not a simple split ratio" in f["t3u-yyy-other-2026-10-15"][3]
+    assert q("""select ev.title, ca.subject from core.event ev join equity.corporate_action ca on ca.event_id = ev.id
+                 where ev.slug = 't3u-yyy-other-2026-10-15'""") == [
+        ("Price adjustment (Yahoo Finance)",
+         "Yahoo Finance lists a split of 1.2:1, not a simple split ratio (how it carries a spin-off or a similar change)")]
     assert checks(tr)["not_applied"] == (False, False)
     assert adjusted(ids["YYY"], date(2026, 10, 14)) == [None]       # held: earlier adjusted prices held back
     review = tmp_path / "us_review.yaml"

@@ -2,8 +2,8 @@
 # ft/equity/actions.py's load_reviews in the same format as India's corporate_action_review.yaml (Spec 02A §5.2). A
 # file of its own, so India's reviews_matched check never names a US release (and the reverse).
 #
-# releases: a factor the task held (its plausibility check failed, or Yahoo listed a split whose ratio isn't two whole
-#   numbers, the way it carries some spin-offs) and a review released. Applied with method `reviewed`.
+# releases: a factor the task held (its plausibility check failed, or Yahoo listed a "split" whose ratio isn't a simple
+#   one, 1061:1000 say, the way it carries a spin-off) and a review released. Applied with method `reviewed`.
 #   - event: the action's event slug (us-<ticker>-<kind>-<ex-date>[-n]), as the not_applied check names it
 #     factor: adjusted ÷ raw for trade dates before the ex-date (stored to 12 places)
 #     evidence: what the review rests on (the company's 8-K or press release, the closes either side)
