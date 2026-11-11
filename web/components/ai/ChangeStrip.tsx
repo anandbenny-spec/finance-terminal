@@ -36,7 +36,7 @@ const BANK_NAME: Record<Bank, string> = { Fed: "Fed (FOMC statements)", RBI: "RB
  * The table's columns (#394): the group column and the date column's header and cell are the parts a second user
  * names; the rest is shared. Module 1's COLUMNS are this with its own words.
  */
-export function changeStripColumns<T extends RowBar>(opts: { groupHeader: string; group: (r: T) => string; dateHeader: string; dateCell?: (r: T) => ReactNode }): Column<T>[] {
+export function changeStripColumns<T extends RowBar>(opts: { groupHeader: string; group: (r: T) => string; dateHeader: string; dateCell?: (r: T) => ReactNode; addedHeader?: string; removedHeader?: string }): Column<T>[] {
   return [
     { id: "bank", header: opts.groupHeader, cell: (r) => opts.group(r), sortValue: (r) => opts.group(r) },
     {
@@ -49,8 +49,8 @@ export function changeStripColumns<T extends RowBar>(opts: { groupHeader: string
       ),
       sortValue: (r) => r.date,
     },
-    { id: "added", header: "Words added (% of this statement)", align: "right", cell: (r) => formatShareChange(r.addedPct), sortValue: (r) => r.addedPct },
-    { id: "removed", header: "Words removed (% of the previous)", align: "right", cell: (r) => formatShareChange(-r.removedPct), sortValue: (r) => r.removedPct },
+    { id: "added", header: opts.addedHeader ?? "Words added (% of this statement)", align: "right", cell: (r) => formatShareChange(r.addedPct), sortValue: (r) => r.addedPct },
+    { id: "removed", header: opts.removedHeader ?? "Words removed (% of the previous)", align: "right", cell: (r) => formatShareChange(-r.removedPct), sortValue: (r) => r.removedPct },
     { id: "wordsAdded", header: "Words added", align: "right", cell: (r) => formatCount(r.wordsAdded), sortValue: (r) => r.wordsAdded },
     { id: "wordsRemoved", header: "Words removed", align: "right", cell: (r) => formatCount(r.wordsRemoved), sortValue: (r) => r.wordsRemoved },
   ];
@@ -58,7 +58,7 @@ export function changeStripColumns<T extends RowBar>(opts: { groupHeader: string
 
 const COLUMNS: Column<StripTableRow>[] = changeStripColumns<StripTableRow>({ groupHeader: "Bank", group: (r) => r.bank, dateHeader: "Meeting" });
 
-function Key({ tone, children }: { tone: "ins" | "del"; children: ReactNode }) {
+export function Key({ tone, children }: { tone: "ins" | "del"; children: ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <i aria-hidden className={`inline-block h-2 w-3.5 ${tone === "ins" ? "bg-ins-ink" : "bg-del-ink"}`} />

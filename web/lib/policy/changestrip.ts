@@ -132,7 +132,7 @@ export function buildChangeStrips(
 }
 
 /** The scale both rows share: ±60% unless a bar needs more, then the next 20 up (never past 100). */
-export function stripScale(strips: readonly BankStrip[]): number {
+export function stripScale(strips: readonly { bars: readonly RowBar[] }[]): number {
   const biggest = Math.max(0, ...strips.flatMap((s) => s.bars.flatMap((b) => [b.addedPct, b.removedPct])));
   return Math.min(100, Math.max(60, Math.ceil(biggest / 20) * 20));
 }
