@@ -32,6 +32,7 @@ import { readFieldPolicy, readSeriesInfo, type PolicyDb } from "@/lib/queries/po
 import { readCallsTab, type CallsTabData } from "@/lib/queries/calls";
 import { readRateTab, type RateTabData } from "@/lib/queries/rate";
 import { readAll } from "@/lib/queries/read";
+import { readValueChainOverview, type ValueChainOverviewData } from "@/lib/queries/valuechain";
 import { publicClient } from "@/lib/supabase/public";
 import type { TabId } from "@/lib/equity/company";
 import { IMF_CPI, IMF_GDP } from "@/lib/equity/valuation";
@@ -146,7 +147,13 @@ export async function readImfForecasts(db: CompanyDb): Promise<ForecastRow[]> {
   );
 }
 
-export type OverviewData = { prices: CompanyPriceRow[]; metrics: CompanyMetricRow[]; peers: PeerCompRow[] };
+export type OverviewData = {
+  prices: CompanyPriceRow[];
+  metrics: CompanyMetricRow[];
+  peers: PeerCompRow[];
+  /** The value chain panel's reads (VC-06, #191); each part null when its read failed (view 0034 not pushed yet). Absent: not read. */
+  valueChain?: ValueChainOverviewData;
+};
 export type FinancialsData = {
   financials: CompanyFinancialRow[];
   metrics: CompanyMetricRow[];
@@ -249,8 +256,13 @@ export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: st
     ]);
     data.valuation = { runs, scenarios, policies, imf, series };
   } else if (tab === "overview") {
-    const [prices, metrics, peers] = await Promise.all([readCompanyPrices(db, slug), readCompanyMetrics(db, slug), readPeers(db, slug)]);
-    data.overview = { prices, metrics, peers };
+    const [prices, metrics, peers, valueChain] = await Promise.all([
+      readCompanyPrices(db, slug),
+      readCompanyMetrics(db, slug),
+      readPeers(db, slug),
+      readValueChainOverview(db, slug),
+    ]);
+    data.overview = { prices, metrics, peers, valueChain };
   } else {
     const [rows, metrics, promoter, segmentChanges, policies] = await Promise.all([
       readFinancials(db, slug),
@@ -277,7 +289,7 @@ export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: st
 // (Next 16), so a failure never outlives the database's recovery, and neither cached read needs a shorter cache profile
 // (lib/queries/cache-profiles.test.ts allows only the no-expiry ones). The header stays all-or-nothing; a failed tab read
 // costs that tab, not the page.
-async function readHeader(slug: string) {
+export async function readHeader(slug: string) {
   "use cache";
   cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);

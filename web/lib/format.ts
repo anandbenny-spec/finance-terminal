@@ -477,3 +477,31 @@ export function formatStatedValue(value: Num, unit: string | null | undefined): 
   if (unit === "inr") return `${value < 0 ? MINUS : ""}₹${digits(Math.abs(value), { decimals, locale: "en-IN" })} cr`;
   return `${body} (unit as spoken)`;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// The value chain card (VC-06, #191; Spec 02B §12.4, §12.7). A BRSR share arrives in percent, exact; a change is said in words.
+
+/**
+ * A BRSR share exactly as filed, in percent, with the decimals it carries (at most four): `90.4` → `90.4%`, `0.07` → `0.07%`,
+ * `96` → `96%`. A hand check compares a share "to its filed decimals" (§12.8), so nothing is rounded or padded.
+ */
+export function formatFiledShare(pct: Num): string {
+  if (isMissing(pct)) return NOT_AVAILABLE;
+  const decimals = Math.min(4, (String(Math.abs(pct)).split(".")[1] ?? "").length);
+  return `${digits(pct, { decimals, grouping: false })}%`;
+}
+
+/** A change in a share between two years, in words with no sign and no colour: `3.24` → `up 3.2 pp`, `-1` → `down 1.0 pp`, `0` → `unchanged`. */
+export function formatShareChangeWords(pp: Num): string {
+  if (isMissing(pp)) return NOT_AVAILABLE;
+  const body = digits(Math.abs(pp), { decimals: 1, grouping: false });
+  if (!/[1-9]/.test(body)) return "unchanged";
+  return `${pp > 0 ? "up" : "down"} ${body} pp`;
+}
+
+/** A change in a count between two years, in words: `120` → `up 120`, `-3` → `down 3`, `0` → `unchanged`. Grouped as India groups. */
+export function formatCountChangeWords(change: number | null | undefined): string {
+  if (isMissing(change)) return NOT_AVAILABLE;
+  if (integer(change, "a count change") === 0) return "unchanged";
+  return `${change > 0 ? "up" : "down"} ${digits(Math.abs(change), { decimals: 0, locale: "en-IN" })}`;
+}

@@ -26,6 +26,8 @@ export type TaskKey =
   | "equity.call_text"
   | "equity.calls_ai"
   | "equity.segment_changes"
+  | "equity.brsr"
+  | "equity.related_parties"
   | "site.quality_summary";
 
 /** Live surfaces and their feeding tasks. */
@@ -100,6 +102,9 @@ export const PREVIEW_FEEDS = {
   // The Financials tab's "Segment changes" panel (DD-02, #410), hidden behind equity.segment_changes until DD-03's judge passes it
   // and Anand flips it; it moves into FEEDS once production's run of equity.segment_changes has left a freshness row.
   segmentChanges: ["equity.segment_changes"],
+  // The Overview tab's "Value chain" panel and the /companies/[slug]/value-chain sub-page (VC-06, #191), hidden behind equity.brsr_values
+  // and its siblings until the hand checks pass and Anand flips them; they move into FEEDS once production's runs of both tasks have left a freshness row.
+  valueChain: ["equity.brsr", "equity.related_parties"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 
 export type PreviewSurface = keyof typeof PREVIEW_FEEDS;
