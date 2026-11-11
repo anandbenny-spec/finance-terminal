@@ -304,6 +304,7 @@ def wipe():
         c.execute(f"delete from equity.company where entity_id in {ids}")
         c.execute("delete from core.entity where slug like 'zr-%'")
         c.execute("delete from ops.alert where task_key = %s", (KEY,))
+        c.execute("delete from core.raw_file where source_url like 'https://example.test/%' and media_type = 'application/xml'")
 
 
 @pytest.fixture(autouse=True)
