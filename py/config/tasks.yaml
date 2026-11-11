@@ -196,3 +196,32 @@ us.filings:
   run_after: [us.universe]
   overdue_after: 10 days
   uses_nse: false
+us.valuation_inputs:
+  description: Damodaran's US industry betas and the IMF's US growth and inflation, the US slice's valuation inputs that India's inputs task doesn't store (the 10-year Treasury and the implied ERP are read where they are stored)
+  workflows: {weekly: every 6 days}
+  overdue_after: 40 days
+  uses_nse: false
+us.metrics:
+  description: Derived metrics of the Dow 30 (TTM figures, margins, returns, growth and market multiples) from the stored SEC statements, prices and corporate actions, with operating income as filed for EBIT, each with its inputs or the reason it is held back
+  workflows: {weekly: every 6 days}
+  run_after: [us.filings, us.corporate_actions]
+  overdue_after: 10 days
+  uses_nse: false
+us.beta:
+  description: Regression beta (104 weekly returns against the S&P 500) and Damodaran's US bottom-up beta relevered at market debt to equity, for the Dow 30
+  workflows: {weekly: every 6 days}
+  run_after: [us.metrics, us.valuation_inputs, policy.market_series]
+  overdue_after: 10 days
+  uses_nse: false
+us.valuation:
+  description: Each Dow 30 company's valuation runs in dollars (reverse DCF and default DCF for operating companies, implied return on equity for lenders, a not-applicable lead run for insurers and mixed companies) and the stored scenario grid
+  workflows: {weekly: every 6 days}
+  run_after: [us.beta]
+  overdue_after: 10 days
+  uses_nse: false
+us.snapshot:
+  description: The weekly screener snapshot of the Dow 30, one row per company with its figures, held-back reasons and labels, kept so multiples' history builds up (unpublished until the US slice goes live)
+  workflows: {weekly: every 6 days}
+  run_after: [us.valuation]
+  overdue_after: 10 days
+  uses_nse: false
