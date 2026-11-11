@@ -13,6 +13,16 @@ first_pages_from: Q1 FY27
 # reports the bucket's stored size against it; a session reads it between the two halves of a history backfill.
 raw_storage_stop_mb: 850
 
+# F3-02 (#387, 11 Nov 2026): the hard stop for NEW files from the growth tasks, in the same MB (1,048,576 bytes) of stored
+# objects. At or over it (or when the bucket can't be listed), equity.call_transcripts still discovers and records its
+# announcements but fetches and stores no transcript, cover letter or company PDF: each company-season it would have built is
+# held, the `storage_stop` check fails and an error alert opens ("storage stop reached"). equity.brsr reads the same key when
+# it opts in. The arithmetic: the Free plan's 1 GB read as 10^9 bytes is 953.7 MB here; 900 leaves 53.7 MB for everything
+# the stop doesn't hold (module 1, prices, filings, shareholding, discovery replies: about 20-25 MB a quarter stored), less
+# one company's files past the stop (checked before each company: up to about 10 MB in a backfill), so about two quarters.
+# Lowering it only tightens; raising it is the owner's decision (docs/OPERATIONS.md section 5.9).
+raw_storage_hold_mb: 900
+
 # 2B-09b (#341, 9 Nov 2026): equity.call_text no longer re-reads every stored transcript PDF on every run (Supabase counts the
 # bytes read out of Storage as egress). A call whose transcript was analysed under the rules it still runs under is skipped,
 # except for one rotating slice: each run re-reads the calls whose stable hash (of the call's id) modulo this number equals the
