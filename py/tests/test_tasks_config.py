@@ -17,7 +17,7 @@ def test_repo_config_loads():
     assert set(tasks) == {"policy.calendar", "policy.fed_documents", "policy.rbi_documents", "policy.market_series",
                           "policy.reactions", "policy.rate_cycles", "policy.ai_batch", "site.quality_summary", "crypto.coingecko_markets", "equity.universe",
                           "equity.valuation_inputs", "equity.prices", "equity.filings", "equity.corporate_actions",
-                          "equity.statements", "equity.shareholding", "equity.metrics", "equity.beta",
+                          "equity.statements", "equity.shareholding", "equity.brsr", "equity.related_parties", "equity.metrics", "equity.beta",
                           "equity.call_transcripts", "equity.call_text", "equity.calls_ai", "equity.rate_reactions",
                           "equity.results_reactions", "equity.valuation", "equity.snapshot", "equity.guidance_scores", "equity.call_scores"}
     # the due-rule names are kept as tasks.yaml writes them (Prompt 01 A2)
@@ -97,9 +97,9 @@ def test_build_tasks_configures_registered_classes_and_names_the_rest(tmp_path):
     fed = tasks[0]
     assert fed.workflows == ("daily", "watch") and fed.rules["watch"] == "fomc_decision_day"
     assert fed.run_after == ("policy.calendar",) and fed.min_interval == timedelta(hours=16)
-    assert sorted(missing) == ["crypto.coingecko_markets", "equity.beta", "equity.call_scores", "equity.call_text", "equity.call_transcripts", "equity.calls_ai", "equity.corporate_actions",
+    assert sorted(missing) == ["crypto.coingecko_markets", "equity.beta", "equity.brsr", "equity.call_scores", "equity.call_text", "equity.call_transcripts", "equity.calls_ai", "equity.corporate_actions",
                                "equity.filings", "equity.guidance_scores",
-                               "equity.metrics", "equity.prices", "equity.rate_reactions", "equity.results_reactions", "equity.shareholding",
+                               "equity.metrics", "equity.prices", "equity.rate_reactions", "equity.related_parties", "equity.results_reactions", "equity.shareholding",
                                "equity.snapshot", "equity.statements", "equity.universe",
                                "equity.valuation", "equity.valuation_inputs",
                                "policy.ai_batch", "policy.calendar", "policy.market_series",
