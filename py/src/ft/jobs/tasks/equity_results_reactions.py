@@ -107,7 +107,7 @@ class EquityResultsReactions(Task):
                  join equity.company c on c.entity_id = e.entity_id
                  join core.entity n on n.id = e.entity_id
                 where e.event_type = 'results_filing' and e.status in ('filed', 'superseded') and e.is_published
-                  and e.occurs_at >= %s and n.slug like %s
+                  and e.occurs_at >= %s and n.slug like %s and n.market = 'IN'
                 order by e.occurs_at, e.id""", (start, self.slug_prefix + "%")).fetchall()
         r.events = len(events)
         wanted: dict[tuple, tuple[Reaction, int]] = {}

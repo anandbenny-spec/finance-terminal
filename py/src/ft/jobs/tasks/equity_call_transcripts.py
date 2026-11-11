@@ -140,7 +140,7 @@ class EquityCallTranscripts(DocumentJob):
         rows = db.execute(
             """select c.entity_id, e.slug, c.nse_symbol, c.isin, c.bse_code, c.listed_on
                  from equity.company c join core.entity e on e.id = c.entity_id
-                where c.nse_symbol is not null order by e.slug""").fetchall()
+                where c.nse_symbol is not null and e.market = 'IN' order by e.slug""").fetchall()
         ids = [r[0] for r in rows]
         sym: dict[int, set[str]] = {i: set() for i in ids}
         isn: dict[int, set[str]] = {i: set() for i in ids}

@@ -82,6 +82,7 @@ with latest as (
     join core.document d on d.id = fl.document_id
     join core.event ev on ev.id = fl.event_id and ev.status = 'filed'
     join equity.company c on c.entity_id = fl.entity_id
+    join core.entity ce on ce.id = fl.entity_id and ce.market = 'IN'
    order by fl.entity_id, fl.period_end, fl.basis, d.version_no desc, fl.filed_at desc nulls last, d.id desc
 ), year_of as (
   select entity_id, max(fy_end) as fy_end from latest where fy_end is not null and period_end = fy_end group by entity_id
@@ -97,7 +98,8 @@ select l.document_id, l.entity_id, e.slug, l.event_id, l.basis, l.period_end, l.
 """
 UNIVERSE_WITHOUT_YEAR = """
 select e.slug from equity.company c join core.entity e on e.id = c.entity_id
- where not exists (select 1 from equity.filing fl join core.event ev on ev.id = fl.event_id and ev.status = 'filed'
+ where e.market = 'IN'
+   and not exists (select 1 from equity.filing fl join core.event ev on ev.id = fl.event_id and ev.status = 'filed'
                     where fl.entity_id = c.entity_id and fl.period_end = fl.fy_end)
  order by 1"""
 

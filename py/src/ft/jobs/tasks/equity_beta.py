@@ -85,7 +85,7 @@ class EquityBeta(Task):
         for eid, slug, family, industry in db.execute(
                 """select c.entity_id, e.slug, c.valuation_family, g.damodaran_industry
                      from equity.company c join core.entity e on e.id = c.entity_id
-                     left join equity.peer_group g on g.key = c.peer_group_key order by e.slug""").fetchall():
+                     left join equity.peer_group g on g.key = c.peer_group_key where e.market = 'IN' order by e.slug""").fetchall():
             out.companies[eid] = Co(eid, slug, family, industry)
         edition = db.execute("select max(edition) from equity.industry_benchmark where market = 'IN'").fetchone()[0]
         out.edition = edition

@@ -74,7 +74,7 @@ class EquitySnapshot(Task):
         out = Fetched()
         like = (self.slug_prefix or "") + "%"
         companies = db.execute("""select c.entity_id, e.slug, c.valuation_family from equity.company c
-                                  join core.entity e on e.id = c.entity_id where e.slug like %s order by e.slug""",
+                                  join core.entity e on e.id = c.entity_id where e.slug like %s and e.market = 'IN' order by e.slug""",
                                (like,)).fetchall()
         ids = [c[0] for c in companies]
         out.date = db.execute("""select max(period_end) from equity.metric_value

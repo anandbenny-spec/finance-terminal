@@ -81,7 +81,8 @@ class EquityCallScores(Task):
                   from equity.earnings_call ec
                   join core.event ev on ev.id = ec.event_id and ev.status = 'stored'
                   join core.document d on d.id = ec.transcript_document_id
-                 where ec.fiscal_label is not null and ec.status_reason is null {where}
+                 where ec.fiscal_label is not null and ec.status_reason is null
+                   and ec.entity_id in (select id from core.entity where market = 'IN') {where}
                  order by ec.entity_id, ec.period_end""", args).fetchall()
         by_label = {(c[1], c[2]): c for c in calls}
         pairs = []

@@ -146,7 +146,7 @@ class EquityBrsr(DocumentJob):
         companies = db.execute(
             """select c.entity_id, e.slug, e.name, c.nse_symbol, c.bse_code, c.listed_on
                  from equity.company c join core.entity e on e.id = c.entity_id
-                where c.nse_symbol is not null order by e.slug""").fetchall()
+                where c.nse_symbol is not null and e.market = 'IN' order by e.slug""").fetchall()
         symbols: dict[int, list[str]] = {}
         codes: dict[int, str] = {}
         for entity_id, scheme, value in db.execute(

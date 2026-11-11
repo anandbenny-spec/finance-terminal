@@ -73,7 +73,7 @@ class EquityMetrics(Task):
         out = Fetched(catalogue={k for (k,) in db.execute("select key from equity.metric")})
         for eid, slug, family, fy in db.execute(
                 """select c.entity_id, e.slug, c.valuation_family, c.fy_end_month from equity.company c
-                     join core.entity e on e.id = c.entity_id order by e.slug""").fetchall():
+                     join core.entity e on e.id = c.entity_id where e.market = 'IN' order by e.slug""").fetchall():
             out.companies[eid] = mx.Company(eid, slug, family, fy)
         ids = list(out.companies)
         fins: dict[int, list[mx.Fin]] = {i: [] for i in ids}

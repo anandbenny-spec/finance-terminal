@@ -114,12 +114,12 @@ class Stored:
 
 
 def fetch(db, entity_ids: list[int] | None = None) -> dict[int, Stored]:
-    """The rows `company_inputs` reads, for the given companies (all of `equity.company` when None)."""
+    """The rows `company_inputs` reads, for the given companies (all of India's companies in `equity.company` when None)."""
     out: dict[int, Stored] = {}
     for eid, slug, family, fy, market, currency in db.execute(
             """select c.entity_id, e.slug, c.valuation_family, c.fy_end_month, e.market, e.currency
                  from equity.company c join core.entity e on e.id = c.entity_id
-                where %s::int[] is null or c.entity_id = any(%s::int[]) order by e.slug""",
+                where (%s::int[] is null and e.market = 'IN') or c.entity_id = any(%s::int[]) order by e.slug""",
             (entity_ids, entity_ids)).fetchall():
         out[eid] = Stored(mx.Company(eid, slug, family, fy), market, currency, [])
     ids = list(out)

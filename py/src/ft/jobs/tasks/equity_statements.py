@@ -87,7 +87,7 @@ class EquityStatements(Task):
             """select fl.document_id, fl.entity_id, e.slug, d.external_key, fl.basis, fl.format, fl.period_end,
                       fl.fy_start, d.raw_file_id, c.isin
                  from equity.filing fl join core.document d on d.id = fl.document_id
-                 join core.entity e on e.id = fl.entity_id
+                 join core.entity e on e.id = fl.entity_id and e.market = 'IN'
                  left join equity.company c on c.entity_id = fl.entity_id
                 where fl.parse_status = 'pending'
                    or (case when fl.parser_version ~ '^[0-9]+$' then fl.parser_version::int else 0 end) < %s
