@@ -11,7 +11,8 @@ import { StateNote } from "@/components/data/StateNote";
 import { NOT_AVAILABLE } from "@/lib/format";
 import { callDateText, statusText, type FigureRow } from "@/lib/equity/calls";
 import type { GuidanceRow } from "@/lib/equity/guidance";
-import type { EarningsCallRow } from "@/lib/queries/api";
+import { similarityText } from "@/lib/equity/remarks";
+import type { EarningsCallRow, RemarksChangeRow } from "@/lib/queries/api";
 
 export function callHref(companySlug: string, callSlug: string): string {
   return `/companies/${companySlug}?tab=calls&call=${callSlug}`;
@@ -26,7 +27,20 @@ export function PageLink({ page }: { page: NonNullable<FigureRow["page"]> }) {
 }
 
 /** The company's published calls, newest first; a row's first cell is a real link that selects the call. */
-export function CallsTable({ rows, companySlug, selected, caption }: { rows: EarningsCallRow[]; companySlug: string; selected: string | null; caption: string }) {
+export function CallsTable({
+  rows,
+  companySlug,
+  selected,
+  caption,
+  remarks,
+}: {
+  rows: EarningsCallRow[];
+  companySlug: string;
+  selected: string | null;
+  caption: string;
+  /** The opening-remarks comparisons (#388), by call slug; given only once the field is released, and then adds the "Opening's similarity" column. */
+  remarks?: ReadonlyMap<string, RemarksChangeRow>;
+}) {
   const columns: Column<EarningsCallRow>[] = [
     {
       id: "quarter",
@@ -55,6 +69,16 @@ export function CallsTable({ rows, companySlug, selected, caption }: { rows: Ear
         ),
     },
   ];
+  if (remarks) {
+    columns.splice(3, 0, {
+      id: "opening",
+      header: "Opening's similarity",
+      cell: (r) => {
+        const m = remarks.get(r.call_slug);
+        return m ? similarityText(m) : <span className="text-ink-3">{NOT_AVAILABLE}</span>;
+      },
+    });
+  }
   return <DataTable columns={columns} rows={rows} rowKey={(r) => r.call_slug} caption={caption} focusable empty={<StateNote kind="empty">No calls are published for this company yet.</StateNote>} />;
 }
 
