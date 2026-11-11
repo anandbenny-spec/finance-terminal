@@ -94,7 +94,7 @@ class EquityBeta(Task):
                 """select industry, unlevered_beta_cash_corrected, beta from equity.industry_benchmark
                     where edition = %s and market = 'IN'""", (edition,)).fetchall()}
         out.missing_industries = sorted({f"{g}: {i}" for g, i in db.execute(
-            "select key, damodaran_industry from equity.peer_group where damodaran_industry is not null").fetchall()
+            "select key, damodaran_industry from equity.peer_group where damodaran_industry is not null and market = 'IN'").fetchall()
             if i not in out.industries})
         index = {d: v for d, v in db.execute(
             """select o.obs_date, o.value from core.observation o join core.series s on s.id = o.series_id

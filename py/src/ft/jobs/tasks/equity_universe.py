@@ -151,7 +151,7 @@ class EquityUniverse(Task):
 
         # peer groups
         have = {r[0]: r[1:] for r in tx.execute(
-            "select key, market, label, damodaran_industry, source_note from equity.peer_group").fetchall()}
+            "select key, market, label, damodaran_industry, source_note from equity.peer_group where market = 'IN'").fetchall()}
         for g in f.groups.values():
             want = ("IN", g.label, g.damodaran_industry, g.source_note)
             if have.get(g.key) != want:

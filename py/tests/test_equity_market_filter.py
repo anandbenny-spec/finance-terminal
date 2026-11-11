@@ -6,8 +6,9 @@ with India's inputs, counted by India's checks or published by India's price loa
 
 The test puts one US company on the test database, with the rows a US load writes and a few it never will (an NSE
 symbol and an ISIN, so the filter is tested even against a row that looks like an Indian one): its entity (id
-987650001, unpublished), identifiers, peer group, master row, NYSE prices, a pending SEC filing, a results event, a
-market capitalisation. Then, for each India task, through the runner with every request answered 404:
+987650001, unpublished), identifiers, peer group (market US, with an industry India's betaIndia doesn't list), master
+row, NYSE prices, a pending SEC filing, a results event, a market capitalisation. Then, for each India task, through the
+runner with every request answered 404:
 
 - the run with the US company is what the run without it is (status, rows written, check names and verdicts, the
   requests made): "the task's company list and its rows are what they are without it";
@@ -31,10 +32,12 @@ JOB, ADMIN = dsn("job_writer"), dsn("postgres")
 NOW = datetime(2026, 11, 9, 6, 0, tzinfo=UTC)          # a Monday morning UTC: after Friday's US and Indian sessions
 US_ID = 987650001
 US_SLUG, US_TICKER, US_NAME = "us-zzmf", "ZZMF", "Market Filter Holdings Inc"
-MARKERS = (US_SLUG, US_TICKER, US_NAME, str(US_ID))
+US_GROUP, US_GROUP_LABEL = "us-zz-test", "Market filter test group"
+MARKERS = (US_SLUG, US_TICKER, US_NAME, str(US_ID), US_GROUP, US_GROUP_LABEL)
 
-# Every India equity task (Plan 05 §0.5 N2's list, with 0038's segment changes).
-INDIA_TASKS = ["equity.universe", "equity.prices", "equity.filings", "equity.corporate_actions", "equity.statements",
+# Every India equity task (Plan 05 §0.5 N2's list, with 0038's segment changes), and valuation_inputs, which checks India's
+# peer groups' Damodaran industries against betaIndia (a US group's industry is a US one).
+INDIA_TASKS = ["equity.universe", "equity.valuation_inputs", "equity.prices", "equity.filings", "equity.corporate_actions", "equity.statements",
                "equity.shareholding", "equity.brsr", "equity.related_parties", "equity.segment_changes",
                "equity.metrics", "equity.beta", "equity.valuation", "equity.snapshot", "equity.rate_reactions",
                "equity.results_reactions", "equity.call_transcripts", "equity.call_text", "equity.calls_ai",
@@ -85,7 +88,7 @@ def add_us() -> None:
                      from (values ('ticker', %s), ('cik', '0009876501'), ('isin', 'USZZMF000001'),
                                   ('nse_symbol', %s)) v(scheme, value)""", (US_ID, US_TICKER, US_TICKER))
         c.execute("""insert into equity.peer_group (key, market, label, damodaran_industry, source_note)
-                     values ('us-zz-test', 'US', 'Market filter test group', 'Software (System & Application)', 'test')""")
+                     values ('us-zz-test', 'US', 'Market filter test group', 'Market Filter Test Industry', 'test')""")
         c.execute("""insert into equity.company (entity_id, isin, nse_symbol, peer_group_key, valuation_family, fy_end_month,
                                                  price_exchange, listed_on)
                      values (%s, 'USZZMF000001', %s, 'us-zz-test', 'operating', 12, 'NYSE', '2019-01-02')""",
@@ -226,7 +229,7 @@ def keys():
 def test_the_list_is_every_india_equity_task_and_none_is_a_us_task(keys):
     reg = registry()
     equity = sorted(k for k in reg if k.startswith("equity."))
-    assert sorted(INDIA_TASKS) == sorted(k for k in equity if k != "equity.valuation_inputs")   # market-level, no companies
+    assert sorted(INDIA_TASKS) == equity
     assert not [k for k in reg if k.startswith("us.") and k in INDIA_TASKS]
 
 
