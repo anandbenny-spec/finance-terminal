@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { AIBlock } from "@/components/ai/AIBlock";
 import { KeyChanges } from "@/components/ai/KeyChanges";
 import { CallsTable, FiguresTable, GuidanceTable, callHref } from "@/components/company/calls/CallTables";
+import { RemarksStrip } from "@/components/company/calls/RemarksStrip";
 import { TabError } from "@/components/company/TabError";
 import { Gated, fieldPolicy } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
@@ -31,7 +32,7 @@ import {
   partialLine,
   summaryLists,
 } from "@/lib/equity/calls";
-import { REMARKS_FIELD, REMARKS_HELD, newSpeakerNote, remarksKeyChanges, similarityText, wordsChangedText } from "@/lib/equity/remarks";
+import { REMARKS_FIELD, REMARKS_HELD, newSpeakerNote, remarksBars, remarksKeyChanges, similarityText, wordsChangedText } from "@/lib/equity/remarks";
 import { GUIDANCE_HELD, guidanceGroups, hitRate, unattributedLine } from "@/lib/equity/guidance";
 import { PREVIEW_FEEDS } from "@/lib/feeds";
 import { dateInZone, formatDate } from "@/lib/format";
@@ -148,6 +149,7 @@ function OpeningRemarks({
   const released = policy !== null && policy.status !== "hidden";
   const row: RemarksChangeRow | null = data.remarks?.find((r) => r.call_slug === call.call_slug) ?? null;
   const speakers = row ? newSpeakerNote(row) : null;
+  const strip = data.remarks ? remarksBars(data.remarks, (slug) => callHref(companySlug, slug)) : null;
   return (
     <Panel
       title="Opening remarks"
@@ -171,6 +173,7 @@ function OpeningRemarks({
             asOf="Numbers in the text are masked before comparing."
           />
           {speakers && <p className="text-data text-ink-1">{speakers}</p>}
+          {strip && <RemarksStrip bars={strip.bars} withoutBar={strip.withoutBar} total={strip.total} companyName={name} />}
           <KeyChanges
             model={remarksKeyChanges(row.pairs)}
             before={{ href: callHref(companySlug, row.base_call_slug), date: row.base_fiscal_label }}
@@ -197,7 +200,7 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
     const w = calls.latest;
     return (
       <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-12">
-        <Panel title="Earnings calls" titleId="panel-calls" subtitle="Which earnings calls are published for this company?" footer={foot(null)}>
+        <Panel title="Earnings calls" titleId="panel-calls" tour="company-calls" subtitle="Which earnings calls are published for this company?" footer={foot(null)}>
           <StateNote kind="empty">
             {NO_TRANSCRIPT}
             {w?.window_from && w.window_to ? ` between ${formatDate(w.window_from)} and ${formatDate(w.window_to)}` : ""}.
@@ -229,6 +232,7 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
       <Panel
         title="Earnings calls"
         titleId="panel-calls"
+        tour="company-calls"
         subtitle={`Which of ${name}'s earnings calls are published, and what is each one's status?`}
         variant="flush"
         footer={foot(rows[0] ?? null)}

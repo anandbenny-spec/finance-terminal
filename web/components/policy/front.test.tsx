@@ -124,6 +124,13 @@ describe("the front page (/)", () => {
     expect(t).toContain("Every decision since 2019");
   });
 
+  it("carries the guided tour's three targets on its sections (#91)", () => {
+    for (const id of ["front-what-changed", "front-votes", "front-change-strip"]) expect(out).toMatch(new RegExp(`<section data-tour="${id}"`));
+    // The sections draw whatever the reads returned, so the targets exist even when a panel failed.
+    const failed = html(<FrontView front={front({ fed: { kind: "error" } }, { fed: no, history: no, changes: no, fieldPolicy: no })} />);
+    for (const id of ["front-what-changed", "front-votes", "front-change-strip"]) expect(failed).toContain(`data-tour="${id}"`);
+  });
+
   it("has its four sections in this order", () => {
     const heads = [...out.matchAll(/<h2[^>]*>(.*?)<\/h2>/g)].map((m) => text(m[1]).replace(/ the bank's own words.*| one dot per member.*/, ""));
     expect(heads).toEqual(["What changed in the latest statements", "How the members voted", "How much each statement changed", "Where rates stand"]);

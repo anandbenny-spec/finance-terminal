@@ -3,9 +3,10 @@
 // (the 48 px top bar plus 16) lands a section link's heading just under the sticky top bar (#147).
 import type { ReactNode } from "react";
 
-export function Section({ id, title, note, children }: { id: string; title: string; note?: ReactNode; children: ReactNode }) {
+/** `tour` is the guided tour's fixed target id (`data-tour`, lib/tour.ts; #91). */
+export function Section({ id, title, note, tour, children }: { id: string; title: string; note?: ReactNode; tour?: string; children: ReactNode }) {
   return (
-    <section aria-labelledby={id} className="mt-8 first:mt-5">
+    <section data-tour={tour} aria-labelledby={id} className="mt-8 first:mt-5">
       <h2
         id={id}
         className="mb-3 flex scroll-mt-16 flex-wrap items-center gap-x-3 gap-y-1 text-title font-semibold text-ink-1 after:h-px after:flex-1 after:bg-line-strong"

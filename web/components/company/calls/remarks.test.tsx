@@ -3,7 +3,7 @@
 // at most five pairs with each side at most 400 characters, the states for no comparison and a failed read, no colour, and every
 // figure through lib/format.ts. Test rows, not real figures.
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CompanyView } from "@/components/company/CompanyView";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { MAX_SIDE, newSpeakerNote, remarksKeyChanges, similarityText, wordsChangedText } from "@/lib/equity/remarks";
@@ -12,6 +12,8 @@ import type { CallsTabData } from "@/lib/queries/calls";
 import { bannedCallWordsIn } from "@/tests/banned-words";
 import { SHOWN, calls } from "@/tests/call-rows";
 import { page } from "@/tests/company-rows";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => undefined }) }));
 
 const text = (markup: string) => markup.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 const html = (c: CallsTabData | null) =>
@@ -104,5 +106,54 @@ describe("the Opening remarks panel", () => {
     const panel = out.slice(out.indexOf("panel-call-remarks"), out.indexOf("panel-call-guidance"));
     expect(panel).not.toMatch(/text-(gain|loss)|bg-(gain|loss)|#[0-9a-f]{3,6}\b/i);
     expect(bannedCallWordsIn(text(panel))).toEqual([]);
+  });
+});
+
+describe("the company's ChangeStrip row in the Opening remarks panel (2B-19f, #395)", () => {
+  const two = [
+    row(),
+    row({ call_slug: "q1-fy27", fiscal_label: "Q1 FY27", period_end: "2026-06-30", base_call_slug: "q4-fy26", base_fiscal_label: "Q4 FY26", words_base: 100, words_new: 200, words_added: 20, words_removed: 10 }),
+  ];
+  const panelOf = (out: string) => out.slice(out.indexOf("panel-call-remarks"), out.indexOf("panel-call-guidance"));
+
+  it("is held back with the panel: no strip markup, no bar, no count", () => {
+    const out = panelOf(html(calls({ remarks: two })));
+    expect(out).not.toContain("Opening remarks, call by call");
+    expect(out).not.toContain("role=\"group\"");
+    expect(out).not.toContain("share of words, derived");
+  });
+
+  it("reads the newest bar from the view's counts, naming the call and what it was compared with", () => {
+    const out = panelOf(html(tab({ remarks: two })));
+    const t = text(out);
+    expect(t).toContain("Opening remarks, call by call");
+    expect(t).toContain("share of words, derived");
+    expect(t).toContain("Q2 FY27, against Q1 FY27");
+    expect(t).toContain("+19.0% added (40 of 210 words)");
+    expect(t).toContain("−15.0% removed (30 of 200 words)");
+    expect(t).toContain("Open this call");
+    expect(out).toContain('href="/companies/tcs?tab=calls&amp;call=q2-fy27"');
+    expect(out).toContain('aria-label="View as table"');
+  });
+
+  it("keeps module 1's words out of the company's row", () => {
+    const out = panelOf(html(tab({ remarks: two })));
+    const strip = out.slice(out.indexOf("Opening remarks, call by call") - 400);
+    expect(text(strip)).not.toMatch(/\b(Fed|RBI|FOMC|MPC|meeting|statement)s?\b/i);
+    expect(out).not.toMatch(/text-(gain|loss)|bg-(gain|loss)|#[0-9a-f]{3,6}\b|text-\[|w-\[\d+px\]/i);
+  });
+
+  it("shows its one bar for a company with one comparison", () => {
+    const t = text(html(tab()));
+    expect(t).toContain("Opening remarks, call by call");
+    expect(t).toContain("Q2 FY27, against Q1 FY27");
+    expect(t).not.toContain("no bar");
+  });
+
+  it("leaves out and counts a row whose counts don't add up", () => {
+    const bad = row({ call_slug: "q1-fy27", fiscal_label: "Q1 FY27", period_end: "2026-06-30", words_base: 100, words_new: 50, words_added: 90 });
+    const t = text(html(tab({ remarks: [row(), bad] })));
+    expect(t).toContain("1 of 2 calls has no bar");
+    expect(t).not.toContain("90 of 50");
   });
 });

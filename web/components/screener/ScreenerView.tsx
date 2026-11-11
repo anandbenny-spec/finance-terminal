@@ -260,6 +260,7 @@ export function ScreenerView({
       <Panel
         title="Nifty 50 screener"
         titleId="screener-table"
+        tour="screener-table"
         variant="flush"
         subtitle={
           <>
