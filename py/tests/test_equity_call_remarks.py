@@ -88,7 +88,7 @@ def test_no_label_at_any_similarity():
         sims.append(c.similarity)
         assert c.label is None
     assert min(sims) < 0.5 <= max(sims)
-    assert rm.RULE_VERSION == "remarks-2"
+    assert rm.RULE_VERSION == "remarks-3"
 
 
 def test_threshold_on_each_side_of_half():
@@ -171,3 +171,61 @@ def test_the_distribution_check_never_fails_on_low_similarities():
     c = EquityCallScores._distribution([(i, 0.01 * i, []) for i in range(1, 21)])
     assert c.passed and not c.blocking and "n 20" in c.detail and "median" in c.detail
     assert EquityCallScores._distribution([]).passed
+
+
+# ---- verified quotes (remarks-3, #414) ----
+PAGES = [(1, 0, 60), (2, 60, 400)]
+
+
+def _compare(old_body: str, new_body: str):
+    old_text, old = opening_of(("Alice Rao", "management", old_body))
+    new_text, new = opening_of(("Alice Rao", "management", new_body))
+    return old_text, new_text, rm.compare(new_text, new, old_text, old)
+
+
+def test_a_side_found_in_the_stored_text_verifies_with_its_page():
+    old_text, new_text, c = _compare("Alpha beta gamma delta. Epsilon zeta eta theta.", "Alpha beta gamma delta. Nu xi omicron pi rho.")
+    out = rm.verify_pairs(c.pairs, new_text, 7, PAGES, old_text, 6, PAGES)
+    assert out and all(p[k]["verified"] is True for p in out for k in ("old", "new") if p[k])
+    side = next(p["new"] for p in out if p["new"])
+    assert side["document_id"] == 7 and new_text[side["start"]:side["end"]].split() == side["text"].split()
+    assert side["page"] in (1, 2) and side["page_last"] >= side["page"]
+
+
+def test_a_side_altered_by_one_character_does_not_verify_and_is_dropped():
+    old_text, new_text, c = _compare("Alpha beta gamma delta.", "Nu xi omicron pi rho.")
+    new_side = next(p["new"] for p in c.pairs if p["new"])
+    new_side["text"] = new_side["text"].replace("omicron", "omicrom")
+    out = rm.verify_pairs(c.pairs, new_text, 7, PAGES, old_text, 6, PAGES)
+    assert all(p["new"] is None for p in out)
+    assert out and all(p["old"] is not None for p in out)     # the other side still verifies
+
+
+def test_a_pair_with_no_verified_side_is_dropped():
+    old_text, new_text, c = _compare("Alpha beta gamma delta.", "Nu xi omicron pi rho.")
+    for pair in c.pairs:
+        for k in ("old", "new"):
+            if pair[k]:
+                pair[k]["spans"] = [[0, 5]]
+                pair[k]["text"] = "Something else entirely"
+    assert rm.verify_pairs(c.pairs, new_text, 7, PAGES, old_text, 6, PAGES) == []
+
+
+def test_a_span_outside_the_text_does_not_verify():
+    old_text, new_text, c = _compare("Alpha beta gamma delta.", "Nu xi omicron pi rho.")
+    next(p["new"] for p in c.pairs if p["new"])["spans"] = [[0, len(new_text) + 10]]
+    out = rm.verify_pairs(c.pairs, new_text, 7, None, old_text, 6, None)
+    assert all(p["new"] is None for p in out)
+
+
+def test_no_verified_side_is_over_400_code_points_and_no_page_map_means_no_page():
+    long_old = "Alpha " + " ".join(f"a{i}" for i in range(300)) + "."
+    long_new = "Beta " + " ".join(f"b{i}" for i in range(300)) + "."
+    old_text, new_text, c = _compare(long_old, long_new)
+    out = rm.verify_pairs(c.pairs, new_text, 7, None, old_text, 6, None)
+    for p in out:
+        for k in ("old", "new"):
+            s = p[k]
+            if s is None:
+                continue
+            assert len(s["text"]) <= rm.MAX_SIDE and s["end"] - s["start"] <= rm.MAX_SIDE and s["page"] is None
