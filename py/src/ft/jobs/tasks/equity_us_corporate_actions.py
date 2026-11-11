@@ -15,8 +15,8 @@ Load (one transaction):
    come) and its `equity.corporate_action` row (exchange the company's listing exchange). Published like India's: a US
    action and its factor are visible only once the company is (migration 0039's policies), so the go-live flip of the
    companies is the whole gate. Kinds: `split` (numerator above denominator; `ratio_new` the numerator, `ratio_old`
-   the denominator), `consolidation` (a reverse split), `other` (a split Yahoo lists with a ratio that isn't two whole
-   numbers, as it carries some spin-offs), `dividend` (`dividend_per_share`). An action is matched to a stored one by
+   the denominator), `consolidation` (a reverse split), `other` (a "split" whose ratio isn't a simple one, 1061:1000 say: Yahoo's
+   way of carrying a spin-off, which changes no share count), `dividend` (`dividend_per_share`). An action is matched to a stored one by
    company, ex-date and kind, so a re-run writes nothing; a re-read that differs is named, never written over.
 2. **Factors**, for every split, reverse split and `other` once the company's stored prices reach its ex-date:
    - ex-date on or before the company's first stored session: factor 1, `method` `source_adjusted` (Spec 02A.1 §5.3:
@@ -95,7 +95,8 @@ class Action:
 
 
 def split_kind(s: yp.Split) -> str:
-    if not s.whole or s.numerator == s.denominator:
+    """`split` or `consolidation` for a simple ratio; `other` for anything else (a spin-off Yahoo lists as a split)."""
+    if not s.simple:
         return "other"
     return "split" if s.numerator > s.denominator else "consolidation"
 
@@ -114,9 +115,12 @@ def actions_of(c: Company, chart: yp.Chart, raw_file_id: int) -> list[Action]:
         elif kind == "consolidation":
             title = f"Reverse stock split {_n(s.numerator)}:{_n(s.denominator)}"
         else:
-            title = f"Split of {s.label} as Yahoo Finance lists it (not a whole-number ratio)"
-        out.append(Action(c.entity_id, c.exchange, s.ex_date, kind, f"{title} (Yahoo Finance splitRatio {s.label})",
-                          title, s.numerator, s.denominator, None, raw_file_id))
+            title = "Price adjustment (Yahoo Finance)"
+        subject = (f"{title} (Yahoo Finance splitRatio {s.label})" if kind != "other" else
+                   f"Yahoo Finance lists a split of {s.label}, not a simple split ratio (how it carries a spin-off or a "
+                   f"similar change)")
+        out.append(Action(c.entity_id, c.exchange, s.ex_date, kind, subject, title, s.numerator, s.denominator, None,
+                          raw_file_id))
     for d in chart.dividends:
         out.append(Action(c.entity_id, c.exchange, d.ex_date, "dividend", "Cash dividend (Yahoo Finance)",
                           "Cash dividend", None, None, d.amount, raw_file_id))
@@ -341,8 +345,8 @@ class UsCorporateActions(Task):
         rows = []                                    # (event_id, slug, kind, factor, problem)
         for event_id, _, slug, kind, _, r_new, r_old in members:
             if kind == "other":
-                why = (f"Yahoo lists a split of {ac.num(r_new)}:{ac.num(r_old)}, not a whole-number ratio (a spin-off "
-                       f"carried as a split?): held for a reviewed factor")
+                why = (f"Yahoo lists a split of {ac.num(r_new)}:{ac.num(r_old)}, not a simple split ratio (how it carries "
+                       f"a spin-off or a similar change): held for a reviewed factor")
                 rows.append((event_id, slug, kind, None, why))
             elif not r_new or not r_old:
                 rows.append((event_id, slug, kind, None, "the split's ratio isn't stored"))
