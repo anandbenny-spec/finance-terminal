@@ -14,9 +14,9 @@
 #   less the one before it), both labelled "derived" in the row's tags.
 #
 # Where a chain is tighter than the helper's (decided by Claude, standing delegation, 24 Oct 2026; recorded on #401):
-# - pat_owners is NetIncomeLoss only: the helper's fallbacks ProfitLoss (which includes non-controlling interests) and
-#   NetIncomeLossAvailableToCommonStockholdersBasic (after preferred dividends) mean something else, so they are pat
-#   and nothing;
+# - pat_owners leaves out the helper's ProfitLoss (which includes non-controlling interests: that is pat). Its fallback
+#   NetIncomeLossAvailableToCommonStockholdersBasic (after preferred dividends; the same figure for a company with no
+#   preferred stock) stays, used only where NetIncomeLoss isn't filed and named in `tags` (Caterpillar on dev run 1);
 # - finance_cost leaves out InterestPaidNet (cash paid, a cash-flow line; the helper's own test assumption);
 # - cfo leaves out the continuing-operations-only tag; capex is the property, plant and equipment tag, then the
 #   productive-assets one (E1's NVDA and GEV);
@@ -41,7 +41,7 @@ columns:
             IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments]
   tax: {kind: flow, chain: [IncomeTaxExpenseBenefit]}
   pat: {kind: flow, chain: [ProfitLoss]}
-  pat_owners: {kind: flow, chain: [NetIncomeLoss]}
+  pat_owners: {kind: flow, chain: [NetIncomeLoss, NetIncomeLossAvailableToCommonStockholdersBasic]}
   pat_nci: {kind: flow, chain: [NetIncomeLossAttributableToNoncontrollingInterest]}
   eps_basic: {kind: per_share, chain: [EarningsPerShareBasic]}
   eps_diluted: {kind: per_share, chain: [EarningsPerShareDiluted]}

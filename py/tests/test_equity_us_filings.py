@@ -97,7 +97,8 @@ def test_the_helper_imports_its_rules_from_the_adapter():
 def test_the_column_map_loads_and_refuses_a_broken_file(tmp_path):
     t = E.load_tags()
     assert t.start == D(2019, 1, 1) and t.tolerance == Decimal("0.005")
-    assert [e.tag for e in t.columns["pat_owners"].chain] == ["NetIncomeLoss"]          # tighter than the helper's
+    assert [e.tag for e in t.columns["pat_owners"].chain] == [
+        "NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"]               # no ProfitLoss (that is pat)
     assert t.columns["total_equity"].chain[1] == E.Entry("StockholdersEquity", 1)
     assert t.columns["equity_owners"].chain[1].nci == -1
     assert "InterestPaidNet" not in [e.tag for e in t.columns["finance_cost"].chain]
@@ -125,12 +126,12 @@ def test_the_rows_equal_e1s_figures(ticker):
 
 @needs_fixtures
 def test_where_the_rows_differ_from_e1_by_design():
-    # Realty Income: NetIncomeLoss stops in 2026, and the column map doesn't fall back to net income after preferred
-    # dividends (E1's chain did); its capex tag (capital improvements) isn't in the map
-    o = e1_differences("O")
-    assert {x for x in o if x[0] == "net_income"} == {("net_income", "quarters", "2026-03-31"),
-                                                       ("net_income", "quarters", "2026-06-30")}
-    assert {x[0] for x in o} == {"net_income", "capex"}
+    # Realty Income: its capex tag (capital improvements) isn't in the map. Its 2026 net income is the fallback,
+    # NetIncomeLossAvailableToCommonStockholdersBasic, as E1 read it
+    assert {x[0] for x in e1_differences("O")} == {"capex"}
+    s = statements("O")
+    q = next(r for r in s.build(window(s)[-1]).rows if r.period_kind == "quarter")
+    assert q.tags["pat_owners"] == "NetIncomeLossAvailableToCommonStockholdersBasic"
     # GE Vernova: its FY2023 figures are only comparatives in its first 10-K (it was spun off in April 2024), and a
     # row is a filing's own period
     assert {x[2] for x in e1_differences("GEV")} == {"2023-12-31"}
@@ -250,9 +251,11 @@ def test_money_in_another_currency_is_never_read_and_equity_fills_adjust_for_nci
     cf = facts({
         "Revenues": {"EUR": [fact(100, "2026-06-30", "2026-04-01")]},
         "NetIncomeLoss": {"USD": [fact(10, "2026-06-30", "2026-04-01"),
-                                  fact(9, "2026-06-30", "2026-04-01", accn="0000000001-26-000002")]},
-        "StockholdersEquity": {"USD": [fact(50, "2026-06-30"), fact(40, "2026-06-30", accn="0000000001-26-000002")]},
-        "MinorityInterest": {"USD": [fact(5, "2026-06-30")]},
+                                  fact(9, "2026-06-30", "2026-04-01", accn="0000000001-26-000002"),
+                                  fact(8, "2026-06-30", "2026-04-01", accn="0000000001-26-000003")]},
+        "StockholdersEquity": {"USD": [fact(50, "2026-06-30"), fact(40, "2026-06-30", accn="0000000001-26-000002"),
+                                       fact(30, "2026-06-30", accn="0000000001-26-000003")]},
+        "MinorityInterest": {"USD": [fact(5, "2026-06-30"), fact(4, "2025-12-31", accn="0000000001-26-000002")]},
     })
     s = E.Statements([(1, cf)], E.load_tags())
     b = s.build(s.filings["0000000001-26-000001"])
@@ -260,8 +263,11 @@ def test_money_in_another_currency_is_never_read_and_equity_fills_adjust_for_nci
     assert "revenue" not in q_row.values and q_row.values["pat_owners"] == 10          # EUR is never read
     assert (bs.values["total_equity"], bs.tags["total_equity"]) == (55, "StockholdersEquity+MinorityInterest")
     assert (bs.values["equity_owners"], bs.values["nci"]) == (50, 5)
-    other = s.build(s.filings["0000000001-26-000002"]).rows[-1]           # no MinorityInterest at its date: no fill
+    other = s.build(s.filings["0000000001-26-000002"]).rows[-1]           # NCI presented, not at its date: no fill
     assert "total_equity" not in other.values and other.values["equity_owners"] == 40
+    # a filing that presents no NCI (Salesforce and Cisco, which had some years before: dev run 1, 11 Nov 2026)
+    none = s.build(s.filings["0000000001-26-000003"]).rows[-1]
+    assert (none.values["total_equity"], none.tags["total_equity"], none.values["equity_owners"]) == (30, "StockholdersEquity", 30)
 
 
 def test_two_values_for_one_period_in_one_filing_are_held():
