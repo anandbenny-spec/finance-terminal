@@ -15,13 +15,12 @@ row). PANs are never read. Rules and their evidence: `ft/equity/related_parties.
 
 Checks, B blocking, W warning:
 - (B) `values`: every related-party amount in every file read is numeric and in rupees (a negative amount is a reversal, not a
-  bad value: it is never stored and `negative_amounts` names it);
+  bad value: it is stored signed, since 0037, and `negative_amounts` names it);
 - (B) `one_fiscal_year`: the filings read for a company belong to one fiscal year (each file's own year end equals the year the
   company was selected for, and its period is that year's end or six months before it);
 - (W) `filings_held`: a filing that gave no rows, with its reason (unreadable, basis or period mismatch, an incomplete row);
 - (W) `unmatched_company`: a filing with rows where none names the company as its entering party (held, never guessed);
-- (W) `negative_amounts`: rows filed with a negative amount (never stored), by company and type, and the shown types left out
-  because of them;
+- (W) `negative_amounts`: rows filed with a negative amount (stored signed; the view nets them), by company and type;
 - (W) `any_other`: rows of type "Any other transaction", counted;
 - (W) `subsidiary_rows`: rows a subsidiary entered into, counted per company;
 - (W) `no_rows`: a company with no related-party rows in a half-year 2A stores (and whether the filing says it entered into
@@ -196,16 +195,12 @@ class EquityRelatedParties(Task):
         out.append(Check("unmatched_company", not unmatched, ("held, no row matched the company: " + _names(unmatched))
                          if unmatched else "every filing with rows names the company as an entering party", blocking=False))
         neg: dict[str, Counter] = {}
-        sup: dict[str, Counter] = {}
         for it in read:
             neg.setdefault(it.slug, Counter()).update(it.parsed.negatives)
-            sup.setdefault(it.slug, Counter()).update(it.parsed.suppressed)
         negs = [f"{s} {sum(c.values())} ({', '.join(f'{k} {v}' for k, v in sorted(c.items()))})"
                 for s, c in sorted(neg.items()) if c]
-        sups = [f"{s} {', '.join(f'{k} {v}' for k, v in sorted(c.items()))}" for s, c in sorted(sup.items()) if c]
         out.append(Check("negative_amounts", not negs,
-                         ("rows filed with a negative amount, never stored: " + _names(negs)
-                          + ("; rows of a shown type left out because of a reversal: " + _names(sups) if sups else ""))
+                         ("rows filed with a negative amount, stored signed: " + _names(negs))
                          if negs else "no row was filed with a negative amount", blocking=False))
         other = sum(1 for it in read for r in it.parsed.rows if r.txn_type.casefold() == "any other transaction")
         out.append(Check("any_other", True, f"{other} rows of type 'Any other transaction' stored", blocking=False))

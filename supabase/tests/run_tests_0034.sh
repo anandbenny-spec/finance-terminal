@@ -212,8 +212,8 @@ check "T07 a count with a fraction can't be stored as ok" \
   "$(as_pg "insert into equity.brsr_value (event_id, field_key, value, kind, element, item_ref, status) select event_id, 'dealers', 4.5, 'count', 'E', 'I', 'ok' from equity.brsr_filing where document_id in (select id from core.document where external_key = 'vc34-c-fy2025-26-v1')")" 'violates check constraint'
 check "T08 a held value needs its reason" \
   "$(as_pg "insert into equity.brsr_value (event_id, field_key, value, kind, element, item_ref, status) select event_id, 'dealers', 4.5, 'count', 'E', 'I', 'held' from equity.brsr_filing where document_id in (select id from core.document where external_key = 'vc34-c-fy2025-26-v1')")" 'violates check constraint'
-check "T09 a negative related-party value is refused" \
-  "$(as_pg "insert into equity.rpt_line (results_event_id, basis, line_no, counterparty, txn_type, entered_by, value_in_period, period_end) select id, 'standalone', 99, 'N', 'Loans', 'company', -1, '2026-03-31' from core.event where slug = 'vc34-res-vc34-a-h1'")" 'violates check constraint'
+check "T09 a negative related-party value is accepted (signed since 0037)" \
+  "$(as_pg "begin; insert into equity.rpt_line (results_event_id, basis, line_no, counterparty, txn_type, entered_by, value_in_period, period_end) select id, 'standalone', 99, 'N', 'Loans', 'company', -1, '2026-03-31' from core.event where slug = 'vc34-res-vc34-a-h1'; rollback")" 'INSERT 0 1'
 check "T10 a single-segment row can't carry revenue, nor a multi-segment row lack it" \
   "$(as_pg "insert into equity.segment_revenue (results_event_id, basis, line_no, reporting, description, revenue, period_start, period_end) select id, 'consolidated', 99, 'single', 'S', 5, '2025-04-01', '2026-03-31' from core.event where slug = 'vc34-res-vc34-b-h1'")" 'violates check constraint'
 check "T11 the four field policies are seeded hidden" \

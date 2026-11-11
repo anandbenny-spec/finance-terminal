@@ -42,7 +42,6 @@ RPT_AXIS = "RelatedPartyTransactionAxis"
 SEG_AXIS = "ReportableSegmentsAxis"
 TIE = Decimal("0.001")                     # segments tie to revenue within 0.1% (the card)
 # The two transaction types the card's top 5 shows (api.related_party_top matches them case-insensitively)
-SHOWN_TYPES = ("sale of goods or services", "purchase of goods or services")
 
 NAME_ELS = ("NameOfTheCompany", "NameOfBank")             # a bank's filing names itself NameOfBank
 COUNTERPARTY = "NameOfCounterParty"
@@ -61,7 +60,7 @@ REVENUE_TOTALS = ("RevenueFromOperations", "Income")        # what the segments 
 
 class RptError(ValueError):
     """A filing that can't give its rows. `check` is the class (it picks the check that names the filing); the message
-    says why. A `value` error is blocking (a related-party amount must be numeric and not negative); the rest hold the
+    says why. A `value` error is blocking (a related-party amount must be numeric; it may be negative); the rest hold the
     filing and are named."""
 
     def __init__(self, check: str, message: str):
@@ -115,8 +114,7 @@ class Parsed:
     rows: list[RptRow] = field(default_factory=list)
     declared_none: bool = False     # the filing says it entered into no related-party transaction
     segments: Segments | None = None
-    negatives: dict[str, int] = field(default_factory=dict)     # rows filed with a negative amount, by type: never stored
-    suppressed: dict[str, int] = field(default_factory=dict)    # rows of a shown type left out because one of its rows is negative
+    negatives: dict[str, int] = field(default_factory=dict)     # rows filed with a negative amount, by type: stored signed
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -158,18 +156,15 @@ class Rows:
     rows: list[RptRow] = field(default_factory=list)
     declared_none: bool = False
     negatives: dict[str, int] = field(default_factory=dict)
-    suppressed: dict[str, int] = field(default_factory=dict)
 
 
 def read_rows(inst: xbrl.Instance, company: str | None) -> Rows:
     """The related-party rows of one filing: one per typed member, values from the duration context only. Raises
     RptError for a filing that can't give its rows.
 
-    **Negative amounts** (reversals and adjustments: about a third of the saved filings carry some, mostly under "Any other
-    transaction") are never stored: the table forbids them and the card's check reads "numeric and not negative". A shown
-    type (sale or purchase of goods or services) that has a negative row on the filing gets none of its rows stored from
-    that filing, because the top 5 would otherwise add the sales and ignore the reversal; the counts are returned and
-    named by a check. Interim rule until Anand decides (the question is on #190); the alternative is to store them signed."""
+    **Negative amounts** (reversals and adjustments: about half of the saved filings carry some, mostly under "Any other
+    transaction") are stored signed (Anand, 11 Nov 2026, #190; migration 0037 dropped the `>= 0` check). The view sums by
+    counterparty, so a reversal nets out exactly; the counts, by type, are returned and named by a warning check."""
     members = [r for r in xbrl.typed_rows(inst, RPT_AXIS) if r.period[0] == "duration"]
     flag = _fact(inst, ANY_RPT)
     out = Rows(declared_none=flag is not None and flag.text.strip().lower() in ("no", "false"))
@@ -205,13 +200,10 @@ def read_rows(inst: xbrl.Instance, company: str | None) -> Rows:
             row.entered_by = "company"
     if not any(r.entered_by == "company" for r in rows):
         raise RptError("unmatched", f"none of {len(rows)} rows names the company ({company!r}) as its entering party")
-    shown_negative = {r.txn_type.casefold() for r in rows if r.value < 0 and r.txn_type.casefold() in SHOWN_TYPES}
     for r in rows:
         if r.value < 0:
             out.negatives[r.txn_type] = out.negatives.get(r.txn_type, 0) + 1
-        elif r.txn_type.casefold() in shown_negative:
-            out.suppressed[r.txn_type] = out.suppressed.get(r.txn_type, 0) + 1
-    out.rows = [r for r in rows if r.value >= 0 and r.txn_type.casefold() not in shown_negative]
+    out.rows = rows
     return out
 
 
@@ -297,7 +289,7 @@ def parse_filing(body: bytes, filing: Filing) -> Parsed:
     start, end = half_year(filing.period_end)
     fy_end = xbrl.to_date(inst.header.get("fy_end")) or filing.fy_end
     got = read_rows(inst, company)
-    out = Parsed(company, filing.basis, start, end, fy_end, got.rows, got.declared_none, None, got.negatives, got.suppressed)
+    out = Parsed(company, filing.basis, start, end, fy_end, got.rows, got.declared_none, None, got.negatives)
     if filing.year_end and filing.basis == "consolidated":
         fy_start = filing.fy_start or xbrl.to_date(inst.header.get("fy_start"))
         out.segments = read_segments(inst, fy_start, filing.period_end) if fy_start else \

@@ -143,14 +143,13 @@ def test_an_amount_that_is_not_rupees_or_not_a_number_is_a_blocking_value_error(
     assert e.value.check == check
 
 
-def test_a_negative_amount_is_never_stored_and_a_shown_type_with_one_loses_its_rows_from_that_filing():
+def test_a_negative_amount_is_stored_signed_and_counted():
     p = parse(instance([{"who": "A", "v": "10"}, {"who": "B", "v": "-3"},
                         {"who": "C", "v": "4", "type": "Loan"}, {"who": "D", "v": "-1", "type": "Any other transaction"},
                         {"who": "E", "v": "6", "type": "Purchase of goods or services"}]))
-    assert [r.counterparty for r in p.rows] == ["C", "E"]                # the sales are left out; the loan and the purchase stay
+    assert [(r.counterparty, r.value) for r in p.rows] == [("A", Decimal(10)), ("B", Decimal(-3)), ("C", Decimal(4)),
+                                                           ("D", Decimal(-1)), ("E", Decimal(6))]
     assert p.negatives == {"Sale of goods or services": 1, "Any other transaction": 1}
-    assert p.suppressed == {"Sale of goods or services": 1}
-    assert all(r.value >= 0 for r in p.rows)
 
 
 def test_a_file_of_the_wrong_basis_or_period_is_refused():
@@ -174,7 +173,7 @@ def test_mm_h1_fy26_gives_1953_rows_636_of_them_its_own_with_the_half_year_as_th
         17, "MAHINDRA ELECTRIC AUTOMOBILE LIMITED", "Sale of goods or services", Decimal(61793800000), "company")   # 6,179.38 crore
     assert (purchase.line_no, purchase.counterparty, purchase.txn_type, purchase.value) == (
         72, "MAHINDRA LOGISTICS LIMITED", "Purchase of goods or services", Decimal(16217300000))                    # 1,621.73 crore
-    assert p.negatives == {} and p.suppressed == {}
+    assert p.negatives == {}
 
 
 @needs_fixtures
@@ -200,14 +199,14 @@ def test_no_stored_text_in_the_saved_filings_holds_a_pan():
 
 
 @needs_fixtures
-def test_mm_q4_fy26_has_negative_rows_that_are_counted_and_not_stored():
+def test_mm_q4_fy26_has_negative_rows_that_are_counted_and_stored_signed():
     inst = xbrl.parse(raw(MM_Q4_SA))
     durations = [r for r in xbrl.typed_rows(inst, rp.RPT_AXIS) if r.period[0] == "duration"]
     negative = [r for r in durations if r.facts[rp.AMOUNT].value < 0]
     assert negative                                                                   # the saved filing does carry reversals
     p = mm_q4("standalone")
-    assert sum(p.negatives.values()) == len(negative) and all(r.value >= 0 for r in p.rows)
-    assert len(p.rows) + sum(p.negatives.values()) + sum(p.suppressed.values()) == len(durations)
+    assert sum(p.negatives.values()) == len(negative) and sum(r.value < 0 for r in p.rows) == len(negative)
+    assert len(p.rows) == len(durations)
     assert (p.period_start, p.period_end) == (D(2025, 10, 1), D(2026, 3, 31))
 
 
@@ -413,7 +412,7 @@ def test_a_refresh_stores_the_latest_years_rows_and_segments(s3):
     assert [(r[1], r[3]) for r in segs if r[0] == "zr-maruti-results-2026-03-31"] == [("single", None)]
     c = checks(tr)
     assert c["values"]["passed"] and c["one_fiscal_year"]["passed"]
-    assert "zr-mm" in c["negative_amounts"]["detail"]                                 # M&M's Q4 reversals are named, not stored
+    assert "zr-mm" in c["negative_amounts"]["detail"]                                 # M&M's Q4 reversals are named and stored signed
     assert c["parsed"]["passed"]
 
 
