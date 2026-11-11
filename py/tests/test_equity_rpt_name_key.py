@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import psycopg
 import pytest
+from conftest import dsn
 
 from ft.equity import related_parties as rp
-
-from conftest import dsn
 
 NAMES = [
     "Acme Ltd", "ACME LIMITED", "Acme Ltd.", "acme  limited", "Acme Private Limited",
