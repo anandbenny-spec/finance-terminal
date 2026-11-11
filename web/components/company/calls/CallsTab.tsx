@@ -197,7 +197,7 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
     const w = calls.latest;
     return (
       <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-12">
-        <Panel title="Earnings calls" titleId="panel-calls" subtitle="Which earnings calls are published for this company?" footer={foot(null)}>
+        <Panel title="Earnings calls" titleId="panel-calls" tour="company-calls" subtitle="Which earnings calls are published for this company?" footer={foot(null)}>
           <StateNote kind="empty">
             {NO_TRANSCRIPT}
             {w?.window_from && w.window_to ? ` between ${formatDate(w.window_from)} and ${formatDate(w.window_to)}` : ""}.
@@ -229,6 +229,7 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
       <Panel
         title="Earnings calls"
         titleId="panel-calls"
+        tour="company-calls"
         subtitle={`Which of ${name}'s earnings calls are published, and what is each one's status?`}
         variant="flush"
         footer={foot(rows[0] ?? null)}

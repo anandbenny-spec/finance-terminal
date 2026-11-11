@@ -37,6 +37,13 @@ const summaryPanel = (markup: string) => {
   return t.slice(t.indexOf("call: what was said"), t.indexOf("Guidance given on this call"));
 };
 
+describe("the guided tour's target (#91)", () => {
+  it("is the calls panel, drawn with a call and without one, so the stop never lands on a held-back panel", () => {
+    expect(html(calls())).toContain('data-tour="company-calls"');
+    expect(html(calls({ calls: [], selected: null }))).toContain('data-tour="company-calls"');
+  });
+});
+
 describe("the tab and the call in the URL", () => {
   it("is a tab in the URL, marked current", () => {
     expect(tabOf("calls")).toBe("calls");
