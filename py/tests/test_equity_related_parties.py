@@ -289,7 +289,8 @@ def storage():
 
 def q(sql, *a):
     with psycopg.connect(ADMIN, autocommit=True) as c:
-        return c.execute(sql, a or None).fetchall()
+        cur = c.execute(sql, a or None)
+        return cur.fetchall() if cur.description else []
 
 
 def wipe():
