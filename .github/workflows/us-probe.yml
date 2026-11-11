@@ -1,0 +1,33 @@
+# The yfinance probe from GitHub's runners (Spec 02A.1 §5.3 step 1; job US-03, issue #402): three tickers' last five
+# sessions and two splits whose traded prices are on record, through Yahoo's chart API and the shared HTTP client
+# (ft.equity.us_probe). Manual only. No database, no storage, no secret; the log shows counts and yes/no answers only
+# (this repository is public). The input reaches the script through the environment, never pasted into the line.
+name: us-probe
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: Comma-separated tickers
+        required: false
+        type: string
+        default: 'AAPL,JPM,GOOGL'
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: py
+jobs:
+  probe:
+    runs-on: ubuntu-24.04   # pinned like the job workflows: the audit's G1/S1 reached Yahoo from 24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0, pinned by SHA (setup-uv publishes no v8+ major tags)
+        with:
+          enable-cache: true
+          cache-dependency-glob: py/uv.lock
+      - run: uv sync --locked --extra jobs
+      - name: Probe
+        run: uv run --locked python -m ft.equity.us_probe --tickers "$INPUT_TICKERS"
+        env:
+          INPUT_TICKERS: ${{ inputs.tickers }}

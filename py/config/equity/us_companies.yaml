@@ -22,7 +22,8 @@
 #   month before). sic: SEC's Standard Industrial Classification code. Both were read from SEC's submissions for AAPL,
 #   AMGN, GOOGL, JPM, MSFT, NVDA and WMT (Oct and 11 Nov 2026); the rest were entered by the build session from SEC's
 #   company records as it knew them. The task checks every one against SEC on every run: a mismatch is a warning
-#   naming the company, and the YAML is corrected from it. Neither is shown to visitors.
+#   naming the company, and the YAML is corrected from it (SHW: 2851 to SEC's 5200, from the first dev run's warning,
+#   11 Nov 2026; #400, #402). Neither is shown to visitors.
 # - peer_group: a key of us_peer_groups.yaml. valuation_family: lender (banks and card lenders), insurer, mixed (the
 #   consolidated figures hold a material lending or insurance arm: valuation shows N/A), else operating; the note says why.
 # - multi_class: more than one class of common stock on the cover page (US-02 sums the classes).
@@ -59,7 +60,7 @@ companies:
   - {ticker: NKE, name: "NIKE, Inc.", short_name: Nike, cik: 320187, exchange: NYSE, fy_end_month: 5, sic: 3021, peer_group: us-consumer, valuation_family: operating, multi_class: true}
   - {ticker: NVDA, name: "NVIDIA Corporation", short_name: Nvidia, cik: 1045810, exchange: NASDAQ, fy_end_month: 1, sic: 3674, peer_group: us-hardware, valuation_family: operating}
   - {ticker: PG, name: "The Procter & Gamble Company", short_name: Procter & Gamble, cik: 80424, exchange: NYSE, fy_end_month: 6, sic: 2840, peer_group: us-consumer, valuation_family: operating}
-  - {ticker: SHW, name: "The Sherwin-Williams Company", short_name: Sherwin-Williams, cik: 89800, exchange: NYSE, fy_end_month: 12, sic: 2851, peer_group: us-chemicals, valuation_family: operating}
+  - {ticker: SHW, name: "The Sherwin-Williams Company", short_name: Sherwin-Williams, cik: 89800, exchange: NYSE, fy_end_month: 12, sic: 5200, peer_group: us-chemicals, valuation_family: operating}
   - {ticker: TRV, name: "The Travelers Companies, Inc.", short_name: Travelers, cik: 86312, exchange: NYSE, fy_end_month: 12, sic: 6331, peer_group: us-insurance, valuation_family: insurer,
      family_note: "A property and casualty insurer (Spec 02A.1 §5.1)."}
   - {ticker: UNH, name: "UnitedHealth Group Incorporated", short_name: UnitedHealth, cik: 731766, exchange: NYSE, fy_end_month: 12, sic: 6324, peer_group: us-health-benefits, valuation_family: mixed,
