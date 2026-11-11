@@ -15,7 +15,8 @@ import { formatDate, formatPercentLevel, formatShare, formatTableDate, type Mark
 import type { PromoterHoldingRow } from "@/lib/queries/api";
 
 function Filing({ row, children }: { row: PromoterHoldingRow; children: ReactNode }) {
-  if (!row.source_url) return <>{children}</>;
+  // A stored URL that isn't https:// renders as text, not a link (the check the other filing links make; #367).
+  if (!row.source_url?.startsWith("https://")) return <>{children}</>;
   return (
     <a href={row.source_url} target="_blank" rel="noopener noreferrer" className="text-ink-1 underline hover:text-ink-2">
       {children}

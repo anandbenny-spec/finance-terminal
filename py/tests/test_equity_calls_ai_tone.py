@@ -119,7 +119,7 @@ def test_a_run_limited_to_tone_asks_for_the_management_passages_only_and_stores_
     assert listing.startswith("[1] (opening remarks, Ravi Rao)") and "\n\n[2] (answer, Meera Iyer)" in listing
     assert "Anil Shah" not in listing and "Moderator" not in listing and "Thank you all for joining" not in listing
     ((status, reason, version, content),) = tone_outputs(c["doc"])
-    assert (status, reason, version) == ("published", "", "v1")
+    assert (status, reason, version) == ("published", "", eca.PROMPT_VERSION[ct.TASK])
     assert [s["score"] for s in content["scores"]] == [2, -1] and [s["section"] for s in content["scores"]] == ["opening", "qa"]
     assert [e["quote"] for e in content["evidence"]] == [UP, DOWN] and content["dropped"] == {}
     assert FILL not in json.dumps(content)                                  # scores and quotes only, no passage text
@@ -186,3 +186,24 @@ def test_a_score_out_of_range_is_retried_with_a_note_then_rejected_with_an_alert
     assert fake.create_calls == 2 and last_run()["checks"]["tone_stored"]["passed"]
     assert go(task([c["slug"]], fake)) == 0, last_run()["error"][-400:].replace("\n", " | ")
     assert fake.create_calls == 2 and len(tone_outputs(c["doc"])) == 2       # an unchanged input is never sent twice
+
+
+# ---------------------------------------------------------------------------------------------- the gate set's Sonnet round (#175)
+@pytest.mark.db
+def test_a_tone_run_limited_to_a_set_asks_only_for_the_sets_calls_on_the_versions_model(monkeypatch, tmp_path):
+    monkeypatch.setenv(eca.ONLY_ENV, ct.TASK)
+    a, b = rechunk(make_call(lines=LONG, fy_end=3)), rechunk(make_call(lines=LONG, fy_end=3))
+    listed = tmp_path / "set.json"
+    listed.write_text(json.dumps({"items": [{"id": f"t:{a['doc']}-1", "document_id": a["doc"], "chunk_no": 1}]}), encoding="utf-8")
+    monkeypatch.setitem(eca.TONE_SETS, "test_set", listed)
+    monkeypatch.setenv(eca.TONE_SET_ENV, "test_set")
+    fake = FakeClaude(["ok"], reply=replies(), answer=tone_answer([2, -1], [(1, UP), (2, DOWN)]))
+    assert go(task([a["slug"], b["slug"]], fake)) == 0, last_run()["error"][-400:].replace("\n", " | ")
+    assert last_run()["status"] == "success"
+    assert q("select document_id, model, prompt_version from ops.ai_request where document_id = any(%s) and ai_task = 'call_tone'",
+             [a["doc"], b["doc"]]) == [(a["doc"], ct.model_of(eca.PROMPT_VERSION[ct.TASK]) or "claude-haiku-5-5",
+                                         eca.PROMPT_VERSION[ct.TASK])]
+    ((_, batch),) = fake.batches.items()
+    (req,) = batch["requests"]
+    assert req["params"]["model"] == (ct.model_of(eca.PROMPT_VERSION[ct.TASK]) or "claude-haiku-5-5")
+    assert tone_outputs(b["doc"]) == []

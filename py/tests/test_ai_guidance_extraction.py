@@ -382,6 +382,81 @@ def test_a_quote_over_400_code_points_is_dropped_and_one_of_exactly_400_stands()
     assert stated.empty and stated.drops == {"too_long": 1}
 
 
+STATED = "Revenue was 4,500 crore in Q2 FY27."
+
+
+def _as_said(kind: str, field: str, value: str) -> ge.Checked:
+    """One item of `kind` ("target" or "stated") whose `field` is `value`, everything else valid."""
+    if kind == "target":
+        return chk(one(GROWTH), [T(GROWTH, **{field: value})])
+    return chk(one(STATED), stated=[S(STATED, **{field: value})])
+
+
+@pytest.mark.parametrize("kind", ["target", "stated"])
+@pytest.mark.parametrize("field", ["metric_text", "period_text", "scope_text"])
+def test_an_as_said_field_over_80_characters_drops_its_item_and_one_of_exactly_80_stands(kind, field):
+    assert ge.MAX_AS_SAID == 80
+    for n, kept in ((1, True), (79, True), (80, True), (81, False), (200, False), (300, False)):
+        value = "w" * n
+        c = _as_said(kind, field, value)
+        items = c.targets if kind == "target" else c.stated
+        assert bool(items) is kept, (field, n)
+        assert c.drops == ({} if kept else {"text_too_long": 1}), (field, n)
+        assert c.empty is (not kept)
+        if kept:
+            assert items[0][field] == value                      # stored as said, never cut
+
+
+def test_an_item_with_several_long_fields_is_counted_once_and_a_long_one_never_becomes_a_cut_one():
+    long = "w" * 150
+    c = chk(one(GROWTH), [T(GROWTH, metric_text=long, period_text=long, scope_text=long)])
+    assert c.empty and c.drops == {"text_too_long": 1}
+    c = chk(one(STATED), stated=[S(STATED, metric_text=long, period_text=long, scope_text=long)])
+    assert c.empty and c.drops == {"text_too_long": 1}
+
+
+def test_the_80_characters_are_counted_as_stored_trimmed_with_spaces_joined_and_in_code_points():
+    spaced = "a" * 40 + "   \n " + "b" * 39                    # 80 characters once the spaces are joined, 84 as sent
+    c = chk(one(GROWTH), [T(GROWTH, metric_text=f"  {spaced}  ")])
+    assert c.drops == {} and c.targets[0]["metric_text"] == "a" * 40 + " " + "b" * 39 and len(c.targets[0]["metric_text"]) == 80
+    c = chk(one(GROWTH), [T(GROWTH, metric_text="a" * 40 + "   " + "b" * 40)])         # 81 once joined
+    assert c.empty and c.drops == {"text_too_long": 1}
+    astral = "\U0001d538"                                       # one code point, two UTF-16 units: 80 of them stand, 81 do not
+    for n, kept in ((80, True), (81, False)):
+        c = chk(one(GROWTH), [T(GROWTH, scope_text=astral * n)])
+        assert bool(c.targets) is kept and c.drops == ({} if kept else {"text_too_long": 1}), n
+
+
+def test_an_empty_or_missing_as_said_field_is_not_a_length_problem_and_a_dropped_item_leaves_the_others_and_their_numbering():
+    c = chk(one(GROWTH), [T(GROWTH, period_text="", scope_text=None)])
+    assert c.drops == {} and c.targets[0]["period_text"] is None and c.targets[0]["scope_text"] is None
+    both = doc((RAO, "management", f"{GROWTH} {STATED}"))
+    c = chk(both, [T(GROWTH, scope_text="w" * 81)], [S(STATED)])
+    assert c.drops == {"text_too_long": 1} and not c.targets and len(c.stated) == 1
+    assert [s["citation_no"] for s in c.stated] == [1] and len(c.citations) == 1
+    c = chk(both, [T(GROWTH)], [S(STATED, metric_text="w" * 81)])
+    assert c.drops == {"text_too_long": 1} and len(c.targets) == 1 and not c.stated
+    assert [t["citation_no"] for t in c.targets] == [1] and len(c.citations) == 1
+
+
+def test_an_item_that_fails_an_earlier_check_in_the_common_part_keeps_that_reason_over_a_long_field():
+    c = chk(one(GROWTH), [T(GROWTH, metric="not_a_metric", metric_text="w" * 90)])
+    assert c.drops == {"metric": 1}
+    c = chk(one(GROWTH), [T(GROWTH, metric_text="", scope_text="w" * 90)])
+    assert c.drops == {"malformed": 1}
+
+
+def test_the_cap_is_in_the_check_not_the_schema_which_is_part_of_every_requests_hash():
+    # Structured outputs take no length limits (ft/ai/client.py, load_schema), and a schema change would change every
+    # request's input hash, so a call already extracted would be asked again. The 80 is held by the check alone.
+    for part in (SCHEMA["properties"]["targets"]["items"], SCHEMA["properties"]["stated_figures"]["items"]):
+        assert "maxLength" not in json.dumps(part["properties"])
+
+
+def test_the_new_drop_reason_is_listed_with_a_label_that_names_the_cap():
+    assert "text_too_long" in ge.DROPS and "80" in ge.DROPS["text_too_long"]
+
+
 def test_a_quote_is_counted_in_code_points_not_in_utf16_units():
     pound = "We expect capital expenditure of 750 crore in FY28 ₹" + "😀" * 400                # 400 emoji: 800 UTF-16 units
     call = one(pound)

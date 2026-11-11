@@ -112,7 +112,7 @@ from core.chunk c join core.document d on d.id = c.document_id where d.external_
 -- Outputs: a published summary with five citations (1 the whole text, 2 unverified, 3 into module 1's public statement,
 -- 4 into the unpublished transcript, 5 an event); a draft summary; a published figures output.
 insert into core.ai_output (task, document_id, content, body, status, model, prompt_key, prompt_version, input_sha256)
-select v.task, d.id, '{}', v.body, 'draft', 'claude-haiku-5-5', v.task, 'v1', sha256(convert_to(v.body, 'UTF8'))
+select v.task, d.id, '{}', v.body, 'draft', 'claude-haiku-5-5', v.task, case when v.task = 'call_summary' then 'v11' else 'v1' end, sha256(convert_to(v.body, 'UTF8'))
 from core.document d, (values ('call_summary', 'ec23 summary'), ('call_summary', 'ec23 draft'), ('guidance_extraction', 'ec23 figures')) v(task, body)
 where d.external_key = 'ec23-ec23-co-call-q2-fy27';
 insert into core.ai_citation (ai_output_id, citation_no, claim_path, kind, document_id, char_start, char_end, event_id, verified)

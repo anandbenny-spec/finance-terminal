@@ -229,10 +229,10 @@ def test_a_rule_with_a_catch_up_reads_and_validates(tmp_path):
     assert set(config.CATCH_UPS.values()) <= set(config.NAMED_RULES)
 
     tasks = config.load()
-    assert tasks[FED].rules == {"daily": "every 20 hours or fomc_catch_up", "watch": "fomc_decision_day"}
-    assert tasks[RBI].rules == {"daily": "every 20 hours or mpc_catch_up", "watch": "mpc_decision_day"}
-    assert tasks[AI].rules == {"daily": "every 20 hours or ai_catch_up", "watch": "after_decision_document"}
-    assert all(tasks[k].min_interval == timedelta(hours=20) for k in (FED, RBI, AI))
+    assert tasks[FED].rules == {"daily": "every 16 hours or fomc_catch_up", "watch": "fomc_decision_day"}
+    assert tasks[RBI].rules == {"daily": "every 16 hours or mpc_catch_up", "watch": "mpc_decision_day"}
+    assert tasks[AI].rules == {"daily": "every 16 hours or ai_catch_up", "watch": "after_decision_document"}
+    assert all(tasks[k].min_interval == timedelta(hours=16) for k in (FED, RBI, AI))
 
     def load(rule):
         f = tmp_path / "tasks.yaml"

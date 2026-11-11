@@ -16,6 +16,16 @@ the set from being mostly positive, which would make the gate trivial):
 The items are listed by chunk id only (no transcript text in the repo). Reading is through a read-only session: on GitHub's
 runners (`python -m ft.eval.tone_set`, which prints the file as annotations) or through the read-only dev connector with
 `CANDIDATE_SQL` (the same query, the same thinning). Writes nothing, calls no model.
+
+**The second set, `earnings_tone_2`** (rule version 2; Anand, 10 Nov 2026, 22:24-22:33 IST: the gate's second round, after both
+models failed the first set): the same rule with its own seed, leaving out the first set's 30 passages (which raters, models and
+Anand had all seen) before the thinning, so a call whose first-set passage was the smallest hash offers its next one. `SETS` holds
+each set's seed, rule version and the sets it leaves out; `--set` picks one.
+
+**Word count fix (10 Nov 2026, after the second round):** the count trims spaces, tabs and line breaks before splitting. It used to
+trim spaces only, so a passage ending in a line break counted one word too many, and `earnings_tone_2:5115-2` (39 words) was picked
+though production's passage list (`ft/ai/call_tone.passages`, at least `MIN_WORDS` words) leaves it out; the gate counted it wrong.
+Both committed sets stand as picked; a new pick no longer offers such a passage.
 """
 from __future__ import annotations
 
@@ -26,6 +36,7 @@ import os
 import sys
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 
 RULE_VERSION = 1
 SET_NAME = "earnings_tone"
@@ -37,6 +48,13 @@ PER_CELL = 5
 PEER_CAP = 4
 MIN_SEASONS = 6
 SEED = "earnings_tone-1"
+# Each set: its seed, its rule version and the earlier sets whose passages it leaves out (`--set`; the default is the first set).
+SETS = {
+    SET_NAME: {"seed": SEED, "rule_version": RULE_VERSION, "excludes": ()},
+    "earnings_tone_2": {"seed": "earnings_tone-2", "rule_version": 2, "excludes": (SET_NAME,)},
+}
+SETS_DIR = Path(__file__).resolve().parents[3] / "config" / "eval" / "sets"
+ANNOTATION_CHARS = 3900  # an annotation's message is cut at 4,096 characters, so the payload goes out in parts
 MAX_NODES = 200_000      # a bound on the search; the data never needs more than a few hundred
 
 CANDIDATE_SQL = """
@@ -59,7 +77,8 @@ with calls as (
     from calls c
     join equity.call_turn t on t.document_id = c.doc and t.role = 'management' and t.section in ('opening', 'qa', 'closing')
     join core.chunk k on k.document_id = c.doc and k.char_start >= t.char_start and k.char_end <= t.char_end
-   where cardinality(regexp_split_to_array(btrim(k.body), '\\s+')) >= %(min_words)s
+   where cardinality(regexp_split_to_array(btrim(k.body, E' \\t\\r\\n'), '\\s+')) >= %(min_words)s
+     and (c.doc || ':' || k.chunk_no) <> all(%(exclude)s::text[])
 )
 select slug, fiscal_label, peer_group, pat_yoy, doc, chunk_no, section, grp, h
   from (select r.*, row_number() over (partition by doc, grp order by h) as rn from ranked r) x
@@ -79,6 +98,7 @@ class Cand:
     section: str                # opening | qa | closing
     group: str                  # open_close | answers
     h: str                      # md5 of seed:document:chunk
+    set_name: str = SET_NAME    # the set the passage is a candidate for (its id's prefix)
 
     @property
     def stratum(self) -> str:
@@ -86,7 +106,7 @@ class Cand:
 
     @property
     def id(self) -> str:
-        return f"{SET_NAME}:{self.document_id}-{self.chunk_no}"
+        return f"{self.set_name}:{self.document_id}-{self.chunk_no}"
 
 
 class NotEnough(Exception):
@@ -199,14 +219,31 @@ def item(c: Cand) -> dict:
             "stratum": c.stratum, "slug": c.slug, "season": c.season, "peer_group": c.peer_group}
 
 
-def payload(chosen: list[Cand], chosen_from: str) -> dict:
-    return {"rule_version": RULE_VERSION, "seed": SEED, "chosen_from": chosen_from, "set": SET_NAME,
-            "rule": "Spec 02B §5.8; ft/eval/tone_set.py", "items": [item(c) for c in chosen]}
+def payload(chosen: list[Cand], chosen_from: str, set_name: str = SET_NAME) -> dict:
+    spec = SETS[set_name]
+    out = {"rule_version": spec["rule_version"], "seed": spec["seed"], "chosen_from": chosen_from, "set": set_name,
+           "rule": "Spec 02B §5.8; ft/eval/tone_set.py", "items": [item(c) for c in chosen]}
+    if spec["excludes"]:
+        out["excludes"] = list(spec["excludes"])
+    return out
 
 
-def load(conn) -> list[Cand]:
-    rows = conn.execute(CANDIDATE_SQL, {"seed": SEED, "min_words": MIN_WORDS}).fetchall()
-    return [Cand(slug, season, peer, float(pat), doc, no, section, grp, h)
+def items_file(set_name: str) -> Path:
+    return SETS_DIR / f"{set_name}_items.json"
+
+
+def excluded(set_name: str) -> list[str]:
+    """'document:chunk' of every passage in the sets this set leaves out (their committed items files)."""
+    out = []
+    for other in SETS[set_name]["excludes"]:
+        out += [f"{i['document_id']}:{i['chunk_no']}" for i in json.loads(items_file(other).read_text(encoding="utf-8"))["items"]]
+    return sorted(out)
+
+
+def load(conn, set_name: str = SET_NAME) -> list[Cand]:
+    spec = SETS[set_name]
+    rows = conn.execute(CANDIDATE_SQL, {"seed": spec["seed"], "min_words": MIN_WORDS, "exclude": excluded(set_name)}).fetchall()
+    return [Cand(slug, season, peer, float(pat), doc, no, section, grp, h, set_name)
             for slug, season, peer, pat, doc, no, section, grp, h in rows]
 
 
@@ -214,9 +251,16 @@ def annotation(title: str, message: str) -> str:
     return f"::notice title={title}::{message.replace('%', '%25').replace(chr(13), '%0D').replace(chr(10), '%0A')}"
 
 
+def annotations(body: str) -> list[str]:
+    """The payload as notices of at most ANNOTATION_CHARS each (GitHub cuts a message at 4,096); joined in order they give it back."""
+    parts = [body[i:i + ANNOTATION_CHARS] for i in range(0, len(body), ANNOTATION_CHARS)] or [""]
+    return [annotation(f"tone items ({n} of {len(parts)})", part) for n, part in enumerate(parts, 1)]
+
+
 def main(argv: list[str] | None = None, *, env=None, out=print) -> int:
     p = argparse.ArgumentParser(prog="python -m ft.eval.tone_set", description=__doc__.split("\n\n")[0])
     p.add_argument("--target", choices=("dev", "production"), default="dev", help="logged; the workflow picks the credentials")
+    p.add_argument("--set", choices=sorted(SETS), default=SET_NAME, help="which set to pick (SETS)")
     args = p.parse_args(argv)
     env = os.environ if env is None else env
     dsn = (env.get("JOB_DATABASE_URL") or "").strip()
@@ -226,14 +270,15 @@ def main(argv: list[str] | None = None, *, env=None, out=print) -> int:
 
     with connect(dsn, autocommit=True, role="eval-items") as conn:
         conn.execute("set default_transaction_read_only = on")
-        cands = load(conn)
+        cands = load(conn, args.set)
     try:
         chosen = pick(cands)
     except NotEnough as e:
         out(f"::error title=tone items::not enough candidates: {e}")
         return 1
-    body = json.dumps(payload(chosen, f"{args.target}"), ensure_ascii=False, separators=(",", ":"))
-    out(annotation("tone items", body))
+    body = json.dumps(payload(chosen, f"{args.target}", args.set), ensure_ascii=False, separators=(",", ":"))
+    for line in annotations(body):
+        out(line)
     return 0
 
 

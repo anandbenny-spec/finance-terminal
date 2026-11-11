@@ -1,0 +1,342 @@
+{
+ "rule_version": 2,
+ "seed": "earnings_tone-2",
+ "chosen_from": "dev, on GitHub's runners (eval-items run 42861836816, 10 Nov 2026)",
+ "set": "earnings_tone_2",
+ "rule": "Spec 02B §5.8; ft/eval/tone_set.py",
+ "items": [
+  {
+   "id": "earnings_tone_2:5027-121",
+   "document_id": 5027,
+   "chunk_no": 121,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "within",
+   "slug": "powergrid",
+   "season": "Q1 FY27",
+   "peer_group": "power"
+  },
+  {
+   "id": "earnings_tone_2:5046-84",
+   "document_id": 5046,
+   "chunk_no": 84,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "within",
+   "slug": "bel",
+   "season": "Q1 FY27",
+   "peer_group": "engineering-defence"
+  },
+  {
+   "id": "earnings_tone_2:5077-58",
+   "document_id": 5077,
+   "chunk_no": 58,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "rose",
+   "slug": "adaniports",
+   "season": "Q4 FY25",
+   "peer_group": "transport"
+  },
+  {
+   "id": "earnings_tone_2:5090-11",
+   "document_id": 5090,
+   "chunk_no": 11,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "fell",
+   "slug": "bajaj-auto",
+   "season": "Q4 FY25",
+   "peer_group": "autos"
+  },
+  {
+   "id": "earnings_tone_2:5115-2",
+   "document_id": 5115,
+   "chunk_no": 2,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "rose",
+   "slug": "eichermot",
+   "season": "Q3 FY25",
+   "peer_group": "autos"
+  },
+  {
+   "id": "earnings_tone_2:5128-21",
+   "document_id": 5128,
+   "chunk_no": 21,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "within",
+   "slug": "hdfcbank",
+   "season": "Q4 FY25",
+   "peer_group": "banks"
+  },
+  {
+   "id": "earnings_tone_2:5134-39",
+   "document_id": 5134,
+   "chunk_no": 39,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "rose",
+   "slug": "hindalco",
+   "season": "Q3 FY25",
+   "peer_group": "metals-mining"
+  },
+  {
+   "id": "earnings_tone_2:5139-12",
+   "document_id": 5139,
+   "chunk_no": 12,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "within",
+   "slug": "hindunilvr",
+   "season": "Q1 FY26",
+   "peer_group": "fmcg"
+  },
+  {
+   "id": "earnings_tone_2:5199-39",
+   "document_id": 5199,
+   "chunk_no": 39,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "fell",
+   "slug": "tatasteel",
+   "season": "Q3 FY25",
+   "peer_group": "steel"
+  },
+  {
+   "id": "earnings_tone_2:5204-53",
+   "document_id": 5204,
+   "chunk_no": 53,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "within",
+   "slug": "tcs",
+   "season": "Q1 FY26",
+   "peer_group": "it-services"
+  },
+  {
+   "id": "earnings_tone_2:5210-77",
+   "document_id": 5210,
+   "chunk_no": 77,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "rose",
+   "slug": "titan",
+   "season": "Q1 FY26",
+   "peer_group": "consumer-retail"
+  },
+  {
+   "id": "earnings_tone_2:5213-59",
+   "document_id": 5213,
+   "chunk_no": 59,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "fell",
+   "slug": "tmpv",
+   "season": "Q1 FY26",
+   "peer_group": "autos"
+  },
+  {
+   "id": "earnings_tone_2:5214-114",
+   "document_id": 5214,
+   "chunk_no": 114,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "fell",
+   "slug": "ultracemco",
+   "season": "Q3 FY25",
+   "peer_group": "building-materials"
+  },
+  {
+   "id": "earnings_tone_2:5219-29",
+   "document_id": 5219,
+   "chunk_no": 29,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "fell",
+   "slug": "adanient",
+   "season": "Q2 FY27",
+   "peer_group": "metals-mining"
+  },
+  {
+   "id": "earnings_tone_2:5234-76",
+   "document_id": 5234,
+   "chunk_no": 76,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "rose",
+   "slug": "infy",
+   "season": "Q1 FY27",
+   "peer_group": "it-services"
+  },
+  {
+   "id": "earnings_tone_2:5238-4",
+   "document_id": 5238,
+   "chunk_no": 4,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "rose",
+   "slug": "lt",
+   "season": "Q2 FY27",
+   "peer_group": "engineering-defence"
+  },
+  {
+   "id": "earnings_tone_2:5240-7",
+   "document_id": 5240,
+   "chunk_no": 7,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "fell",
+   "slug": "maruti",
+   "season": "Q2 FY27",
+   "peer_group": "autos"
+  },
+  {
+   "id": "earnings_tone_2:5243-20",
+   "document_id": 5243,
+   "chunk_no": 20,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "rose",
+   "slug": "tataconsum",
+   "season": "Q1 FY27",
+   "peer_group": "fmcg"
+  },
+  {
+   "id": "earnings_tone_2:5266-8",
+   "document_id": 5266,
+   "chunk_no": 8,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "rose",
+   "slug": "asianpaint",
+   "season": "Q2 FY26",
+   "peer_group": "consumer-retail"
+  },
+  {
+   "id": "earnings_tone_2:5269-39",
+   "document_id": 5269,
+   "chunk_no": 39,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "within",
+   "slug": "axisbank",
+   "season": "Q3 FY26",
+   "peer_group": "banks"
+  },
+  {
+   "id": "earnings_tone_2:5275-13",
+   "document_id": 5275,
+   "chunk_no": 13,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "within",
+   "slug": "bajajfinsv",
+   "season": "Q2 FY26",
+   "peer_group": "nbfc"
+  },
+  {
+   "id": "earnings_tone_2:5280-8",
+   "document_id": 5280,
+   "chunk_no": 8,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "rose",
+   "slug": "bajfinance",
+   "season": "Q4 FY26",
+   "peer_group": "nbfc"
+  },
+  {
+   "id": "earnings_tone_2:5287-26",
+   "document_id": 5287,
+   "chunk_no": 26,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "rose",
+   "slug": "bse",
+   "season": "Q2 FY26",
+   "peer_group": "capital-markets"
+  },
+  {
+   "id": "earnings_tone_2:5290-8",
+   "document_id": 5290,
+   "chunk_no": 8,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "within",
+   "slug": "cipla",
+   "season": "Q2 FY26",
+   "peer_group": "pharma"
+  },
+  {
+   "id": "earnings_tone_2:5305-3",
+   "document_id": 5305,
+   "chunk_no": 3,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "fell",
+   "slug": "hcltech",
+   "season": "Q3 FY26",
+   "peer_group": "it-services"
+  },
+  {
+   "id": "earnings_tone_2:5324-2",
+   "document_id": 5324,
+   "chunk_no": 2,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "within",
+   "slug": "icicibank",
+   "season": "Q4 FY26",
+   "peer_group": "banks"
+  },
+  {
+   "id": "earnings_tone_2:5327-3",
+   "document_id": 5327,
+   "chunk_no": 3,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "fell",
+   "slug": "indigo",
+   "season": "Q4 FY26",
+   "peer_group": "transport"
+  },
+  {
+   "id": "earnings_tone_2:5357-8",
+   "document_id": 5357,
+   "chunk_no": 8,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "within",
+   "slug": "ntpc",
+   "season": "Q3 FY26",
+   "peer_group": "power"
+  },
+  {
+   "id": "earnings_tone_2:5375-5",
+   "document_id": 5375,
+   "chunk_no": 5,
+   "section": "opening",
+   "group": "open_close",
+   "stratum": "fell",
+   "slug": "shriramfin",
+   "season": "Q3 FY26",
+   "peer_group": "nbfc"
+  },
+  {
+   "id": "earnings_tone_2:5381-32",
+   "document_id": 5381,
+   "chunk_no": 32,
+   "section": "qa",
+   "group": "answers",
+   "stratum": "fell",
+   "slug": "sunpharma",
+   "season": "Q2 FY27",
+   "peer_group": "pharma"
+  }
+ ],
+ "excludes": [
+  "earnings_tone"
+ ]
+}

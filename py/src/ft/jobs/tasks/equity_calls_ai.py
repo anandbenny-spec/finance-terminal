@@ -106,6 +106,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from pathlib import Path
 
 from ft.ai import batch, summaries
 from ft.ai import call_summary as cs
@@ -131,14 +132,20 @@ from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TARGETS
 
-# v11 runs on Opus 5.5 at effort high (ft/ai/call_summary.py, MODEL_OF), about 40 times Haiku's price (config/ai_prices.yaml): a run that asks
-# for it on production would cost far past #178's approved 1.50 USD. So this branch (claude/2b-15-summary-v11-opus, #178) is run on dev only and
-# is not merged to main until the summary gate has passed and Anand has decided the production run (each company's latest call only); main stays
-# on v9.
-PROMPT_VERSION = {cs.TASK: "v11", ge.TASK: "v1", ct.TASK: "v1"}
+# call_summary v11 runs on Opus 5.5 at effort high (ft/ai/call_summary.py, MODEL_OF), about 40 times Haiku's price
+# (config/ai_prices.yaml). Anand decided on 10 Nov 2026, 19:09 IST that the summaries ship as labelled paraphrases with their
+# quotes in view (#178), so v11 is merged to main (#370 part 2a, with his OK in the session, 11 Nov 2026). A run with no date
+# window asks for each company's newest call only (#370, `summary_scope`), and §7's $5 run estimate still holds about 10 calls a run.
+# call_tone v3 on Haiku 5.5 passed the tone gate's second round (#175; 10 Nov 2026: 25 of 30 on earnings_tone_2, no reversals), so
+# it is the tone prompt. v1 (Haiku) and v2 (v1's text on Sonnet) failed the first set; v4 and v5 (v3's text on Sonnet and Opus) were
+# never needed. A tone run is still opt-in (CALLS_AI_TASK=call_tone): no scheduled run asks for tone.
+PROMPT_VERSION = {cs.TASK: "v11", ge.TASK: "v1", ct.TASK: "v3"}
 IST = "Asia/Kolkata"
 SHOWN = 12
 ONLY_ENV = "CALLS_AI_TASK"            # both (the default) | call_summary | guidance_extraction | call_tone: limits what a run asks for (#302)
+TONE_SET_ENV = "CALLS_AI_TONE_SET"    # empty (the default) | earnings_tone: a tone-only run limited to that evaluation set's calls (#175)
+_SETS_DIR = Path(__file__).resolve().parents[4] / "config" / "eval" / "sets"
+TONE_SETS = {name: _SETS_DIR / f"{name}_items.json" for name in ("earnings_tone", "earnings_tone_2")}
 
 
 NEWEST, ALL = "newest", "all"         # which calls a run asks a summary for (#370): `summary_scope`
@@ -160,6 +167,26 @@ def only_task(env=None) -> str | None:
     if v not in ("both", cs.TASK, ge.TASK, ct.TASK):
         raise ValueError(f"{ONLY_ENV} must be both, {cs.TASK} or {ge.TASK} (or {ct.TASK}), not {v!r}")
     return None if v == "both" else v
+
+
+def tone_set_documents(only: str | None, target: str, env=None) -> list[int] | None:
+    """The documents of the evaluation set a tone-only run is limited to (`CALLS_AI_TONE_SET`; #175, the tone gate's Sonnet round),
+    or None for no limit. The set's items name their chunks, so its calls are the documents those chunks are in. A value other than
+    a known set, one given to a run that isn't limited to `call_tone`, or one given to a run on any project but dev (the set holds
+    dev's document ids: Review 02a F1-03) stops the run before anything is sent."""
+    v = ((os.environ if env is None else env).get(TONE_SET_ENV) or "").strip()
+    if not v:
+        return None
+    if v not in TONE_SETS:
+        raise ValueError(f"{TONE_SET_ENV} must be empty or one of {sorted(TONE_SETS)}, not {v!r}")
+    if only != ct.TASK:
+        raise ValueError(f"{TONE_SET_ENV} limits a tone run: it needs {ONLY_ENV}={ct.TASK}")
+    if target != "dev":
+        raise ValueError(f"{TONE_SET_ENV}: the set holds dev's document ids, so it runs on dev only, not {target!r}")
+    ids = sorted({int(i["document_id"]) for i in json.loads(TONE_SETS[v].read_text(encoding="utf-8"))["items"]})
+    if not ids:
+        raise ValueError(f"{TONE_SET_ENV}={v}: the set has no items")
+    return ids
 
 
 def _names(items: list[str]) -> str:
@@ -377,8 +404,9 @@ class EquityCallsAi(BatchSteps, Task):
         f = Fetched("batch", budget=batch.monthly_budget(db), month_spend=batch.month_spend(db), since=ctx.since,
                     until=ctx.until, only=only_task(), summaries=summary_scope(ctx.since, ctx.until))
         prompts = {t: load_prompt(t, v) for t, v in PROMPT_VERSION.items()}
-        works = [w for w in self._calls(db, since=ctx.since, until=ctx.until, skipped=f.no_guidance, tone=f.only == ct.TASK,
-                                        newest_only=f.summaries == NEWEST)
+        doc_ids = tone_set_documents(f.only, ctx.target)    # None unless a tone-only run on dev names an evaluation set (#175)
+        works = [w for w in self._calls(db, doc_ids=doc_ids, since=ctx.since, until=ctx.until, skipped=f.no_guidance,
+                                        tone=f.only == ct.TASK, newest_only=f.summaries == NEWEST)
                  if (f.only is None and w.task != ct.TASK) or f.only == w.task]       # tone only when the run is limited to it
         f.wanted = sum(1 for w in works if w.task == cs.TASK)
         f.wanted_guidance = sum(1 for w in works if w.task == ge.TASK)
