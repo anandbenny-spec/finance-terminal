@@ -578,7 +578,7 @@ def test_a_year_end_that_doesnt_tie_fails_the_load_and_writes_nothing(s3, monkey
 @pytest.mark.db
 @needs_fixtures
 def test_a_company_missing_from_the_master_fails_the_load(s3, monkeypatch):
-    q("delete from core.entity_identifier where value = '19617' and scheme = 'cik'")
+    q("delete from core.entity_identifier where value = '19617' and scheme = 'cik' returning entity_id")
     _code, tr = go(Sec(), monkeypatch)
     assert tr[0] == "checks_failed" and checks(tr)["company_facts"] == (False, True), tr
     assert "JPM (not in the company master" in detail(tr, "company_facts") and counts()[0] == 0
