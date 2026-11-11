@@ -41,7 +41,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from ft.engines.document.job import DocumentFields, insert_document
+from ft.engines.document.job import DocumentFields
 from ft.equity import edgar
 from ft.equity import us_universe as us
 from ft.equity.guard import equity_due
@@ -65,8 +65,8 @@ def document_url(cik: int, accn: str, primary: str) -> str:
     return f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn.replace('-', '')}/{primary}"
 
 
-def _names(items: list[str]) -> str:
-    return "; ".join(items[:SHOWN]) + (f"; and {len(items) - SHOWN} more" if len(items) > SHOWN else "")
+def _names(items: list[str], shown: int = SHOWN) -> str:
+    return "; ".join(items[:shown]) + (f"; and {len(items) - shown} more" if len(items) > shown else "")
 
 
 @dataclass(frozen=True)
@@ -226,6 +226,8 @@ class UsFilings(Task):
 
     # ------------------------------------------------------------------ load (one transaction)
     def load(self, tx, f: Fetched, task_run_id) -> int:
+        """Batched per company (dev run 1 spent 19 minutes on one round trip per row): the new filings' documents, their
+        `equity.filing` rows and their statement rows, each in one `executemany`."""
         sec = tx.execute("select id from core.source where key = 'sec'").fetchone()[0]
         COLUMNS = columns(f.tags)
         insert = (f"""insert into equity.financials (document_id, entity_id, basis, period_start, period_end,
@@ -236,48 +238,49 @@ class UsFilings(Task):
             if x.error or x.stmts is None:
                 continue
             by = {b.filing.accn: b for b in x.built}
-            for accn in x.new + x.rebuild:
-                b = by[accn]
-                fl = b.filing
-                listed = x.listed.get(accn)
-                accepted = listed.accepted if listed else None
-                note = (f"v{self.version}: {fl.form} filed {fl.filed.isoformat()}"
-                        + ("" if accepted else " (its acceptance time isn't in SEC's recent filings list)")
-                        + f"; {len(b.rows)} rows from company facts (CIK {fl.cik})"
-                        + (f"; {'; '.join(b.notes)}" if b.notes else ""))
-                if accn in x.new:
-                    reg = insert_document(tx, DocumentFields(
-                        "results_xbrl", x.entity_id, sec, accn, fl.link(),
-                        f"{x.c.name} {fl.form}, period ended {b.period_end.isoformat()}", x.raw[fl.cik], accepted), None)
-                    doc_id = reg.document_id
-                    tx.execute(
+            doc_ids: dict[str, int] = {}
+            new = [by[a] for a in x.new]
+            if new:
+                doc_ids = dict(zip(x.new, self._documents(tx, [
+                    DocumentFields("results_xbrl", x.entity_id, sec, b.filing.accn, b.filing.link(),
+                                   f"{x.c.name} {b.filing.form}, period ended {b.period_end.isoformat()}",
+                                   x.raw[b.filing.cik], self._accepted(x, b.filing.accn)) for b in new]), strict=True))
+                with tx.cursor() as cur:
+                    cur.executemany(
                         """insert into equity.filing (document_id, entity_id, basis, format, period_end, fy_start, fy_end,
                                                       audited, filed_at, source_url, exchange, parse_status, parse_note,
                                                       parser_version)
                            values (%s, %s, 'consolidated', 'us_gaap', %s, %s, %s, %s, %s, %s, 'SEC', 'parsed', %s, %s)""",
-                        (doc_id, x.entity_id, b.period_end, b.fy_start, b.period_end if fl.annual else None,
-                         None if fl.amendment else fl.annual, accepted, fl.link(), note, str(self.version)))
-                    registered += 1
-                else:
-                    doc_id = tx.execute("select id from core.document where source_id = %s and external_key = %s "
-                                        "order by version_no desc limit 1", (sec, accn)).fetchone()[0]
-                    kept = tx.execute("""select shares_outstanding, tags->>'shares_outstanding' from equity.financials
-                                          where document_id = %s and period_kind = 'instant'""", (doc_id,)).fetchone()
-                    tx.execute("delete from equity.financials where document_id = %s", (doc_id,))
-                    tx.execute("""update equity.filing set parse_status = %s, parse_note = %s, parser_version = %s
-                                   where document_id = %s""",
-                               ("parsed" if b.rows else "failed", note, str(self.version), doc_id))
-                    if x.c.multi_class and kept and kept[0] is not None:
-                        for r in b.rows:
-                            if r.period_kind == "instant" and r.values.get("shares_outstanding") is None:
-                                r.values["shares_outstanding"], r.tags["shares_outstanding"] = kept[0], kept[1]
-                    rebuilt += 1
-                for r in b.rows:
-                    tx.execute(insert, (doc_id, x.entity_id, r.period_start, r.period_end, r.period_kind,
-                                        *[r.values.get(col) for col in COLUMNS],
-                                        json.dumps(r.tags, ensure_ascii=False)))
-                    rows[r.period_kind] = rows.get(r.period_kind, 0) + 1
-                    n += 1
+                        [(doc_ids[b.filing.accn], x.entity_id, b.period_end, b.fy_start,
+                          b.period_end if b.filing.annual else None, None if b.filing.amendment else b.filing.annual,
+                          self._accepted(x, b.filing.accn), b.filing.link(), self._note(x, b), str(self.version))
+                         for b in new])
+                registered += len(new)
+            for accn in x.rebuild:
+                b = by[accn]
+                doc_id = doc_ids[accn] = tx.execute(
+                    "select id from core.document where source_id = %s and external_key = %s order by version_no desc "
+                    "limit 1", (sec, accn)).fetchone()[0]
+                kept = tx.execute("""select shares_outstanding, tags->>'shares_outstanding' from equity.financials
+                                      where document_id = %s and period_kind = 'instant'""", (doc_id,)).fetchone()
+                tx.execute("delete from equity.financials where document_id = %s", (doc_id,))
+                tx.execute("""update equity.filing set parse_status = %s, parse_note = %s, parser_version = %s
+                               where document_id = %s""",
+                           ("parsed" if b.rows else "failed", self._note(x, b), str(self.version), doc_id))
+                if x.c.multi_class and kept and kept[0] is not None:
+                    for r in b.rows:
+                        if r.period_kind == "instant" and r.values.get("shares_outstanding") is None:
+                            r.values["shares_outstanding"], r.tags["shares_outstanding"] = kept[0], kept[1]
+                rebuilt += 1
+            params = [(doc_ids[accn], x.entity_id, r.period_start, r.period_end, r.period_kind,
+                       *[r.values.get(col) for col in COLUMNS], json.dumps(r.tags, ensure_ascii=False))
+                      for accn in x.new + x.rebuild for r in by[accn].rows]
+            if params:
+                with tx.cursor() as cur:
+                    cur.executemany(insert, params)
+                for p in params:
+                    rows[p[4]] = rows.get(p[4], 0) + 1
+                n += len(params)
             if x.fill_shares is not None and x.fill_shares[2][0] is not None:
                 _accn, doc_id, (value, how) = x.fill_shares
                 end = tx.execute("select period_end from equity.filing where document_id = %s", (doc_id,)).fetchone()[0]
@@ -295,6 +298,36 @@ class UsFilings(Task):
                 n += got
         self.result = {"registered": registered, "rebuilt": rebuilt, "rows": rows}
         return n
+
+    @staticmethod
+    def _accepted(x: Company, accn: str) -> datetime | None:
+        listed = x.listed.get(accn)
+        return listed.accepted if listed else None
+
+    def _note(self, x: Company, b: edgar.Built) -> str:
+        fl = b.filing
+        return (f"v{self.version}: {fl.form} filed {fl.filed.isoformat()}"
+                + ("" if self._accepted(x, fl.accn) else " (its acceptance time isn't in SEC's recent filings list)")
+                + f"; {len(b.rows)} rows from company facts (CIK {fl.cik})"
+                + (f"; {'; '.join(b.notes)}" if b.notes else ""))
+
+    @staticmethod
+    def _documents(tx, docs: list[DocumentFields]) -> list[int]:
+        """New version-1 `core.document` rows in one round trip, unpublished and without text: `insert_document`'s
+        columns for a document seen for the first time (its `previous` is None)."""
+        with tx.cursor() as cur:
+            cur.executemany(
+                """insert into core.document (doc_type, entity_id, event_id, title, source_id, external_key, source_url,
+                                              raw_file_id, published_at, version_no, supersedes_id, language)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1, null, %s) returning id""",
+                [(d.doc_type, d.entity_id, d.event_id, d.title, d.source_id, d.external_key, d.source_url, d.raw_file_id,
+                  d.published_at, d.language) for d in docs], returning=True)
+            ids = []
+            while True:
+                ids.append(cur.fetchone()[0])
+                if not cur.nextset():
+                    break
+        return ids
 
     # ------------------------------------------------------------------ checks (same transaction)
     def checks(self, tx, f: Fetched, task_run_id) -> list[Check]:
@@ -329,7 +362,7 @@ class UsFilings(Task):
                     bad.append(f"{x.c.ticker} {b.period_end}: {how}")
                 elif "no total-liabilities line" in how:
                     partial.append(x.c.ticker)
-        out.append(Check("balance_sheet", not bad, ("doesn't tie within 0.5%: " + _names(bad)) if bad else
+        out.append(Check("balance_sheet", not bad, ("doesn't tie within 0.5%: " + _names(bad, 40)) if bad else
                          f"{n10k} year ends tie within 0.5%"
                          + (f" ({', '.join(sorted(set(partial)))}: no total-liabilities line, so against the balance "
                             "sheet total)" if partial else "")))
@@ -390,6 +423,15 @@ class UsFilings(Task):
         return out
 
     @staticmethod
+    def _why(x: Company, kind: str, end) -> str:
+        """Why a period has no revenue or net income: the column's tag (held, and why) or that none is filed."""
+        r = next((r for b in reversed(x.built) for r in b.rows if r.period_kind == kind and r.period_end == end), None)
+        if r is None:
+            return " (no row: the filing has no such period)"
+        return " (" + ", ".join(f"{c}: {r.tags.get(c) or 'no tag of its chain is filed'}"
+                                for c in ("revenue", "pat_owners") if r.values.get(c) is None) + ")"
+
+    @staticmethod
     def _coverage(tx, f: Fetched, ok: list[Company]) -> Check:
         """Each company's latest 3 fiscal years (its 10-Ks' period ends) and latest 8 quarters (its filings' period
         ends) have a row with revenue and net income to owners."""
@@ -407,13 +449,13 @@ class UsFilings(Task):
             quarters = [e for (e,) in tx.execute(
                 """select distinct period_end from equity.filing where entity_id = %s and exchange = 'SEC'
                     order by 1 desc limit 8""", (x.entity_id,)).fetchall()]
-            gaps = [f"FY {e}" for e in years if ("year", e) not in have] + \
-                   [f"Q {e}" for e in quarters if ("quarter", e) not in have]
+            gaps = [f"FY {e}{UsFilings._why(x, 'year', e)}" for e in years if ("year", e) not in have] + \
+                   [f"Q {e}{UsFilings._why(x, 'quarter', e)}" for e in quarters if ("quarter", e) not in have]
             short = (["fewer than 3 fiscal years"] if len(years) < 3 else []) + \
                     (["fewer than 8 quarters"] if len(quarters) < 8 else [])
             if gaps or short:
                 (excused if reason else bad).append(f"{x.c.ticker}: " + ", ".join(short + gaps)
                                                     + (f" ({reason})" if reason else ""))
-        return Check("coverage", not bad, ("missing revenue or net income: " + _names(bad)) if bad else
+        return Check("coverage", not bad, ("missing revenue or net income: " + _names(bad, 40)) if bad else
                      f"{len(ok)} companies have 3 fiscal years and 8 quarters of revenue and net income"
                      + (f"; named reasons: {_names(excused)}" if excused else ""))

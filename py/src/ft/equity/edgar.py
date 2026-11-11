@@ -12,7 +12,8 @@ which imports its rules from here, its tests unchanged. The rules (Data Audit 02
 - year-end balances chosen by date (`fiscal_year_ends`), never by the form of the latest filing;
 - CIK succession: a predecessor CIK's facts merged, the successor's winning (`merge_companyfacts`);
 - equity fills net of non-controlling interests (a fill from the other equity concept adjusts by `MinorityInterest`
-  at the same date);
+  at the same date in the same filing; a filing that presents no `MinorityInterest` at all has none to adjust by:
+  Salesforce and Cisco, which had NCI years ago, on dev run 1 of 11 Nov 2026);
 - Q4 = the fiscal year − the nine-month year to date; year-to-date cash flow differenced into quarters;
 - cover-page shares summed across classes: from company facts' `dei:EntityCommonStockSharesOutstanding` for a
   single-class issuer, from the latest filing's cover page (inline XBRL, `read_cover`) for a multi-class one, whose
@@ -39,7 +40,7 @@ from pathlib import Path
 import yaml
 
 # Bump it when a change alters what a filing's rows are: the task rebuilds older filings' rows from that run's bytes.
-PARSER_VERSION = 1
+PARSER_VERSION = 1           # nothing is stored yet (dev run 1 rolled back), so the 12 Nov fixes keep 1
 TAGS_FILE = Path(__file__).resolve().parents[3] / "config" / "equity" / "us_tags.yaml"
 
 PERIODIC_FORMS = {"10-K", "10-Q", "10-KT", "10-QT", "20-F", "40-F"}    # whose facts count (the helper's rule)
@@ -510,7 +511,6 @@ class Statements:
         for cik, cf in docs:
             for accn, f in filings_of(cik, cf).items():
                 self.filings.setdefault(accn, f)
-        self.has_mi = MI in self.facts
         self.order: dict[str, list[Entry]] = {}
         for c in cfg.columns.values():
             by_tag = {e.tag: e for e in c.chain}
@@ -529,9 +529,9 @@ class Statements:
                 mi = f.get(MI, MONEY, None, end)
                 if len(mi) == 1:
                     return v + e.nci * next(iter(mi)), f"{e.tag}{'+' if e.nci > 0 else '-'}{MI}"
-                if self.has_mi:
-                    continue
-            return v, e.tag
+                if f.has(MI):
+                    continue                   # this filing presents NCI, but not at this date: no fill
+            return v, e.tag                    # (a filing that presents no NCI: the equity line is the whole)
         return None, None
 
     def _parts(self, f: Filing, col: Column, end) -> tuple[Decimal | None, str | None]:
