@@ -4,8 +4,10 @@
 // price history, about 1,950 rows, is two pages joined). Cached for minutes like the screener. A failed header read leaves the
 // page in its error state (StateNote); a failed tab read holds back that tab only (#328); the reason goes to the server log only (Arch 02). Nothing here computes a figure.
 //
-// The promoter-holding read (view 0025, pushed by Anand) is the one read allowed to fail on its own: until the view
-// exists, the Financials tab says that holding isn't published yet and the rest of the page is unaffected.
+// The promoter-holding read (view 0025, pushed by Anand) is allowed to fail on its own: until the view
+// exists, the Financials tab says that holding isn't published yet and the rest of the page is unaffected. The segment-changes
+// reads (DD-02, #410: view 0038 and the field policy) fail on their own the same way: before 0038 is pushed, or when either read
+// fails, the panel holds back (no policy read is a hidden field) or says it couldn't load, and the rest of the tab is unaffected.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cacheLife, cacheTag } from "next/cache";
 import { dateInZone } from "@/lib/format";
@@ -21,6 +23,7 @@ import type {
   ForecastRow,
   PeerCompRow,
   PromoterHoldingRow,
+  SegmentChangeRow,
   SeriesRow,
   ValuationScenarioRow,
 } from "@/lib/queries/api";
@@ -102,6 +105,13 @@ export async function readPromoterHolding(db: CompanyDb, slug: string): Promise<
   );
 }
 
+/** The company's segment line-up changes (0038, #409): one row per flag, or one row with the state; none while the field is hidden. */
+export async function readSegmentChanges(db: CompanyDb, slug: string): Promise<SegmentChangeRow[]> {
+  return readAll<SegmentChangeRow>("api.segment_changes", (from, to) =>
+    db.from("segment_changes").select("*", { count: "exact" }).eq("company_slug", slug).order("change_no").range(from, to),
+  );
+}
+
 export async function readValuationRuns(db: CompanyDb, slug: string): Promise<CompanyValuationRow[]> {
   return readAll<CompanyValuationRow>("api.company_valuation", (from, to) =>
     db.from("company_valuation").select("*", { count: "exact" }).eq("slug", slug).order("kind").range(from, to),
@@ -142,6 +152,10 @@ export type FinancialsData = {
   metrics: CompanyMetricRow[];
   /** Null when the promoter-holding view can't be read (not pushed yet). */
   promoter: PromoterHoldingRow[] | null;
+  /** api.segment_changes for this company (DD-02, #410); null when its read failed (view 0038 not pushed yet). Absent: not read. */
+  segmentChanges?: SegmentChangeRow[] | null;
+  /** The field policies, for the segment-changes panel's gate; null or absent when not read, which holds the panel back. */
+  policies?: FieldPolicyRow[] | null;
 };
 
 export type ValuationData = {
@@ -238,15 +252,23 @@ export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: st
     const [prices, metrics, peers] = await Promise.all([readCompanyPrices(db, slug), readCompanyMetrics(db, slug), readPeers(db, slug)]);
     data.overview = { prices, metrics, peers };
   } else {
-    const [rows, metrics, promoter] = await Promise.all([
+    const [rows, metrics, promoter, segmentChanges, policies] = await Promise.all([
       readFinancials(db, slug),
       readCompanyMetrics(db, slug),
       readPromoterHolding(db, slug).catch((error: unknown) => {
         logFailure(`${slug} promoter holding`, error);
         return null;
       }),
+      readSegmentChanges(db, slug).catch((error: unknown) => {
+        logFailure(`${slug} segment changes`, error);
+        return null;
+      }),
+      readFieldPolicy(db as PolicyDb).catch((error: unknown) => {
+        logFailure(`${slug} field policy`, error);
+        return null;
+      }),
     ]);
-    data.financials = { financials: rows, metrics, promoter };
+    data.financials = { financials: rows, metrics, promoter, segmentChanges, policies };
   }
   return data;
 }

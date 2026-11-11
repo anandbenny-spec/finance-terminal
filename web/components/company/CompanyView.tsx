@@ -1,6 +1,7 @@
 // CompanyView (2A-19; Spec 02A §8): the company page's header, tabs and the tab shown, from one cached read
 // (lib/queries/company.ts). The tab and the basis are in the URL (?tab=financials&basis=standalone), so every view can be
-// linked. Overview, Financials, Valuation (2A-20) and Rate decisions (2A-25) exist. Each panel carries its source line and freshness; a figure with no value says why. Server-rendered.
+// linked. Overview, Financials, Valuation (2A-20) and Rate decisions (2A-25) exist; the Financials tab's "Segment changes" panel
+// (DD-02, #410) sits after the statements, held back until equity.segment_changes is released. Each panel carries its source line and freshness; a figure with no value says why. Server-rendered.
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ActionsPanel } from "@/components/company/ActionsPanel";
@@ -11,6 +12,7 @@ import { PeersPanel } from "@/components/company/PeersPanel";
 import { PriceChartPanel } from "@/components/company/PriceChartPanel";
 import { RateDecisionsTab } from "@/components/company/RateDecisionsTab";
 import { PromoterPanel } from "@/components/company/PromoterPanel";
+import { SegmentChangesPanel } from "@/components/company/SegmentChangesPanel";
 import { StatementTable } from "@/components/company/StatementTable";
 import { TabError } from "@/components/company/TabError";
 import { ValuationTab } from "@/components/company/valuation/ValuationTab";
@@ -231,6 +233,7 @@ function Financials({ data, basis: asked, freshness }: { data: Ok; basis: Basis;
           emptyText="No standalone bank filings are published for this company yet."
         />
       )}
+      <SegmentChangesPanel rows={financials.segmentChanges} policies={financials.policies} freshness={freshness} now={now} />
       <PromoterPanel
         rows={financials.promoter}
         market={company.market}

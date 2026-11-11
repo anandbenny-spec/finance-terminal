@@ -464,6 +464,37 @@ export type PromoterHoldingRow = {
   nse_pct: Num;
 };
 
+/**
+ * api.segment_changes (0038, #409): a company's reportable segments in its latest compared quarter (consolidated, as filed)
+ * against the four quarters before it. One row per flag (state `changed`) or one row with the state. No row at all while field
+ * policy `equity.segment_changes` is hidden. `segments_before` and `segments_after` are the affected segments as filed: before
+ * from the previous quarter, after from the latest. Read through components/company/SegmentChangesPanel.tsx.
+ */
+export type SegmentChangeRow = {
+  company_slug: string;
+  company_name: string;
+  /** The latest quarter compared. */
+  period_end: string;
+  state: "changed" | "single_segment" | "none_flagged" | "not_compared" | null;
+  /** not_compared only: "N of the 4 earlier quarters have a line-up". */
+  state_reason: string | null;
+  quarters_compared: number;
+  change_no: number | null;
+  kind: "dropped" | "merged" | "renamed" | "multi_to_single" | "single_to_multi" | "other" | null;
+  segments_before: string[] | null;
+  segments_after: string[] | null;
+  /** merged only: the new segment's revenue over the absent ones' summed revenue in the previous quarter. */
+  revenue_ratio: Num;
+  previous_period_end: string | null;
+  latest_filing_url: string | null;
+  latest_filed_at: string | null;
+  previous_filing_url: string | null;
+  previous_filed_at: string | null;
+  rule_version: number | null;
+  /** The latest filing's exchange: nse or bse. */
+  source_key: string | null;
+};
+
 /** api.company_valuation (0024): a company's latest run of each kind. `status` is null while the model fields are hidden; `inputs` is the run's stored inputs. */
 export type CompanyValuationRow = {
   slug: string;
@@ -809,6 +840,7 @@ export type ApiDatabase = {
       company_financials: View<CompanyFinancialRow>;
       company_corporate_actions: View<CorporateActionRow>;
       company_promoter_holding: View<PromoterHoldingRow>;
+      segment_changes: View<SegmentChangeRow>;
       company_valuation: View<CompanyValuationRow>;
       valuation_scenarios: View<ValuationScenarioRow>;
       priced_in_operating: View<PricedInRow>;

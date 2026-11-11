@@ -130,3 +130,26 @@ describe("the Earnings calls tab's opening-remarks read (#388)", () => {
     expect(out.calls).toHaveLength(1);
   });
 });
+
+describe("the Financials tab's segment-changes reads (DD-02, #410)", () => {
+  const FIN: Store = { ...HEADER, company_financials: [], company_metrics: [], company_promoter_holding: [] };
+  const row = { company_slug: "tcs", period_end: "2026-09-30", state: "none_flagged", change_no: null };
+  it("reads the company's rows against the exact count, with the field policies", async () => {
+    store = { ...FIN, segment_changes: [row, { ...row, company_slug: "other" }] as unknown as Row[], field_policy: [{ field_key: "equity.segment_changes", status: "hidden", label: null }] as unknown as Row[] };
+    const out = await readCompanyPage("tcs", "financials");
+    expect(out.ok && out.tabFailed).toBe(false);
+    if (!out.ok) return;
+    expect(out.financials?.segmentChanges).toEqual([row]);
+    expect(out.financials?.policies?.map((p) => p.field_key)).toEqual(["equity.segment_changes"]);
+  });
+  it("leaves each null when its own read throws (view 0038 not pushed yet), and the rest of the tab still reads", async () => {
+    store = { ...FIN };
+    const out = await readCompanyPage("tcs", "financials");
+    expect(out.ok && out.tabFailed).toBe(false);
+    if (!out.ok) return;
+    expect(out.financials?.segmentChanges).toBeNull();
+    expect(out.financials?.policies).toBeNull();
+    expect(out.financials?.financials).toEqual([]);
+    expect(out.financials?.promoter).toEqual([]);
+  });
+});
