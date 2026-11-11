@@ -27,8 +27,9 @@ function columns(upcoming: boolean): Column<CorporateActionRow>[] {
     {
       id: "subject",
       header: "As filed",
+      // A stored URL that isn't https:// renders as text, not a link (the check the other filing links make; #367).
       cell: (a) =>
-        a.source_url ? (
+        a.source_url?.startsWith("https://") ? (
           <a href={a.source_url} target="_blank" rel="noopener noreferrer" className="text-ink-1 underline hover:text-ink-2">
             {a.subject ?? a.title ?? "Filing"}
           </a>

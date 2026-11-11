@@ -20,7 +20,8 @@ const colId = (r: CompanyFinancialRow) => `${r.period_kind}-${r.period_end}`;
 
 function FilingLink({ row }: { row: CompanyFinancialRow }) {
   const text = row.filed_at ? `Filed ${formatDate(row.filed_at.slice(0, 10))}` : "Filing";
-  if (!row.source_url) return <span>{text}</span>;
+  // A stored URL that isn't https:// renders as text, not a link (the check the other filing links make; #367).
+  if (!row.source_url?.startsWith("https://")) return <span>{text}</span>;
   return (
     <a
       href={row.source_url}
