@@ -4,6 +4,7 @@
 // at most 400 characters; it is cut again here by code point (JavaScript counts UTF-16) in case a stored side were longer.
 // Words, never colour: nothing here is a market move (CLAUDE.md §5).
 import { formatCount, formatFraction } from "@/lib/format";
+import { countsToShares, type RowBar } from "@/lib/policy/changestrip";
 import type { KeyChanges, KeyGroup, KeyRow } from "@/lib/policy/keychanges";
 import type { RemarksChangeRow } from "@/lib/queries/api";
 
@@ -65,4 +66,38 @@ export function newSpeakerNote(r: Pick<RemarksChangeRow, "new_speakers">): strin
 /** The comparison of a call, by its slug. */
 export function remarksOf(rows: readonly RemarksChangeRow[] | null, callSlug: string): RemarksChangeRow | null {
   return rows?.find((r) => r.call_slug === callSlug) ?? null;
+}
+
+/** One bar of the company's strip: a call's opening remarks against the previous quarter's. */
+export type RemarksBar = RowBar & { callSlug: string; fiscalLabel: string; baseLabel: string };
+
+/**
+ * The strip's bars from the view's own counts (2B-19f, #395): one per published comparison, oldest first, on the call's
+ * `period_end`. Shares come from the stored counts (`words_added` over `words_new`, `words_removed` over `words_base`) through
+ * the strip's held-back rule; a row whose counts can't be a share, with no period end, or on a date another bar already holds
+ * is held back and counted, not drawn. `href` selects the call on the tab.
+ */
+export function remarksBars(
+  rows: readonly RemarksChangeRow[],
+  hrefOf: (callSlug: string) => string,
+): { bars: RemarksBar[]; withoutBar: number; total: number } {
+  const byDate = new Map<string, RemarksBar>();
+  for (const r of [...rows].sort((a, b) => (a.period_end ?? "").localeCompare(b.period_end ?? "") || a.call_slug.localeCompare(b.call_slug))) {
+    if (r.period_end === null || byDate.has(r.period_end)) continue;
+    const s = countsToShares({ wordsAdded: r.words_added, wordsRemoved: r.words_removed, wordsOld: r.words_base, wordsNew: r.words_new });
+    if (!s) continue;
+    byDate.set(r.period_end, {
+      ...s,
+      date: r.period_end,
+      label: `${r.fiscal_label}, against ${r.base_fiscal_label}`,
+      wordsAdded: r.words_added,
+      wordsRemoved: r.words_removed,
+      href: hrefOf(r.call_slug),
+      callSlug: r.call_slug,
+      fiscalLabel: r.fiscal_label,
+      baseLabel: r.base_fiscal_label,
+    });
+  }
+  const bars = [...byDate.values()];
+  return { bars, withoutBar: rows.length - bars.length, total: rows.length };
 }
