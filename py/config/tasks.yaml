@@ -95,6 +95,12 @@ equity.brsr:
   run_after: [equity.universe]
   overdue_after: 10 days
   uses_nse: true
+equity.related_parties:
+  description: Each universe company's related-party transactions and segment revenue for its latest fiscal year, read from the stored results filings, for the value chain card
+  workflows: {weekly: every 6 days}
+  run_after: [equity.filings]
+  overdue_after: 10 days
+  uses_nse: false
 equity.metrics:
   description: Derived metrics of the universe companies (TTM figures, margins, returns, growth, banks' ratios and market multiples) from the stored statements, prices and corporate actions, each with its inputs or the reason it is held back
   workflows: {weekly: every 6 days}
