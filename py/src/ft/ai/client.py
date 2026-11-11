@@ -5,7 +5,8 @@ evaluations and, later, the live API service.
 Messages API call and returns the reply with its usage and cost.
 - Settings per task (`TASKS`): Haiku 5.5 by default; effort `low` for summaries and extraction; `max_tokens` with
   headroom for adaptive thinking, which counts towards it (8,000 for summaries, 4,000 for extraction). No
-  `temperature`, `top_p` or `top_k`, and no assistant prefill.
+  `temperature`, `top_p` or `top_k`, and no assistant prefill. A request may name its own effort and `max_tokens`
+  (`Request.effort`, `Request.max_tokens`): `call_summary` v11 does (`ft/ai/call_summary.py`, `EFFORT_OF`).
 - Two output routes (§1.2): `citations` sends the documents as plain-text document blocks with citations on;
   `json` sends them without citations and asks for a JSON schema through `output_config.format`. The API refuses a
   request that combines the two, so a request is one or the other.
@@ -73,7 +74,11 @@ CONFIG = Path(__file__).resolve().parents[3] / "config"
 PRICES = CONFIG / "ai_prices.yaml"
 PROMPTS = CONFIG / "prompts"
 
-HAIKU, SONNET = "claude-haiku-5-5", "claude-sonnet-5-5"
+HAIKU, SONNET, OPUS = "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"
+# `output_config.effort` as the API docs list it for Opus 5.5 (platform.claude.com/docs/build-with-claude/effort, read 10 Nov 2026):
+# all five levels; the default is `medium` there, so `high` is a real step up, not the same as leaving the setting out. Only a request's
+# own `effort` (below) is checked against this: the tasks' own settings are `low` and `medium`.
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 MAX_REQUEST_TOKENS = 100_000          # CLAUDE.md §6; Architecture 03 §1.1
 CHARS_PER_TOKEN = 3.0                 # a deliberate over-estimate (English runs about 4 characters a token)
 REQUEST_OVERHEAD_TOKENS = 1_500       # citations' own system additions, document framing
@@ -283,19 +288,29 @@ class Request:
     schema: dict | None = None        # the json route's JSON schema
     note: str | None = None           # a retry's note: its own last block, so the prefix before it stays cached
     route: str | None = None          # 'citations' | 'json': this request's route where it isn't the task's (call_summary v6)
+    effort: str | None = None         # this request's `output_config.effort` where it isn't the task's (call_summary v11, #178)
+    max_tokens: int | None = None     # this request's `max_tokens` where it isn't the task's (call_summary v11, #178)
 
     def __post_init__(self):
         if self.task not in TASKS:
             raise ValueError(f"{self.task} isn't a task the wrapper runs")
         if self.prompt.task != self.task:
             raise ValueError(f"prompt for {self.prompt.task}, request for {self.task}")
+        if self.effort is not None and self.effort not in EFFORTS:
+            raise ValueError(f"{self.task}: effort {self.effort!r} isn't one of {', '.join(EFFORTS)}")
+        if self.max_tokens is not None and self.max_tokens <= 0:
+            raise ValueError(f"{self.task}: max_tokens must be positive, not {self.max_tokens}")
         if (self.spec.route == "json") != (self.schema is not None):
             raise ValueError(f"{self.task}: the json route needs a schema, the citations route none")
 
     @property
     def spec(self) -> TaskSpec:
+        """The task's settings, with this request's route, effort and `max_tokens` where it names its own. The input hash
+        (`_canonical`) and the guard's worst case (`_worst_case`) read them from here, so a changed setting is a new input."""
         base = TASKS[self.task]
-        return replace(base, route=self.route) if self.route and self.route != base.route else base
+        own = {k: v for k, v in (("route", self.route), ("effort", self.effort), ("max_tokens", self.max_tokens))
+               if v and v != getattr(base, k)}
+        return replace(base, **own) if own else base
 
     @property
     def model_id(self) -> str:
