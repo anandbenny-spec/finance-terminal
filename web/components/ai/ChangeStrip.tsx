@@ -22,7 +22,7 @@ import { Qualifier } from "@/components/data/Qualifier";
 import { StateNote } from "@/components/data/StateNote";
 import type { ChartSeries } from "@/components/data/TimeSeriesChart";
 import { formatAxisShare, formatCount, formatDate, formatShareChange, formatTableDate } from "@/lib/format";
-import { barAt, stepBar, stripSeries, stripTableRows, type BankStrip, type StripBar, type StripTableRow } from "@/lib/policy/changestrip";
+import { barAt, stepBar, stripSeries, stripTableRows, type BankStrip, type RowBar, type StripTableRow } from "@/lib/policy/changestrip";
 import type { Bank } from "@/lib/queries/policy";
 
 const TimeSeriesChart = dynamic(() => import("@/components/data/TimeSeriesChart"), {
@@ -32,23 +32,31 @@ const TimeSeriesChart = dynamic(() => import("@/components/data/TimeSeriesChart"
 
 const BANK_NAME: Record<Bank, string> = { Fed: "Fed (FOMC statements)", RBI: "RBI (MPC resolutions)" };
 
-const COLUMNS: Column<StripTableRow>[] = [
-  { id: "bank", header: "Bank", cell: (r) => r.bank, sortValue: (r) => r.bank },
-  {
-    id: "meeting",
-    header: "Meeting",
-    cell: (r) => (
-      <Link href={r.href} className="font-mono text-ink-1 underline">
-        {formatTableDate(r.date)}
-      </Link>
-    ),
-    sortValue: (r) => r.date,
-  },
-  { id: "added", header: "Words added (% of this statement)", align: "right", cell: (r) => formatShareChange(r.addedPct), sortValue: (r) => r.addedPct },
-  { id: "removed", header: "Words removed (% of the previous)", align: "right", cell: (r) => formatShareChange(-r.removedPct), sortValue: (r) => r.removedPct },
-  { id: "wordsAdded", header: "Words added", align: "right", cell: (r) => formatCount(r.wordsAdded), sortValue: (r) => r.wordsAdded },
-  { id: "wordsRemoved", header: "Words removed", align: "right", cell: (r) => formatCount(r.wordsRemoved), sortValue: (r) => r.wordsRemoved },
-];
+/**
+ * The table's columns (#394): the group column and the date column's header and cell are the parts a second user
+ * names; the rest is shared. Module 1's COLUMNS are this with its own words.
+ */
+export function changeStripColumns<T extends RowBar>(opts: { groupHeader: string; group: (r: T) => string; dateHeader: string; dateCell?: (r: T) => ReactNode }): Column<T>[] {
+  return [
+    { id: "bank", header: opts.groupHeader, cell: (r) => opts.group(r), sortValue: (r) => opts.group(r) },
+    {
+      id: "meeting",
+      header: opts.dateHeader,
+      cell: (r) => (
+        <Link href={r.href} className="font-mono text-ink-1 underline">
+          {opts.dateCell ? opts.dateCell(r) : formatTableDate(r.date)}
+        </Link>
+      ),
+      sortValue: (r) => r.date,
+    },
+    { id: "added", header: "Words added (% of this statement)", align: "right", cell: (r) => formatShareChange(r.addedPct), sortValue: (r) => r.addedPct },
+    { id: "removed", header: "Words removed (% of the previous)", align: "right", cell: (r) => formatShareChange(-r.removedPct), sortValue: (r) => r.removedPct },
+    { id: "wordsAdded", header: "Words added", align: "right", cell: (r) => formatCount(r.wordsAdded), sortValue: (r) => r.wordsAdded },
+    { id: "wordsRemoved", header: "Words removed", align: "right", cell: (r) => formatCount(r.wordsRemoved), sortValue: (r) => r.wordsRemoved },
+  ];
+}
+
+const COLUMNS: Column<StripTableRow>[] = changeStripColumns<StripTableRow>({ groupHeader: "Bank", group: (r) => r.bank, dateHeader: "Meeting" });
 
 function Key({ tone, children }: { tone: "ins" | "del"; children: ReactNode }) {
   return (
@@ -59,10 +67,10 @@ function Key({ tone, children }: { tone: "ins" | "del"; children: ReactNode }) {
   );
 }
 
-function Readout({ bar }: { bar: StripBar }) {
+function Readout({ bar, linkText }: { bar: RowBar; linkText: string }) {
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-data text-ink-2">
-      <span className="font-mono text-ink-3">{formatDate(bar.date)}</span>
+      <span className="font-mono text-ink-3">{bar.label ?? formatDate(bar.date)}</span>
       <span>
         <b className="font-semibold text-ink-1">{formatShareChange(bar.addedPct)}</b> added
         <span className="text-ink-3"> ({formatCount(bar.wordsAdded)} of {formatCount(bar.wordsNew)} words)</span>
@@ -72,25 +80,60 @@ function Readout({ bar }: { bar: StripBar }) {
         <span className="text-ink-3"> ({formatCount(bar.wordsRemoved)} of {formatCount(bar.wordsOld)} words)</span>
       </span>
       <Link href={bar.href} className="text-ink-1 underline">
-        Open what changed
+        {linkText}
       </Link>
     </span>
   );
 }
 
-function BankRow({ strip, scale }: { strip: BankStrip; scale: number }) {
+/** The words of one row (#394): module 1's are its bank's; a second user passes its own. */
+export type ChangeStripRowCopy = {
+  /** The row's heading, e.g. "Fed (FOMC statements)". */
+  heading: string;
+  /** Shown when the row has no bar at all. */
+  emptyNote: ReactNode;
+  /** The focusable group's aria-label. */
+  groupLabel: string;
+  /** The chart's aria-label. */
+  chartLabel: string;
+  /** The readout's link words, e.g. "Open what changed". */
+  linkText: string;
+  /** The note under the chart when some items have no bar. */
+  noBarNote: (withoutBar: number, total: number) => ReactNode;
+};
+
+/**
+ * One row of ChangeStrip as a part: heading, the chosen bar's readout, the two histograms and the keyboard way in.
+ * `id` keeps the series ids apart when several rows share a page. Module 1's BankRow is this with its own words.
+ */
+export function ChangeStripRow({
+  id,
+  bars,
+  withoutBar,
+  total,
+  scale,
+  copy,
+}: {
+  id: string;
+  bars: readonly RowBar[];
+  withoutBar: number;
+  total: number;
+  scale: number;
+  copy: ChangeStripRowCopy;
+}) {
   const router = useRouter();
   const [picked, setPicked] = useState<string | null>(null);
   const range = useMemo(() => ({ min: -scale, max: scale }), [scale]);
+  const strip = useMemo(() => ({ bars }), [bars]);
   const series = useMemo<ChartSeries[]>(() => {
     const s = stripSeries(strip);
     return [
-      { id: `${strip.bank}-added`, kind: "histogram", tone: "ins", data: s.added },
-      { id: `${strip.bank}-removed`, kind: "histogram", tone: "del", data: s.removed },
+      { id: `${id}-added`, kind: "histogram", tone: "ins", data: s.added },
+      { id: `${id}-removed`, kind: "histogram", tone: "del", data: s.removed },
     ];
-  }, [strip]);
+  }, [strip, id]);
   // The chosen bar, else the newest: a row is never without a reading.
-  const bar = barAt(strip, picked) ?? strip.bars.at(-1);
+  const bar = barAt(strip, picked) ?? bars.at(-1);
   const onHover = useCallback((date: string | null) => {
     if (date !== null) setPicked(date);
   }, []);
@@ -114,40 +157,39 @@ function BankRow({ strip, scale }: { strip: BankStrip; scale: number }) {
   return (
     <div className="px-3 pt-2.5 pb-1">
       <div className="mb-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <h4 className="text-meta font-medium text-ink-2">{BANK_NAME[strip.bank]}</h4>
-        <span aria-live="polite">{bar && <Readout bar={bar} />}</span>
+        <h4 className="text-meta font-medium text-ink-2">{copy.heading}</h4>
+        <span aria-live="polite">{bar && <Readout bar={bar} linkText={copy.linkText} />}</span>
       </div>
-      {strip.bars.length === 0 ? (
-        <StateNote kind="unavailable">
-          No {strip.bank === "Fed" ? "FOMC statement" : "MPC resolution"} has a stored comparison with the one before it yet.
-        </StateNote>
+      {bars.length === 0 ? (
+        <StateNote kind="unavailable">{copy.emptyNote}</StateNote>
       ) : (
-        <div
-          role="group"
-          tabIndex={0}
-          onKeyDown={onKeyDown}
-          aria-label={`${strip.bank}: share of each statement's words added and removed, by meeting. Left and right arrow keys choose a meeting; Enter opens it. View as table lists them all.`}
-          className="rounded-sm"
-        >
-          <TimeSeriesChart
-            series={series}
-            onHover={onHover}
-            onSelect={onSelect}
-            axisFormat={formatAxisShare}
-            valueRange={range}
-            compact
-            label={`${strip.bank}: for each meeting, the share of the statement's words added (above the line) and removed (below), against the statement before it.`}
-          />
+        <div role="group" tabIndex={0} onKeyDown={onKeyDown} aria-label={copy.groupLabel} className="rounded-sm">
+          <TimeSeriesChart series={series} onHover={onHover} onSelect={onSelect} axisFormat={formatAxisShare} valueRange={range} compact label={copy.chartLabel} />
         </div>
       )}
-      {strip.withoutBar > 0 && strip.bars.length > 0 && (
-        <p className="pt-1 text-meta text-ink-3">
-          {strip.withoutBar} of {strip.meetings} {strip.bank} meetings {strip.withoutBar === 1 ? "has" : "have"} no bar: nothing earlier to compare with, or the comparison
-          isn&apos;t stored.
-        </p>
-      )}
+      {withoutBar > 0 && bars.length > 0 && <p className="pt-1 text-meta text-ink-3">{copy.noBarNote(withoutBar, total)}</p>}
     </div>
   );
+}
+
+function BankRow({ strip, scale }: { strip: BankStrip; scale: number }) {
+  const copy = useMemo<ChangeStripRowCopy>(
+    () => ({
+      heading: BANK_NAME[strip.bank],
+      emptyNote: <>No {strip.bank === "Fed" ? "FOMC statement" : "MPC resolution"} has a stored comparison with the one before it yet.</>,
+      groupLabel: `${strip.bank}: share of each statement's words added and removed, by meeting. Left and right arrow keys choose a meeting; Enter opens it. View as table lists them all.`,
+      chartLabel: `${strip.bank}: for each meeting, the share of the statement's words added (above the line) and removed (below), against the statement before it.`,
+      linkText: "Open what changed",
+      noBarNote: (n, total) => (
+        <>
+          {n} of {total} {strip.bank} meetings {n === 1 ? "has" : "have"} no bar: nothing earlier to compare with, or the comparison
+          isn&apos;t stored.
+        </>
+      ),
+    }),
+    [strip.bank],
+  );
+  return <ChangeStripRow id={strip.bank} bars={strip.bars} withoutBar={strip.withoutBar} total={strip.meetings} scale={scale} copy={copy} />;
 }
 
 export function ChangeStrip({

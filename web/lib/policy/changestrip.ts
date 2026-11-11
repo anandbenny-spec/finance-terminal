@@ -47,6 +47,12 @@ export type BankStrip = {
   meetings: number;
 };
 
+/**
+ * What one bar needs of any row (#394, 2B-19e): StripBar satisfies it, and so can a second user's bars (a company's
+ * calls). `label` is the text beside the bar's date in the readout; without it the readout shows the formatted date.
+ */
+export type RowBar = Pick<StripBar, "date" | "addedPct" | "removedPct" | "wordsAdded" | "wordsRemoved" | "wordsNew" | "wordsOld" | "href"> & { label?: string };
+
 function wholeCount(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v >= 0;
 }
@@ -70,6 +76,14 @@ export function shares(diff: StripDiff): { addedPct: number; removedPct: number;
     wordsNew: len.new,
     wordsOld: len.old,
   };
+}
+
+/**
+ * Stored counts as a bar's shares, with `shares()`'s held-back rule (a count above its text's length, a length of zero
+ * or a value that isn't a whole number gives null, not a drawn bar). For a second user whose counts aren't a diff row.
+ */
+export function countsToShares(c: { wordsAdded: number; wordsRemoved: number; wordsOld: number; wordsNew: number }): { addedPct: number; removedPct: number; wordsNew: number; wordsOld: number } | null {
+  return shares({ document_id: 0, words_added: c.wordsAdded, words_removed: c.wordsRemoved, words: { old: c.wordsOld, new: c.wordsNew } });
 }
 
 /** Each meeting's latest decision document by event slug (the highest version wins). */
@@ -124,7 +138,7 @@ export function stripScale(strips: readonly BankStrip[]): number {
 }
 
 /** The chart data of one bank: added above the zero line, removed below it (so negative values). */
-export function stripSeries(strip: BankStrip): { added: { time: string; value: number }[]; removed: { time: string; value: number }[] } {
+export function stripSeries(strip: { bars: readonly RowBar[] }): { added: { time: string; value: number }[]; removed: { time: string; value: number }[] } {
   return {
     added: strip.bars.map((b) => ({ time: b.date, value: b.addedPct })),
     removed: strip.bars.map((b) => ({ time: b.date, value: -b.removedPct })),
@@ -132,12 +146,12 @@ export function stripSeries(strip: BankStrip): { added: { time: string; value: n
 }
 
 /** The bar at a date, or undefined. */
-export function barAt(strip: BankStrip, date: string | null): StripBar | undefined {
+export function barAt<B extends RowBar>(strip: { bars: readonly B[] }, date: string | null): B | undefined {
   return date === null ? undefined : strip.bars.find((b) => b.date === date);
 }
 
 /** The bar next to the one at `date` (`step` ±1), clamped to the ends; the newest bar when none is selected. */
-export function stepBar(strip: BankStrip, date: string | null, step: -1 | 1): StripBar | undefined {
+export function stepBar<B extends RowBar>(strip: { bars: readonly B[] }, date: string | null, step: -1 | 1): B | undefined {
   if (strip.bars.length === 0) return undefined;
   const i = date === null ? -1 : strip.bars.findIndex((b) => b.date === date);
   if (i === -1) return strip.bars[strip.bars.length - 1];
