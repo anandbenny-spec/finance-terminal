@@ -101,6 +101,12 @@ equity.related_parties:
   run_after: [equity.filings]
   overdue_after: 10 days
   uses_nse: false
+equity.segment_changes:
+  description: Each India company's reportable segments over its latest six quarters, read from the stored consolidated results filings, and the flags where a segment of the previous four quarters is missing from the latest (dropped, merged, renamed)
+  workflows: {weekly: every 6 days}
+  run_after: [equity.statements]
+  overdue_after: 10 days
+  uses_nse: false
 equity.metrics:
   description: Derived metrics of the universe companies (TTM figures, margins, returns, growth, banks' ratios and market multiples) from the stored statements, prices and corporate actions, each with its inputs or the reason it is held back
   workflows: {weekly: every 6 days}

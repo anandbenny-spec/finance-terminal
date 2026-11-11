@@ -152,7 +152,7 @@ def key(description: str) -> str:
 
 def is_reconciling(description: str) -> bool:
     """A reconciling row of the segment table filed on the segment axis ("Less: Inter segment revenue")."""
-    return bool(_RECONCILING.match(description))
+    return bool(_RECONCILING.search(description))
 
 
 def _distance(a: str, b: str, limit: int) -> int:
