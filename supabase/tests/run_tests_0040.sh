@@ -28,6 +28,18 @@ insert into core.event (event_type, entity_id, slug, title, starts_on, occurs_at
 insert into core.event (event_type, entity_id, slug, title, starts_on, occurs_at, status, source_id, is_published)
   select 'results_filing', id, 'vc40-res-vc40-a-old', 'vc40', date '2026-03-31', date '2026-05-10', 'superseded',
          (select id from core.source where key = 'nse'), true from core.entity where slug = 'vc40-a';
+-- the row-level-security policy on equity.rpt_line lets a visitor read a line only when the event has an equity.filing row of
+-- that basis, so every event gets a document and a filing row for both bases (as 0034's fixture does)
+with d as (
+  insert into core.document (doc_type, entity_id, event_id, title, source_id, external_key, source_url, is_published)
+    select 'results_xbrl', ev.entity_id, ev.id, 'vc40 ' || ev.slug || '-' || b, ev.source_id, 'vc40-' || ev.slug || '-' || b,
+           'https://example.com/vc40/' || ev.slug || '-' || b, false
+    from core.event ev cross join unnest(array['consolidated', 'standalone']) as b where ev.slug like 'vc40-res-%'
+    returning id, entity_id, event_id, external_key)
+insert into equity.filing (document_id, entity_id, event_id, basis, format, period_end, fy_start, fy_end, filed_at, source_url, exchange)
+  select d.id, d.entity_id, d.event_id, case when d.external_key like '%-consolidated' then 'consolidated' else 'standalone' end,
+         'ind_as', ev.starts_on, date '2025-04-01', ev.starts_on, ev.occurs_at, 'https://example.com/vc40/' || d.external_key, 'NSE'
+  from d join core.event ev on ev.id = d.event_id;
 -- lines: (event tag, basis, line_no, counterparty, type, entered_by, value)
 insert into equity.rpt_line (results_event_id, basis, line_no, counterparty, relationship, txn_type, entering_party, entered_by,
                              value_in_period, period_start, period_end)
@@ -72,11 +84,12 @@ insert into equity.rpt_line (results_event_id, basis, line_no, counterparty, rel
 
 select 'SETUP|' || count(*) from equity.rpt_line r join core.event ev on ev.id = r.results_event_id where ev.slug like 'vc40-res-%';
 
--- hidden: ranks stay, names and values are null
+-- hidden: the gate nulls every name, relationship and value; and the row-level-security policy hides every line from anon
 update core.field_policy set status = 'hidden' where field_key = 'equity.rpt_counterparties';
-set role anon;
 select 'R01|' || count(*) || ':' || count(*) filter (where counterparty is not null or value is not null or relationship is not null)
   from api.related_party_top where company_slug like 'vc40%';
+set role anon;
+select 'R01a|' || count(*) from api.related_party_top where company_slug like 'vc40%';
 reset role;
 
 update core.field_policy set status = 'shown' where field_key = 'equity.rpt_counterparties';
@@ -105,7 +118,8 @@ SQL
 get() { grep "^$1|" <<<"$OUT" | head -1 | cut -d'|' -f2-; }
 
 check "S00 the fixture loaded (26 lines in the fixture's events)" "$(get SETUP)" '^26$'
-check "R01 hidden: every row keeps its rank, and no name, relationship or value shows" "$(get R01)" '^[0-9]+:0$'
+check "R01 hidden: the view still ranks the fixture's rows (read as the owner), and no name, relationship or value shows" "$(get R01)" '^[1-9][0-9]*:0$'
+check "R01a hidden: anon reads no row of the view at all" "$(get R01a)" '^0$'
 check "R02 sales, spellings merged: Alpha 140, Gamma 110, Zeta 105, Beta 100, Delta 70, each under the latest filing's wording; Epsilon (60) is sixth" \
   "$(get R02)" '^1=ALPHA INDUSTRIES LIMITED:140(\.0*)?,2=Gamma and Sons Ltd:110(\.0*)?,3=Zeta Corp\.:105(\.0*)?,4=Beta Trading Pvt Ltd:100(\.0*)?,5=Delta Corp:70(\.0*)?$'
 check "R03 purchases are their own list, merged the same way (Pur Co 15, Alpha 7)" \
