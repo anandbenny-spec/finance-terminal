@@ -34,6 +34,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
+from math import gcd
 from zoneinfo import ZoneInfo
 
 from ft.policy.series_sources import SourceError, yahoo_url
@@ -55,6 +56,7 @@ NEW_YORK = ZoneInfo("America/New_York")
 CENT = Decimal("0.01")
 CENTS_SLACK = Decimal("0.002")             # an unscaled price further than this from a whole cent is named
 DIVIDEND_PLACES = Decimal("0.000001")
+SIMPLE = 50                                # a split ratio reduces to this or less on each side
 # Yahoo's `meta.exchangeName` -> equity.company.price_exchange (Nasdaq's three tiers are one exchange)
 EXCHANGES = {"NYQ": "NYSE", "NYS": "NYSE", "NMS": "NASDAQ", "NGM": "NASDAQ", "NCM": "NASDAQ", "NAS": "NASDAQ"}
 
@@ -94,10 +96,22 @@ class Split:
 
     @property
     def whole(self) -> bool:
-        """Both sides whole numbers (a real split or reverse split); anything else (1.2:1, Yahoo's way of
-        carrying some spin-offs) is held for review by the task."""
+        """Both sides whole numbers."""
         return self.numerator == self.numerator.to_integral_value() and \
             self.denominator == self.denominator.to_integral_value()
+
+    @property
+    def simple(self) -> bool:
+        """A ratio a split is declared in: whole numbers that reduce to SIMPLE or less on each side (4:1, 3:2, 20:1,
+        1:10). Yahoo also lists a spin-off as a 'split' whose ratio is the price drop it caused, such as Merck's
+        1048:1000 (Organon, 3 Jun 2021), IBM's 1046:1000 (Kyndryl, 4 Nov 2021), 3M's 1196:1000 (Solventum, 1 Apr
+        2024) and Honeywell's 1061:1000 (30 Oct 2025): those are not splits (the share count doesn't change), so
+        the task records them as `other` and holds their factor for review (the first dev backfill, 11 Nov 2026)."""
+        if not self.whole or self.numerator == self.denominator:
+            return False
+        n, d = int(self.numerator), int(self.denominator)
+        g = gcd(n, d)
+        return max(n // g, d // g) <= SIMPLE
 
 
 @dataclass(frozen=True)
