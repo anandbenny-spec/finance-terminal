@@ -8,12 +8,14 @@
 - Text-like files (HTML, JSON, CSV, XML, plain text) are gzipped before upload (typically 5-10x smaller);
   PDFs, zips and images are stored as they are. Gzip output is deterministic (no timestamp in the header).
 - Every read is checked against the hash in its key, so corruption or tampering fails loudly.
+- `StorageStop` (F3-02, #387) answers "may this task store a new file now?" for the tasks that opt in; `put` never asks it.
 """
 from __future__ import annotations
 
 import gzip
 import hashlib
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import boto3
@@ -142,3 +144,58 @@ class Storage:
         data = gzip.decompress(body) if key.endswith(".gz") else body
         if hashlib.sha256(data).hexdigest() != key.rsplit("/", 1)[-1].split(".", 1)[0]:
             raise IntegrityError(f"{key}: content does not match its hash")
+
+
+# ---------------------------------------------------------------------- the storage stop (F3-02, #387)
+MB = 1024 * 1024                        # the unit of the stops in config (the raw_storage check's too)
+
+
+class StorageStop:
+    """F3-02 (#387, 11 Nov 2026): may a growth task store a new raw file now?
+
+    **Opt-in.** Nothing in this module consults it: `Storage.put` stores whatever it is given, as before. A task that grows the
+    bucket by whole documents (`equity.call_transcripts`; `equity.brsr` when it exists) constructs one at the start of its run,
+    with its stop, and asks `allows()` before it fetches a new file. Module 1's document tasks and every other task never
+    construct one, so they store up to Supabase's own cap: the stop exists to keep that room for them.
+
+    The bucket is listed once (`Storage.stored_bytes()`: an object listing, no download, so no egress), and each new file the
+    task stores is added with `add()`, so the answer stays current through the run without listing again. A bucket that can't
+    be listed holds new files: the stop fails closed, with its own message."""
+
+    def __init__(self, storage: Storage | Callable[[], Storage] | None, stop_mb: int):
+        if stop_mb <= 0:
+            raise ValueError("stop_mb must be positive")
+        self.stop_mb = stop_mb
+        self.at_start: int | None = None                       # the bucket's stored bytes when the run began; None: unreadable
+        self.added = 0                                         # bytes this run stored since
+        try:
+            st = storage() if callable(storage) else storage
+            if st is not None:
+                self.at_start = int(st.stored_bytes()[1])
+        except Exception:                                      # noqa: BLE001 - any failure to list means "unknown": hold
+            self.at_start = None
+
+    @property
+    def readable(self) -> bool:
+        return self.at_start is not None
+
+    @property
+    def stored(self) -> int | None:
+        """The bucket's stored bytes now, as far as this run knows (the listing plus what it added)."""
+        return None if self.at_start is None else self.at_start + self.added
+
+    def allows(self) -> bool:
+        """True while the bucket is readable and under the stop; at or over it, or unreadable, new files are held."""
+        return self.stored is not None and self.stored < self.stop_mb * MB
+
+    def add(self, nbytes: int) -> None:
+        """Count a file this run stored (its stored size: a PDF's is its source size)."""
+        self.added += max(0, int(nbytes))
+
+    def describe(self) -> str:
+        """One line for a check or an alert: sizes and the stop, never names or contents."""
+        if self.at_start is None:
+            return (f"the raw bucket's size couldn't be read, so new files are held (the stop fails closed; "
+                    f"read Storage in the dashboard; the stop is {self.stop_mb} MB)")
+        return (f"the raw bucket holds {self.stored / MB:.1f} MB of stored objects, "
+                f"{'under' if self.allows() else 'at or over'} the {self.stop_mb} MB stop for new files")
