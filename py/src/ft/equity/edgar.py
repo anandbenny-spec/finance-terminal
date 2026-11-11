@@ -490,7 +490,7 @@ class Built:
     period_end: dt.date
     fy_start: dt.date | None
     rows: list[Row]
-    balance: tuple[bool, str] | None = None        # 10-Ks: (ties, how)
+    balance: tuple[bool | None, str] | None = None  # 10-Ks: (ties, how); None ties: not checked
     notes: list[str] = field(default_factory=list)
 
 
@@ -646,30 +646,43 @@ class Statements:
         how = f"dei:{SHARES_TAG} (cover page, as of {end.isoformat()})"
         return sum(vals, ZERO), how if len(vals) == 1 else f"{how}, summed across {len(vals)} entries"
 
-    def balance(self, f: Filing, end: dt.date, equity: Decimal | None) -> tuple[bool, str]:
+    def balance(self, f: Filing, end: dt.date, equity: Decimal | None) -> tuple[bool | None, str]:
         """A year end's balance sheet: total assets = liabilities + temporary equity + total equity (± tolerance); where
-        no total-liabilities line is filed, total assets = the filed balance sheet total."""
+        no total-liabilities line is filed, total assets = the filed balance sheet total. None: not checked (an
+        amendment that presents no balance sheet). Where `Assets` has two values at the date in one filing (the column
+        holds the field), the check passes only if exactly one of them ties, and says so."""
         def one(tag):
             v = f.get(tag, MONEY, None, end)
             return next(iter(v)) if len(v) == 1 else None
-        assets = one("Assets")
-        if assets is None:
-            return False, "no single total-assets figure"
-        tol = abs(assets) * self.cfg.tolerance
+        found = sorted(f.get("Assets", MONEY, None, end))
+        if not found:
+            if f.amendment and not f.has("Assets"):
+                return None, f"{f.form} {f.accn} presents no balance sheet (no total assets): not checked"
+            dates = sorted({k[3] for k in f.facts if k[0] == "Assets" and k[1] == MONEY})
+            return False, (f"no total-assets figure at the year end ({f.form} {f.accn}; Assets filed at "
+                           + (", ".join(map(str, dates)) or "no date") + ")")
         liab = one(self.cfg.liabilities)
         if liab is not None:
             if equity is None:
-                return False, "no total-equity figure"
+                return False, f"no total-equity figure ({f.form} {f.accn})"
             temp = one(self.cfg.temporary_equity_total)
             if temp is None:
                 temp = sum((x for t in self.cfg.temporary_equity if (x := one(t)) is not None), ZERO)
-            gap = assets - (liab + temp + equity)
-            how = f"assets {assets} vs liabilities {liab} + temporary equity {temp} + equity {equity}"
-            return abs(gap) <= tol, how
-        total = one(self.cfg.balance_total)
-        if total is None:
-            return False, "neither a total-liabilities line nor a balance sheet total is filed"
-        return abs(assets - total) <= tol, f"assets {assets} vs the balance sheet total {total} (no total-liabilities line is filed)"
+            other, side = liab + temp + equity, f"liabilities {liab} + temporary equity {temp} + equity {equity}"
+        else:
+            total = one(self.cfg.balance_total)
+            if total is None:
+                return False, f"neither a total-liabilities line nor a balance sheet total is filed ({f.form} {f.accn})"
+            other, side = total, f"the balance sheet total {total} (no total-liabilities line is filed)"
+        ties = [a for a in found if abs(a - other) <= abs(a) * self.cfg.tolerance]
+        if len(found) == 1:
+            return bool(ties), f"assets {found[0]} vs {side}"
+        if len(ties) == 1:
+            return True, (f"assets {ties[0]} vs {side} (Assets has {len(found)} values at the date in {f.form} {f.accn}: "
+                          + ", ".join(map(str, found)) + "; the one that ties is the balance sheet's, and the column "
+                          "holds the field)")
+        return False, f"Assets has {len(found)} values at the date in {f.form} {f.accn} (" + ", ".join(map(str, found)) \
+            + f") and {len(ties)} tie with {side}"
 
     def switched(self, used: dict[str, set[str]]) -> list[str]:
         """Columns whose rows came from more than one tag of their chain, the primary named."""
