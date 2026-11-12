@@ -27,8 +27,11 @@ export function FieldsTable({ model }: { model: FieldsTableModel }) {
               <span>
                 {c.text}
                 {c.marks.map((m) => (
-                  <sup key={m} className="ml-0.5 text-ink-3">
+                  // text-meta: a superscript's default size would fall under the 12 px floor. The mark is read as "note 1", not as a digit of the figure.
+                  <sup key={m} className="ml-0.5 text-meta text-ink-3">
+                    <span className="sr-only"> (note </span>
                     {m}
+                    <span className="sr-only">)</span>
                   </sup>
                 ))}
               </span>

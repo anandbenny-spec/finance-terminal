@@ -391,7 +391,14 @@ describe("the value chain card's figures (VC-06, #191)", () => {
     expect(formatShareChangeWords(3.24)).toBe("up 3.2 pp");
     expect(formatShareChangeWords(-1)).toBe("down 1.0 pp");
     expect(formatShareChangeWords(0)).toBe("unchanged");
-    expect(formatShareChangeWords(0.04)).toBe("unchanged");
+    // A change too small for one decimal is never "unchanged": the two filed figures sit beside it (#191's page check).
+    expect(formatShareChangeWords(0.04)).toBe("up 0.04 pp");
+    expect(formatShareChangeWords(-0.04)).toBe("down 0.04 pp");
+    expect(formatShareChangeWords(0.01)).toBe("up 0.01 pp");
+    expect(formatShareChangeWords(-0.0004)).toBe("down 0.0004 pp");
+    expect(formatShareChangeWords(0.05)).toMatch(/^up 0\.(1|05) pp$/);
+    expect(formatShareChangeWords(-0.14)).toBe("down 0.1 pp");
+    expect(formatShareChangeWords(0.000004)).toBe("unchanged");
     expect(formatShareChangeWords(undefined)).toBe(NOT_AVAILABLE);
   });
 

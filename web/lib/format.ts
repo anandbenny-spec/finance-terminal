@@ -502,12 +502,19 @@ export function formatFiledShare(pct: Num): string {
   return `${digits(pct, { decimals, grouping: false })}%`;
 }
 
-/** A change in a share between two years, in words with no sign and no colour: `3.24` → `up 3.2 pp`, `-1` → `down 1.0 pp`, `0` → `unchanged`. */
+/**
+ * A change in a share between two years, in words with no sign and no colour: `3.24` → `up 3.2 pp`, `-1` → `down 1.0 pp`,
+ * `0` → `unchanged`. A change too small for one decimal keeps the decimals it needs (`-0.04` → `down 0.04 pp`, at most four,
+ * the most a filed share carries): the two years' figures are shown as filed beside it, so "unchanged" is said only of a
+ * change that is nothing (#191's page check, 12 Nov 2026: 1.44% to 1.4% read "unchanged").
+ */
 export function formatShareChangeWords(pp: Num): string {
   if (isMissing(pp)) return NOT_AVAILABLE;
-  const body = digits(Math.abs(pp), { decimals: 1, grouping: false });
-  if (!/[1-9]/.test(body)) return "unchanged";
-  return `${pp > 0 ? "up" : "down"} ${body} pp`;
+  for (let decimals = 1; decimals <= 4; decimals++) {
+    const body = digits(Math.abs(pp), { decimals, grouping: false });
+    if (/[1-9]/.test(body)) return `${pp > 0 ? "up" : "down"} ${body} pp`;
+  }
+  return "unchanged";
 }
 
 /** A change in a count between two years, in words: `120` → `up 120`, `-3` → `down 3`, `0` → `unchanged`. Grouped as India groups. */
