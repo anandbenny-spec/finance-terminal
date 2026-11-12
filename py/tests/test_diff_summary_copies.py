@@ -155,17 +155,17 @@ FRONT_PAGE = [own('- Growth of economic activity changed from "has moderated" to
 
 def test_the_rule_applies_from_v4_and_a_pinned_older_reply_is_checked_as_before():
     """`ai_batch.Work.check` asks for the rule only for a v4 (or later) request; a target pinned to v1, v2 or v3 keeps
-    its copies, exactly as before this change. v5 (the current version) and v4 are checked the same way."""
+    its copies, exactly as before this change. v4, v5 and v6 (the current version) are checked the same way."""
     w = Work("statement_diff_summary", NEW, OLD, D.segments)
     texts = {}
-    for version in ("v1", "v2", "v3", "v4", "v5"):
+    for version in ("v1", "v2", "v3", "v4", "v5", "v6"):
         req = w.request(load_prompt("statement_diff_summary", version))
         c = w.check(req, reply(FRONT_PAGE))
         assert c.ok, (version, c.reasons())
         texts[version] = ([b.text for b in c.kept], dict(c.copies))
     assert texts["v4"] == (['Growth of economic activity changed from "has moderated" to "has moderated further".',
                             'The policy decision changed from "maintain" to "lower" the target range.'], {"removed": 3})
-    assert texts["v5"] == texts["v4"]
+    assert texts["v4"] == texts["v5"] == texts["v6"]
     plain = check("statement_diff_summary", reply(FRONT_PAGE), REQ.sources, changed=CHANGED)
     assert texts["v1"] == texts["v2"] == texts["v3"] == ([b.text for b in plain.kept], {})
     assert texts["v1"][0][0].endswith(FOMC_A[slice(*A_GROWTH)] + " ... " + FOMC_B[slice(*B_GROWTH)])
@@ -201,7 +201,7 @@ def test_copies_in_their_own_parentheses_go_with_them():
     assert [b.text for b in c.kept] == [
         'Growth of economic activity changed from "has moderated" to "has moderated further".',
         'The policy decision changed from "maintain" to "lower" the target range.']
-    assert [len(b.citations) for b in c.kept] == [2, 2] and c.copies == {"removed": 3}
+    assert [len(b.citations) for b in c.kept] == [2, 2] and c.copies == {"removed": 4}     # a joined copy counts its pieces
 
 
 def test_a_copy_after_a_word_that_closes_the_clause_comes_out_and_one_after_an_open_word_is_quoted():
@@ -222,6 +222,7 @@ def test_a_copy_after_a_word_that_closes_the_clause_comes_out_and_one_after_an_o
 
 
 def test_a_joined_copy_inside_the_models_sentence_is_quoted_piece_by_piece():
+    """Its pieces share one fate: the second never comes out while the first stays (that would change the meaning)."""
     joined = {"type": "text", "text": FOMC_A[slice(*A_GROWTH)] + " / " + FOMC_B[slice(*B_GROWTH)],
               "citations": [cite(FOMC_A, *A_GROWTH, 0), cite(FOMC_B, *B_GROWTH, 1)]}
     blocks = [own("- The growth sentence now reads "), joined, own("\n- The decision changed. "), new(B_RATE)]
@@ -229,4 +230,36 @@ def test_a_joined_copy_inside_the_models_sentence_is_quoted_piece_by_piece():
     assert c.ok, c.reasons()
     assert c.kept[0].text == (f'The growth sentence now reads "{FOMC_A[slice(*A_GROWTH)]}" / '
                               f'"{FOMC_B[slice(*B_GROWTH)]}"')
-    assert c.copies == {"quoted": 1, "removed": 1}
+    assert c.copies == {"quoted": 2, "removed": 1}
+
+
+def test_copies_joined_by_a_semicolon_come_out_together():
+    """Dev's output 2457 (round 4, v5): "…records a "12 – 0" vote. <copy>; <copy>." as one cited block."""
+    joined = {"type": "text", "text": FOMC_A[slice(*A_RISK)][:-1] + "; " + FOMC_B[slice(*B_RISKS)],
+              "citations": [cite(FOMC_A, *A_RISK, 0), cite(FOMC_B, *B_RISKS, 1)]}
+    blocks = [own("- The sentence on uncertainty was dropped and a judgment on risks was added. "), joined,
+              own("\n- The decision changed: "), old(A_RATE), own(" / "), new(B_RATE)]
+    c = diff_check(blocks)
+    assert c.ok, c.reasons()
+    assert [b.text for b in c.kept] == [
+        "The sentence on uncertainty was dropped and a judgment on risks was added.",
+        f'The decision changed: "{FOMC_A[slice(*A_RATE)]}" / "{FOMC_B[slice(*B_RATE)]}"']
+    assert c.copies == {"removed": 2, "quoted": 2}
+
+
+def test_a_copy_in_its_own_quotation_marks_comes_out_with_them_only_where_the_text_reads_without_it():
+    """Dev's output 2468 (round 4, v5): "…"were of the view that the stance be retained at neutral." "<copy>"" repeats the
+    sentence; "…changed from "<copy>" to "<copy>"" and "…records a dissent: "<copy>"" need theirs. The marks may be the
+    model's own text or inside the cited block."""
+    inside_marks = {"type": "text", "text": '"' + FOMC_B[slice(*B_RISKS)] + '"',
+                    "citations": [cite(FOMC_B, *B_RISKS, 1)]}
+    blocks = [own('- The statement now judges that "downside risks to employment have risen." '), inside_marks,
+              own('\n- The growth sentence changed from "'), old(A_GROWTH), own('" to "'), new(B_GROWTH), own('"'),
+              own('\n- The new statement records a dissent: "'), new((1157, 1286)), own('"')]
+    c = diff_check(blocks)
+    assert c.ok, c.reasons()
+    assert [b.text for b in c.kept] == [
+        'The statement now judges that "downside risks to employment have risen."',
+        f'The growth sentence changed from "{FOMC_A[slice(*A_GROWTH)]}" to "{FOMC_B[slice(*B_GROWTH)]}"',
+        f'The new statement records a dissent: "{FOMC_B[1157:1286]}"']
+    assert c.copies == {"removed": 1}

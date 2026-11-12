@@ -317,29 +317,31 @@ def verify_bullet(body: str, cites: list, sources: tuple[Source, ...], mapping: 
 # Prompts v2 and v3 didn't stop it (two dev samples), so for this task only, from prompt v4 on, before the checks:
 # - A copy is a cited text block whose text is found word for word, in `match_form`, in its own cited text (one citation's,
 #   or its citations' joined in order), a closing punctuation mark aside ("…in several parts of the world." from "…world,
-#   especially …"). Its list marker, the whitespace around it and a pair of parentheses around it don't count; it is one
-#   line; pieces joined by " / " or " ... " are one copy if each is found; each piece has at least COPY_MIN_WORDS words.
-#   A block with any words of the model's own isn't a copy and is never touched.
-# - A copy the model put inside quotation marks is left as it is.
-# - A copy comes out of the bullet's text, with the separators (" ... ", " / ") beside it, when the text around it reads
-#   without it. Before it: the bullet's start, a sentence's end, a removed copy, or a word that doesn't need what follows
-#   (not a colon, nor "in", "as", "from", "reads" and the like: `_NEEDS_MORE`). After it: the bullet's end, another copy,
+#   especially …"), with at least COPY_MIN_WORDS words. Its list marker, the whitespace around it and a pair of
+#   parentheses or quotation marks around it don't count; it is one line. A block whose pieces, joined by " / ", " ... "
+#   or "; ", are each such a copy holds one copy per piece. A block with any words of the model's own isn't a copy and is
+#   never touched.
+# - Copies joined only by separators share one fate. They come out of the bullet's text, with the separators, when the
+#   text around them reads without them. Before: the bullet's start, a sentence's end, or a word that doesn't need what
+#   follows (not a colon, nor "in", "as", "from", "reads" and the like: `_NEEDS_MORE`). After: the bullet's end,
 #   punctuation, or a new sentence. Copies in their own parentheses go with them ("…to "been little changed" (<copy> /
-#   <copy>)."). A full stop that ended a removed copy stays where the sentence would otherwise have none. Its citations
-#   stay on the bullet: the page shows each cited sentence through its chip.
-# - Any other copy is part of the model's own sentence ("…described as "moderate" in <copy>") and goes in quotation marks
-#   instead (each piece of a joined copy in its own), as does every copy of a bullet that would otherwise keep fewer than
-#   OWN_MIN_WORDS words of the model's own outside quotation marks (no sentence of its own words).
-# Our code only removes words copied from the source (with the separators and parentheses that held them), or puts them in
-# quotation marks; it never adds a word. The checks then run on the final text: the figures check can only get stricter,
-# since a copy's figures are in its cited text.
+#   <copy>)."), and so does a copy in its own quotation marks ("…retained at neutral." "<copy>""). A full stop that ended
+#   a removed copy stays where the sentence would otherwise have none. Their citations stay on the bullet: the page shows
+#   each cited sentence through its chip.
+# - Any other copy is part of the model's own sentence ("…described as "moderate" in <copy>"): it goes in quotation marks
+#   (one pair per piece), or keeps its own. So does every copy of a bullet that would otherwise keep fewer than
+#   OWN_MIN_WORDS words, or none outside quotation marks (no sentence of the model's own: "Revised:", or nothing).
+# - A copy inside the model's quotation marks with other words is left as it is.
+# Our code only removes words copied from the source (with the separators, parentheses and quotation marks that held them),
+# or puts them in quotation marks; it never adds a word. The checks then run on the final text: the figures check can only
+# get stricter, since a copy's figures are in its cited text.
 COPY_MIN_WORDS = 5                # the judge's measure counts copied stretches from five words (ft/eval/diff_quotes.py)
-OWN_MIN_WORDS = 3                 # fewer of the model's own words outside quotation marks isn't a sentence of its own
+OWN_MIN_WORDS = 3                 # fewer words left, or none outside quotation marks, isn't a sentence of the model's own
 _OPEN, _CLOSE = "\x01", "\x02"    # around a copy between `mark_copies` and `settle_copies`; never stored
 _GAP, _GAP_STOP = "\x03", "\x04"  # where a removed copy was (`_GAP_STOP`: it ended with a full stop); never stored
 _COPY = re.compile("\x01([^\x01\x02]*)\x02")
 _WORD = re.compile(r"[^\W_]+")
-_PIECES = re.compile(r"\s+(?:/|\||\.\.\.|…)\s+")
+_PIECES = re.compile(r"\s*;\s+|\s+(?:/|\||\.\.\.|…)\s+")   # between the pieces of a joined copy
 _SEP = r"(?:\s|\.\.\.|…|[;|/]|(?<=\s)[-–—](?=\s|$))"
 _SEP_TAIL = re.compile(_SEP + "+$")
 _SEP_HEAD = re.compile(r"^(?:\s|\.\.\.|…|[;|/]|[-–—](?=\s))+")
@@ -354,16 +356,30 @@ _NEEDS_MORE = frozenset({"a", "an", "the", "in", "into", "as", "from", "to", "th
     "adds", "adding", "replace", "replaces", "replaced", "replacing", "now", "then", "where", "when"})
 
 
-def _is_copy(core: str, cited: list[str]) -> bool:
+def _found(text: str, hay: list[str]) -> bool:
+    if len(_WORD.findall(text)) < COPY_MIN_WORDS:
+        return False
+    words = match_form(text).rstrip(".,;:!? ")          # a full stop the model put after a shortened copy isn't a word
+    t = re.compile(r"(?<!\w)" + re.escape(words) + r"(?!\w)")
+    return any(t.search(h) for h in hay)
+
+
+def copy_spans(core: str, cited: list[str]) -> list[tuple[int, int]]:
+    """Where `core` (a cited block's text) copies its cited text: all of it, or each of its joined pieces; else nothing."""
     hay = [match_form(h) for h in [*cited, " ".join(cited)]]
-    for piece in _PIECES.split(core):
-        if len(_WORD.findall(piece)) < COPY_MIN_WORDS:
-            return False
-        words = match_form(piece).rstrip(".,;:!? ")     # a full stop the model put after a shortened copy isn't a word
-        t = re.compile(r"(?<!\w)" + re.escape(words) + r"(?!\w)")
-        if not any(t.search(h) for h in hay):
-            return False
-    return True
+    if _found(core, hay):
+        return [(0, len(core))]
+    spans, pos = [], 0
+    for m in [*_PIECES.finditer(core), None]:
+        a, b = pos, (m.start() if m else len(core))
+        if not _found(core[a:b], hay):
+            return []
+        spans.append((a, b))
+        pos = m.end() if m else b
+    return spans if len(spans) > 1 else []
+
+
+_PAIRS = ((("(",), r"\)[.,;:!?]?$"), (('"', "\u201c"), r"[\"\u201d][.,;:!?]?$"))
 
 
 def mark_copies(parts: list[TextPart]) -> list[TextPart]:
@@ -376,12 +392,18 @@ def mark_copies(parts: list[TextPart]) -> list[TextPart]:
         lead = _LEAD.match(p.text)
         s = lead.end() if lead else 0
         e = len(p.text.rstrip())
-        if p.text[s:s + 1] == "(" and (m := re.search(r"\)[.,;:!?]?$", p.text[s:e])):
-            s, e = s + 1, s + m.start()                  # the parentheses around a copy stay outside it
-            s, e = s + len(p.text[s:e]) - len(p.text[s:e].lstrip()), s + len(p.text[s:e].rstrip())
+        for opens, closes in _PAIRS * 2:                 # parentheses or quotation marks around a copy stay outside it
+            if p.text[s:s + 1] in opens and (m := re.search(closes, p.text[s + 1:e])):
+                s, e = s + 1, s + 1 + m.start()
+                s, e = s + len(p.text[s:e]) - len(p.text[s:e].lstrip()), s + len(p.text[s:e].rstrip())
         core = p.text[s:e]
-        if cited and core and "\n" not in core and _is_copy(core, cited):
-            p = TextPart(p.text[:s] + _OPEN + core + _CLOSE + p.text[e:], p.citations)
+        spans = copy_spans(core, cited) if cited and core and "\n" not in core else []
+        if spans:
+            text, pos = p.text[:s], 0
+            for a, b in spans:
+                text += core[pos:a] + _OPEN + core[a:b] + _CLOSE
+                pos = b
+            p = TextPart(text + core[pos:] + p.text[e:], p.citations)
         out.append(p)
     return out
 
@@ -418,11 +440,6 @@ def _end_ok(copy: str, after: str) -> bool:
             or (bool(_SENTENCE_END.search(copy.rstrip())) and (a[0].isupper() or a[0] in "\"“")))
 
 
-def _quote(copy: str) -> str:
-    """A copy in quotation marks, each piece of a joined copy in its own."""
-    return _PIECES.sub(lambda m: '"' + m.group(0) + '"', f'"{copy}"')
-
-
 def _close_gaps(t: str) -> str:
     """The text with each removed copy's gap closed: its separators and its own parentheses go with it, a chain of gaps is
     one gap, and a full stop that ended the copy stays where the sentence would otherwise have none."""
@@ -455,40 +472,60 @@ def settle_copies(body: str, tally: Counter) -> str:
         pos = m.end()
     tokens.append(unmark(body[pos:]))
     copies = range(1, len(tokens), 2)
-    inside = {i for i in copies
-              if match_form("".join(tokens[:i])).count('"') % 2 or '"' in match_form(tokens[i])}
-    acts: dict[int, str] = {}                            # a copy's token index → 'remove' | 'quote' (else left as it is)
-    i = 1
-    while i < len(tokens):                               # copies in their own parentheses, alone or joined by separators
-        j = i
-        while j + 2 < len(tokens) and not _SEP_TAIL.sub("", tokens[j + 1]) and j + 2 not in inside:
-            j += 2
-        run = range(i, j + 1, 2)
-        if (not inside & set(run) and tokens[i - 1].rstrip().endswith("(")
-                and tokens[j + 1].lstrip().startswith(")")):
-            acts.update({k: "remove" for k in run})
-        i = j + 2
+    marks = {i: match_form("".join(tokens[:i])).count('"') for i in copies}
+    quoted = {i for i in copies if marks[i] % 2 and tokens[i - 1].rstrip()[-1:] in '"\u201c'
+              and tokens[i + 1].lstrip()[:1] in '"\u201d' and '"' not in match_form(tokens[i])}
+    inside = {i for i in copies if i not in quoted and (marks[i] % 2 or '"' in match_form(tokens[i]))}
+
+    def bare(i: int, side: int) -> str:
+        """The own text on one side of copy `i` (-1 before, +1 after) without the quotation marks of the copies it lies
+        between."""
+        t = tokens[i + side]
+        if (side < 0 and i in quoted) or (side > 0 and i + 2 in quoted):
+            t = t.rstrip()[:-1]
+        if (side < 0 and i - 2 in quoted) or (side > 0 and i in quoted):
+            t = t.lstrip()[1:]
+        return t
+
+    acts: dict[int, str] = {}                            # a copy's index → 'remove' | 'quote'; else it stays as it is
+    chains: list[list[int]] = []                         # copies joined by separators only (" / ", " ... ", "; ") share a fate
     for i in copies:
-        if i in inside or i in acts:
+        if i in inside:
             continue
-        prev_removed = i >= 3 and not _SEP_TAIL.sub("", tokens[i - 1]) and acts.get(i - 2) == "remove"
-        ok = (prev_removed or _start_ok("".join(tokens[:i]))) and _end_ok(tokens[i], tokens[i + 1])
-        acts[i] = "remove" if ok else "quote"
+        if chains and chains[-1][-1] == i - 2 and not _SEP_TAIL.sub("", bare(i, -1)):
+            chains[-1].append(i)
+        else:
+            chains.append([i])
+    for chain in chains:
+        first, last = chain[0], chain[-1]
+        before, after = "".join(tokens[:first - 1]) + bare(first, -1), bare(last, +1)
+        if not quoted & set(chain) and before.rstrip().endswith("(") and after.lstrip().startswith(")"):
+            ok = True                                    # copies in their own parentheses go with them
+        else:
+            ok = _start_ok(before) and _end_ok(tokens[last], after)
+        for k in chain:
+            if ok:
+                acts[k] = "remove"
+            elif k not in quoted:
+                acts[k] = "quote"                        # a copy already in its own marks stays as it is
 
     def build(remove: bool) -> str:
         out = list(tokens)
-        for k, act in acts.items():
-            if act == "remove" and remove:
+        for k in sorted(acts):
+            if acts[k] == "remove" and remove:
                 out[k] = _GAP_STOP if _SENTENCE_END.search(tokens[k].rstrip()) else _GAP
-            else:
-                out[k] = _quote(tokens[k])
+                if k in quoted:                          # its own quotation marks go with it
+                    out[k - 1], out[k + 1] = out[k - 1].rstrip()[:-1], out[k + 1].lstrip()[1:]
+            elif k not in quoted:
+                out[k] = f'"{tokens[k]}"'
         return " ".join(_close_gaps("".join(out)).split())
 
     removed = sum(1 for a in acts.values() if a == "remove")
     text = build(remove=True)
-    if removed and _own_words(text) < OWN_MIN_WORDS:
+    if removed and (len(_WORD.findall(text)) < OWN_MIN_WORDS or not _own_words(text)):
         text, removed = build(remove=False), 0           # no sentence of the model's own would be left: quote them all
-    for key, n in (("removed", removed), ("quoted", len(acts) - removed)):
+    quoted_now = sum(1 for k, a in acts.items() if k not in quoted and (a == "quote" or not removed))
+    for key, n in (("removed", removed), ("quoted", quoted_now)):
         if n:
             tally[key] += n
     return text

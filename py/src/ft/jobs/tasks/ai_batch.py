@@ -150,9 +150,10 @@ from ft.policy import rbi_resolution
 # dev sample): quote only the changed words and don't repeat the cited sentence after them. v4 (Anand's option 1, 12 Nov
 # 2026): v3's instructions word for word, with our assembly taking the reply's copies of its cited text out of the bullets
 # (`summaries.mark_copies`; from `COPIES_FROM` on). v5: the same instructions again, marking the outputs made with the
-# copies rule's revision after v4's dev sample (parentheses, joined copies, copies after a clause). Its older targets keep
-# the version they were answered with until the re-run (`PINNED_TASKS`, `RERUN_ENV`).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v5", "stance_extraction": "v2",
+# copies rule's revision after v4's dev sample (parentheses, joined copies, copies after a clause); v6 likewise, after v5's
+# ("; " joins, copies in their own quotation marks). Its older targets keep the version they were answered with until the
+# re-run (`PINNED_TASKS`, `RERUN_ENV`).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v6", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 PINNED_TASKS = ("statement_diff_summary",)   # a target keeps the version it was answered with (module docstring)
