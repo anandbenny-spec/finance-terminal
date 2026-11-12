@@ -95,6 +95,7 @@ function ChangesPanel({ bank, latest, changes, policies, now, footer }: { bank: 
       subtitle={fed ? "What did the Fed's latest statement change, against the one before?" : "What did the RBI's latest resolution change, against the one before?"}
       market={fed ? "US" : "IN"}
       span={6}
+      className="self-start"
       footer={footer}
       refresh={FEEDS.policyChanges}
     >
