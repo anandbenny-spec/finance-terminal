@@ -100,21 +100,31 @@ export const TABS = [
 ] as const;
 export type TabId = (typeof TABS)[number]["id"];
 
-/** The tab a `?tab=` value names; anything else (or nothing) is the Overview. */
+/** The tab a `?tab=` value names (the /latest routes still take that query); anything else (or nothing) is the Overview. */
 export function tabOf(value: string | string[] | undefined): TabId {
   const v = Array.isArray(value) ? value[0] : value;
   return TABS.some((t) => t.id === v) ? (v as TabId) : "overview";
 }
 
 /**
- * A meeting page's link on a given tab: /policy/fed/2026-09-17 for the Overview, ?tab=changes for the rest. `extra` is
- * one more query parameter ("doc=governor"). Previous / Next and the Latest decisions cards use it so a reader
- * stays on the tab they were reading (#147).
+ * A meeting page's link on a given tab, as a path (R05-9a, 12 Nov 2026): /policy/fed/2026-09-17 for the Overview,
+ * /policy/fed/2026-09-17/changes for the rest, so every tab is built ahead and cached like Policy Day. The RBI's
+ * Governor's statement is /policy/rbi/2026-10-07/statement/governor (`{ doc: "governor" }`; it means nothing on any other
+ * tab or for the Fed, so it is ignored there). Previous / Next and the Latest decisions cards use it so a reader stays on
+ * the tab they were reading (#147). Old `?tab=` and `?doc=` links are redirected in next.config.ts.
  */
-export function meetingTabHref(bank: Bank, decisionDate: string, tab: TabId, extra = ""): string {
+export function meetingTabHref(bank: Bank, decisionDate: string, tab: TabId, options: { doc?: "governor" } = {}): string {
   const base = meetingHref(bank, decisionDate);
-  if (tab === "overview") return extra ? `${base}?${extra}` : base;
-  return `${base}?tab=${tab}${extra ? `&${extra}` : ""}`;
+  if (tab === "overview") return base;
+  if (tab === "statement" && bank === "RBI" && options.doc === "governor") return `${base}/statement/governor`;
+  return `${base}/${tab}`;
+}
+
+/** The tab a path segment names (/policy/fed/2026-09-17/changes); null for anything else, and for `overview`, which is the
+ * bare date's page, so that segment answers 404. */
+export function tabSegment(value: string): TabId | null {
+  const t = TABS.find((x) => x.id === value);
+  return t && t.id !== "overview" ? t.id : null;
 }
 
 // ------------------------------------------------------------------ Tallies

@@ -1,19 +1,13 @@
-// /policy/rbi/[date]: an MPC meeting page (C4; Spec 01 §4.3). The date is the decision date; the tab is in the URL
-// (?tab=…) so every tab can be linked (Design 01 §4.2). The tab's content renders inside Suspense (the search params
-// are only known on request), from cached reads (lib/queries/meeting.ts).
+// /policy/rbi/[date]: the Overview of an MPC meeting (C4; Spec 01 §4.3). The date is the decision date; every other tab is its own
+// path (/policy/rbi/2026-10-07/changes, …/statement/governor; R05-9a, 12 Nov 2026), so no meeting page reads the query string and each is cached like Policy Day.
+// Old ?tab= links are redirected in next.config.ts. components/policy/MeetingRoute.tsx holds the body and the 404 for a missing meeting.
 //
-// A missing meeting answers 404 (#21, item 4): the page looks the meeting up BEFORE its Suspense boundary, because
-// once the response streams its status is fixed at 200 (Next 16 docs, streaming guide, "Status codes"). Reading the
-// date there needs it known when the route prerenders, so generateStaticParams names one sample: the 2018 baseline
-// (Spec 01 §2), a meeting that never changes. Every other date renders on its first request, then is cached.
+// generateStaticParams names one sample, the 2018 baseline (Spec 01 §2), a meeting that never changes: no more build-time
+// reads of production. Every other date renders on its first request, then is cached.
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
-import { Suspense } from "react";
-import { PageLoading } from "@/components/data/PageLoading";
-import { MeetingView, tabOf } from "@/components/policy/MeetingView";
+import { renderMeeting } from "@/components/policy/MeetingRoute";
 import { formatDate } from "@/lib/format";
 import { slugFor } from "@/lib/policy/meeting";
-import { readMeetingExists } from "@/lib/queries/meeting";
 
 type Props = PageProps<"/policy/rbi/[date]">;
 
@@ -27,19 +21,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return { title: `MPC meeting, ${formatDate(date)} · Finance Terminal` };
 }
 
-async function Meeting({ slug, date, searchParams }: { slug: string; date: string; searchParams: Props["searchParams"] }) {
-  const query = await searchParams;
-  const doc = typeof query.doc === "string" ? query.doc : undefined;
-  return <MeetingView bank="RBI" slug={slug} date={date} tab={tabOf(query.tab)} doc={doc} />;
-}
-
-export default async function Page({ params, searchParams }: Props) {
+export default async function Page({ params }: Props) {
   const { date } = await params;
-  const slug = slugFor("RBI", date);
-  if (!slug || (await readMeetingExists("RBI", slug)) === false) notFound();
-  return (
-    <Suspense fallback={<PageLoading>Loading the meeting…</PageLoading>}>
-      <Meeting slug={slug} date={date} searchParams={searchParams} />
-    </Suspense>
-  );
+  return renderMeeting("RBI", date, "overview");
 }
