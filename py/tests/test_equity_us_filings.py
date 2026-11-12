@@ -850,11 +850,11 @@ def test_a_stored_row_that_displaced_a_fuller_one_is_removed_by_the_rebuild(s3, 
     sec = Sec(with_part_iii_amendment)
     go(sec, monkeypatch)
     doc = q("select id from core.document where external_key = %s", APPLE_10KA)[0][0]
-    q("update equity.filing set parser_version = '1' where document_id = %s", doc)
+    q("update equity.filing set parser_version = '1' where document_id = %s returning document_id", doc)
     q("""insert into equity.financials (document_id, entity_id, basis, period_start, period_end, period_kind, currency,
                                         pat_owners, tags)
          select %s, entity_id, 'consolidated', '2024-09-29', '2025-09-27', 'year', 'USD', 112010000000,
-                '{"pat_owners": "NetIncomeLoss"}' from core.document where id = %s""", doc, doc)
+                '{"pat_owners": "NetIncomeLoss"}' from core.document where id = %s returning document_id""", doc, doc)
     code, tr = go(sec, monkeypatch)
     assert code == 0 and tr[0] == "success", tr
     assert detail(tr, "loaded").startswith("0 filings registered, 1 rebuilt")
