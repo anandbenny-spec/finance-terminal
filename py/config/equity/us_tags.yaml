@@ -27,6 +27,16 @@
 #   line is filed, never both (short-term borrowings include commercial paper and other short-term borrowings). `tags`
 #   names every part added and says the figure is the sum of the filed captions. Held, with the parts named, where a
 #   company's parts can't be added without counting one twice (`not_summed`) or a filed caption is outside the sum.
+#
+# #455's questions 1 to 3 (Anand, 12 Nov 2026, about 22:27 IST: "just apply your recommendations"; job US-02c, #470):
+# - borrowings_current's `filed_total`: a company whose one filed caption is its whole current debt (IBM);
+# - borrowings_current's `added_to`: other short-term borrowings filed beside commercial paper, with no short-term
+#   borrowings line, are added to it (Coca-Cola's 2023-25 year ends);
+# - pbt's `all_parts`: where no tag of the chain is filed for a period (same end and duration) and every part is, their
+#   sum (McDonald's from 2022). One part alone leaves the field empty.
+# - `tie`, and pbt's chain against its `all_parts`: the task's parts_tie warning compares a filed total with its parts
+#   wherever all are filed for one period (more than $1 million apart: named, tickers and dates only), and a company
+#   named there has that column's parts rule (`added_to`, `all_parts`) switched off, held, until Anand rules.
 from: 2019-01-01
 
 columns:
@@ -42,6 +52,10 @@ columns:
     kind: flow
     chain: [IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest,
             IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments]
+    # #455's question 3 (#470): McDonald's files no total from 2022, only its income tax note's two parts
+    all_parts: [IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic,
+                IncomeLossFromContinuingOperationsBeforeIncomeTaxesForeign]
+    all_parts_label: the sum of the filed domestic and foreign parts
   tax: {kind: flow, chain: [IncomeTaxExpenseBenefit]}
   pat: {kind: flow, chain: [ProfitLoss]}
   pat_owners: {kind: flow, chain: [NetIncomeLoss, NetIncomeLossAvailableToCommonStockholdersBasic]}
@@ -77,13 +91,27 @@ columns:
       - [LongTermDebtCurrent, LongTermDebtAndCapitalLeaseObligationsCurrent]
       - [ShortTermBorrowings, CommercialPaper]
     included: {ShortTermBorrowings: [OtherShortTermBorrowings]}
-    # held, never added: decided by Claude (standing delegation, 24 Oct 2026; #455), as it only holds a value back
-    not_summed:
-      IBM: >-
-        IBM's ShortTermBorrowings is its balance sheet's short-term debt, which includes its current maturities of
-        long-term debt: it exceeds commercial paper plus current maturities wherever it files all three (30 Jun 2019:
-        8,530 against 2,988 + 5,147; 30 Sep 2021: 7,575 against 900 + 6,632, $ millions), so adding the parts would
-        count the current maturities twice
+    # #455's question 2 (#470): with no short-term borrowings line, other short-term borrowings filed beside commercial
+    # paper are added to it, since a short-term borrowings line holds both (Coca-Cola 2020-22: 2,373 = 2,146 + 227,
+    # $ millions). Other short-term borrowings with neither line still hold the field.
+    added_to: {CommercialPaper: [OtherShortTermBorrowings]}
+    # parts_tie: where all three are filed for one date, short-term borrowings against the two it holds
+    tie: {ShortTermBorrowings: [CommercialPaper, OtherShortTermBorrowings]}
+    # held, never added (standing delegation, 24 Oct 2026; #455): none since IBM moved to filed_total (#470)
+    not_summed: {}
+    # #455's question 1 (#470): a company whose one filed caption is its whole current debt. Nothing is added to it; a
+    # date where it is below the current part of long-term debt it includes (`never_below`, the first non-zero filed)
+    # is held and named in the debt_held warning.
+    filed_total:
+      IBM:
+        tag: ShortTermBorrowings
+        label: short-term debt as filed, including current maturities of long-term debt
+        source: >-
+          IBM's 10-K: the balance sheet's "Short-term debt" line, and the borrowings note's short-term debt table,
+          which counts the current maturities of long-term debt within it (30 Jun 2019: 8,530 against commercial paper
+          2,988 + current maturities 5,147; 30 Sep 2021: 7,575 against 900 + 6,632; 30 Sep 2026: 7,013 against
+          current maturities 7,009, $ millions; #455)
+        never_below: [LongTermDebtCurrent, LongTermDebtAndCapitalLeaseObligationsCurrent]
   # LongTermDebt is left out: it includes the part due within a year
   borrowings_noncurrent: {kind: instant, chain: [LongTermDebtNoncurrent, LongTermDebtAndCapitalLeaseObligations]}
 
