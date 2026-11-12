@@ -119,4 +119,11 @@ describe("meetingReaction", () => {
     expect(m.dataTo).toBe("2024-09-18");
     expect(meetingReaction({ ...base, bank: "Fed", reactions: [], series: series(ALL), observations: {} }).dataTo).toBeNull();
   });
+
+  it("gives each entry its own series' attribution, null when not shown (R05-8)", () => {
+    const m = meetingReaction({ ...base, bank: "Fed", reactions, series: series(ALL), observations });
+    for (const e of m.entries) expect(e.source).toBe(`Source: ${e.key}`);
+    const one = meetingReaction({ ...base, bank: "Fed", reactions, series: series(["yf.^NSEI"]), observations });
+    expect(one.entries.map((e) => e.source).filter(Boolean)).toEqual(["Source: yf.^NSEI"]);
+  });
 });

@@ -457,7 +457,14 @@ async function MarketReaction({ ctx, flat = false }: { ctx: Ctx; flat?: boolean 
       <Freshness freshness={ctx.freshOf(FEEDS.policyReactions, model.dataTo)} />
     </>
   );
-  return <MeetingReactionView model={model} footer={footer} refresh={FEEDS.policyReactions} flat={flat} />;
+  const fresh = ctx.freshOf(FEEDS.policyReactions, model.dataTo);
+  const chartFooter = (source: string) => (
+    <>
+      <SourceLine lines={[source]} />
+      <Freshness freshness={fresh} />
+    </>
+  );
+  return <MeetingReactionView model={model} footer={footer} chartFooter={chartFooter} refresh={FEEDS.policyReactions} flat={flat} />;
 }
 
 // ------------------------------------------------------------------ Statement, Minutes, Press conference

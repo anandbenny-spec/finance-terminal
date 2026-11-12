@@ -116,17 +116,22 @@ function ChartPanel({ e, chart, label, footer }: { e: ReactionEntry; chart: Reac
 export function MeetingReactionView({
   model,
   footer,
+  chartFooter,
   refresh,
   note,
   flat = false,
 }: {
   model: MeetingReaction;
+  /** The table panel's footer: every shown series' source lines. */
   footer: ReactNode;
+  /** A chart's own footer, given that series' attribution (R05-8, #434's sibling #435). Without one, or for a series with no attribution, a chart keeps `footer`. */
+  chartFooter?: (source: string) => ReactNode;
   refresh?: readonly string[];
   note?: string;
   /** No top margin: the caller (Policy Day, #90) spaces its panels itself. */
   flat?: boolean;
 }) {
+  const footerOf = (e: ReactionEntry) => (chartFooter && e.source ? chartFooter(e.source) : footer);
   const moves = model.entries.filter((e) => e.chart || e.chartNote);
   return (
     <div className={flat ? "flex flex-col gap-4" : "mt-5 flex flex-col gap-4"}>
@@ -179,10 +184,10 @@ export function MeetingReactionView({
                 e={e}
                 chart={e.chart}
                 label={`${e.title}: values around the decision. View as table for the values.`}
-                footer={footer}
+                footer={footerOf(e)}
               />
             ) : (
-              <Panel key={e.key} title={e.title} span={6} footer={footer}>
+              <Panel key={e.key} title={e.title} span={6} footer={footerOf(e)}>
                 <StateNote kind="error">{e.chartNote}</StateNote>
               </Panel>
             ),
