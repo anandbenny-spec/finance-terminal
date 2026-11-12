@@ -48,7 +48,7 @@ from ft.equity.valuation.model import Company, Input, Lender, Market
 
 CONFIG = Path(__file__).resolve().parents[3] / "config" / "equity"
 MARKET, CURRENCY = "US", "USD"
-FILINGS = "10-K and 10-Q filings (SEC EDGAR)"
+FILINGS = "10-K and 10-Q filings, SEC EDGAR"
 RF_SERIES = "fred.DGS10"
 ERP_SERIES = "damodaran.ERP_IMPLIED"
 INDEX = "yf.^GSPC"
