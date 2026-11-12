@@ -50,6 +50,31 @@ describe("the What changed panel", () => {
   });
 });
 
+describe("Policy Day's What changed panel shows a preview and doesn't scroll inside itself (R05-6, #441)", () => {
+  const changes = between("async function Changes(", "\nasync function NumbersPart(");
+  const keys = between("{model.keys && model.redline ? (", "The redline isn&apos;t available");
+
+  it("has no fixed height or inner scroll, flat or not", () => {
+    expect(changes).not.toContain("max-h-96");
+    expect(changes).not.toContain("overflow-auto");
+  });
+
+  it("when flat, Key changes is the preview: three rows and a link to the meeting's What changed tab", () => {
+    const flat = keys.slice(keys.indexOf("flat ? ("), keys.indexOf(") : ("));
+    expect(flat).toContain("limit={3}");
+    expect(flat).toContain('seeAllHref={meetingTabHref(ctx.bank, ctx.m.decision_date, "changes")}');
+    expect(flat).not.toContain("redline");
+    expect(flat).not.toContain("unchangedParagraphs");
+  });
+
+  it("otherwise keeps the redline and the unchanged count, with no limit", () => {
+    const full = keys.slice(keys.indexOf(") : (", keys.indexOf("flat ? (")));
+    expect(full).toContain("redline={<Redline");
+    expect(full).toContain("unchangedParagraphs={model.redline.unchangedParagraphs}");
+    expect(full).not.toContain("limit=");
+  });
+});
+
 describe("the Statement, Minutes and Press conference tabs", () => {
   const tab = between("async function DocumentTab(", "\nfunction StatementSwitch(");
 
