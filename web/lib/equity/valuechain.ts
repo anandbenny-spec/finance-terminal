@@ -7,6 +7,7 @@ import {
   EN_DASH,
   NOT_AVAILABLE,
   formatCount,
+  dateInZone,
   formatCountChangeWords,
   formatDate,
   formatFiledShare,
@@ -45,6 +46,12 @@ export function brsrSourceLine(sourceKey: string | null | undefined): string {
 export function boundaryText(boundary: "standalone" | "consolidated"): string {
   return `${boundary === "standalone" ? "Standalone" : "Consolidated"}, as reported in the BRSR`;
 }
+
+/**
+ * The day a BRSR was filed, as `YYYY-MM-DD` in India. The exchange's list gives a date, stored as that day's midnight IST
+ * (`2026-07-19T18:30:00+00:00` is 20 Jul 2026), so the instant's UTC date is the day before: never slice the string (#191).
+ */
+export const filedDay = (at: string | null | undefined): string | null => (at ? dateInZone(at, "Asia/Kolkata") : null);
 
 /** The https link of an exchange list page, else null (a stored URL that isn't https renders as text, #367). */
 export const httpsOnly = (url: string | null | undefined): string | null => (url?.startsWith("https://") ? url : null);
@@ -354,7 +361,7 @@ export function fieldsTable(years: readonly YearCards[], family: string | null |
       key: "_filed",
       label: "Filed",
       itemRef: "The exchange's BRSR list",
-      cells: years.map((y) => ({ year: y.label, text: y.filedAt ? formatDate(y.filedAt.slice(0, 10)) : NOT_AVAILABLE, marks: [] })),
+      cells: years.map((y) => ({ year: y.label, text: y.filedAt ? formatDate(filedDay(y.filedAt)) : NOT_AVAILABLE, marks: [] })),
     },
   ];
   const fields = first.cells.map((c) => c.field_key);

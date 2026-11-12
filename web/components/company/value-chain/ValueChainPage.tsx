@@ -32,6 +32,7 @@ import {
   assuranceLine,
   brsrSourceLine,
   fieldsTable,
+  filedDay,
   flowOf,
   httpsOnly,
   latestRpt,
@@ -47,7 +48,7 @@ import {
   type YearCards,
 } from "@/lib/equity/valuechain";
 import { FEEDS } from "@/lib/feeds";
-import { dateInZone, formatDate, formatFiledShare, formatShare } from "@/lib/format";
+import { formatDate, formatFiledShare, formatShare } from "@/lib/format";
 import type { CompanyRow, CorporateActionRow, TaskFreshnessRow } from "@/lib/queries/api";
 import type { ValueChainPageData } from "@/lib/queries/valuechain";
 
@@ -59,8 +60,6 @@ const isShown = (policies: FieldPolicies, ...fields: string[]): boolean =>
     const p = fieldPolicy(policies, f);
     return p !== null && p.status !== "hidden";
   });
-
-const filedDay = (at: string | null): string | null => (at ? dateInZone(at, "Asia/Kolkata") : null);
 
 export const yearHref = (slug: string, label: string): string => `/companies/${slug}/value-chain?year=${yearParam(label)}`;
 
@@ -85,9 +84,12 @@ function YearNav({ slug, years, current }: { slug: string; years: readonly YearC
 }
 
 /** Held back, empty or failed: the source line only. No data is shown, so no date or run is claimed for it. */
-function heldFoot(now: string) {
-  return <Foot sources={[brsrSourceLine(null)]} tasks={[]} dataTo={null} freshness={null} now={now} />;
+function heldFoot(now: string, source: string = brsrSourceLine(null)) {
+  return <Foot sources={[source]} tasks={[]} dataTo={null} freshness={null} now={now} />;
 }
+
+/** Where the segments come from, for the panel with no row to name an exchange: the results filings, never the BRSR (#191). */
+const SEGMENTS_FROM = "From the results filings";
 
 function FlowPanel({ slug, name, family, data, asked, policies, freshness, now }: { slug: string; name: string; family: string | null; data: ValueChainPageData; asked: string | string[] | undefined; policies: FieldPolicies; freshness: TaskFreshnessRow[] | null; now: string }) {
   const shown = isShown(policies, VC_VALUES_FIELD);
@@ -266,9 +268,9 @@ function SegmentsPanel({ data, policies, freshness, now }: { data: ValueChainPag
     .map((r) => ({ key: `${r.line_no}`, segment: r.description as string, revenue: amount(r.revenue, r.currency), share: formatShare(r.share_of_total_pct) }));
   const first = rows[0];
   const footer = shown && first ? (
-    <Foot sources={["From the results filings", sourceLineFor(first.source_key)]} tasks={TASKS} dataTo={first.period_end} freshness={freshness} now={now} />
+    <Foot sources={[SEGMENTS_FROM, sourceLineFor(first.source_key)]} tasks={TASKS} dataTo={first.period_end} freshness={freshness} now={now} />
   ) : (
-    heldFoot(now)
+    heldFoot(now, SEGMENTS_FROM)
   );
   return (
     <Panel title="Segments" titleId="panel-vc-segments" subtitle="Which businesses make up the revenue? Consolidated, the latest fiscal year." footer={footer}>
