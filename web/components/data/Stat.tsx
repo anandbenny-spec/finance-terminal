@@ -1,8 +1,11 @@
 // Stat and StatRow (Design 01 §4.3, §1.15): label (meta, ink-2) · value (figure; its unit in ink-2 at ui size) ·
 // a context line · an as-of line (ink-3). A stat about one market carries the 3 px market edge on its top. StatRow
-// places them with hairline dividers, four across from md and two per row below.
+// places them with hairline dividers, four across from md and two per row below. A last row that the stats don't
+// fill is finished with one empty cell on the panel surface (12 Nov 2026): the dividers are the row's own background
+// showing through 1 px gaps, so an unfilled row showed that background as a grey slab (one stat on Policy Day's "Next
+// meeting" panel, one and three on /accuracy).
 import { cn } from "cn";
-import type { ReactNode } from "react";
+import { Children, type ReactNode } from "react";
 
 const EDGE = { US: "border-t-3 border-t-series-1", IN: "border-t-3 border-t-series-2" } as const;
 
@@ -34,11 +37,20 @@ export function Stat({
   );
 }
 
+// The empty cell's width from md, by how many of the row's four places are left (whole class names, so Tailwind sees them).
+const REST = ["md:hidden", "md:block md:col-span-1", "md:block md:col-span-2", "md:block md:col-span-3"] as const;
+
 export function StatRow({ children }: { children: ReactNode }) {
+  const count = Children.toArray(children).length;
+  const left = (4 - (count % 4)) % 4; // places left in the last row of four (from md)
+  const odd = count % 2 === 1; // a place left in the last row of two (below md)
   return (
-    // Hairline dividers from the 1 px gaps over the line colour: right for both layouts, with no edge cases.
+    // Hairline dividers from the 1 px gaps over the line colour.
     <div className="grid grid-cols-2 gap-px bg-line md:grid-cols-4">
       {children}
+      {(left > 0 || odd) && (
+        <div aria-hidden data-stat-rest className={cn("bg-panel", odd ? "block" : "hidden", REST[left])} />
+      )}
     </div>
   );
 }

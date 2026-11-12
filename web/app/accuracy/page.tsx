@@ -5,7 +5,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { AccuracyView } from "@/components/accuracy/AccuracyView";
-import { StateNote } from "@/components/data/StateNote";
+import { PageLoading } from "@/components/data/PageLoading";
 import { parsePeriod } from "@/lib/accuracy/summary";
 import { readEvalSummary, readQualitySummary } from "@/lib/queries/accuracy";
 import { readFreshness } from "@/lib/queries/shell";
@@ -31,7 +31,7 @@ async function Accuracy({ searchParams }: { searchParams: Props["searchParams"] 
 
 export default function Page({ searchParams }: Props) {
   return (
-    <Suspense fallback={<StateNote kind="empty">Loading the counts…</StateNote>}>
+    <Suspense fallback={<PageLoading>Loading the counts…</PageLoading>}>
       <Accuracy searchParams={searchParams} />
     </Suspense>
   );

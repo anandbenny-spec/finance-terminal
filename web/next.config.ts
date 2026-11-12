@@ -18,6 +18,17 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [{ source: "/favicon.ico", destination: "/icon" }];
   },
+  // Policy Day's bank moved from `?bank=` to the path on 12 Nov 2026 (lib/policy/policyday.ts), so the page can be
+  // prerendered. Links shared before then still work: they are sent on to the bank's own page. Temporary (307), so a
+  // browser never remembers it. The query string rides along, unused. web/next-config.test.ts covers this.
+  async redirects() {
+    return ["fed", "rbi"].map((bank) => ({
+      source: "/workspace/policy-day",
+      has: [{ type: "query" as const, key: "bank", value: bank }],
+      destination: `/workspace/policy-day/${bank}`,
+      permanent: false,
+    }));
+  },
   // Security headers on every route (#367, R4; Review 02a F1-05). `DENY` and not `SAMEORIGIN`: nothing on the site frames
   // its own pages, and the admin page's session is kept in the browser, so framing it is the realistic gap. There is no
   // Content-Security-Policy on purpose: a real one needs nonces for Next's inline scripts and ships report-only first

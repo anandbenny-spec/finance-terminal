@@ -9,7 +9,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { StateNote } from "@/components/data/StateNote";
+import { PageLoading } from "@/components/data/PageLoading";
 import { MeetingView, tabOf } from "@/components/policy/MeetingView";
 import { formatDate } from "@/lib/format";
 import { slugFor } from "@/lib/policy/meeting";
@@ -38,7 +38,7 @@ export default async function Page({ params, searchParams }: Props) {
   const slug = slugFor("RBI", date);
   if (!slug || (await readMeetingExists("RBI", slug)) === false) notFound();
   return (
-    <Suspense fallback={<StateNote kind="empty">Loading the meeting…</StateNote>}>
+    <Suspense fallback={<PageLoading>Loading the meeting…</PageLoading>}>
       <Meeting slug={slug} date={date} searchParams={searchParams} />
     </Suspense>
   );

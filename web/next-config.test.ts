@@ -46,3 +46,19 @@ describe("next.config headers()", () => {
     expect(await nextConfig.rewrites!()).toEqual([{ source: "/favicon.ico", destination: "/icon" }]);
   });
 });
+
+// Policy Day's bank moved from `?bank=` to the path on 12 Nov 2026 so the page can be prerendered
+// (lib/policy/policyday.ts). A link shared before then must still reach the bank it named.
+describe("next.config redirects()", () => {
+  it("sends an old ?bank= link to the bank's own page, temporarily, and nothing else", async () => {
+    expect(await nextConfig.redirects!()).toEqual([
+      { source: "/workspace/policy-day", has: [{ type: "query", key: "bank", value: "fed" }], destination: "/workspace/policy-day/fed", permanent: false },
+      { source: "/workspace/policy-day", has: [{ type: "query", key: "bank", value: "rbi" }], destination: "/workspace/policy-day/rbi", permanent: false },
+    ]);
+  });
+  it("lands on the paths the page links to", async () => {
+    const { policyDayHref } = await import("./lib/policy/policyday");
+    const destinations = (await nextConfig.redirects!()).map((r) => r.destination);
+    expect(destinations).toEqual([policyDayHref("Fed"), policyDayHref("RBI")]);
+  });
+});

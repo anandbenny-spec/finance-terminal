@@ -337,11 +337,15 @@ function Rail({ ctx }: { ctx: Ctx }) {
 
 // ------------------------------------------------------------------ What changed
 
+// The panel uses its whole width (12 Nov 2026; Anand: half of it was black). It used to cap everything at the reading
+// width, the two tables included, so on a wide screen the Before / Now columns were about 200 px each beside an empty
+// half. Now only the prose keeps the reading measure (Design 01 §5.2): from xl the AI summary and Numbers that changed
+// sit side by side, and Key changes' table runs the panel's width. Below xl they stack as before.
 async function Changes({ ctx, flat = false }: { ctx: Ctx; flat?: boolean }) {
   const decisionDoc = ctx.docs.get(DOC_TYPES[ctx.bank].decision) ?? null;
   const title = ctx.bank === "Fed" ? "What changed in the statement" : "What changed in the resolution";
   const panel = (body: ReactNode, sources: string[] = [docSource(ctx, decisionDoc)]) => (
-    <Panel title={title} titleId="panel-changes" subtitle="What did this decision change in the wording, against the one before?" variant="prose" footer={<Foot ctx={ctx} sources={sources} dataTo={docDate(ctx, decisionDoc)} />}>
+    <Panel title={title} titleId="panel-changes" subtitle="What did this decision change in the wording, against the one before?" footer={<Foot ctx={ctx} sources={sources} dataTo={docDate(ctx, decisionDoc)} />}>
       {body}
     </Panel>
   );
@@ -361,14 +365,18 @@ async function Changes({ ctx, flat = false }: { ctx: Ctx; flat?: boolean }) {
       {panel(
         <div className={flat ? "flex max-h-96 flex-col gap-5 overflow-auto" : "flex flex-col gap-5"}>
           <p className="text-data text-ink-2">Compared with the {model.baseLabel}.</p>
-          {model.summary && ctx.policies ? (
-            <Gated policies={ctx.policies} field="ai.statement_diff_summary" showLabel={false}>
-              <AIBlock block={{ ...model.summary, label: "What changed" }} now={ctx.page.readAt} dense={false} />
-            </Gated>
-          ) : (
-            <StateNote kind="unavailable">No AI summary of the changes yet.</StateNote>
-          )}
-          <NumbersPart ctx={ctx} base={read.base} />
+          <div data-changes-top className="grid grid-cols-1 items-start gap-x-8 gap-y-5 xl:grid-cols-2">
+            <div className="max-w-(--reading-width)">
+              {model.summary && ctx.policies ? (
+                <Gated policies={ctx.policies} field="ai.statement_diff_summary" showLabel={false}>
+                  <AIBlock block={{ ...model.summary, label: "What changed" }} now={ctx.page.readAt} dense={false} />
+                </Gated>
+              ) : (
+                <StateNote kind="unavailable">No AI summary of the changes yet.</StateNote>
+              )}
+            </div>
+            <NumbersPart ctx={ctx} base={read.base} />
+          </div>
           {model.keys && model.redline ? (
             <KeyChanges
               model={model.keys}
@@ -473,45 +481,52 @@ async function DocumentTab({
 }) {
   const body = doc ? await documentText(doc.id) : null;
   const anchors = body && speakers ? speakerAnchors(body.chunks, body.paras) : [];
+  // The document in the main column with the Key facts rail beside it from xl (Design 01 §5.3's meeting layout, as the
+  // Overview tab has it; 12 Nov 2026). The panel used to span the page with its text held to the reading width, so half
+  // of it was empty. The text keeps its measure (DocumentView's own); below xl there is no rail and nothing changes.
   return (
-    <div className="mt-5 flex flex-col gap-4">
-      {switcher}
-      <Panel
-        title={doc ? documentTitle(doc) : title}
-        titleId="panel-document"
-        actions={officialLink(ctx, doc)}
-        variant="prose"
-        footer={<Foot ctx={ctx} sources={[docSource(ctx, doc)]} dataTo={doc ? docDate(ctx, doc) : null} />}
-      >
-        {!ctx.page.documents.ok ? (
-          <StateNote kind="error">{ERROR}</StateNote>
-        ) : !doc ? (
-          <StateNote kind="unavailable">{missing}</StateNote>
-        ) : !body ? (
-          <StateNote kind="error">{ERROR}</StateNote>
-        ) : (
-          <div className="flex flex-col gap-5">
-            {withSummary && <Summary ctx={ctx} doc={doc} />}
-            {anchors.length > 0 && (
-              <nav aria-label="Members' statements" className="text-data">
-                <h4 className="mb-1.5 font-semibold text-ink-1">Members&apos; statements</h4>
-                <ul className="flex flex-wrap gap-x-4 gap-y-1">
-                  {anchors.map((a, i) => (
-                    <li key={a.speaker}>
-                      <a href={`#member-${i + 1}`} className="text-ink-1 underline">{a.speaker}</a>
-                    </li>
-                  ))}
-                </ul>
-              </nav>
-            )}
-            <DocumentView
-              paragraphs={body.paras}
-              anchors={Object.fromEntries(anchors.map((a, i) => [a.para, `member-${i + 1}`]))}
-              label={documentTitle(doc)}
-            />
-          </div>
-        )}
-      </Panel>
+    <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-12">
+      <div className="flex min-w-0 flex-col gap-4 xl:col-span-8">
+        {switcher}
+        <Panel
+          title={doc ? documentTitle(doc) : title}
+          titleId="panel-document"
+          actions={officialLink(ctx, doc)}
+          footer={<Foot ctx={ctx} sources={[docSource(ctx, doc)]} dataTo={doc ? docDate(ctx, doc) : null} />}
+        >
+          {!ctx.page.documents.ok ? (
+            <StateNote kind="error">{ERROR}</StateNote>
+          ) : !doc ? (
+            <StateNote kind="unavailable">{missing}</StateNote>
+          ) : !body ? (
+            <StateNote kind="error">{ERROR}</StateNote>
+          ) : (
+            <div className="flex flex-col gap-5">
+              {withSummary && <Summary ctx={ctx} doc={doc} />}
+              {anchors.length > 0 && (
+                <nav aria-label="Members' statements" className="text-data">
+                  <h4 className="mb-1.5 font-semibold text-ink-1">Members&apos; statements</h4>
+                  <ul className="flex flex-wrap gap-x-4 gap-y-1">
+                    {anchors.map((a, i) => (
+                      <li key={a.speaker}>
+                        <a href={`#member-${i + 1}`} className="text-ink-1 underline">{a.speaker}</a>
+                      </li>
+                    ))}
+                  </ul>
+                </nav>
+              )}
+              <DocumentView
+                paragraphs={body.paras}
+                anchors={Object.fromEntries(anchors.map((a, i) => [a.para, `member-${i + 1}`]))}
+                label={documentTitle(doc)}
+              />
+            </div>
+          )}
+        </Panel>
+      </div>
+      <div className="hidden min-w-0 xl:col-span-4 xl:block">
+        <Rail ctx={ctx} />
+      </div>
     </div>
   );
 }
