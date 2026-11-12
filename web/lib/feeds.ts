@@ -28,7 +28,17 @@ export type TaskKey =
   | "equity.segment_changes"
   | "equity.brsr"
   | "equity.related_parties"
-  | "site.quality_summary";
+  | "site.quality_summary"
+  // The US slice (lane U; Spec 02A.1 §5): its own tasks, never shared with India's.
+  | "us.universe"
+  | "us.prices"
+  | "us.corporate_actions"
+  | "us.filings"
+  | "us.valuation_inputs"
+  | "us.metrics"
+  | "us.beta"
+  | "us.valuation"
+  | "us.snapshot";
 
 /** Live surfaces and their feeding tasks. */
 export const FEEDS = {
@@ -106,6 +116,12 @@ export const PREVIEW_FEEDS = {
   // The Financials tab's "Segment changes" panel (DD-02, #410), hidden behind equity.segment_changes until DD-03's judge passes it
   // and Anand flips it; it moves into FEEDS once production's run of equity.segment_changes has left a freshness row.
   segmentChanges: ["equity.segment_changes"],
+  // The US slice's pages (US-06, #405; Spec 02A.1 §7): the screener's US view and the US company page, unpublished until Anand's
+  // flip after US-08's judge passes; each moves into FEEDS once production's runs (US-07) have left a freshness row for its tasks.
+  usScreener: ["us.universe", "us.prices", "us.filings", "us.metrics", "us.beta"],
+  usScreenerImplied: ["us.universe", "us.prices", "us.filings", "us.metrics", "us.beta", "us.valuation", "us.snapshot"],
+  usCompany: ["us.universe", "us.prices", "us.filings", "us.metrics", "us.beta"],
+  usValuation: ["us.valuation_inputs", "us.valuation", "us.prices", "us.filings", "us.metrics", "us.beta"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 
 export type PreviewSurface = keyof typeof PREVIEW_FEEDS;

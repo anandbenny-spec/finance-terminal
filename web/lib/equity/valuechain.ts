@@ -236,16 +236,17 @@ export type Flow = {
   table: FlowTableRow[];
 };
 
-type Spec = { key: string; label: string; details?: { key: string; label: string; plural?: string }[] };
+/** A detail line under a figure; `one` is the label for a count of exactly 1 ("1 country"). */
+type Spec = { key: string; label: string; details?: { key: string; label: string; one?: string }[] };
 
 const SUPPLIERS: Spec[] = [
   { key: "within_india_share", label: "Inputs from within India" },
   { key: "msme_share", label: "Inputs from MSMEs and small producers" },
-  { key: "trading_house_share", label: "Purchases through trading houses", details: [{ key: "trading_houses", label: "trading houses" }, { key: "top10_trading_share", label: "top 10 trading houses" }] },
+  { key: "trading_house_share", label: "Purchases through trading houses", details: [{ key: "trading_houses", label: "trading houses", one: "trading house" }, { key: "top10_trading_share", label: "top 10 trading houses" }] },
 ];
 const CUSTOMERS: Spec[] = [
-  { key: "dealer_share", label: "Sales through dealers and distributors", details: [{ key: "dealers", label: "dealers and distributors" }, { key: "top10_dealer_share", label: "top 10 dealers and distributors" }] },
-  { key: "exports_share", label: "Exports, share of turnover", details: [{ key: "countries_served", label: "countries" }, { key: "states_served", label: "states" }] },
+  { key: "dealer_share", label: "Sales through dealers and distributors", details: [{ key: "dealers", label: "dealers and distributors", one: "dealer or distributor" }, { key: "top10_dealer_share", label: "top 10 dealers and distributors" }] },
+  { key: "exports_share", label: "Exports, share of turnover", details: [{ key: "countries_served", label: "countries", one: "country" }, { key: "states_served", label: "states", one: "state" }] },
 ];
 const GROUP: Spec[] = [
   { key: "rpt_purchases_share", label: "Purchases from related parties" },
@@ -269,7 +270,10 @@ export function flowOf(
       // A detail that is itself unreadable says so in short words; a figure reads "4,480 dealers and distributors".
       const shownAsCount = dc.kind === "count" && (dc.state === "ok" || (dc.state === "zero" && !ZERO_AS_FILED.has(dc.field_key)));
       const change = opts.years ? changeLine(dc, year, opts.years) : null;
-      details.push(`${shownAsCount ? `${cellValue(dc)} ${d.label}` : `${d.label}: ${cellValue(dc)}`}${change ? ` (${change})` : ""}`);
+      // A restated detail says so beside its figure, as the main figures do (#191's page check: Trent's 13 trading houses had no note).
+      const notes = [change, restatedNote(dc)].filter((n): n is string => n !== null);
+      const noun = shownAsCount && dc.value === 1 && d.one ? d.one : d.label;
+      details.push(`${shownAsCount ? `${cellValue(dc)} ${noun}` : `${d.label}: ${cellValue(dc)}`}${notes.length ? ` (${notes.join("; ")})` : ""}`);
     }
     return {
       key: spec.key,

@@ -42,8 +42,8 @@ describe("the sector view", () => {
     const out = await render();
     const t = text(out).replace(/ ,/g, ",");
     expect(t).toContain("IT services TCS, Wipro RBI (MPC) · Hold 30 −0.20%");
-    expect(out).toContain('href="/companies/tcs?tab=rate-decisions"');
-    expect(out).toContain('href="/companies/wipro?tab=rate-decisions"');
+    expect(out).toContain('href="/companies/tcs/rate-decisions"');
+    expect(out).toContain('href="/companies/wipro/rate-decisions"');
     expect(t).not.toContain("+0.07"); // the company row
   });
   it("shows no statistic for a group with fewer than five decisions, and says so", async () => {

@@ -435,3 +435,67 @@ def test_the_due_rule_waits_for_migration_0039_and_for_the_first_recorded_run(s3
         d = t.due(c, "refresh", NOW)
         c.rollback()
     assert not d.due and "0039" in d.reason
+    with psycopg.connect(ADMIN) as c:                               # rolled back: 0041's columns missing
+        c.execute("alter table equity.company rename column cik to cik_gone")
+        d = t.due(c, "refresh", NOW)
+        c.rollback()
+    assert not d.due and "0041" in d.reason
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_the_ticker_and_cik_reach_equity_company_and_follow_a_ticker_change(s3, monkeypatch, tmp_path):
+    # 0041 (#404, option B): the views read the current ticker and CIK from equity.company, as India's NSE symbol
+    sec = Sec()
+    go(sec, monkeypatch)
+    assert q("""select e.slug, c.ticker, c.cik from core.entity e join equity.company c on c.entity_id = e.id
+                 where e.slug in ('us-aapl', 'us-dis') order by 1""") == [("us-aapl", "AAPL", "320193"),
+                                                                         ("us-dis", "DIS", "1744489")]
+    assert q("""select count(*) from core.entity e join equity.company c on c.entity_id = e.id
+                 where e.market = 'US' and c.ticker is not null and c.cik is not null
+                   and c.ticker = (select value from core.entity_identifier i where i.entity_id = e.id
+                                    and i.scheme = 'ticker' and upper_inf(i.valid))
+                   and c.cik = (select value from core.entity_identifier i where i.entity_id = e.id
+                                 and i.scheme = 'cik' and upper_inf(i.valid))""") == [(30,)]
+    assert q("""select count(*) from equity.company c join core.entity e on e.id = c.entity_id
+                 where e.market = 'IN' and (c.ticker is not null or c.cik is not null)""") == [(0,)]
+    # a dev project pushed 0041 after the first load: the columns are empty, and the next run fills them
+    q("""update equity.company c set ticker = null, cik = null from core.entity e
+         where e.id = c.entity_id and e.market = 'US' returning c.entity_id""")
+    code, tr = go(sec, monkeypatch)
+    assert code == 0 and tr[0] == "success" and tr[1] == 30, tr
+    assert q("""select count(*) from equity.company c join core.entity e on e.id = c.entity_id
+                 where e.market = 'US' and c.ticker is not null and c.cik is not null""") == [(30,)]
+    # a ticker change moves the current value with the identifier's range
+    rows = yaml.safe_load(us.COMPANIES_FILE.read_text())
+    rows["companies"] = edit("HON", ticker="HONT")(rows["companies"])
+    path = tmp_path / "us_companies.yaml"
+    path.write_text(yaml.safe_dump(rows))
+    monkeypatch.setattr(us, "COMPANIES_FILE", path)
+    hon = next(c for c in us.load_us_config(path).companies if c.ticker == "HONT")
+    sec.files[f"/submissions/CIK{hon.cik:010d}.json"] = made_submission(hon)
+    code, tr = go(sec, monkeypatch)
+    assert code == 0 and tr[0] == "success" and checks(tr)["master"] == (True, True), tr
+    assert q("""select c.ticker from equity.company c join core.entity e on e.id = c.entity_id
+                 where e.slug = 'us-hon'""") == [("HONT",)]
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_ticker_or_cik_that_isnt_the_current_identifier_fails_the_master_check(s3, monkeypatch):
+    sec = Sec()
+    go(sec, monkeypatch)
+
+    load = UsUniverse.load
+
+    def stale(self, tx, f, task_run_id):            # a load that leaves one company's ticker behind its identifier
+        n = load(self, tx, f, task_run_id)
+        tx.execute("""update equity.company set ticker = 'XX' where entity_id =
+                      (select id from core.entity where slug = 'us-ko')""")
+        return n
+    monkeypatch.setattr(UsUniverse, "load", stale)
+    _code, tr = go(sec, monkeypatch)
+    assert tr[0] == "checks_failed" and checks(tr)["master"] == (False, True), tr
+    assert "isn't the current identifier for: us-ko" in next(x["detail"] for x in tr[2] if x["name"] == "master")
+    assert q("""select c.ticker from equity.company c join core.entity e on e.id = c.entity_id
+                 where e.slug = 'us-ko'""") == [("KO",)]                # rolled back

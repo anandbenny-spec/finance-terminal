@@ -11,6 +11,7 @@ import { EmptyFigure } from "@/components/company/cells";
 import { DataTable, type Column } from "@/components/data/DataTable";
 import { Delta } from "@/components/data/Delta";
 import { StateNote } from "@/components/data/StateNote";
+import { companyHref } from "@/lib/equity/company";
 import { changeOf } from "@/lib/delta";
 import {
   DIRECTION_LABEL,
@@ -149,7 +150,7 @@ export function RateSectorTable({ rows, caption }: { rows: SectorRow[]; caption:
               {r.group.members.map((m, i) => (
                 <span key={m.slug}>
                   {i > 0 && ", "}
-                  <Link href={`/companies/${m.slug}?tab=rate-decisions`} className="underline hover:text-ink-1">
+                  <Link href={companyHref(m.slug, "rate-decisions")} className="underline hover:text-ink-1">
                     {m.name}
                   </Link>
                 </span>

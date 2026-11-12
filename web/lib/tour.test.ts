@@ -1,5 +1,6 @@
 // The guided tour's rules (#91; Design 01 §4.8): hidden without its field-policy row, five stops with fixed targets,
 // opt-in state, placement (a wide screen and a 375 px phone), the keyboard end to end, and reduced motion.
+import { companyHref } from "@/lib/equity/company";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -115,6 +116,14 @@ describe("the page", () => {
     expect(atRoute("/companies/adanient?tab=calls", "/companies/adanient", "?tab=calls&call=q2")).toBe(true);
     expect(atRoute("/companies/adanient?tab=calls", "/companies/adanient", "")).toBe(false);
     expect(atRoute("/companies/adanient?tab=calls", "/companies/tcs", "?tab=calls")).toBe(false);
+  });
+
+  it("sends the calls stop to the company's calls tab by its path address, and the page matches it (R05-9b)", () => {
+    const stop = TOUR_STOPS.find((s) => s.id === "company-calls")!;
+    expect(stop.route).toBe(companyHref("adanient", "calls"));
+    expect(atRoute(stop.route, "/companies/adanient/calls", "")).toBe(true);
+    expect(atRoute(stop.route, "/companies/adanient", "")).toBe(false);
+    expect(atRoute(stop.route, "/companies/adanient/valuation", "")).toBe(false);
   });
 
   const view = { width: 1280, height: 800 };

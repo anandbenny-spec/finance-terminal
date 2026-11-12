@@ -8,6 +8,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { CompanyError } from "@/components/company/CompanyView";
+import { ValueChainNotCovered } from "@/components/company/us/ValueChainNotCovered";
 import { ValueChainPage } from "@/components/company/value-chain/ValueChainPage";
 import { PageLoading } from "@/components/data/PageLoading";
 import { readCompanyExists, readHeader } from "@/lib/queries/company";
@@ -36,6 +37,8 @@ async function Content({ slug, searchParams }: { slug: string; searchParams: Pro
     return <CompanyError />;
   }
   if (!header.company) return <CompanyError />;
+  // A US company has no value chain (US-06, #405): the reason, and no read of the value chain's views.
+  if (header.company.market === "US") return <ValueChainNotCovered company={header.company} actions={header.actions} indexNames={header.indexNames} />;
   let data: Awaited<ReturnType<typeof readValueChainPage>>;
   try {
     data = await readValueChainPage(slug);

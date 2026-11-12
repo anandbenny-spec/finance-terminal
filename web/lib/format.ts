@@ -178,20 +178,21 @@ export function formatUsdInr(value: Num): string {
 
 /**
  * Money in its own reporting currency, grouped by that currency's market, never the viewer's:
- * INR 12345 crore → `₹12,345 cr`. Nothing converts, compares or sums across currencies (CLAUDE.md §1).
- * The units module 2 needs for USD (million, billion) are added with module 2's spec.
+ * INR 12345 crore → `₹12,345 cr`; USD 12345 million → `$12,345 mn`. Nothing converts, compares or sums across
+ * currencies (CLAUDE.md §1). Each unit belongs to one currency: crore to INR, million to USD (US-06, #405).
  */
 export function formatMoney(
   amount: Num,
   currency: Currency,
-  { unit, decimals = 0 }: { unit?: "crore"; decimals?: number } = {},
+  { unit, decimals = 0 }: { unit?: "crore" | "million"; decimals?: number } = {},
 ): string {
   if (isMissing(amount)) return NOT_AVAILABLE;
   if (unit === "crore" && currency !== "INR") throw new RangeError("formatMoney: crore is an INR unit");
+  if (unit === "million" && currency !== "USD") throw new RangeError("formatMoney: million is a USD unit here");
   const { symbol, market } = CURRENCY[currency];
   const body = digits(Math.abs(amount), { decimals, locale: LOCALE[market] });
   const sign = amount < 0 && /[1-9]/.test(body) ? MINUS : ""; // a value that rounds to zero carries no sign
-  return `${sign}${symbol}${body}${unit === "crore" ? " cr" : ""}`;
+  return `${sign}${symbol}${body}${unit === "crore" ? " cr" : unit === "million" ? " mn" : ""}`;
 }
 
 /** A projection as published (RBI projections carry 1 decimal): `3.5`, `3.8` → `3.5–3.8%`; one value `7` → `7.0%`. */
@@ -462,6 +463,17 @@ export function formatRupeesAsCrore(rupees: Num): string {
   return formatMoney(rupees / 10_000_000, "INR", { unit: "crore" });
 }
 
+/** Dollars given in full, shown in millions with US grouping (US-06, #405; the US twin of crore): `3.94328e11` → `$394,328 mn`. */
+export function formatDollarsAsMillion(dollars: Num): string {
+  if (isMissing(dollars)) return NOT_AVAILABLE;
+  return formatMoney(dollars / 1_000_000, "USD", { unit: "million" });
+}
+
+/** Money given in full units of its currency, in that currency's display unit: crore for rupees, millions for dollars. */
+export function formatAmount(value: Num, currency: Currency): string {
+  return currency === "INR" ? formatRupeesAsCrore(value) : formatDollarsAsMillion(value);
+}
+
 /** A percentage level that may exceed 100 and is grouped by the figure's market, for a value shown as filed (the promoter note, #116): `6613` → `6,613.00%`, `66.13` → `66.13%`. */
 export function formatPercentLevel(pct: Num, market: Market = "IN", decimals = 2): string {
   if (isMissing(pct)) return NOT_AVAILABLE;
@@ -502,12 +514,19 @@ export function formatFiledShare(pct: Num): string {
   return `${digits(pct, { decimals, grouping: false })}%`;
 }
 
-/** A change in a share between two years, in words with no sign and no colour: `3.24` → `up 3.2 pp`, `-1` → `down 1.0 pp`, `0` → `unchanged`. */
+/**
+ * A change in a share between two years, in words with no sign and no colour: `3.24` → `up 3.2 pp`, `-1` → `down 1.0 pp`,
+ * `0` → `unchanged`. A change too small for one decimal keeps the decimals it needs (`-0.04` → `down 0.04 pp`, at most four,
+ * the most a filed share carries): the two years' figures are shown as filed beside it, so "unchanged" is said only of a
+ * change that is nothing (#191's page check, 12 Nov 2026: 1.44% to 1.4% read "unchanged").
+ */
 export function formatShareChangeWords(pp: Num): string {
   if (isMissing(pp)) return NOT_AVAILABLE;
-  const body = digits(Math.abs(pp), { decimals: 1, grouping: false });
-  if (!/[1-9]/.test(body)) return "unchanged";
-  return `${pp > 0 ? "up" : "down"} ${body} pp`;
+  for (let decimals = 1; decimals <= 4; decimals++) {
+    const body = digits(Math.abs(pp), { decimals, grouping: false });
+    if (/[1-9]/.test(body)) return `${pp > 0 ? "up" : "down"} ${body} pp`;
+  }
+  return "unchanged";
 }
 
 /** A change in a count between two years, in words: `120` → `up 120`, `-3` → `down 3`, `0` → `unchanged`. Grouped as India groups. */

@@ -65,3 +65,17 @@ describe("/methodology", () => {
     expect(text).not.toMatch(/\b(hit rate|delivered on guidance|beat guidance|missed guidance)\b/i);
   });
 });
+
+describe("/methodology panel titles (R05-10)", () => {
+  // each section's heading (the h2) and its panel's title (the h3 "<id>-title") say different words
+  const headings = [...markup.matchAll(/<h2 id="([^"]+)"[^>]*>([\s\S]*?)<\/h2>/g)];
+  it("no panel title repeats its section's heading, and the section ids are unchanged", () => {
+    expect(headings.map((m) => m[1])).toEqual(["alignment", "what", "data", "ai", "oversight", "switches", "trace", "testing", "limits", "contact"]);
+    for (const [, id, inner] of headings) {
+      const heading = inner.replace(/<[^>]+>/g, "").trim();
+      const panel = markup.match(new RegExp(`<h3 id="${id}-title"[^>]*>([\\s\\S]*?)</h3>`))?.[1].replace(/<[^>]+>/g, "").trim();
+      expect(panel, id).toBeTruthy();
+      expect(panel, id).not.toBe(heading);
+    }
+  });
+});

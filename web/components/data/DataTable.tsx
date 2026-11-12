@@ -17,7 +17,7 @@
 // clip and sits at its row's offset in the page, so every row scrolled out of view stretched the page with black
 // space below the footer (Anand's report, 28 Oct 2026; the same reason TapeScroller is `relative`). The plain,
 // sideways-only scroller is `relative` too (3 Nov 2026, #132): a wide table's sr-only caption sat at the table's
-// width, so SBI's Bank ratios table (1,245 px) stretched /companies/sbin?tab=financials to 899 px at 320 px.
+// width, so SBI's Bank ratios table (1,245 px) stretched /companies/sbin/financials to 899 px at 320 px.
 import {
   flexRender,
   getCoreRowModel,

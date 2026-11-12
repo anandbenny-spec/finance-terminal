@@ -1,23 +1,14 @@
 // /companies/[slug]: one page per company (2A-19; Spec 02A §8). A header (identifiers, peer group, index chips, last
-// close), then an Overview tab (price chart, key figures, peers) and a Financials tab (statements, bank ratios, promoter
-// holding, corporate actions), every figure a row an `api` view returned (lib/queries/company.ts), formatted by
-// lib/format.ts. Informational only: no verdict wording (Brief §11). Not in the sidebar and not linked from module 1's
-// pages: 2A-26 adds the links after its checks, so the shared link doesn't advertise a page still being built; the route
-// works for review (the screener's rows already link here).
+// close), then an Overview tab (price chart, key figures, peers); the other tabs are /companies/[slug]/[...path]
+// (financials, valuation, rate-decisions, calls, each with an optional view). Every figure a row an `api` view returned
+// (lib/queries/company.ts), formatted by lib/format.ts. Informational only: no verdict wording (Brief §11). Not in the
+// sidebar and not linked from module 1's pages: 2A-26 adds the links after its checks, so the shared link doesn't
+// advertise a page still being built; the route works for review (the screener's rows already link here).
 //
-// An unknown slug answers 404: the page checks BEFORE its Suspense boundary, because once a response streams its status
-// is fixed at 200 (as /policy/fed/[date] does). A failed existence read is the error state, never a 404. The tab and
-// basis are search params, known only on request, so the tab's content renders inside Suspense from cached reads.
+// The page reads no query string (R05-9b, 12 Nov 2026), so it is built ahead and cached; see components/company/CompanyRoute.tsx.
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
-import { Suspense } from "react";
-import { CompanyError, CompanyView } from "@/components/company/CompanyView";
-import { PageLoading } from "@/components/data/PageLoading";
-import { callOf } from "@/lib/equity/calls";
-import { basisOf, tabOf } from "@/lib/equity/company";
-import { windowOf } from "@/lib/equity/rate";
-import { readCompanyExists, readCompanyName, readCompanyPage } from "@/lib/queries/company";
-import { readFreshness } from "@/lib/queries/shell";
+import { companyMetadata, renderCompany } from "@/components/company/CompanyRoute";
+import { DEFAULT_VIEW } from "@/lib/equity/company";
 
 type Props = PageProps<"/companies/[slug]">;
 
@@ -27,31 +18,11 @@ export function generateStaticParams(): { slug: string }[] {
   return [{ slug: "adanient" }];
 }
 
-// The tab's title names the company (12 Nov 2026): every company page used to be "Company · Finance Terminal", so two
-// open tabs, a bookmark or a shared link couldn't be told apart. An unknown slug or a failed read keeps the plain title.
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const name = await readCompanyName((await params).slug);
-  return {
-    title: `${name ?? "Company"} · Finance Terminal`,
-    description: "A Nifty 50 company's price, key figures, peers, filed financials and corporate actions. Informational only, not investment advice.",
-  };
+  return companyMetadata((await params).slug);
 }
 
-async function Company({ slug, searchParams }: { slug: string; searchParams: Props["searchParams"] }) {
-  const query = await searchParams;
-  const [data, fresh] = await Promise.all([readCompanyPage(slug, tabOf(query.tab), callOf(query.call)), readFreshness()]);
-  if (!data.ok) return <CompanyError />;
-  return <CompanyView data={data} basis={basisOf(query.basis)} window={windowOf(query.window)} freshness={fresh.ok ? fresh.tasks : null} />;
-}
-
-export default async function Page({ params, searchParams }: Props) {
+export default async function Page({ params }: Props) {
   const { slug } = await params;
-  const exists = await readCompanyExists(slug);
-  if (exists === false) notFound();
-  if (exists === null) return <CompanyError />;
-  return (
-    <Suspense fallback={<PageLoading>Loading the company…</PageLoading>}>
-      <Company slug={slug} searchParams={searchParams} />
-    </Suspense>
-  );
+  return renderCompany(slug, "overview", DEFAULT_VIEW);
 }

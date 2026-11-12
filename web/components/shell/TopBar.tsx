@@ -14,7 +14,7 @@ export function TopBar() {
       <MobileNav />
       <Link
         href="/"
-        className="flex items-center gap-2 font-mono text-ui font-medium whitespace-nowrap text-ink-1 no-underline lg:min-w-50"
+        className="flex min-h-6 items-center gap-2 font-mono text-ui font-medium whitespace-nowrap text-ink-1 no-underline lg:min-w-50"
       >
         <span aria-hidden className="size-2 shrink-0 bg-highlight" />
         Finance Terminal

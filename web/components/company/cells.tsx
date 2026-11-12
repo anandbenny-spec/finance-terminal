@@ -1,10 +1,9 @@
 // The company page's small shared pieces (2A-19): how an empty figure is told, and how a stored amount is formatted
 // for its currency. Every number goes through lib/format.ts; nothing here formats inline.
 import {
+  formatAmount,
   formatFraction,
-  formatMoney,
   formatPrice,
-  formatRupeesAsCrore,
   NOT_APPLICABLE,
   NOT_AVAILABLE,
   NOT_AVAILABLE_LABEL,
@@ -34,9 +33,9 @@ export function EmptyFigure({ state, reason }: { state: "held" | "not_applicable
   );
 }
 
-/** A stored amount in full units of its reporting currency: crore for rupees, whole dollars otherwise. */
+/** A stored amount in full units of its reporting currency: crore for rupees, millions for dollars (US-06, #405). */
 export function amount(value: number | null, currency: Currency): string {
-  return currency === "INR" ? formatRupeesAsCrore(value) : formatMoney(value, currency);
+  return formatAmount(value, currency);
 }
 
 /** A statement line's value by its kind. */

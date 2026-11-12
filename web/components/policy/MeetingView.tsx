@@ -457,7 +457,19 @@ async function MarketReaction({ ctx, flat = false }: { ctx: Ctx; flat?: boolean 
       <Freshness freshness={ctx.freshOf(FEEDS.policyReactions, model.dataTo)} />
     </>
   );
-  return <MeetingReactionView model={model} footer={footer} refresh={FEEDS.policyReactions} flat={flat} />;
+  const fresh = ctx.freshOf(FEEDS.policyReactions, model.dataTo);
+  // One footer per attribution line, rendered here: MeetingReactionView is a client component, so it takes nodes, never a function.
+  const chartFooters: Record<string, ReactNode> = {};
+  for (const e of model.entries) {
+    if (e.source === null || Object.hasOwn(chartFooters, e.source)) continue;
+    chartFooters[e.source] = (
+      <>
+        <SourceLine lines={[e.source]} />
+        <Freshness freshness={fresh} />
+      </>
+    );
+  }
+  return <MeetingReactionView model={model} footer={footer} chartFooters={chartFooters} refresh={FEEDS.policyReactions} flat={flat} />;
 }
 
 // ------------------------------------------------------------------ Statement, Minutes, Press conference

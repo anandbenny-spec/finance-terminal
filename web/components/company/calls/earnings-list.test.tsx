@@ -73,7 +73,7 @@ describe("the list", () => {
   });
 
   it("links each company to its Earnings calls tab", () => {
-    for (const r of rows) expect(out).toContain('href="/companies/' + r.company_slug + '?tab=calls"');
+    for (const r of rows) expect(out).toContain('href="/companies/' + r.company_slug + '/calls"');
   });
 
   it("opens sorted by call date, newest first, a company with no call last", () => {

@@ -23,7 +23,7 @@ export const WINDOWS: readonly { id: WindowKey; label: string; note: string }[] 
   { id: "d5", label: "5 days", note: "From the last close before the decision to the fifth close after it." },
 ];
 
-/** The window in the URL (?window=…); one day unless five is asked for. */
+/** The window in the sector view's own URL query; one day unless five is asked for. A company's tab takes it as a path segment (companyHref). */
 export function windowOf(value: string | string[] | undefined): WindowKey {
   return value === "d5" ? "d5" : "d1";
 }

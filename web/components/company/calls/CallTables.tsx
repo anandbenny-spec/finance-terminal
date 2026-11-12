@@ -8,6 +8,7 @@ import Link from "next/link";
 import { CitationChip } from "@/components/ai/CitationChip";
 import { DataTable, type Column } from "@/components/data/DataTable";
 import { StateNote } from "@/components/data/StateNote";
+import { companyHref } from "@/lib/equity/company";
 import { NOT_AVAILABLE } from "@/lib/format";
 import { callDateText, statusText, type FigureRow } from "@/lib/equity/calls";
 import type { GuidanceRow } from "@/lib/equity/guidance";
@@ -15,7 +16,7 @@ import { similarityText } from "@/lib/equity/remarks";
 import type { EarningsCallRow, RemarksChangeRow } from "@/lib/queries/api";
 
 export function callHref(companySlug: string, callSlug: string): string {
-  return `/companies/${companySlug}?tab=calls&call=${callSlug}`;
+  return companyHref(companySlug, "calls", callSlug);
 }
 
 export function PageLink({ page }: { page: NonNullable<FigureRow["page"]> }) {
