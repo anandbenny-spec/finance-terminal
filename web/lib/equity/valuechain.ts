@@ -27,6 +27,12 @@ export const SEGMENTS_HELD = "Segments held back until they pass review";
 export const PEERS_HELD = "Peer comparison held back until the value chain passes review";
 
 export const AS_REPORTED = "As reported by the company; not verified by this site";
+/** The figures are the XBRL's; the company's PDF of the same report may differ (VC-06c, #433; Anand's ruling of 12 Nov 2026 on #191). */
+export const XBRL_NOTE =
+  "The figures are the ones the company tagged in the BRSR's XBRL file filed with the exchange. The company's PDF of the same report may round a figure differently, or say \"Not applicable\" where the XBRL file carries 0.";
+/** What a restated note means, so a restatement missing here is not read as none (VC-06c, #433). */
+export const RESTATED_NOTE =
+  "A restatement is shown where the next year's XBRL file carries the earlier year's figure; a comparative that appears only in the next year's PDF is not shown.";
 export const NOT_REPORTED = "Not reported in the company's BRSR";
 
 /** The openness-of-business figures, the only ones the filing's assurance flag covers (Principle 1, Essential Indicator 9; decision 5 of #191). */

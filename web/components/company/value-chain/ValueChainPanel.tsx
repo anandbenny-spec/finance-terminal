@@ -13,6 +13,8 @@ import { StateNote } from "@/components/data/StateNote";
 import { Foot } from "@/components/policy/PanelFoot";
 import {
   AS_REPORTED,
+  RESTATED_NOTE,
+  XBRL_NOTE,
   VC_HELD,
   VC_VALUES_FIELD,
   assuranceLine,
@@ -20,6 +22,7 @@ import {
   flowOf,
   httpsOnly,
   monthsNote,
+  restatedNote,
   stateNotes,
   valueChainModel,
 } from "@/lib/equity/valuechain";
@@ -74,6 +77,8 @@ export function ValueChainPanel({
         <ValueChainFlow flow={flow} />
         <div className="flex flex-col gap-1 text-meta text-ink-2" data-vc-notes>
           <p>{AS_REPORTED}</p>
+          <p>{XBRL_NOTE}</p>
+          {year.cells.some((c) => restatedNote(c) !== null) && <p>{RESTATED_NOTE}</p>}
           {assurance && <p>{assurance}</p>}
           {notes.map((n) => (
             <p key={n}>{n}</p>

@@ -20,6 +20,8 @@ import { Foot } from "@/components/policy/PanelFoot";
 import { dayChange, sourceLineFor } from "@/lib/equity/company";
 import {
   AS_REPORTED,
+  RESTATED_NOTE,
+  XBRL_NOTE,
   GROUP_HELD,
   PEERS_HELD,
   RPT_HELD,
@@ -36,6 +38,7 @@ import {
   httpsOnly,
   latestRpt,
   monthsNote,
+  restatedNote,
   peersModel,
   periodText,
   pickYear,
@@ -112,6 +115,8 @@ function FlowPanel({ slug, name, family, data, asked, policies, freshness, now }
         <ValueChainFlow flow={flow} />
         <div className="flex flex-col gap-1 text-meta text-ink-2">
           <p>{AS_REPORTED}</p>
+          <p>{XBRL_NOTE}</p>
+          {year.cells.some((c) => restatedNote(c) !== null) && <p>{RESTATED_NOTE}</p>}
           {assurance && <p>{assurance}</p>}
           {notes.map((n) => (
             <p key={n}>{n}</p>
@@ -173,7 +178,7 @@ function FieldsPanel({ family, data, policies, freshness, now }: { family: strin
           </div>
         )}
         {years && <FieldsTable model={fieldsTable(years, family)} />}
-        {years && <p className="border-t border-line px-3 py-2 text-meta text-ink-2">{AS_REPORTED}. A share is shown as filed; a change is told in words on the flow above.</p>}
+        {years && <p className="border-t border-line px-3 py-2 text-meta text-ink-2">{AS_REPORTED}. A share is shown as filed; a change is told in words on the flow above. {XBRL_NOTE} {RESTATED_NOTE}</p>}
       </Gated>
     </Panel>
   );
