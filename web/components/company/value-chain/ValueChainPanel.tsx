@@ -19,6 +19,7 @@ import {
   VC_VALUES_FIELD,
   assuranceLine,
   brsrSourceLine,
+  filedDay,
   flowOf,
   httpsOnly,
   monthsNote,
@@ -27,7 +28,7 @@ import {
   valueChainModel,
 } from "@/lib/equity/valuechain";
 import { FEEDS } from "@/lib/feeds";
-import { dateInZone, formatDate } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import type { TaskFreshnessRow } from "@/lib/queries/api";
 import type { ValueChainOverviewData } from "@/lib/queries/valuechain";
 
@@ -55,7 +56,7 @@ export function ValueChainPanel({
   const shown = policy !== null && policy.status !== "hidden";
   const model = valueChainModel(data?.rows, shown);
   const year = model.kind === "years" ? model.years[model.years.length - 1] : null;
-  const filed = year?.filedAt ? dateInZone(year.filedAt, "Asia/Kolkata") : null;
+  const filed = filedDay(year?.filedAt);
   const footer = year ? (
     <Foot sources={[brsrSourceLine(year.sourceKey), filed ? `Filed ${formatDate(filed)}` : null]} tasks={TASKS} dataTo={filed} freshness={freshness} now={now} />
   ) : (
