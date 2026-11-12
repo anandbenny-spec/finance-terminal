@@ -179,7 +179,7 @@ describe("the company's ChangeStrip row in the Opening remarks panel (2B-19f, #3
     expect(t).toContain("+19.0% added (40 of 210 words)");
     expect(t).toContain("−15.0% removed (30 of 200 words)");
     expect(t).toContain("Open this call");
-    expect(out).toContain('href="/companies/tcs?tab=calls&amp;call=q2-fy27"');
+    expect(out).toContain('href="/companies/tcs/calls/q2-fy27"');
     expect(out).toContain('aria-label="View as table"');
   });
 

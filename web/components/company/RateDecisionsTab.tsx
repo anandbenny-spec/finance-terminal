@@ -12,6 +12,7 @@ import { Gated } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
 import { StateNote } from "@/components/data/StateNote";
 import { Foot } from "@/components/policy/PanelFoot";
+import { companyHref } from "@/lib/equity/company";
 import {
   NOT_A_FORECAST,
   RATE_GATE,
@@ -33,9 +34,7 @@ const HELD = "Rate-sensitivity figures are held back until their checks pass.";
 const latest = (dates: (string | null | undefined)[]): string | null => dates.filter((d): d is string => Boolean(d)).sort().at(-1) ?? null;
 
 export function rateHref(slug: string, window: WindowKey): string {
-  const params = new URLSearchParams({ tab: "rate-decisions" });
-  if (window !== "d1") params.set("window", window);
-  return `/companies/${slug}?${params.toString()}`;
+  return companyHref(slug, "rate-decisions", window === "d5" ? "d5" : undefined);
 }
 
 function WindowToggle({ slug, window }: { slug: string; window: WindowKey }) {

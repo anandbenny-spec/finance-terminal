@@ -68,14 +68,14 @@ describe("PricedInView", () => {
     const split = out.indexOf("priced-in-lenders");
     const first = out.slice(0, split);
     const second = out.slice(split);
-    for (const r of operating) expect(second).not.toContain("/companies/" + r.slug + "?tab=valuation");
-    for (const r of lenders) expect(first).not.toContain("/companies/" + r.slug + "?tab=valuation");
+    for (const r of operating) expect(second).not.toContain("/companies/" + r.slug + "/valuation");
+    for (const r of lenders) expect(first).not.toContain("/companies/" + r.slug + "/valuation");
   });
   it("links each row to its Valuation tab", () => {
-    expect(html()).toContain('href="/companies/top?tab=valuation"');
+    expect(html()).toContain('href="/companies/top/valuation"');
   });
   it("underlines each company name as a link, with its Valuation-tab target unchanged (R05-7)", () => {
-    expect(html()).toMatch(/<a[^>]*class="[^"]*\bunderline\b[^"]*"[^>]*href="\/companies\/top\?tab=valuation"|<a[^>]*href="\/companies\/top\?tab=valuation"[^>]*class="[^"]*\bunderline\b/);
+    expect(html()).toMatch(/<a[^>]*class="[^"]*\bunderline\b[^"]*"[^>]*href="\/companies\/top\/valuation"|<a[^>]*href="\/companies\/top\/valuation"[^>]*class="[^"]*\bunderline\b/);
   });
   it("lists held, N/A and no-delivered-figure rows below, each with its reason, and gives them no rank", () => {
     const t = text(html());

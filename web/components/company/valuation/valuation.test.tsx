@@ -47,7 +47,7 @@ describe("the Valuation tab", () => {
 
   it("is a tab in the URL, marked current", () => {
     const out = html(valuation());
-    expect(out).toContain('href="/companies/tcs?tab=valuation"');
+    expect(out).toContain('href="/companies/tcs/valuation"');
     expect(text(out)).toContain("What growth does today's price imply?");
   });
 

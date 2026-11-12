@@ -45,9 +45,9 @@ describe("the header", () => {
   });
   it("offers the Overview, Financials, Valuation and Rate decisions tabs, the current one marked (2A-25 adds the last)", () => {
     expect(out).toContain('aria-current="page"');
-    expect(out).toContain('href="/companies/tcs?tab=financials"');
-    expect(out).toContain('href="/companies/tcs?tab=valuation"');
-    expect(out).toContain('href="/companies/tcs?tab=rate-decisions"');
+    expect(out).toContain('href="/companies/tcs/financials"');
+    expect(out).toContain('href="/companies/tcs/valuation"');
+    expect(out).toContain('href="/companies/tcs/rate-decisions"');
   });
   it("says Source: NSE and carries no link to module 1's pages", () => {
     expect(text(out)).toContain("Source: NSE");
@@ -139,9 +139,9 @@ describe("the Financials tab", () => {
     expect(t).toContain("Filed 30 Jun 2026");
     expect(t).toContain("Borrowings exclude lease liabilities (not in results filings).");
   });
-  it("renders the basis toggle in the URL and falls back, with a note, to the basis that has rows", () => {
+  it("renders the basis toggle in the path and falls back, with a note, to the basis that has rows", () => {
     const out = html(base());
-    expect(out).toContain('href="/companies/tcs?tab=financials&amp;basis=standalone"');
+    expect(out).toContain('href="/companies/tcs/financials/standalone"');
     const standaloneOnly = base({ financials: { financials: [financial("quarter", "2026-06-30", { basis: "standalone" })], metrics: [], promoter: [] } });
     const t = text(html(standaloneOnly, "consolidated"));
     expect(t).toContain("No consolidated statements are published for this company; showing standalone.");

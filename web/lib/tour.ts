@@ -58,7 +58,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "company-calls",
-    route: "/companies/adanient?tab=calls",
+    route: "/companies/adanient/calls",
     title: "A company's earnings calls",
     text: "The earnings calls published for a company, newest first, with the status of each one. AI-written lines about a call are marked as AI and cite the passage they came from.",
   },

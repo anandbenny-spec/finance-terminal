@@ -6,13 +6,13 @@ import { dateInZone, formatDate, formatFraction, formatStatedValue } from "@/lib
 import { pageLink, toCitation, wholeQuote, type Citation, type CitationPage } from "@/lib/policy/ai";
 import type { AiCitationRow, AiOutputRow, CallFigureRow, CitationPageRow, EarningsCallRow, EarningsListRow } from "@/lib/queries/api";
 
-/** The call the tab shows: the one in the URL (?call=q2-fy27) if it is one of the company's, else the default. */
+/** The call the tab shows: the one in the path (/calls/q2-fy27) if it is one of the company's, else the default. */
 export function selectCall(calls: readonly EarningsCallRow[], slug: string | undefined | string[]): EarningsCallRow | null {
   const wanted = typeof slug === "string" ? slug : undefined;
   return calls.find((c) => c.call_slug === wanted) ?? calls.find((c) => c.is_default) ?? null;
 }
 
-/** The call in the URL (?call=q2-fy27): a slug-shaped string only, else undefined (the default call). */
+/** The call in a path segment (/calls/q2-fy27): a slug-shaped string only, else undefined (the default call). */
 export function callOf(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" && /^[a-z0-9-]{1,40}$/.test(value) ? value : undefined;
 }
