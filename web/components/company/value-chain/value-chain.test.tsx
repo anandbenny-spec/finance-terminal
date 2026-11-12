@@ -180,6 +180,18 @@ describe("each state, in its words", () => {
     expect(t).toContain("Restated in the FY 2026-27 BRSR to 89.9%");
   });
 
+  it("a restated count under a figure says so beside it, as the main figures do (#191's page check: 13 trading houses had no note)", () => {
+    const t = html({ trading_houses: { value: 13, restated: true, next: 1409 } });
+    expect(t).toContain("13 trading houses (Restated in the FY 2026-27 BRSR to 1,409)");
+  });
+
+  it("one of a thing is singular: 1 country, 1 state, 1 trading house, 1 dealer or distributor", () => {
+    const t = html({ countries_served: { value: 1 }, states_served: { value: 1 }, trading_houses: { value: 1 }, dealers: { value: 1 } });
+    for (const s of ["1 country", "1 state", "1 trading house", "1 dealer or distributor"]) expect(t).toContain(s);
+    for (const s of ["1 countries", "1 states", "1 trading houses", "1 dealers"]) expect(t).not.toContain(s);
+    expect(html({ countries_served: { value: 2 } })).toContain("2 countries");
+  });
+
   it("the explainer says the figures are the XBRL's, and says what a shown restatement is, only where the year has one (#433)", () => {
     const plain = text(panel(overview(), "panel-value-chain"));
     expect(plain).toContain("tagged in the BRSR's XBRL file");
@@ -308,6 +320,21 @@ describe("the sub-page once released", () => {
     expect(y25).toContain("Standalone in FY 2023-24, consolidated in FY 2024-25: not compared");
     expect(y25).toContain("down 120 on FY 2023-24");
     expect(flow).not.toMatch(/[▲▼]/);
+  });
+
+  it("never says 'unchanged' of a share that moved, however little (#191's page check: 1.44% to 1.4% read 'unchanged')", () => {
+    const rows = [...card(FY25), ...card(FY26, { fields: { rpt_purchases_share: { change: -0.04 }, rpt_sales_share: { change: 0.01 }, within_india_share: { change: 0 } } })];
+    const flow = text(panel(sub(pageData({ rows })), "panel-vc-flow"));
+    expect(flow).toContain("down 0.04 pp on FY 2024-25");
+    expect(flow).toContain("up 0.01 pp on FY 2024-25");
+    expect(flow).toContain("unchanged on FY 2024-25"); // only the change that is nothing
+    expect(flow.match(/unchanged on FY 2024-25/g)).toHaveLength(1);
+  });
+
+  it("marks a footnote at the 12 px floor and reads it as a note, not as a digit of the figure", () => {
+    const fields = panel(out, "panel-vc-fields");
+    expect(fields).toMatch(/<sup class="[^"]*text-meta[^"]*">/);
+    expect(fields).toMatch(/<span class="sr-only"> \(note <\/span>1<span class="sr-only">\)<\/span>/);
   });
 
   it("lists every field by year with its item reference, and the restated note as a footnote", () => {
