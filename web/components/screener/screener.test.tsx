@@ -53,6 +53,9 @@ describe("ScreenerView", () => {
     expect(out).toContain("down 4.1 percent");
     expect(out).toContain('href="/companies/tcs"');
   });
+  it("underlines each company name as a link, with its target unchanged (R05-7)", () => {
+    expect(html([])).toMatch(/<a[^>]*class="[^"]*\bunderline\b[^"]*"[^>]*href="\/companies\/tcs"|<a[^>]*href="\/companies\/tcs"[^>]*class="[^"]*\bunderline\b/);
+  });
   it("reads an empty cell as Held with its reason, N/A with its reason, or a dash with a label, never blank", () => {
     const out = html([]);
     expect(out).toContain('title="Profit is not positive."');

@@ -28,7 +28,7 @@ const missing = (
 
 function CompanyLink({ row }: { row: PricedInRow }) {
   return (
-    <Link href={"/companies/" + row.slug + "?tab=valuation"} className="text-ink-1 hover:text-highlight">
+    <Link href={"/companies/" + row.slug + "?tab=valuation"} className="text-ink-1 underline hover:text-ink-2">
       {name(row)}
       {row.nse_symbol && <span className="ml-1.5 text-meta text-ink-3">{row.nse_symbol}</span>}
     </Link>
