@@ -22,8 +22,11 @@
 #   productive-assets one (E1's NVDA and GEV);
 # - borrowings_current: SEC's filers split current debt into captions (term debt due within a year, commercial paper,
 #   short-term borrowings). A filed total (DebtCurrent) is used; else a single non-zero caption is the whole of it;
-#   where two or more are filed and no total, the field is held with the parts named in `tags` (adding them would be
-#   computing from other lines: an open question for Anand on #401).
+#   where two or more are filed and no total, they are added (#401's question 1, option A: Anand, 12 Nov 2026; #455):
+#   the current part of long-term debt, plus short-term borrowings, or commercial paper where no short-term borrowings
+#   line is filed, never both (short-term borrowings include commercial paper and other short-term borrowings). `tags`
+#   names every part added and says the figure is the sum of the filed captions. Held, with the parts named, where a
+#   company's parts can't be added without counting one twice (`not_summed`) or a filed caption is outside the sum.
 from: 2019-01-01
 
 columns:
@@ -68,6 +71,19 @@ columns:
     chain: [DebtCurrent]
     parts: [LongTermDebtCurrent, ShortTermBorrowings, CommercialPaper, LongTermDebtAndCapitalLeaseObligationsCurrent,
             OtherShortTermBorrowings]
+    # one from each group, the first non-zero (the current part of long-term debt: the line without finance leases
+    # first, as borrowings_noncurrent's chain), added; never two of one group
+    sum:
+      - [LongTermDebtCurrent, LongTermDebtAndCapitalLeaseObligationsCurrent]
+      - [ShortTermBorrowings, CommercialPaper]
+    included: {ShortTermBorrowings: [OtherShortTermBorrowings]}
+    # held, never added: decided by Claude (standing delegation, 24 Oct 2026; #455), as it only holds a value back
+    not_summed:
+      IBM: >-
+        IBM's ShortTermBorrowings is its balance sheet's short-term debt, which includes its current maturities of
+        long-term debt: it exceeds commercial paper plus current maturities wherever it files all three (30 Jun 2019:
+        8,530 against 2,988 + 5,147; 30 Sep 2021: 7,575 against 900 + 6,632, $ millions), so adding the parts would
+        count the current maturities twice
   # LongTermDebt is left out: it includes the part due within a year
   borrowings_noncurrent: {kind: instant, chain: [LongTermDebtNoncurrent, LongTermDebtAndCapitalLeaseObligations]}
 
@@ -91,9 +107,36 @@ share_classes:
   NKE:
     note: "Class A converts into Class B one for one and both share alike in earnings (NIKE's 10-K, earnings per share note), so each counts as one share"
     ratios: {CommonClassAMember: 1, CommonClassBMember: 1}
+  # Anand, 12 Nov 2026 (#401's question 2; #455's amendment): the rates from Visa's FY2026 10-K, and its preferred
+  # stock counted as converted. Only the latest cover page is read with them; earlier filings keep the field held.
+  # The B rates fall with every litigation-escrow deposit (Visa files an 8-K each time): the task warns (share_rates)
+  # once the newest cover page is dated more than review_days after their effective date.
   V:
-    note: "Visa's class B-1, B-2 and C common stock convert into class A at rates its 10-K states and that change over time; until they are curated here with their source, the shares are held"
-    ratios: {CommonClassAMember: 1}
+    note: "class A shares per share as Visa's 10-K for the year ended 30 Sep 2026 states them (accession 0001403161-26-000134, Note 15, Stockholders' Equity, the as-converted table at 30 Sep 2026), with its series A, B and C preferred stock counted as converted"
+    review_days: 120
+    ratios:
+      CommonClassAMember: 1
+      CommonClassB1Member:
+        ratio: "1.5400"
+        effective: 2026-09-18
+        source: "Visa's 10-K for FY2026 (0001403161-26-000134), Note 15; in effect since 18 Sep 2026 (Visa's 8-K of 23 Sep 2026, 0001403161-26-000121)"
+      CommonClassB2Member:
+        ratio: "1.4924"
+        effective: 2026-09-18
+        source: "Visa's 10-K for FY2026 (0001403161-26-000134), Note 15; in effect since 18 Sep 2026 (Visa's 8-K of 23 Sep 2026, 0001403161-26-000121)"
+      CommonClassB3Member:
+        ratio: "1.4773"
+        effective: 2026-09-18
+        source: "Visa's 10-K for FY2026 (0001403161-26-000134), Note 15; in effect since 18 Sep 2026 (Visa's 8-K of 23 Sep 2026, 0001403161-26-000121)"
+      CommonClassCMember:
+        ratio: "4.0000"
+        as_of: 2026-09-30
+        source: "Visa's 10-K for FY2026 (0001403161-26-000134), Note 15; 4 since Visa's four-for-one split of 2015"
+    # company facts holds no as-converted count for the preferred series (each series is a dimension of the
+    # filing, and company facts leaves dimensions out), so the note's figures, rounded to millions, are used
+    extra:
+      - shares: 9000000
+        note: "series A, B and C preferred stock as converted into class A at 30 Sep 2026: 6, 1 and 2 million, rounded to millions as Note 15 states them"
 
 # A company that can't have 3 fiscal years and 8 quarters of revenue and net income, with the reason (none so far).
 coverage_exceptions: {}

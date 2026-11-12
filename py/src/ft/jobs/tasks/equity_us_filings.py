@@ -18,7 +18,9 @@ one transaction, for each 10-K and 10-Q (and amendment) whose period ends on or 
   the parse note);
 - its `equity.financials` rows (currency USD), with `tags` naming the element behind each value.
 A filing registered by an older `edgar.PARSER_VERSION` gets its rows rebuilt from this run's bytes. A multi-class
-issuer's latest filing whose shares are missing gets them once its cover page is read. Nothing is published: US
+issuer's latest filing whose shares are missing gets them once its cover page is read. A row that lacks a figure an
+earlier filing's row for the same period has isn't stored (`edgar.never_displace`, #455): the filing is registered, its
+parse note says which rows and why, and the earlier row stays the latest filed for that period. Nothing is published: US
 companies stay unpublished until Anand's flip (Spec 02A.1 §3). A second identical run writes nothing.
 
 Checks, B blocking, W warning:
@@ -32,12 +34,20 @@ Checks, B blocking, W warning:
 - (B) `shares`: every share count stored is above zero;
 - (W) `shares_held`: a company whose latest filing has no share count, with why (a class with no curated ratio);
 - (W) `tag_switch`: a column whose figures came from more than one tag of its chain, the primary named;
-- (W) `debt_held`: a company whose latest current borrowings are held (filed in parts, no total);
+- (W) `debt_held`: a company whose latest current borrowings are held (filed in parts that aren't added, no total);
+- (W) `share_rates`: a multi-class issuer whose curated conversion rates took effect more than their `review_days`
+  before its newest cover page (Visa's B rates fall with each litigation-escrow deposit; #455);
+- (W) `kept_fuller`: the filings whose rows weren't stored because they lack figures an earlier filing's row for the
+  same period has (#455);
+- (W) `gaps`: for each operating company, the lines a valuation reads (GAP_WORDS) that are empty in its latest
+  3 fiscal years, 8 quarters and their balance sheets, with the us-gaap tags that filing files for the period whose
+  names suggest the line (tag names only, never a value): where to look before a tag joins a chain (#455);
 - (W) `loaded`: what the run registered (always passing).
 """
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -51,6 +61,11 @@ from ft.jobs.runner import Check, Context, Task
 from ft.jobs.tasks import register
 
 SHOWN = 12
+COVER_DATE = re.compile(r"cover page, as of (\d{4}-\d{2}-\d{2})")
+# A valuation's lines and the words a tag that might carry each holds (the `gaps` check)
+GAP_WORDS = {"revenue": ("Revenue",), "operating_income": ("OperatingIncome",), "pbt": ("BeforeIncomeTax",),
+             "tax": ("IncomeTax",), "pat_owners": ("NetIncome", "ProfitLoss"), "finance_cost": ("InterestExpense",),
+             "cash": ("Cash",), "total_equity": ("StockholdersEquity",), "total_assets": ("Assets",)}
 
 
 def columns(tags: edgar.TagConfig) -> tuple[str, ...]:
@@ -178,7 +193,7 @@ class UsFilings(Task):
                 raise edgar.EdgarError(f"CIK {cik} files IFRS facts (the slice reads US GAAP filers only)")
             x.raw[cik] = got.raw_file_id
             docs.append((cik, cf))
-        x.stmts = s = edgar.Statements(docs, tags)
+        x.stmts = s = edgar.Statements(docs, tags, c.ticker)
         window = sorted((f_ for f_ in s.filings.values() if (pe := f_.period_end) is not None and pe >= start),
                         key=lambda f_: (f_.filed, f_.accn))
         latest = window[-1] if window else None
@@ -195,16 +210,19 @@ class UsFilings(Task):
         for fl in window:
             share = (cover if fl is latest and cover is not None else held) if c.multi_class else None
             b = s.build(fl, cover=share)
-            if b is None:
-                continue
-            x.built.append(b)
+            if b is not None:
+                x.built.append(b)
+        edgar.never_displace(x.built)
+        for b in x.built:
+            fl = b.filing
             if fl.accn not in stored:
-                if b.rows:
+                if b.rows or b.dropped:
                     x.new.append(fl.accn)
             elif str(stored[fl.accn][1]) != str(self.version):
                 x.rebuild.append(fl.accn)
+        last = next((b for b in x.built if b.filing is latest), None)
         if c.multi_class and latest is not None and latest.accn in stored and cover is not None \
-                and latest.accn not in x.rebuild:
+                and latest.accn not in x.rebuild and not (last is not None and "instant" in last.dropped):
             x.fill_shares = (latest.accn, stored[latest.accn][0], cover)
 
     @staticmethod
@@ -266,7 +284,7 @@ class UsFilings(Task):
                 tx.execute("delete from equity.financials where document_id = %s", (doc_id,))
                 tx.execute("""update equity.filing set parse_status = %s, parse_note = %s, parser_version = %s
                                where document_id = %s""",
-                           ("parsed" if b.rows else "failed", self._note(x, b), str(self.version), doc_id))
+                           ("parsed" if b.rows or b.dropped else "failed", self._note(x, b), str(self.version), doc_id))
                 if x.c.multi_class and kept and kept[0] is not None:
                     for r in b.rows:
                         if r.period_kind == "instant" and r.values.get("shares_outstanding") is None:
@@ -420,7 +438,18 @@ class UsFilings(Task):
             if how and how.startswith("held"):
                 debt.append(f"{x.c.ticker} {last.period_end}: {how[len('held: '):]}")
         out.append(Check("debt_held", not debt, ("current borrowings held: " + _names(debt)) if debt
-                         else "every company's latest current borrowings are filed as one line", blocking=False))
+                         else "every company's latest current borrowings are one filed line or the sum of its filed "
+                              "captions", blocking=False))
+
+        out.append(self._share_rates(tx, f, ok))
+
+        kept = [f"{x.c.ticker} {b.filing.form} {b.filing.accn} ({', '.join(b.dropped)})" for x in ok for b in x.built
+                if b.dropped]
+        out.append(Check("kept_fuller", not kept, ("rows not stored, as they lack figures an earlier filing's row for the "
+                                                   "same period has: " + _names(kept)) if kept
+                         else "no filing's row lacks a figure an earlier filing's row for its period has", blocking=False))
+
+        out.append(self._gaps(ok))
 
         r = self.result
         out.append(Check("loaded", True, f"{r.get('registered', 0)} filings registered, {r.get('rebuilt', 0)} rebuilt; "
@@ -428,6 +457,76 @@ class UsFilings(Task):
                                                                               sorted(r.get("rows", {}).items())) or "none")
                          + f"; window from {f.start.isoformat()}", blocking=False))
         return out
+
+    @staticmethod
+    def _share_rates(tx, f: Fetched, ok: list[Company]) -> Check:
+        """A multi-class issuer's rates that took effect more than `review_days` before its newest cover page (read from
+        the latest filing's stored share count, which names the cover page's date)."""
+        due = []
+        for x in ok:
+            classes = f.tags.share_classes.get(x.c.ticker)
+            if classes is None or not classes.review_days:
+                continue
+            row = tx.execute(
+                """select fn.tags->>'shares_outstanding' from equity.financials fn
+                     join equity.filing fl on fl.document_id = fn.document_id
+                    where fl.entity_id = %s and fl.exchange = 'SEC' and fn.period_kind = 'instant'
+                      and fn.shares_outstanding is not null
+                    order by fn.period_end desc, fn.document_id desc limit 1""", (x.entity_id,)).fetchone()
+            m = COVER_DATE.search(row[0] or "") if row else None
+            if m is None:
+                continue
+            end = date.fromisoformat(m.group(1))
+            stale = classes.stale(end)
+            if stale:
+                since = sorted({classes.rates[k].effective.isoformat() for k in stale})
+                due.append(f"{x.c.ticker}: {', '.join(stale)} took effect {', '.join(since)}, more than "
+                           f"{classes.review_days} days before its cover page of {end.isoformat()}: update them in "
+                           f"us_tags.yaml share_classes.{x.c.ticker} from its latest 8-K or 10-K")
+        return Check("share_rates", not due, _names(due) if due else
+                     "every curated conversion rate took effect within its review days of the newest cover page",
+                     blocking=False)
+
+    @staticmethod
+    def _gaps(ok: list[Company]) -> Check:
+        """Each operating company's empty valuation lines in its latest 3 fiscal years, 8 quarters and their balance
+        sheets (the latest stored row per period), grouped by line, with the us-gaap tags filed for those periods whose
+        names suggest the line. Tag names and dates only."""
+        found = []
+        for x in ok:
+            if x.c.valuation_family != "operating" or x.stmts is None:
+                continue
+            latest: dict[tuple, tuple] = {}
+            for b in sorted(x.built, key=lambda b: (b.filing.filed, b.filing.accn)):
+                for r in b.rows:
+                    latest[(r.period_kind, r.period_end)] = (r, b)
+            years = sorted({b.period_end for b in x.built if b.filing.annual})[-3:]
+            quarters = sorted({b.period_end for b in x.built})[-8:]
+            want = [("year", e) for e in years] + [("quarter", e) for e in quarters] + \
+                   [("instant", e) for e in sorted(set(years) | set(quarters[-1:]))]
+            per: dict[str, tuple[list[str], set[str]]] = {}
+            for kind, end in want:
+                got = latest.get((kind, end))
+                for col, words in GAP_WORDS.items():
+                    instant = x.stmts.cfg.columns[col].kind == "instant"
+                    if instant != (kind == "instant"):
+                        continue
+                    if got is not None and got[0].values.get(col) is not None:
+                        continue
+                    label, tags = per.setdefault(col, ([], set()))
+                    label.append(f"{kind} {end.isoformat()}" + ("" if got is None else
+                                 f" ({got[0].tags[col]})" if str(got[0].tags.get(col) or "").startswith("held") else ""))
+                    if got is not None:
+                        r, b = got
+                        starts = {None} if instant else {r.period_start, b.fy_start}
+                        for st in starts:
+                            tags.update(x.stmts.candidates(b.filing, col, st, end, words))
+            for col, (label, tags) in per.items():
+                found.append(f"{x.c.ticker} {col} empty in {len(label)} of its periods ({_names(label, 4)}); filed for "
+                             f"them: {', '.join(sorted(tags)) or 'no tag holding ' + ' or '.join(GAP_WORDS[col])}")
+        return Check("gaps", not found, _names(found, 40) if found else
+                     "every operating company's valuation lines are filed for its latest years and quarters",
+                     blocking=False)
 
     @staticmethod
     def _why(x: Company, kind: str, end) -> str:

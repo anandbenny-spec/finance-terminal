@@ -421,7 +421,8 @@ def edgar_rows(ticker: str) -> tuple[mx.Fin, ...]:
 
 
 def summed_parts(f: mx.Fin) -> mx.Fin:
-    """A test assumption only (#401's open question 1, option A): current debt filed in parts taken as their sum."""
+    """A test assumption only: current debt the adapter still holds in parts (outside option A's sum, #455) taken as
+    the sum of its parts."""
     tag = str(f.tags.get("borrowings_current") or "")
     if not tag.startswith("held: filed in parts"):
         return f
@@ -448,23 +449,24 @@ def edgar_company(ticker: str, close: Decimal, assume_parts: bool) -> tuple[asse
 @needs_fixtures
 @pytest.mark.parametrize("ticker", list(CIK))
 def test_each_fixture_company_is_valued_or_na_with_its_reason(ticker):
-    """As filed, current debt in parts holds Apple's, Microsoft's, Walmart's and Alphabet's models (#401's open
-    question); Nvidia's runs and round-trips."""
+    """With current debt filed in parts summed by the adapter (#401's question 1, option A; #455), Microsoft's,
+    Nvidia's, Walmart's and Alphabet's models run and round-trip; Apple's stays N/A, as it tags no interest expense
+    after FY2023 (its cost of debt is held)."""
     s, day = edgar_company(ticker, Decimal(150), assume_parts=False)
     m = ui.market_inputs(rates(rf="5.29", erp="4.2", rf_day=day, erp_month=day.replace(day=1)), day)
     co = compute(s, day, m, SETTINGS, RULE)
     rev = next(r for r in co.runs if r.kind == "reverse_dcf")
-    if ticker == "NVDA":
-        assert rev.status == "solved" and round_trip(co, m, SETTINGS, rev) is None
+    if ticker == "AAPL":
+        assert rev.status == "not_applicable" and rev.reason == "The filing doesn't report interest expense."
     else:
-        assert rev.status == "not_applicable" and "splits its current debt into parts" in rev.reason
+        assert rev.status == "solved" and round_trip(co, m, SETTINGS, rev) is None
 
 
 @needs_fixtures
 @pytest.mark.parametrize("ticker", list(CIK))
 def test_every_fixture_operating_company_round_trips_with_current_debt_summed(ticker):
-    """With #401's option A assumed (only here), every solved run solves back to its growth within 0.01 points, and
-    one that isn't solved says why (Spec 02A §9.5 item 9)."""
+    """With every part of current debt summed (beyond option A's sum, only here), every solved run solves back to its
+    growth within 0.01 points, and one that isn't solved says why (Spec 02A §9.5 item 9)."""
     s, day = edgar_company(ticker, Decimal(150), assume_parts=True)
     m = ui.market_inputs(rates(rf="5.29", erp="4.2", rf_day=day, erp_month=day.replace(day=1)), day)
     co = compute(s, day, m, SETTINGS, RULE)
