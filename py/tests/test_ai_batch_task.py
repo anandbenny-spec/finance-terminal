@@ -1128,6 +1128,12 @@ def published_with_v1(monkeypatch, days: list[date]) -> tuple[list[str], list[in
     return slugs, docs
 
 
+def visible_diff_version(doc: int) -> str:
+    """The prompt version of the one What changed summary visitors see for `doc` (api.ai_outputs has no version column)."""
+    ((oid,),) = as_anon("select id from api.ai_outputs where document_id = %s and task = 'statement_diff_summary'", doc)
+    return q("select prompt_version from core.ai_output where id = %s", oid)[0][0]
+
+
 def sent(fake: FakeClaude) -> list[dict]:
     return [r["params"] for b in fake.batches.values() for r in b["requests"]]
 
@@ -1154,8 +1160,7 @@ def test_older_diff_summaries_move_to_v2_only_through_the_rerun_and_each_target_
     rerun = json.loads(r["checks"]["rerun"]["detail"])
     assert r["checks"]["rerun"]["passed"] and (rerun["meetings"], rerun["older"], rerun["targets"]) == ("all", 1, 1)
     assert rerun["outcomes"] == {"published": 1} and rerun["rejected_documents"] == []
-    assert as_anon("""select prompt_version from api.ai_outputs where document_id = %s
-                       and task = 'statement_diff_summary'""", new) == [("v2",)]
+    assert visible_diff_version(new) == "v2"
     # Once: the same re-run again sends nothing, and neither does a scheduled run.
     again_fake = FakeClaude(["ok"])
     assert backfill(task(slugs, again_fake), datetime(2069, 1, 4, 12, tzinfo=UTC), monkeypatch, "all") == 0
@@ -1174,8 +1179,7 @@ def test_a_rerun_reply_rejected_twice_leaves_the_old_output_published_and_is_nev
     assert diffs == [("published", "v1"), ("rejected", "v2"), ("rejected", "v2")]
     assert not r["checks"]["rerun"]["passed"]
     assert json.loads(r["checks"]["rerun"]["detail"])["rejected_documents"] == [new]
-    assert as_anon("""select prompt_version from api.ai_outputs where document_id = %s
-                       and task = 'statement_diff_summary'""", new) == [("v1",)]
+    assert visible_diff_version(new) == "v1"
     assert q("select count(*) from ops.alert where dedupe_key = %s and resolved_at is null",
              f"ai_rejected:statement_diff_summary:{new}") == [(0,)]       # the old output still stands
     later = FakeClaude(["ok"])
