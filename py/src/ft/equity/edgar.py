@@ -27,8 +27,14 @@ with the cover page's shares). The period end is the latest end of the filing's 
 busiest end's facts (it equals SEC's `reportDate` for every one of the 219 filings the saved submissions list; a
 forward-looking line never sets it); the task checks it against SEC where SEC's
 list holds the filing. The column map and the tag chains are `py/config/equity/us_tags.yaml`. A column whose meaning
-isn't filed is null, never computed from other lines, except the quarter differences above and the equity fills;
-`tags` names the element behind each value or why it is held.
+isn't filed is null, never computed from other lines, except the quarter differences above, the equity fills and
+current debt filed in parts (its filed captions summed: #401's question 1, option A; `Statements._parts`); `tags`
+names the element behind each value or why it is held.
+
+**A row that lacks a figure never displaces one that has it** (`never_displace`, #455): a reader takes the latest
+filed row for each period, so a later filing's row for a period an earlier filing's row already covers is stored only
+if it has every figure that row has. Disney's FY2023 10-K/A (a Part III amendment that tags only net income) would
+otherwise have replaced its 10-K's year, quarter and balance sheet rows (#403's dev runs, 12 Nov 2026).
 """
 from __future__ import annotations
 
@@ -41,7 +47,8 @@ from pathlib import Path
 import yaml
 
 # Bump it when a change alters what a filing's rows are: the task rebuilds older filings' rows from that run's bytes.
-PARSER_VERSION = 1           # nothing is stored yet (dev run 1 rolled back), so the 12 Nov fixes keep 1
+PARSER_VERSION = 2           # 2 (#455, 12 Nov 2026): current debt summed from its filed captions, no row displacing a
+                             # fuller one, Visa's share classes (1: US-02's first load, #401)
 TAGS_FILE = Path(__file__).resolve().parents[3] / "config" / "equity" / "us_tags.yaml"
 
 PERIODIC_FORMS = {"10-K", "10-Q", "10-KT", "10-QT", "20-F", "40-F"}    # whose facts count (the helper's rule)
@@ -209,7 +216,10 @@ class Column:
     name: str
     kind: str                        # flow, cash_flow, per_share, instant
     chain: tuple[Entry, ...]
-    parts: tuple[str, ...] = ()      # instant columns filed in parts: one non-zero part only, else held
+    parts: tuple[str, ...] = ()      # instant columns filed in parts (no total in the chain): see Statements._parts
+    sum: tuple[tuple[str, ...], ...] = ()    # the parts added: one from each group (its first non-zero), never two
+    included: dict[str, tuple[str, ...]] = field(default_factory=dict)   # a part -> the parts it already includes
+    not_summed: dict[str, str] = field(default_factory=dict)            # ticker -> why its parts are never added
 
     @property
     def unit(self) -> str:
@@ -221,9 +231,35 @@ class Column:
 
 
 @dataclass(frozen=True)
+class Rate:
+    """A share class's conversion rate into the reference class, with where it comes from."""
+    ratio: Decimal
+    source: str = ""
+    effective: dt.date | None = None    # the day it took effect, where the source gives it (reviewed after review_days)
+    as_of: dt.date | None = None        # the day the source states it
+
+
+@dataclass(frozen=True)
+class Extra:
+    """Shares counted beside the cover page's classes, in the reference class (Visa's preferred stock as converted)."""
+    shares: Decimal
+    note: str
+
+
+@dataclass(frozen=True)
 class ShareClasses:
     note: str
     ratios: dict[str, Decimal]       # class member (local name) -> shares of the reference class per share
+    rates: dict[str, Rate] = field(default_factory=dict)
+    extra: tuple[Extra, ...] = ()
+    review_days: int | None = None   # a rate with an effective date older than this before the cover page: a warning
+
+    def stale(self, cover_end: dt.date) -> list[str]:
+        """The rates with an effective date more than `review_days` before the cover page's date."""
+        if not self.review_days:
+            return []
+        return [m for m, r in sorted(self.rates.items())
+                if r.effective is not None and (cover_end - r.effective).days > self.review_days]
 
 
 @dataclass(frozen=True)
@@ -243,6 +279,44 @@ class TagConfig:
 
 
 KINDS = ("flow", "cash_flow", "per_share", "instant")
+
+
+def _positive(ticker: str, what: str, r) -> Decimal:
+    try:
+        v = Decimal(str(r))
+    except InvalidOperation:
+        v = ZERO
+    if not v.is_finite() or v <= 0:
+        raise EdgarError(f"us_tags.yaml: share_classes {ticker} {what}: a ratio is a positive number")
+    return v
+
+
+def _share_classes(ticker: str, c) -> ShareClasses:
+    """One issuer's classes: each ratio a number, or {ratio, source, effective, as_of} where it changes over time or
+    needs its source beside it; `extra` shares counted beside the cover page's classes; `review_days`."""
+    if not (c or {}).get("note") or not isinstance(c.get("ratios"), dict) or not c["ratios"]:
+        raise EdgarError(f"us_tags.yaml: share_classes {ticker} needs its note and ratios")
+    ratios, rates = {}, {}
+    for member, r in c["ratios"].items():
+        if isinstance(r, dict):
+            if not r.get("source"):
+                raise EdgarError(f"us_tags.yaml: share_classes {ticker} {member}: a rate given as a mapping needs its source")
+            for k in ("effective", "as_of"):
+                if r.get(k) is not None and not isinstance(r[k], dt.date):
+                    raise EdgarError(f"us_tags.yaml: share_classes {ticker} {member}: {k} is a date (YYYY-MM-DD)")
+            ratios[member] = _positive(ticker, member, r.get("ratio"))
+            rates[member] = Rate(ratios[member], str(r["source"]), r.get("effective"), r.get("as_of"))
+        else:
+            ratios[member] = _positive(ticker, member, r)
+    extra = []
+    for e in c.get("extra") or []:
+        if not isinstance(e, dict) or not e.get("note"):
+            raise EdgarError(f"us_tags.yaml: share_classes {ticker}: an extra entry needs its shares and note")
+        extra.append(Extra(_positive(ticker, "extra shares", e.get("shares")), str(e["note"])))
+    review = c.get("review_days")
+    if review is not None and (not isinstance(review, int) or review <= 0):
+        raise EdgarError(f"us_tags.yaml: share_classes {ticker}: review_days is a positive whole number")
+    return ShareClasses(c["note"], ratios, rates, tuple(extra), review)
 
 
 def load_tags(path: Path | None = None) -> TagConfig:
@@ -269,22 +343,16 @@ def load_tags(path: Path | None = None) -> TagConfig:
             raise EdgarError(f"us_tags.yaml: {name} has no tags")
         if parts and kind != "instant":
             raise EdgarError(f"us_tags.yaml: {name}: parts are for balance-sheet lines only")
-        cols[name] = Column(name, kind, tuple(chain), parts)
+        groups = tuple(tuple(g) for g in (spec.get("sum") or ()))
+        included = {k: tuple(v) for k, v in (spec.get("included") or {}).items()}
+        named = {t for g in groups for t in g} | set(included) | {t for v in included.values() for t in v}
+        if (groups or included) and not named <= set(parts):
+            raise EdgarError(f"us_tags.yaml: {name}: sum and included name only its parts "
+                             f"({', '.join(sorted(named - set(parts)))} isn't one)")
+        not_summed = {str(k): str(v) for k, v in (spec.get("not_summed") or {}).items()}
+        cols[name] = Column(name, kind, tuple(chain), parts, groups, included, not_summed)
     bal = raw.get("balance_check") or {}
-    classes = {}
-    for ticker, c in (raw.get("share_classes") or {}).items():
-        if not (c or {}).get("note") or not isinstance(c.get("ratios"), dict) or not c["ratios"]:
-            raise EdgarError(f"us_tags.yaml: share_classes {ticker} needs its note and ratios")
-        ratios = {}
-        for member, r in c["ratios"].items():
-            try:
-                v = Decimal(str(r))
-            except InvalidOperation:
-                v = ZERO
-            if v <= 0:
-                raise EdgarError(f"us_tags.yaml: share_classes {ticker} {member}: a ratio is a positive number")
-            ratios[member] = v
-        classes[ticker] = ShareClasses(c["note"], ratios)
+    classes = {ticker: _share_classes(ticker, c) for ticker, c in (raw.get("share_classes") or {}).items()}
     need = ("liabilities", "total", "temporary_equity", "temporary_equity_total", "tolerance")
     if any(bal.get(k) in (None, "", []) for k in need):
         raise EdgarError(f"us_tags.yaml: balance_check needs {', '.join(need)}")
@@ -477,9 +545,14 @@ def cover_total(cover: Cover, classes: ShareClasses | None) -> tuple[Decimal | N
     if missing:
         return None, ("held: no curated conversion ratio for " + ", ".join(missing) + " (classes on the cover page: "
                       + ", ".join(f"{m} {v}" for m, v in parts) + ")")
-    total = sum((v * classes.ratios[m] for m, v in parts), ZERO)
-    how = " + ".join(f"{m} {v} × {classes.ratios[m]}" for m, v in parts)
-    return total, f"cover page, as of {cover.end.isoformat()}: {how} ({classes.note})"
+    total = sum((v * classes.ratios[m] for m, v in parts), ZERO) + sum((e.shares for e in classes.extra), ZERO)
+    if total != total.to_integral_value():
+        total = total.quantize(Decimal(1))        # a fractional rate gives a fraction of a share: counted to the share
+    how = " + ".join([f"{m} {v} × {classes.ratios[m]}" for m, v in parts] + [f"{e.shares} ({e.note})" for e in classes.extra])
+    dated = [f"{m} {r.ratio} in effect from {r.effective.isoformat()}" for m, r in sorted(classes.rates.items())
+             if r.effective is not None]
+    return total, (f"cover page, as of {cover.end.isoformat()}: {how}" + (f"; rates: {', '.join(dated)}" if dated else "")
+                   + f" ({classes.note})")
 
 
 # ------------------------------------------------------------------------------------------------ rows
@@ -500,18 +573,20 @@ class Built:
     rows: list[Row]
     balance: tuple[bool | None, str] | None = None  # 10-Ks: (ties, how); None ties: not checked
     notes: list[str] = field(default_factory=list)
+    dropped: list[str] = field(default_factory=list)  # period kinds whose rows aren't stored (never_displace)
 
 
 class Statements:
     """One company's filings as rows. `docs` is its company facts, its own CIK's first, then each predecessor's, each
     with the CIK it was read under."""
 
-    def __init__(self, docs: list[tuple[int, dict]], cfg: TagConfig):
+    def __init__(self, docs: list[tuple[int, dict]], cfg: TagConfig, ticker: str | None = None):
         if not docs or not any(cf.get("facts", {}).get("us-gaap") for _, cf in docs):
             raise EdgarError("company facts hold no us-gaap facts (an IFRS filer?)")
         if any("ifrs-full" in cf.get("facts", {}) for _, cf in docs):
             raise EdgarError("company facts hold IFRS facts (the slice reads US GAAP filers only)")
         self.cfg = cfg
+        self.ticker = ticker
         cfs = [cf for _, cf in docs]
         self.facts = load_facts(merge_companyfacts(cfs[0], cfs[1:]))
         self.history = history_of(cfs)
@@ -559,8 +634,37 @@ class Statements:
             return v, p
         if not nonzero:
             return (ZERO, "+".join(filed) + " (filed as zero)") if filed else (None, None)
-        return None, ("held: filed in parts (" + ", ".join(f"{p} {v}" for p, v in nonzero.items())
-                      + ") and no total is filed")
+        return self._summed(col, nonzero)
+
+    def _summed(self, col: Column, nonzero: dict[str, Decimal]) -> tuple[Decimal | None, str]:
+        """Two or more non-zero captions and no total (#401's question 1, option A; Anand, 12 Nov 2026): one from each
+        of the column's `sum` groups, the first filed non-zero, added, never two of one group (for current debt: the
+        current part of long-term debt, plus short-term borrowings, or commercial paper where no short-term borrowings
+        line is filed, since short-term borrowings include it). Held, naming the parts, where the company's parts are
+        never added (`not_summed`: one caption includes another) or a filed caption is outside the sum."""
+        listed = "held: filed in parts (" + ", ".join(f"{p} {v}" for p, v in nonzero.items()) + ") and no total is filed"
+        if self.ticker in col.not_summed:
+            return None, f"{listed}; not added: {col.not_summed[self.ticker]}"
+        used, beside = [], {}
+        for group in col.sum:
+            got = next((p for p in group if p in nonzero), None)
+            if got is None:
+                continue
+            used.append(got)
+            for p in group:
+                if p != got and p in nonzero:
+                    beside[p] = f"{p} (never with {got})"
+            for p in col.included.get(got, ()):
+                if p in nonzero:
+                    beside[p] = f"{p} (within {got})"
+        left = [p for p in nonzero if p not in used and p not in beside]
+        if not used or left:
+            return None, f"{listed}; {', '.join(left or nonzero)} outside the decided sum"
+        how = "+".join(used) + (" (the sum of the filed captions; no total is filed" if len(used) > 1 else
+                                " (no total is filed")
+        if beside:
+            how += "; not added: " + ", ".join(beside.values())
+        return sum((nonzero[p] for p in used), ZERO), how + ")"
 
     def _prior(self, tag: str, unit: str, start: dt.date, kind: str, filed: dt.date) -> F | None:
         """The year to date of `kind` from `start`, as last filed on or before `filed`."""
@@ -692,6 +796,14 @@ class Statements:
         return False, f"Assets has {len(found)} values at the date in {f.form} {f.accn} (" + ", ".join(map(str, found)) \
             + f") and {len(ties)} tie with {side}"
 
+    def candidates(self, f: Filing, col: str, start: dt.date | None, end: dt.date, words: tuple[str, ...]) -> list[str]:
+        """The us-gaap tags the filing files for this period (a duration from `start`, or the instant at `end`) whose names
+        hold one of `words` and that aren't in the column's chain: where to look when the column is empty."""
+        c = self.cfg.columns.get(col)
+        chain = ({e.tag for e in c.chain} | set(c.parts)) if c else set()
+        return sorted({t for (t, u, s, e) in f.facts if e == end and s == start and t not in chain
+                       and any(w in t for w in words)})
+
     def switched(self, used: dict[str, set[str]]) -> list[str]:
         """Columns whose rows came from more than one tag of their chain, the primary named."""
         out = []
@@ -702,3 +814,27 @@ class Statements:
                 primary = self.order[col][0].tag if self.order.get(col) else "?"
                 out.append(f"{col}: {primary} primary, also " + ", ".join(sorted(base - {primary})))
         return out
+
+
+def never_displace(built: list[Built]) -> None:
+    """A row that lacks a figure never displaces one that has it (#455). A reader takes the latest filed row for each
+    period (India's `metrics.Book`, which the US metrics share), so among one company's filings, in filing order, a
+    later filing's row for a period (its kind and end) that an earlier stored row covers is kept only if it has every
+    figure that row has; otherwise it isn't stored, the filing's notes say why, and the earlier row stays the latest.
+    A fuller or equal later row (an amendment that restates the statements) is kept and replaces it, as before."""
+    latest: dict[tuple[str, dt.date], tuple[Row, Filing]] = {}
+    for b in sorted(built, key=lambda b: (b.filing.filed, b.filing.accn)):
+        kept = []
+        for r in b.rows:
+            k = (r.period_kind, r.period_end)
+            prev = latest.get(k)
+            if prev is not None:
+                missing = [c for c in prev[0].values if r.values.get(c) is None]
+                if missing:
+                    b.dropped.append(r.period_kind)
+                    b.notes.append(f"its {r.period_kind} row to {r.period_end.isoformat()} isn't stored: it lacks "
+                                   f"{', '.join(missing)}, which {prev[1].form} {prev[1].accn} files for that period")
+                    continue
+            latest[k] = (r, b.filing)
+            kept.append(r)
+        b.rows = kept

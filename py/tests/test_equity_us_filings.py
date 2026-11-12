@@ -102,14 +102,22 @@ def test_the_column_map_loads_and_refuses_a_broken_file(tmp_path):
     assert t.columns["total_equity"].chain[1] == E.Entry("StockholdersEquity", 1)
     assert t.columns["equity_owners"].chain[1].nci == -1
     assert "InterestPaidNet" not in [e.tag for e in t.columns["finance_cost"].chain]
-    assert t.columns["borrowings_current"].parts[:3] == ("LongTermDebtCurrent", "ShortTermBorrowings", "CommercialPaper")
+    debt = t.columns["borrowings_current"]
+    assert debt.parts[:3] == ("LongTermDebtCurrent", "ShortTermBorrowings", "CommercialPaper")
+    assert debt.sum == (("LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent"),
+                        ("ShortTermBorrowings", "CommercialPaper"))                 # never both of one group (#455)
+    assert debt.included == {"ShortTermBorrowings": ("OtherShortTermBorrowings",)} and list(debt.not_summed) == ["IBM"]
     assert sorted(t.share_classes) == ["GOOGL", "NKE", "V"]
     assert set(t.columns) <= set(task_module.columns(t)) and "shares_outstanding" in task_module.columns(t)
     text = E.TAGS_FILE.read_text()
     for bad, message in ((text.replace("kind: flow", "kind: stream", 1), "kind 'stream'"),
                          (text.replace("from: 2019-01-01", "from: soon"), "needs `from`"),
                          (text.replace("CommonClassBMember: 1, CapitalClassCMember: 1", "CommonClassBMember: 0, CapitalClassCMember: 1"),
-                          "positive number")):
+                          "positive number"),
+                         (text.replace("included: {ShortTermBorrowings: [OtherShortTermBorrowings]}",
+                                       "included: {ShortTermBorrowings: [NotesPayableCurrent]}"), "NotesPayableCurrent isn't one"),
+                         (text.replace("effective: 2026-09-18", "effective: soon", 1), "effective is a date"),
+                         (text.replace("review_days: 120", "review_days: -1"), "review_days")):
         (tmp_path / "t.yaml").write_text(bad)
         with pytest.raises(E.EdgarError, match=message):
             E.load_tags(tmp_path / "t.yaml")
@@ -211,16 +219,90 @@ def test_a_forward_looking_line_never_sets_the_period():
 
 
 @needs_fixtures
-def test_current_debt_is_one_filed_line_or_held():
+def test_current_debt_is_a_filed_total_one_line_or_its_filed_captions_summed():
+    """#401's question 1, option A (Anand, 12 Nov 2026; #455)."""
     def latest(ticker):
         s = statements(ticker)
-        r = next(r for r in s.build(window(s)[-1]).rows if r.period_kind == "instant")
-        return r.values.get("borrowings_current"), r.tags.get("borrowings_current")
-    assert latest("NVDA") == (1000000000, "DebtCurrent")                  # a filed total
-    assert latest("MSFT") == (9227000000, "LongTermDebtCurrent")          # the one line it files
-    assert latest("AAPL") == (None, ("held: filed in parts (LongTermDebtCurrent 11007000000, CommercialPaper 1997000000) "
-                                    "and no total is filed"))
-    assert latest("WMT")[0] is None and "ShortTermBorrowings 10479000000" in latest("WMT")[1]
+        f = window(s)[-1]
+        r = next(r for r in s.build(f).rows if r.period_kind == "instant")
+        return r.values.get("borrowings_current"), r.tags.get("borrowings_current"), f
+    assert latest("NVDA")[:2] == (1000000000, "DebtCurrent")              # a filed total
+    assert latest("MSFT")[:2] == (9227000000, "LongTermDebtCurrent")      # the one line it files
+    assert latest("AAPL")[:2] == (11007000000 + 1997000000,
+                                  "LongTermDebtCurrent+CommercialPaper (the sum of the filed captions; no total is filed)")
+    v, how, f = latest("WMT")                                             # Walmart: plus short-term borrowings
+    parts = [next(iter(f.get(t, E.MONEY, None, f.period_end))) for t in ("LongTermDebtCurrent", "ShortTermBorrowings")]
+    assert parts[1] == 10479000000 and v == sum(parts)
+    assert how == "LongTermDebtCurrent+ShortTermBorrowings (the sum of the filed captions; no total is filed)"
+    # Apple's 2020 quarters filed OtherShortTermBorrowings with no ShortTermBorrowings line: outside the decided sum
+    s = statements("AAPL")
+    q = next(r for r in s.build(next(f for f in window(s) if f.period_end == D(2020, 3, 28))).rows if r.period_kind == "instant")
+    assert "borrowings_current" not in q.values
+    assert q.tags["borrowings_current"].endswith("no total is filed; OtherShortTermBorrowings outside the decided sum")
+
+
+def debt(parts: dict[str, int], ticker: str | None = None) -> tuple:
+    cf = facts({t: {"USD": [fact(v, "2026-06-30")]} for t, v in parts.items()} |
+               {"NetIncomeLoss": {"USD": [fact(1, "2026-06-30", "2026-04-01")]}, "Assets": {"USD": [fact(99, "2026-06-30")]}})
+    s = E.Statements([(1, cf)], E.load_tags(), ticker)
+    r = s.build(next(iter(s.filings.values()))).rows[-1]
+    return r.values.get("borrowings_current"), r.tags.get("borrowings_current")
+
+
+def test_current_debt_in_parts_takes_one_caption_of_each_group_never_both():
+    lt, lcl, stb, cp, other = ("LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent", "ShortTermBorrowings",
+                               "CommercialPaper", "OtherShortTermBorrowings")
+    assert debt({"DebtCurrent": 9, lt: 5, cp: 4}) == (9, "DebtCurrent")                # a filed total wins
+    assert debt({lt: 5, cp: 0}) == (5, lt)                                            # one non-zero caption
+    assert debt({lt: 0, cp: 0}) == (0, f"{lt}+{cp} (filed as zero)")
+    # Home Depot: commercial paper and current installments with finance leases
+    assert debt({cp: 4248, lcl: 4697}) == (8945, f"{lcl}+{cp} (the sum of the filed captions; no total is filed)")
+    # short-term borrowings include commercial paper and other short-term borrowings (Coca-Cola 2020-22: 2,373 =
+    # 2,146 + 227): never both
+    assert debt({lt: 399, stb: 2373, cp: 2146, other: 227}) == (2772, (
+        f"{lt}+{stb} (the sum of the filed captions; no total is filed; not added: {cp} (never with {stb}), "
+        f"{other} (within {stb}))"))
+    # one current-part line only: the one without finance leases first, as borrowings_noncurrent's chain
+    assert debt({lt: 5, lcl: 6, cp: 1})[0] == 6
+    # other short-term borrowings beside commercial paper, with no short-term borrowings line: outside the sum, held
+    v, how = debt({lt: 1960, cp: 4209, other: 348})
+    assert v is None and how == (f"held: filed in parts ({lt} 1960, {cp} 4209, {other} 348) and no total is filed; "
+                                 f"{other} outside the decided sum")
+    # IBM: its short-term borrowings include its current maturities, so its parts are never added
+    v, how = debt({stb: 7013, lcl: 7009}, "IBM")
+    assert v is None and how.startswith(f"held: filed in parts ({stb} 7013, {lcl} 7009) and no total is filed; not added: "
+                                        "IBM's ShortTermBorrowings is its balance sheet's short-term debt")
+    assert debt({stb: 7013, lcl: 7009}, "SHW")[0] == 14022
+    assert debt({stb: 8530}, "IBM") == (8530, stb)                                    # one caption is the whole
+
+
+def test_a_row_that_lacks_a_figure_never_displaces_one_that_has_it():
+    """Disney's FY2023 10-K/A (Part III: net income only) would have replaced its 10-K's year, quarter and balance sheet
+    rows for US-04's reader, which takes the latest filed row per period (#403's dev runs, 12 Nov 2026; #455)."""
+    k, ka, full = "0000000003-23-000001", "0000000003-24-000001", "0000000003-24-000002"
+    yr = lambda v, accn, form, filed: fact(v, "2023-09-30", "2022-10-02", accn=accn, form=form, filed=filed)
+    nine = lambda v: fact(v, "2023-07-01", "2022-10-02", accn="0000000003-23-000000", filed="2023-08-09")
+    cf = facts({
+        "Revenues": {"USD": [nine(75), yr(100, k, "10-K", "2023-11-21"), yr(101, full, "10-K/A", "2024-03-01")]},
+        "NetIncomeLoss": {"USD": [nine(30), yr(40, k, "10-K", "2023-11-21"), yr(40, ka, "10-K/A", "2024-01-24"),
+                                  yr(41, full, "10-K/A", "2024-03-01")]},
+        "Assets": {"USD": [fact(500, "2023-09-30", accn=k, form="10-K", filed="2023-11-21"),
+                           fact(501, "2023-09-30", accn=full, form="10-K/A", filed="2024-03-01")]},
+    }, dei=[{"val": 7, "end": "2024-01-17", "accn": ka, "form": "10-K/A", "filed": "2024-01-24"}])
+    s = E.Statements([(1, cf)], E.load_tags())
+    built = [s.build(s.filings[a]) for a in (k, ka)]
+    assert {r.period_kind for r in built[1].rows} == {"quarter", "year", "instant"}      # as built: it would displace
+    E.never_displace(built)
+    assert [r.period_kind for r in built[0].rows] == ["quarter", "year", "instant"]
+    assert built[1].rows == [] and built[1].dropped == ["quarter", "year", "instant"]
+    assert built[1].notes[1] == ("its year row to 2023-09-30 isn't stored: it lacks revenue, which 10-K "
+                                 f"{k} files for that period")
+    assert next(r for r in built[0].rows if r.period_kind == "quarter").values == {"revenue": 25, "pat_owners": 10}
+    # a later amendment with every figure (restated statements) replaces the 10-K's rows, as before
+    built = [s.build(s.filings[a]) for a in (full, k, ka)]                # in filing order whatever the list's order
+    E.never_displace(built)
+    assert [b.dropped for b in built] == [[], [], ["quarter", "year", "instant"]]
+    assert next(r for r in built[0].rows if r.period_kind == "year").values == {"revenue": 101, "pat_owners": 41}
 
 
 @needs_fixtures
@@ -349,13 +431,89 @@ def test_a_multi_class_cover_page_is_summed_by_its_curated_ratios():
     total, how = E.cover_total(cov, E.load_tags().share_classes["GOOGL"])
     assert total == 12230000000                                                   # E1's cover-page total
     assert how.startswith("cover page, as of 2026-07-15: CapitalClassCMember 5527000000 × 1 + CommonClassAMember")
-    # Visa: a class with no curated conversion ratio holds the field, naming it
-    v = E.read_cover(cover_page("2026-10-30", {"CommonClassAMember": "1,700", "CommonClassB1Member": "4"}))
+    # a class with no curated conversion ratio holds the field, naming it
+    v = E.read_cover(cover_page("2026-10-30", {"CommonClassAMember": "1,700", "CommonClassB4Member": "4"}))
     total, how = E.cover_total(v, E.load_tags().share_classes["V"])
-    assert total is None and how.startswith("held: no curated conversion ratio for CommonClassB1Member")
+    assert total is None and how.startswith("held: no curated conversion ratio for CommonClassB4Member")
     assert E.cover_total(v, None)[0] is None
     assert E.cover_total(E.read_cover(cover_page("2026-10-30", {"total": "7,425,545,491"}, scale=None)), None) == (
         Decimal(7425545491), "cover page, as of 2026-10-30")
+
+
+VISA_COVER = {"CommonClassAMember": "1,724,473,215", "CommonClassB1Member": "2,180,148", "CommonClassB2Member": "486,669",
+              "CommonClassB3Member": "60,589,871", "CommonClassCMember": "9,080,220"}
+
+
+def test_visas_classes_and_preferred_stock_count_as_converted():
+    """#401's question 2 (Anand, 12 Nov 2026; #455): the rates of Visa's FY2026 10-K, Note 15, and its preferred stock as
+    converted (6, 1 and 2 million, rounded to millions as the note gives them)."""
+    v = E.load_tags().share_classes["V"]
+    assert {m: str(r) for m, r in v.ratios.items()} == {"CommonClassAMember": "1", "CommonClassB1Member": "1.5400",
+                                                        "CommonClassB2Member": "1.4924", "CommonClassB3Member": "1.4773",
+                                                        "CommonClassCMember": "4.0000"}
+    assert {m: r.effective for m, r in v.rates.items()} == {"CommonClassB1Member": D(2026, 9, 18), "CommonClassB2Member":
+                                                            D(2026, 9, 18), "CommonClassB3Member": D(2026, 9, 18),
+                                                            "CommonClassCMember": None}
+    assert all("0001403161-26-000134" in r.source for r in v.rates.values()) and v.rates["CommonClassCMember"].as_of == D(2026, 9, 30)
+    cover = E.read_cover(cover_page("2026-10-29", VISA_COVER, scale=None, cik="0001403161"))
+    total, how = E.cover_total(cover, v)
+    # 1,724,473,215 + 2,180,148 × 1.54 + 486,669 × 1.4924 + 60,589,871 × 1.4773 + 9,080,220 × 4 + 9,000,000
+    exact = (Decimal(1724473215) + Decimal(2180148) * Decimal("1.54") + Decimal(486669) * Decimal("1.4924")
+             + Decimal(60589871) * Decimal("1.4773") + Decimal(9080220) * 4 + 9000000)
+    assert total == exact.quantize(Decimal(1)) == 1863387244
+    # the note's total at 30 Sep 2026 is 1,867 million, when class A was 1,728 million
+    assert round((total - 1724473215 + 1728000000) / Decimal(10) ** 6) == 1867
+    assert how.startswith("cover page, as of 2026-10-29: CommonClassAMember 1724473215 × 1 + CommonClassB1Member 2180148 × 1.5400")
+    assert "+ 9000000 (series A, B and C preferred stock as converted into class A at 30 Sep 2026: 6, 1 and 2 million, " \
+           "rounded to millions as Note 15 states them)" in how
+    assert "; rates: CommonClassB1Member 1.5400 in effect from 2026-09-18" in how
+    # the B rates fall with each litigation-escrow deposit: a warning once the cover page is 120 days past them
+    assert v.stale(D(2027, 1, 16)) == [] and v.stale(D(2027, 1, 17)) == [
+        "CommonClassB1Member", "CommonClassB2Member", "CommonClassB3Member"]
+    assert E.load_tags().share_classes["GOOGL"].stale(D(2030, 1, 1)) == []
+
+
+class Rows:
+    def __init__(self, row):
+        self.row = row
+
+    def execute(self, sql, args=None):
+        return self
+
+    def fetchone(self):
+        return self.row
+
+
+def test_the_share_rates_warning_reads_the_stored_cover_pages_date():
+    x = task_module.Company(us.load_us_config().companies[0], 1)
+    x.c = next(c for c in us.load_us_config().companies if c.ticker == "V")
+    f = task_module.Fetched(START, E.load_tags())
+    stored = "cover page, as of {}: CommonClassAMember 1 × 1; rates: … (note)"
+    assert UsFilings._share_rates(Rows((stored.format("2026-10-29"),)), f, [x]).passed
+    late = UsFilings._share_rates(Rows((stored.format("2027-02-01"),)), f, [x])
+    assert not late.passed and not late.blocking
+    assert late.detail.startswith("V: CommonClassB1Member, CommonClassB2Member, CommonClassB3Member took effect 2026-09-18, "
+                                  "more than 120 days before its cover page of 2027-02-01: update them")
+    assert UsFilings._share_rates(Rows(None), f, [x]).passed                     # no share count stored yet
+
+
+def test_the_gaps_warning_names_the_tags_filed_for_an_empty_line():
+    """Where to look before a tag joins a chain: tag names only, never a value (#455)."""
+    y = lambda t, v: {t: {"USD": [fact(v, "2026-06-30", "2025-07-01", form="10-K"),
+                                  fact(v - 1, "2026-03-31", "2025-07-01", accn="0000000001-26-000000", filed="2026-05-01")]}}
+    cf = facts(y("Revenues", 7101) | y("NetIncomeLoss", 7102) | y("IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic", 7103)
+               | y("IncomeTaxExpenseBenefit", 7104) | y("OperatingIncomeLoss", 7105) | y("InterestExpense", 7106)
+               | {"Assets": {"USD": [fact(7777, "2026-06-30", form="10-K")]}})
+    s = E.Statements([(1, cf)], E.load_tags())
+    x = task_module.Company(next(c for c in us.load_us_config().companies if c.valuation_family == "operating"), 1)
+    x.stmts, x.built = s, [s.build(next(iter(s.filings.values())))]
+    got = UsFilings._gaps([x])
+    assert not got.passed and not got.blocking
+    assert f"{x.c.ticker} pbt empty in 2 of its periods (year 2026-06-30; quarter 2026-06-30); filed for them: " \
+           "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic" in got.detail
+    assert f"{x.c.ticker} cash empty in 1 of its periods (instant 2026-06-30); filed for them: no tag holding Cash" in got.detail
+    assert not any(str(v) in got.detail for v in (7101, 7102, 7103, 7104, 7105, 7106, 7777))
+    assert " revenue " not in got.detail and " operating_income " not in got.detail          # filed: no gap
 
 
 def test_a_cover_page_without_a_share_figure_or_with_an_entity_is_refused():
@@ -530,8 +688,13 @@ def test_the_first_load_registers_every_filing_since_2019_unpublished(s3, monkey
     assert code == 0 and tr[0] == "success", tr
     assert checks(tr) == {"company_facts": (True, True), "period_end": (True, True), "balance_sheet": (True, True),
                           "coverage": (True, True), "shares": (True, True), "shares_held": (True, False),
-                          "tag_switch": (False, False), "debt_held": (False, False), "loaded": (True, False)}
-    assert "AAPL 2026-06-27: filed in parts (LongTermDebtCurrent" in detail(tr, "debt_held")
+                          "tag_switch": (False, False), "debt_held": (True, False), "share_rates": (True, False),
+                          "kept_fuller": (True, False), "gaps": (False, False), "loaded": (True, False)}
+    assert detail(tr, "gaps").startswith("AAPL finance_cost empty in 10 of its periods")       # tag names only
+    assert q("""select fn.borrowings_current, fn.tags->>'borrowings_current' from equity.financials fn
+                  join core.document d on d.id = fn.document_id
+                 where d.external_key = '0000320193-25-000079' and fn.period_kind = 'instant'""") == [
+        (20329000000, "LongTermDebtCurrent+CommercialPaper (the sum of the filed captions; no total is filed)")]
     assert "WMT" in detail(tr, "balance_sheet") and "no total-liabilities line" in detail(tr, "balance_sheet")
     n_filings = sum(FILINGS.values())
     assert counts()[0] == n_filings and counts()[2:] == (n_filings, 0, 0)     # nothing published
@@ -550,7 +713,8 @@ def test_the_first_load_registers_every_filing_since_2019_unpublished(s3, monkey
                        fl.parser_version
                   from equity.filing fl join core.document d on d.id = fl.document_id
                  where d.external_key = '0000320193-25-000079'""") == [
-        ("SEC", "us_gaap", "consolidated", D(2025, 9, 27), D(2024, 9, 29), D(2025, 9, 27), True, "parsed", "1")]
+        ("SEC", "us_gaap", "consolidated", D(2025, 9, 27), D(2024, 9, 29), D(2025, 9, 27), True, "parsed",
+         str(E.PARSER_VERSION))]
     assert q("""select fn.period_kind, fn.period_start, fn.currency, fn.revenue, fn.operating_income, fn.pat_owners,
                        fn.tags->>'revenue'
                   from equity.financials fn join core.document d on d.id = fn.document_id
@@ -640,3 +804,60 @@ def test_the_due_rule_waits_for_migration_0039_and_for_the_first_recorded_run(s3
         d = t.due(c, "refresh", NOW)
         c.rollback()
     assert not d.due and "0039" in d.reason
+
+
+APPLE_10KA = "0000320193-26-000999"     # a made Part III amendment of Apple's FY2025 10-K: net income only
+
+
+def with_part_iii_amendment(t, cf):
+    """Apple's FY2025 10-K/A, as Disney's FY2023 one: it tags only the year's net income (#455)."""
+    if t != "AAPL":
+        return cf
+    cf = copy.deepcopy(cf)
+    cf["facts"]["us-gaap"]["NetIncomeLoss"]["units"]["USD"].append(
+        {"start": "2024-09-29", "end": "2025-09-27", "val": 112010000000, "accn": APPLE_10KA, "fy": 2025, "fp": "FY",
+         "form": "10-K/A", "filed": "2026-01-20"})
+    return cf
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_part_iii_amendment_is_registered_and_never_displaces_the_10ks_rows(s3, monkeypatch):
+    code, tr = go(Sec(with_part_iii_amendment), monkeypatch)
+    assert code == 0 and tr[0] == "success", tr
+    assert checks(tr)["kept_fuller"] == (False, False)
+    assert detail(tr, "kept_fuller").endswith(f"AAPL 10-K/A {APPLE_10KA} (quarter, year)")
+    (status, note, n), = q("""select fl.parse_status, fl.parse_note,
+                                     (select count(*) from equity.financials where document_id = fl.document_id)
+                                from equity.filing fl join core.document d on d.id = fl.document_id
+                               where d.external_key = %s""", APPLE_10KA)
+    assert (status, n) == ("parsed", 0)
+    assert note.startswith(f"v{E.PARSER_VERSION}: 10-K/A filed 2026-01-20 (its acceptance time isn't in SEC's recent "
+                           "filings list); 0 rows from company facts (CIK 320193); its quarter row to 2025-09-27 isn't "
+                           "stored: it lacks revenue, operating_income, ")
+    assert "; its year row to 2025-09-27 isn't stored: it lacks revenue, " in note
+    assert note.endswith("which 10-K 0000320193-25-000079 files for that period")
+    # Apple's 10-K's rows stay the latest filed for the year
+    assert q("""select count(*) from equity.financials fn join core.document d on d.id = fn.document_id
+                 where d.external_key = '0000320193-25-000079' and fn.revenue is not null""") == [(2,)]
+    assert counts()[0] == sum(FILINGS.values()) + 1
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_stored_row_that_displaced_a_fuller_one_is_removed_by_the_rebuild(s3, monkeypatch):
+    """Dev's Disney: v1 stored its FY2023 10-K/A's one-figure rows; the v2 rebuild leaves the filing with none."""
+    sec = Sec(with_part_iii_amendment)
+    go(sec, monkeypatch)
+    doc = q("select id from core.document where external_key = %s", APPLE_10KA)[0][0]
+    q("update equity.filing set parser_version = '1' where document_id = %s returning document_id", doc)
+    q("""insert into equity.financials (document_id, entity_id, basis, period_start, period_end, period_kind, currency,
+                                        pat_owners, tags)
+         select %s, entity_id, 'consolidated', '2024-09-29', '2025-09-27', 'year', 'USD', 112010000000,
+                '{"pat_owners": "NetIncomeLoss"}' from core.document where id = %s returning document_id""", doc, doc)
+    code, tr = go(sec, monkeypatch)
+    assert code == 0 and tr[0] == "success", tr
+    assert detail(tr, "loaded").startswith("0 filings registered, 1 rebuilt")
+    assert q("select count(*) from equity.financials where document_id = %s", doc) == [(0,)]
+    assert q("select parse_status, parser_version from equity.filing where document_id = %s", doc) == [
+        ("parsed", str(E.PARSER_VERSION))]
