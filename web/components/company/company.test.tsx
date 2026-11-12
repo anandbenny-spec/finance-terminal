@@ -178,6 +178,14 @@ describe("the Financials tab", () => {
     expect(withNote).toContain('href="https://example.test/sh/2021-12-31"');
     expect(text(html(base({ financials: { financials: quarters, metrics: [], promoter: null } })))).toContain("Promoter holding isn't published yet.");
   });
+  it("shows a filing's day in India, never the stored instant's UTC date (the Filed dates were a day early; #191's page check)", () => {
+    // NSE's submission date is stored as midnight IST (18:30 UTC the day before); a results filing can be broadcast after midnight IST.
+    const rows = [promoter("2026-09-30", { filed_at: "2026-10-19T18:30:00+00:00" }), promoter("2026-06-30", { filed_at: "2026-07-17T18:30:00+00:00" })];
+    const lateNight = [financial("quarter", "2026-06-30", { filed_at: "2026-07-24T19:10:00+00:00" })];
+    const t = text(html(base({ financials: { financials: lateNight, metrics: [], promoter: rows } })));
+    for (const day of ["20 Oct 2026", "18 Jul 2026", "Filed 25 Jul 2026", "Latest filing 25 Jul 2026"]) expect(t).toContain(day);
+    for (const dayBefore of ["19 Oct 2026", "17 Jul 2026", "24 Jul 2026"]) expect(t).not.toContain(dayBefore);
+  });
   it("lists upcoming corporate actions apart, says when none are announced, and tells each factor's status in words", () => {
     const list = [
       action({ status: "announced", ex_date: "2026-11-20", subject: "Dividend - Rs 11 Per Share" }),

@@ -335,6 +335,17 @@ export function dateInZone(instant: Instant, zone: EventZone): string {
 }
 
 /**
+ * The calendar day a filing was made, as `YYYY-MM-DD`, for `formatDate`. An Indian filing's day is the day in IST: an exchange
+ * list date is stored as that day's midnight IST (18:30 UTC the day before), and a results filing can be broadcast between
+ * midnight and 05:30 IST, so the instant's UTC date would be a day early (found by #191's page check, 12 Nov 2026). A US filing
+ * keeps the instant's UTC date, as before: which day an evening acceptance counts on is an open question (#448).
+ */
+export function filingDay(instant: string | null | undefined, market: Market): string | null {
+  if (!instant) return null;
+  return market === "IN" ? dateInZone(instant, IST) : instant.slice(0, 10);
+}
+
+/**
  * Release time in the event's own zone. RBI `2026-10-01T04:30Z` → `10:00 IST`. US events add IST in brackets:
  * Fed `2026-09-17T18:00Z` → `14:00 ET (23:30 IST)`, and the IST date when it differs: `14:00 ET (00:30 IST, 10 Dec)`.
  */

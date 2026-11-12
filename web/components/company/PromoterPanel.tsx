@@ -11,7 +11,7 @@ import { Panel } from "@/components/data/Panel";
 import { Qualifier } from "@/components/data/Qualifier";
 import { StateNote } from "@/components/data/StateNote";
 import { EmptyFigure } from "@/components/company/cells";
-import { formatDate, formatPercentLevel, formatShare, formatTableDate, type Market } from "@/lib/format";
+import { filingDay, formatDate, formatPercentLevel, formatShare, formatTableDate, type Market } from "@/lib/format";
 import type { PromoterHoldingRow } from "@/lib/queries/api";
 
 function Filing({ row, children }: { row: PromoterHoldingRow; children: ReactNode }) {
@@ -55,7 +55,7 @@ export function PromoterPanel({ rows, market, footer }: { rows: PromoterHoldingR
           ),
         sortValue: (r) => r.promoter_pct,
       },
-      { id: "filed", header: "Filed", cell: (r) => (r.filed_at ? <Filing row={r}>{formatDate(r.filed_at.slice(0, 10))}</Filing> : "—") },
+      { id: "filed", header: "Filed", cell: (r) => (r.filed_at ? <Filing row={r}>{formatDate(filingDay(r.filed_at, market))}</Filing> : "—") },
       { id: "note", header: "Note", cell: (r) => note(r, market) ?? "" },
     ],
     [market],
