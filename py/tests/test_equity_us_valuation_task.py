@@ -37,6 +37,7 @@ NOW = datetime(2032, 5, 31, 6, 0, tzinfo=UTC)
 DAY = D(2032, 5, 28)                        # a Friday: the price date
 SEED = "test.usv_seed"
 SLUG, IN_SLUG = "us-zzv", "zzin-usv"
+IN_ID = 987650301
 GROUP, IN_GROUP = "us-zzv-test", "zzin-usv-test"
 INDUSTRY = "ZZV Test Industry"
 EDITION = D(2032, 1, 5)
@@ -55,10 +56,14 @@ def shift(d):
 
 
 def wipe():
+    """Everything the tests wrote, children first (the industry betas before their raw file; the observations, which
+    test_runner counts, before anything else)."""
     with psycopg.connect(ADMIN, autocommit=True) as c:
+        c.execute("delete from core.observation where task_run_id in (select id from ops.task_run where task_key = %s)",
+                  (SEED,))
         ids = f"(select id from core.entity where slug in ('{SLUG}', '{IN_SLUG}'))"
         for sql in ((f"delete from equity.valuation_scenario where run_id in (select id from equity.valuation_run "
-                    f"where entity_id in {ids})"),
+                     f"where entity_id in {ids})"),
                     f"delete from equity.valuation_run where entity_id in {ids}",
                     f"delete from equity.screener_snapshot where entity_id in {ids}",
                     f"delete from equity.metric_value where entity_id in {ids}",
@@ -71,11 +76,9 @@ def wipe():
                     f"delete from core.entity_identifier where entity_id in {ids}",
                     f"delete from core.entity where slug in ('{SLUG}', '{IN_SLUG}')",
                     f"delete from equity.peer_group where key in ('{GROUP}', '{IN_GROUP}')",
-                    "delete from core.raw_file where object_key like 'usv-test-%%'",
-                    f"delete from equity.industry_benchmark where edition = '{EDITION.isoformat()}'"):
+                    f"delete from equity.industry_benchmark where edition = '{EDITION.isoformat()}'",
+                    "delete from core.raw_file where object_key like 'usv-test-%%'"):
             c.execute(sql)
-        c.execute("delete from core.observation where task_run_id in (select id from ops.task_run where task_key = %s)",
-                  (SEED,))
 
 
 @pytest.fixture(scope="module")
@@ -102,9 +105,13 @@ def seed_run(c) -> int:
 def add_company(c, tr: int, *, slug: str, market: str, group: str, exchange: str, filing_exchange: str, fmt: str,
                 source: str, rows) -> int:
     currency = "USD" if market == "US" else "INR"
-    eid = c.execute("""insert into core.entity (kind, slug, name, market, currency, is_published)
-                       values ('company', %s, %s, %s, %s, %s) returning id""",
-                    (slug, slug.upper(), market, currency, market == "IN")).fetchone()[0]
+    # the Indian company's id is fixed and far from any count or id a task reads, so the trap can't mistake one for it
+    eid = c.execute("""insert into core.entity (id, kind, slug, name, market, currency, is_published)
+                       overriding system value
+                       values (coalesce(%s::int, nextval(pg_get_serial_sequence('core.entity', 'id'))::int), 'company', %s, %s, %s,
+                               %s, %s) returning id""",
+                    (IN_ID if market == "IN" else None, slug, slug.upper(), market, currency,
+                     market == "IN")).fetchone()[0]
     c.execute("""insert into equity.company (entity_id, peer_group_key, valuation_family, fy_end_month, price_exchange)
                  values (%s, %s, 'operating', 12, %s)""", (eid, group, exchange))
     raw = c.execute("""insert into core.raw_file (object_key, source_id, sha256, bytes, media_type, fetched_at, task_run_id)
