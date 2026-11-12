@@ -11,6 +11,7 @@ import { Freshness } from "@/components/data/Freshness";
 import { PageHeader } from "@/components/data/PageHeader";
 import { Panel } from "@/components/data/Panel";
 import { SourceLine } from "@/components/data/SourceLine";
+import { PageLoading } from "@/components/data/PageLoading";
 import { StateNote } from "@/components/data/StateNote";
 import { Tabs } from "@/components/data/Tabs";
 import { Foot } from "@/components/policy/PanelFoot";
@@ -105,7 +106,7 @@ async function Screener({ searchParams }: { searchParams: Promise<{ view?: strin
 
 export default function ScreenerPage(props: PageProps<"/screener">) {
   return (
-    <Suspense fallback={<StateNote kind="empty">Loading the screener…</StateNote>}>
+    <Suspense fallback={<PageLoading>Loading the screener…</PageLoading>}>
       <Screener searchParams={props.searchParams} />
     </Suspense>
   );

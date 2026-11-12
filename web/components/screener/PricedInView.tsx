@@ -147,8 +147,8 @@ export function PricedInView({
     <div className="flex flex-col gap-4">
       <Table spec={OPERATING} rows={operating} policies={policies} footer={footer} />
       <Table spec={LENDERS} rows={lenders} policies={policies} footer={footer} />
-      <Panel title="How this is worked out" titleId="priced-in-explainer" variant="prose" footer={footer}>
-        <div className="flex flex-col gap-2 text-read text-ink-1">
+      <Panel title="How this is worked out" titleId="priced-in-explainer" variant="columns" footer={footer}>
+        <div className="space-y-2 text-read text-ink-1">
           <p>
             These are model-implied figures, not forecasts. Each starts from a company&apos;s latest close and asks what the model would need to assume for its own value to match that
             price. The assumptions behind each row are one click away: the company&apos;s name opens its Valuation tab.

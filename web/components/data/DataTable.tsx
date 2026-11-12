@@ -6,6 +6,9 @@
 // left. Sorting shown by an icon and aria-sort. A row that links has a real anchor in its first cell. Below md the
 // table scrolls sideways inside its panel, with the first column sticky. Cells arrive formatted (lib/format.ts):
 // this component never formats a number.
+// Below md the sticky first column is at most 176 px wide and its text wraps (12 Nov 2026): a long company name made
+// it 359 px on a 375 px phone, wider than the 341 px the table had, so the other columns scrolled under it and the
+// screener showed nothing but names. A short first column (a date) is unchanged.
 // `scroll` (Anand, 28 Oct 2026: the page shouldn't run on for screens): a long table stops at --table-max-h and the
 // rest of its rows scroll inside the panel, under the sticky header (Design 01 §5.4 already scrolls panels inside
 // themselves). The scroller is a named, focusable region, so a keyboard can scroll it too (WCAG 2.1.1); its focus
@@ -115,7 +118,7 @@ export function DataTable<Row>({
                       "h-8 border-b border-line-strong px-3 text-meta font-medium text-ink-2",
                       wrapHeader.has(header.column.id) ? "whitespace-normal" : "whitespace-nowrap",
                       right ? "text-right" : "text-left",
-                      i === 0 && "sticky left-0 z-10 bg-raised",
+                      i === 0 && "sticky left-0 z-10 bg-raised max-md:max-w-44 max-md:whitespace-normal",
                     )}
                   >
                     {header.column.getCanSort() ? (
@@ -153,7 +156,7 @@ export function DataTable<Row>({
                     wrapCell.has(cell.column.id) ? "whitespace-normal" : "whitespace-nowrap",
                     dense ? "h-7" : "h-8",
                     align.get(cell.column.id) === "right" ? "text-right" : "text-left",
-                    i === 0 && "sticky left-0 bg-panel group-hover:bg-raised",
+                    i === 0 && "sticky left-0 bg-panel group-hover:bg-raised max-md:max-w-44 max-md:whitespace-normal",
                   )}
                 >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
