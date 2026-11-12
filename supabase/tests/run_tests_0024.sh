@@ -268,17 +268,19 @@ check "A38 suppressing the BSE source changes nothing here (the test companies a
   "$(flip anon "update core.source set is_suppressed = true where key = 'bse'" "select count(*) from api.company_prices where slug like 'eq24-%'")" '^7$'
 
 ############################################################ semantic views (sql_reader)
-check "A39 sql_reader reads the three semantic views (the unpublished company is absent) and no equity table or api view" \
+# A39, A43: since 0041 the semantic views are India-only (Spec 02A.1 §6), so the published US company eq24-us is absent too
+# (9 rows before 0041; tests 0041 compare every semantic view's India rows before and after it).
+check "A39 sql_reader reads the three semantic views (the unpublished and the US companies are absent) and no equity table or api view" \
   "$(as_role sql_reader "select (select count(*) from semantic.companies where company like 'Eq24%')||'|'||(select count(*) from semantic.company_financials where company like 'Eq24%')||'|'||(select count(*) from semantic.company_valuations where company like 'Eq24%')")|$(as_role sql_reader "select count(*) from equity.company")|$(as_role sql_reader "select count(*) from api.screener")" \
-  '^9\|2\|9\|ERROR:  permission denied[^|]*\|ERROR:  permission denied'
+  '^8\|2\|8\|ERROR:  permission denied[^|]*\|ERROR:  permission denied'
 check "A40 semantic.companies: identifiers, curated group, market, currency and the index names" \
   "$(as_role sql_reader "select nse_symbol||'|'||peer_group||'|'||market||'|'||currency||'|'||valuation_family||'|'||indices from semantic.companies where company = 'Eq24 Alpha Ltd'")" '^EQ24-A\|Eq24 four-member group\|IN\|INR\|operating\|Nifty 100, Nifty 50$'
 check "A41 semantic.company_financials: the revised figure only, in INR, with the derived EBIT (labelled) and gated by its policy" \
   "$(as_role sql_reader "select count(*)||'|'||max(revenue)||'|'||max(currency)||'|'||max(ebit_derived) from semantic.company_financials where company = 'Eq24 Alpha Ltd'")/$(flip sql_reader "$(HIDE equity.ebit_derived)" "select coalesce(max(ebit_derived)::text,'null') from semantic.company_financials where company = 'Eq24 Alpha Ltd'")" '^1\|1100\|INR\|500/null$'
 check "A42 semantic.company_valuations: the model-implied columns are null while hidden and return when flipped (same CASE as the api views)" \
   "$(as_role sql_reader "select coalesce(implied_growth::text,'null')||'|'||pe_ttm from semantic.company_valuations where company = 'Eq24 Alpha Ltd'")/$(flip sql_reader "$(SHOW equity.implied_growth)" "select implied_growth||'|'||growth_gap from semantic.company_valuations where company = 'Eq24 Alpha Ltd'")" '^null\|10/0\.12\|0\.04$'
-check "A43 semantic views: suppressing nse empties the valuation and financial views; the company list stays" \
-  "$(flip sql_reader "update core.source set is_suppressed = true where key = 'nse'" "select (select count(*) from semantic.company_valuations)||'|'||(select count(*) from semantic.company_financials)||'|'||(select count(*) from semantic.companies where company like 'Eq24%')")" '^0\|0\|9$'
+check "A43 semantic views: suppressing nse empties the valuation and financial views; the (Indian) company list stays" \
+  "$(flip sql_reader "update core.source set is_suppressed = true where key = 'nse'" "select (select count(*) from semantic.company_valuations)||'|'||(select count(*) from semantic.company_financials)||'|'||(select count(*) from semantic.companies where company like 'Eq24%')")" '^0\|0\|8$'
 check "A44 every semantic view and column has a comment" \
   "$(as_pg "select (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'semantic' and c.relkind = 'v' and c.relname in ('companies','company_financials','company_valuations') and obj_description(c.oid, 'pg_class') is null)
             ||'|'||(select count(*) from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
