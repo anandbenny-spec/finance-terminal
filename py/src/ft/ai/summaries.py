@@ -44,7 +44,8 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # round 6; Anand's decision of 12 Nov 2026, 22:36 IST): the judge failed Haiku's round 5 (v6) on 7 of 10 targets, mostly on
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
-DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET}   # v8: v7's text, marking the copies rule's revision for Sonnet (round 7)
+DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7);
+# v9: v8 plus three rules (round 8)
 _MARK = re.compile(r"^[ \t]*(?:[-*•–—]|\d{1,2}[.)])[ \t]+")
 
 

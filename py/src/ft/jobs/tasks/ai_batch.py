@@ -160,8 +160,9 @@ from ft.policy import rbi_resolution
 # v6's round 5): v6's text plus a paragraph on what to cover and four rules, on Sonnet 5.5 (`summaries.DIFF_MODEL_OF`), with
 # its replies' quotations checked against each bullet's cited passages (`QUOTES_FROM`). Its older targets keep the version
 # they were answered with until the re-run (`PINNED_TASKS`, `RERUN_ENV`). v8: v7's text, on Sonnet 5.5, marking the copies
-# rule's strict form and the repeats check (round 7, after v7's dev sample: `STRICT_COPIES_FROM`, `REPEATS_FROM`).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v8", "stance_extraction": "v2",
+# rule's strict form and the repeats check (round 7, after v7's dev sample: `STRICT_COPIES_FROM`, `REPEATS_FROM`). v9: v8
+# plus three rules (under 60 words; quotations fitted to the sentence; no bullet for a date, a title or attendance), on Sonnet.
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v9", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)

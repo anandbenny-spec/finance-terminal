@@ -97,7 +97,7 @@ def test_v7_is_v6_plus_a_paragraph_on_coverage_and_four_rules_and_v6_is_left_as_
 
 
 def test_v7_runs_on_sonnet_with_the_tasks_settings_and_every_earlier_version_on_haiku():
-    assert REQ.model_id == SONNET and summaries.DIFF_MODEL_OF == {"v7": SONNET, "v8": SONNET}
+    assert REQ.model_id == SONNET and summaries.DIFF_MODEL_OF == {"v7": SONNET, "v8": SONNET, "v9": SONNET}
     assert (REQ.spec.route, REQ.spec.effort, REQ.spec.max_tokens) == ("citations", "low", 8_000)
     for version in ("v1", "v2", "v3", "v4", "v5", "v6"):
         req = summaries.diff_summary_request(NEW, OLD, D.segments, load_prompt("statement_diff_summary", version))
@@ -206,11 +206,10 @@ DECISION_COPIES = [own('\n- The decision changed from "maintain" to "lower". '),
                    copy_of(FOMC_B, 1, B_RATE)]
 
 
-def test_v8_sends_v7s_text_on_sonnet_and_is_current():
+def test_v8_sends_v7s_text_on_sonnet():
     v8 = load_prompt("statement_diff_summary", "v8")
     assert v8.text == V7.text and "<!--" not in v8.text
     assert summaries.diff_summary_request(NEW, OLD, D.segments, v8).model_id == SONNET
-    assert PROMPT_VERSION["statement_diff_summary"] == "v8"
     assert (ai_batch.QUOTES_FROM, ai_batch.STRICT_COPIES_FROM, ai_batch.REPEATS_FROM) == (7, 8, 8)
 
 
@@ -276,3 +275,29 @@ def test_from_v8_a_bullet_that_repeats_itself_is_dropped():
     c = at("v8", blocks)
     assert c.bullets[0].problem.startswith("repeats its own words: ") and c.bullets[1].problem is None
     assert reasons.categorise("rejected", "; ".join(c.reasons())) == ("format", True)
+
+
+# ---------------------------------------------------------------------------------------------- v9 (round 8)
+RULES_V9 = [
+    "- Keep each bullet under 60 words.",
+    ("- Each quotation must fit the grammar of your own sentence. If the statement's words don't fit, quote fewer of them "
+     "or word your sentence differently (write that inflation \"rose\", not that it was described as having \"rose\")."),
+    "- Don't give a bullet to a change only in a date, a title or which members attended.",
+]
+
+
+def test_v9_is_v8_plus_three_rules_after_say_each_change_once_and_is_current():
+    """Round 7 (v8 on dev): a quotation bent into the sentence's grammar ("described as having "rose to 7.0 per cent"",
+    dev's 2497), a five-sentence bullet about a date (2502), the same change stated twice (2497)."""
+    v8, v9 = load_prompt("statement_diff_summary", "v8"), load_prompt("statement_diff_summary", "v9")
+    assert v9.version == "v9" and "<!--" not in v9.text
+    eight, nine = v8.text.splitlines(), v9.text.splitlines()
+    assert [x for x in nine if x not in eight] == RULES_V9
+    assert [x for x in nine if x not in RULES_V9] == eight                    # every v8 line kept, in the same order
+    assert nine[nine.index("- Say each change once.") + 1:][:3] == RULES_V9
+    assert summaries.diff_summary_request(NEW, OLD, D.segments, v9).model_id == SONNET
+    assert PROMPT_VERSION["statement_diff_summary"] == "v9"
+    # The strict copies rule and the repeats check hold for v9 too.
+    text = f"{SENTENCE} {SENTENCE}"
+    assert at("v9", bullet(text, old(A_RATE), new(B_RATE), first=True) + DECISION).bullets[0].problem.startswith(
+        "repeats its own words: ")
