@@ -12,6 +12,7 @@ import { Gated, type FieldPolicies } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
 import { Qualifier } from "@/components/data/Qualifier";
 import { StateNote } from "@/components/data/StateNote";
+import { companyHref } from "@/lib/equity/company";
 import { splitRanked, unrankedReason } from "@/lib/equity/priced-in";
 import { formatCount, formatFraction, formatFractionPoints, NOT_AVAILABLE, NOT_AVAILABLE_LABEL } from "@/lib/format";
 import type { PricedInRow } from "@/lib/queries/api";
@@ -28,7 +29,7 @@ const missing = (
 
 function CompanyLink({ row }: { row: PricedInRow }) {
   return (
-    <Link href={"/companies/" + row.slug + "?tab=valuation"} className="text-ink-1 hover:text-highlight">
+    <Link href={companyHref(row.slug, "valuation")} className="text-ink-1 underline hover:text-ink-2">
       {name(row)}
       {row.nse_symbol && <span className="ml-1.5 text-meta text-ink-3">{row.nse_symbol}</span>}
     </Link>
@@ -147,8 +148,8 @@ export function PricedInView({
     <div className="flex flex-col gap-4">
       <Table spec={OPERATING} rows={operating} policies={policies} footer={footer} />
       <Table spec={LENDERS} rows={lenders} policies={policies} footer={footer} />
-      <Panel title="How this is worked out" titleId="priced-in-explainer" variant="prose" footer={footer}>
-        <div className="flex flex-col gap-2 text-read text-ink-1">
+      <Panel title="How this is worked out" titleId="priced-in-explainer" variant="columns" footer={footer}>
+        <div className="space-y-2 text-read text-ink-1">
           <p>
             These are model-implied figures, not forecasts. Each starts from a company&apos;s latest close and asks what the model would need to assume for its own value to match that
             price. The assumptions behind each row are one click away: the company&apos;s name opens its Valuation tab.

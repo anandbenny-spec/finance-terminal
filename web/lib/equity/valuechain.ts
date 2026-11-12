@@ -7,6 +7,7 @@ import {
   EN_DASH,
   NOT_AVAILABLE,
   formatCount,
+  dateInZone,
   formatCountChangeWords,
   formatDate,
   formatFiledShare,
@@ -27,6 +28,12 @@ export const SEGMENTS_HELD = "Segments held back until they pass review";
 export const PEERS_HELD = "Peer comparison held back until the value chain passes review";
 
 export const AS_REPORTED = "As reported by the company; not verified by this site";
+/** The figures are the XBRL's; the company's PDF of the same report may differ (VC-06c, #433; Anand's ruling of 12 Nov 2026 on #191). */
+export const XBRL_NOTE =
+  "The figures are the ones the company tagged in the BRSR's XBRL file filed with the exchange. The company's PDF of the same report may round a figure differently, or say \"Not applicable\" where the XBRL file carries 0.";
+/** What a restated note means, so a restatement missing here is not read as none (VC-06c, #433). */
+export const RESTATED_NOTE =
+  "A restatement is shown where the next year's XBRL file carries the earlier year's figure; a comparative that appears only in the next year's PDF is not shown.";
 export const NOT_REPORTED = "Not reported in the company's BRSR";
 
 /** The openness-of-business figures, the only ones the filing's assurance flag covers (Principle 1, Essential Indicator 9; decision 5 of #191). */
@@ -45,6 +52,12 @@ export function brsrSourceLine(sourceKey: string | null | undefined): string {
 export function boundaryText(boundary: "standalone" | "consolidated"): string {
   return `${boundary === "standalone" ? "Standalone" : "Consolidated"}, as reported in the BRSR`;
 }
+
+/**
+ * The day a BRSR was filed, as `YYYY-MM-DD` in India. The exchange's list gives a date, stored as that day's midnight IST
+ * (`2026-07-19T18:30:00+00:00` is 20 Jul 2026), so the instant's UTC date is the day before: never slice the string (#191).
+ */
+export const filedDay = (at: string | null | undefined): string | null => (at ? dateInZone(at, "Asia/Kolkata") : null);
 
 /** The https link of an exchange list page, else null (a stored URL that isn't https renders as text, #367). */
 export const httpsOnly = (url: string | null | undefined): string | null => (url?.startsWith("https://") ? url : null);
@@ -223,16 +236,17 @@ export type Flow = {
   table: FlowTableRow[];
 };
 
-type Spec = { key: string; label: string; details?: { key: string; label: string; plural?: string }[] };
+/** A detail line under a figure; `one` is the label for a count of exactly 1 ("1 country"). */
+type Spec = { key: string; label: string; details?: { key: string; label: string; one?: string }[] };
 
 const SUPPLIERS: Spec[] = [
   { key: "within_india_share", label: "Inputs from within India" },
   { key: "msme_share", label: "Inputs from MSMEs and small producers" },
-  { key: "trading_house_share", label: "Purchases through trading houses", details: [{ key: "trading_houses", label: "trading houses" }, { key: "top10_trading_share", label: "top 10 trading houses" }] },
+  { key: "trading_house_share", label: "Purchases through trading houses", details: [{ key: "trading_houses", label: "trading houses", one: "trading house" }, { key: "top10_trading_share", label: "top 10 trading houses" }] },
 ];
 const CUSTOMERS: Spec[] = [
-  { key: "dealer_share", label: "Sales through dealers and distributors", details: [{ key: "dealers", label: "dealers and distributors" }, { key: "top10_dealer_share", label: "top 10 dealers and distributors" }] },
-  { key: "exports_share", label: "Exports, share of turnover", details: [{ key: "countries_served", label: "countries" }, { key: "states_served", label: "states" }] },
+  { key: "dealer_share", label: "Sales through dealers and distributors", details: [{ key: "dealers", label: "dealers and distributors", one: "dealer or distributor" }, { key: "top10_dealer_share", label: "top 10 dealers and distributors" }] },
+  { key: "exports_share", label: "Exports, share of turnover", details: [{ key: "countries_served", label: "countries", one: "country" }, { key: "states_served", label: "states", one: "state" }] },
 ];
 const GROUP: Spec[] = [
   { key: "rpt_purchases_share", label: "Purchases from related parties" },
@@ -256,7 +270,10 @@ export function flowOf(
       // A detail that is itself unreadable says so in short words; a figure reads "4,480 dealers and distributors".
       const shownAsCount = dc.kind === "count" && (dc.state === "ok" || (dc.state === "zero" && !ZERO_AS_FILED.has(dc.field_key)));
       const change = opts.years ? changeLine(dc, year, opts.years) : null;
-      details.push(`${shownAsCount ? `${cellValue(dc)} ${d.label}` : `${d.label}: ${cellValue(dc)}`}${change ? ` (${change})` : ""}`);
+      // A restated detail says so beside its figure, as the main figures do (#191's page check: Trent's 13 trading houses had no note).
+      const notes = [change, restatedNote(dc)].filter((n): n is string => n !== null);
+      const noun = shownAsCount && dc.value === 1 && d.one ? d.one : d.label;
+      details.push(`${shownAsCount ? `${cellValue(dc)} ${noun}` : `${d.label}: ${cellValue(dc)}`}${notes.length ? ` (${notes.join("; ")})` : ""}`);
     }
     return {
       key: spec.key,
@@ -354,7 +371,7 @@ export function fieldsTable(years: readonly YearCards[], family: string | null |
       key: "_filed",
       label: "Filed",
       itemRef: "The exchange's BRSR list",
-      cells: years.map((y) => ({ year: y.label, text: y.filedAt ? formatDate(y.filedAt.slice(0, 10)) : NOT_AVAILABLE, marks: [] })),
+      cells: years.map((y) => ({ year: y.label, text: y.filedAt ? formatDate(filedDay(y.filedAt)) : NOT_AVAILABLE, marks: [] })),
     },
   ];
   const fields = first.cells.map((c) => c.field_key);

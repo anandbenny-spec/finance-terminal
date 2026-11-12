@@ -130,7 +130,7 @@ export function ScreenerView({
       header: "Company",
       sortValue: (r) => (r.short_name ?? r.name).toLowerCase(),
       cell: (r) => (
-        <Link href={`/companies/${r.slug}`} className="text-ink-1 hover:text-highlight">
+        <Link href={`/companies/${r.slug}`} className="text-ink-1 underline hover:text-ink-2">
           {r.short_name ?? r.name}
           <span className="ml-1.5 text-meta text-ink-3">{r.nse_symbol}</span>
         </Link>
@@ -204,7 +204,7 @@ export function ScreenerView({
               <select
                 value={filters.peerGroup ?? ""}
                 onChange={(e) => setFilters((f) => ({ ...f, peerGroup: e.target.value || null }))}
-                className="h-8 rounded-sm border border-line-input bg-raised px-2 text-read md:text-data text-ink-1 focus-visible:outline-2 focus-visible:outline-highlight"
+                className="h-8 max-w-full rounded-sm border border-line-input bg-raised px-2 text-read md:text-data text-ink-1 focus-visible:outline-2 focus-visible:outline-highlight"
               >
                 <option value="">All peer groups</option>
                 {groups.map((g) => (

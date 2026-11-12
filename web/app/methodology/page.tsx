@@ -99,6 +99,7 @@ const BLOCKS: Block[] = [
       "The guidance record compares each measurable target management gave on a call with the company's own filed figures once they are out: delivered, missed, still pending, or not scored with the reason shown. Only what speakers identified as management said is a target. The tolerance for each kind of target was written down before any target was scored, a target is scored on the first time it was stated, and a revised target is shown as revised. A missed target is a fact about a figure, not a verdict on management. The record is held back until it has passed review, and the share delivered appears only once a company has at least five scored targets.",
       "Some calls are not analysed: a transcript that is only a scan, or one kept only on the company's own website that the site has no stored copy of, is named as such and not summarised. What speakers whose role could not be read said is shown apart and is not attributed to management.",
       "Transcript text stays private. Visitors see only the short quotes of verified citations, each with its page where the page could be matched, never a transcript itself.",
+      "Where a company's value chain card is shown, its figures are the ones the company tagged in the BRSR's XBRL file filed with the exchange. The company's PDF of the same report may round a figure differently, or say \"Not applicable\" where the XBRL file carries zero, and a restatement is shown only where the next year's XBRL file carries the earlier year's figure.",
       "The site makes no claim about future rates or prices.",
     ],
   },
@@ -125,7 +126,7 @@ export default function MethodologyPage() {
 
       <Section id="alignment" title="Alignment note">
         <PanelGrid>
-          <Panel title="Responsible AI use" titleId="alignment-title" variant="prose">
+          <Panel title="Responsible AI use" titleId="alignment-title" variant="columns">
             <p className="text-ink-1">
               Written with SEBI&apos;s consultation paper &ldquo;Guidelines for Responsible Usage of AI/ML in Indian Securities Markets&rdquo; (20 June
               2025) in mind, and the final guidelines SEBI said in August 2026 were coming, which it said would stress human oversight, data controls and kill switches. This site is not a
@@ -138,7 +139,7 @@ export default function MethodologyPage() {
       {BLOCKS.map((b) => (
         <Section key={b.id} id={b.id} title={b.title}>
           <PanelGrid>
-            <Panel title={b.title} titleId={`${b.id}-title`} variant="prose">
+            <Panel title={b.title} titleId={`${b.id}-title`} variant="columns">
               <div className="space-y-3 text-ink-2">
                 {b.paragraphs.map((p, i) => (
                   <p key={i}>{p}</p>

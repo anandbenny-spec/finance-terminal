@@ -217,6 +217,22 @@ export async function readCompanyExists(slug: string): Promise<boolean | null> {
   }
 }
 
+/** The company's name, for the browser tab's title (12 Nov 2026): null when no company has the slug or the read
+ * fails, and the page then keeps its plain title. */
+export async function readCompanyName(slug: string): Promise<string | null> {
+  "use cache";
+  cacheLife("minutesNoExpire");
+  cacheTag("equity", `company-${slug}`);
+  const db = publicClient();
+  if (!db) return null;
+  try {
+    return (await readCompany(db, slug))?.name ?? null;
+  } catch (error) {
+    logFailure(`${slug} name`, error);
+    return null;
+  }
+}
+
 /** What one tab reads; exactly one field is set, the rest null. */
 export type TabData = {
   overview: OverviewData | null;

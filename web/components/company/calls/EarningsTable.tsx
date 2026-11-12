@@ -6,11 +6,12 @@
 import Link from "next/link";
 import { DataTable, type Column } from "@/components/data/DataTable";
 import { StateNote } from "@/components/data/StateNote";
+import { companyHref } from "@/lib/equity/company";
 import { listDateKey, listDateText, listStatusText, noTranscriptNote } from "@/lib/equity/calls";
 import type { EarningsListRow } from "@/lib/queries/api";
 
 export function callsTabHref(companySlug: string): string {
-  return "/companies/" + companySlug + "?tab=calls";
+  return companyHref(companySlug, "calls");
 }
 
 export function EarningsTable({ rows }: { rows: EarningsListRow[] }) {

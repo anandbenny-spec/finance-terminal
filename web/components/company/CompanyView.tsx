@@ -1,5 +1,5 @@
 // CompanyView (2A-19; Spec 02A §8): the company page's header, tabs and the tab shown, from one cached read
-// (lib/queries/company.ts). The tab and the basis are in the URL (?tab=financials&basis=standalone), so every view can be
+// (lib/queries/company.ts). The tab and the basis are in the path (/companies/tcs/financials/standalone), so every view can be
 // linked. Overview, Financials, Valuation (2A-20) and Rate decisions (2A-25) exist; the Financials tab's "Segment changes" panel
 // (DD-02, #410) sits after the statements, held back until equity.segment_changes is released. Each panel carries its source line and freshness; a figure with no value says why. Server-rendered.
 import Link from "next/link";
@@ -33,6 +33,7 @@ import {
   PNL_LINES,
   TABS,
   chooseBasis,
+  companyHref,
   dayChange,
   familyKind,
   isLender,
@@ -47,7 +48,7 @@ import {
 } from "@/lib/equity/company";
 import type { WindowKey } from "@/lib/equity/rate";
 import { FEEDS } from "@/lib/feeds";
-import { formatDate } from "@/lib/format";
+import { filingDay, formatDate } from "@/lib/format";
 import type { CompanyPageData } from "@/lib/queries/company";
 import type { CompanyFinancialRow, TaskFreshnessRow } from "@/lib/queries/api";
 import { panelFreshness } from "@/lib/shell/freshness";
@@ -64,16 +65,8 @@ const BANK_LINES: LineSpec[] = [
 
 const latest = (dates: (string | null | undefined)[]): string | null => dates.filter((d): d is string => Boolean(d)).sort().at(-1) ?? null;
 
-/** The date part of the newest filing time among the rows. */
-const lastFiled = (rows: readonly CompanyFinancialRow[]): string | null => latest(rows.map((r) => r.filed_at?.slice(0, 10)));
-
-export function companyHref(slug: string, tab: TabId, basis?: Basis): string {
-  const params = new URLSearchParams();
-  if (tab !== "overview") params.set("tab", tab);
-  if (basis === "standalone") params.set("basis", basis);
-  const query = params.toString();
-  return `/companies/${slug}${query ? `?${query}` : ""}`;
-}
+/** The day of the newest filing among the rows, in the filing's market (lib/format.ts `filingDay`). */
+const lastFiled = (rows: readonly CompanyFinancialRow[]): string | null => latest(rows.map((r) => filingDay(r.filed_at, r.market)));
 
 function BasisToggle({ slug, basis, available }: { slug: string; basis: Basis; available: Basis[] }) {
   return (
@@ -83,7 +76,7 @@ function BasisToggle({ slug, basis, available }: { slug: string; basis: Basis; a
         {(["consolidated", "standalone"] as const).map((b) => (
           <Link
             key={b}
-            href={companyHref(slug, "financials", b)}
+            href={companyHref(slug, "financials", b === "standalone" ? "standalone" : undefined)}
             aria-current={b === basis ? "page" : undefined}
             className={`border-r border-line px-2.5 py-1 text-meta no-underline last:border-r-0 hover:text-ink-1 aria-[current=page]:bg-active aria-[current=page]:text-ink-1 ${
               available.includes(b) ? "text-ink-2" : "text-ink-3"
@@ -266,7 +259,7 @@ export function CompanyView({
 }: {
   data: Ok;
   basis: Basis;
-  /** The rate-decision window in the URL (?window=); one day by default. */
+  /** The rate-decision window in the path (/rate-decisions/d5); one day by default. */
   window?: WindowKey;
   freshness: TaskFreshnessRow[] | null;
 }) {
