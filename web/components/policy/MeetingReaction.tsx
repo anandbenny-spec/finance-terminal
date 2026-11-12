@@ -116,7 +116,7 @@ function ChartPanel({ e, chart, label, footer }: { e: ReactionEntry; chart: Reac
 export function MeetingReactionView({
   model,
   footer,
-  chartFooter,
+  chartFooters,
   refresh,
   note,
   flat = false,
@@ -124,14 +124,18 @@ export function MeetingReactionView({
   model: MeetingReaction;
   /** The table panel's footer: every shown series' source lines. */
   footer: ReactNode;
-  /** A chart's own footer, given that series' attribution (R05-8, #434's sibling #435). Without one, or for a series with no attribution, a chart keeps `footer`. */
-  chartFooter?: (source: string) => ReactNode;
+  /**
+   * Each chart's own footer, keyed by that series' attribution line (R05-8, #434's sibling #435). Without one, or for a series with
+   * no attribution, a chart keeps `footer`. Nodes, not a function: this is a client component, and a function can't be passed to
+   * one from the server page (the production builds of 12 Nov 2026 failed on a `chartFooter` function).
+   */
+  chartFooters?: Readonly<Record<string, ReactNode>>;
   refresh?: readonly string[];
   note?: string;
   /** No top margin: the caller (Policy Day, #90) spaces its panels itself. */
   flat?: boolean;
 }) {
-  const footerOf = (e: ReactionEntry) => (chartFooter && e.source ? chartFooter(e.source) : footer);
+  const footerOf = (e: ReactionEntry) => (e.source && chartFooters && Object.prototype.hasOwnProperty.call(chartFooters, e.source) ? chartFooters[e.source] : footer);
   const moves = model.entries.filter((e) => e.chart || e.chartNote);
   return (
     <div className={flat ? "flex flex-col gap-4" : "mt-5 flex flex-col gap-4"}>
