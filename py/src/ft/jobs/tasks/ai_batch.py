@@ -94,6 +94,8 @@ target's reply is checked as before. From v7 on (`QUOTES_FROM`; Anand's decision
 on Sonnet 5.5 (`summaries.DIFF_MODEL_OF`) and the reply is also checked with `check_quotes=True`: every quotation in a bullet is
 in that bullet's cited passages. Sonnet's batch price is 20 times Haiku's, so the $5 run estimate above counts each v7 request
 at Sonnet's price (the request's own model), and a re-run of all of production's targets may need to be split by meetings.
+From v8 on (`STRICT_COPIES_FROM`, `REPEATS_FROM`), only a copy that stands as a whole sentence comes out (the rest go in
+quotation marks), and a bullet that repeats 12 or more of its own words fails.
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -157,11 +159,14 @@ from ft.policy import rbi_resolution
 # ("; " joins, copies in their own quotation marks). v7 (Anand's decision of 12 Nov 2026, 22:36 IST, after the judge failed
 # v6's round 5): v6's text plus a paragraph on what to cover and four rules, on Sonnet 5.5 (`summaries.DIFF_MODEL_OF`), with
 # its replies' quotations checked against each bullet's cited passages (`QUOTES_FROM`). Its older targets keep the version
-# they were answered with until the re-run (`PINNED_TASKS`, `RERUN_ENV`).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v7", "stance_extraction": "v2",
+# they were answered with until the re-run (`PINNED_TASKS`, `RERUN_ENV`). v8: v7's text, on Sonnet 5.5, marking the copies
+# rule's strict form and the repeats check (round 7, after v7's dev sample: `STRICT_COPIES_FROM`, `REPEATS_FROM`).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v8", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
+STRICT_COPIES_FROM = 8                       # ... and from v8 on with strict_copies (only whole-sentence copies come out)
+REPEATS_FROM = 8                             # ... and with check_repeats (summaries.repeat_problem)
 PINNED_TASKS = ("statement_diff_summary",)   # a target keeps the version it was answered with (module docstring)
 RERUN_TASK = "statement_diff_summary"        # the one task the re-run sends (#445)
 RERUN_ENV = "POLICY_AI_RERUN"                # empty or 'none' (the default) | 'all' | meeting slugs, comma-separated
@@ -239,6 +244,10 @@ class Work:
             changed = {self.base.document_id: old, self.doc.document_id: new}
             drop_copies = _vnum(req.prompt.version) >= COPIES_FROM      # a pinned v1-v3 reply is checked as before
             check_quotes = _vnum(req.prompt.version) >= QUOTES_FROM     # a pinned v1-v6 reply, likewise
+            strict = _vnum(req.prompt.version) >= STRICT_COPIES_FROM    # a pinned v4-v7 reply keeps the looser rule
+            repeats = _vnum(req.prompt.version) >= REPEATS_FROM
+            return summaries.check(self.task, reply, req.sources, changed=changed, drop_copies=drop_copies,
+                                   check_quotes=check_quotes, strict_copies=strict, check_repeats=repeats)
         return summaries.check(self.task, reply, req.sources, changed=changed, drop_copies=drop_copies,
                                check_quotes=check_quotes)
 

@@ -23,6 +23,8 @@ passages they cite.
   `check_quotes`), one more check, a tightening: every stretch a bullet puts in double quotation marks is found in that
   bullet's own cited passages, and its quotation marks are balanced (`quote_problem`). v7 also runs on Sonnet 5.5
   (`DIFF_MODEL_OF`).
+- From v8 on (#445, round 7; `strict_copies`, `check_repeats`): only a copy that stands as a whole sentence comes out, and
+  every other copy goes in quotation marks; and a bullet that repeats a stretch of its own words fails (`repeat_problem`).
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
 (`policy.ai_batch`). The database checks the published output's citations again at commit (Architecture 01 §1.4).
@@ -42,7 +44,7 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # round 6; Anand's decision of 12 Nov 2026, 22:36 IST): the judge failed Haiku's round 5 (v6) on 7 of 10 targets, mostly on
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
-DIFF_MODEL_OF = {"v7": SONNET}
+DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET}   # v8: v7's text, marking the copies rule's revision for Sonnet (round 7)
 _MARK = re.compile(r"^[ \t]*(?:[-*•–—]|\d{1,2}[.)])[ \t]+")
 
 
@@ -275,17 +277,18 @@ REASON_PHRASES: dict[str, tuple[str, ...]] = {
     "citation": (r"no verified citation", r"quoted words not in its cited passages"),
     "numbers": (r"numbers not in its cited passages",),
     "format": (r"text outside the bullets", r"no bullets \(each bullet", r"\d+ bullets, not \d+ to \d+",
-               r"an unclosed quotation mark"),
+               r"an unclosed quotation mark", r"repeats its own words"),
 }
 
 
 def verify_bullet(body: str, cites: list, sources: tuple[Source, ...], mapping: Counter, *,
                   changed: dict[int, list[tuple[int, int]]] | None = None,
-                  full_text: dict[int, str] | None = None, quotes: bool = False) -> Bullet:
+                  full_text: dict[int, str] | None = None, quotes: bool = False, repeats: bool = False) -> Bullet:
     """One bullet against our copies of the documents: each citation mapped into them (`citations.map_api_citation`),
     then the bullet kept only with a verified citation and only figures from its cited passages. `mapping` counts how
     the citations mapped. `changed`: for statement_diff_summary, each document's changed spans. `quotes`: also only
-    quotations from its cited passages (`quote_problem`; statement_diff_summary from v7 on)."""
+    quotations from its cited passages (`quote_problem`; statement_diff_summary from v7 on). `repeats`: and no stretch of
+    its own words twice (`repeat_problem`; from v8 on)."""
     b = Bullet(body)
     seen = set()
     passages = []
@@ -321,6 +324,8 @@ def verify_bullet(body: str, cites: list, sources: tuple[Source, ...], mapping: 
         b.problem = "numbers not in its cited passages: " + ", ".join(extra)
     elif quotes and (q := quote_problem(body, passages)):
         b.problem = q
+    elif repeats and (r := repeat_problem(body)):
+        b.problem = r
     return b
 
 
@@ -351,6 +356,24 @@ def _quote_found(q: str, hay: list[str]) -> bool:
     tail = r"(?!\w)" if re.search(r"\w$", q) else ""
     t = re.compile(head + body + tail)
     return any(t.search(h) for h in hay)
+
+
+# #445, round 7 (from prompt v8 on, `ai_batch.REPEATS_FROM`; a tightening): a bullet that repeats a stretch of
+# REPEAT_MIN_WORDS or more of its own words fails. Round 6's retry for one target (dev's 2492) wrote its first sentence
+# twice. Words as `_WORD` reads them, case aside, in `match_form`; quoted or not.
+REPEAT_MIN_WORDS = 12
+
+
+def repeat_problem(body: str) -> str | None:
+    """Why a bullet repeats itself (see above), or None."""
+    words = _WORD.findall(match_form(body).casefold())
+    seen: set[tuple[str, ...]] = set()
+    for i in range(len(words) - REPEAT_MIN_WORDS + 1):
+        gram = tuple(words[i:i + REPEAT_MIN_WORDS])
+        if gram in seen:
+            return f"repeats its own words: \"{' '.join(gram)}\""
+        seen.add(gram)
+    return None
 
 
 def quote_problem(body: str, passages: list[str]) -> str | None:
@@ -387,6 +410,11 @@ def quote_problem(body: str, passages: list[str]) -> str | None:
 #   (one pair per piece), or keeps its own. So does every copy of a bullet that would otherwise keep fewer than
 #   OWN_MIN_WORDS words, or none outside quotation marks (no sentence of the model's own: "Revised:", or nothing).
 # - A copy inside the model's quotation marks with other words is left as it is.
+# - From prompt v8 on (#445, round 7; `strict`): a copy comes out only when it stands as a whole sentence of its own: the
+#   text before it is the bullet's start or ends a sentence, and after it comes the bullet's end or a new sentence (a full
+#   stop of the model's own may close it first). Copies in their own parentheses still go. Every other copy goes in
+#   quotation marks. Why: round 6 (v7, Sonnet 5.5) wrote its cited blocks as fragments inside its own sentences ("…says the
+#   Committee <copy>."), and the looser test above took 11 of them out, leaving 8 broken sentences in 6 of 10 outputs.
 # Our code only removes words copied from the source (with the separators, parentheses and quotation marks that held them),
 # or puts them in quotation marks; it never adds a word. The checks then run on the final text: the figures check can only
 # get stricter, since a copy's figures are in its cited text.
@@ -478,19 +506,30 @@ def unmark(text: str) -> str:
     return text.replace(_OPEN, "").replace(_CLOSE, "")
 
 
-def _start_ok(before: str) -> bool:
-    """Whether the bullet's text before a copy reads on without it (see above)."""
+def _start_ok(before: str, strict: bool = False) -> bool:
+    """Whether the bullet's text before a copy reads on without it (see above). `strict` (v8 on): only the bullet's start
+    or a sentence's end."""
     b = _SEP_TAIL.sub("", before).rstrip()
-    if not b or _SENTENCE_END.search(b) or b[-1] in _CLOSING_QUOTE:
+    if not b or _SENTENCE_END.search(b):
+        return True
+    if strict:
+        return False
+    if b[-1] in _CLOSING_QUOTE:
         return True
     b = b.rstrip(",").rstrip()
     m = _LAST_WORD.search(b)
     return bool(m) and m.group(1).lower() not in _NEEDS_MORE
 
 
-def _end_ok(copy: str, after: str) -> bool:
-    """Whether the bullet's text after a copy reads on without it (see above)."""
+def _end_ok(copy: str, after: str, strict: bool = False) -> bool:
+    """Whether the bullet's text after a copy reads on without it (see above). `strict` (v8 on): only the bullet's end or
+    a new sentence, after the copy's own full stop or one of the model's."""
     a = _SEP_HEAD.sub("", after)
+    if strict:
+        ended = bool(_SENTENCE_END.search(copy.rstrip()))
+        if a[:1] in (".", "!", "?") and not ended:
+            a, ended = a[1:].lstrip(), True
+        return not a or (ended and (a[0].isupper() or a[0] in "\"\u201c"))
     return (not a or a[0] in ".,;:!?)"
             or (bool(_SENTENCE_END.search(copy.rstrip())) and (a[0].isupper() or a[0] in "\"“")))
 
@@ -504,7 +543,9 @@ def _close_gaps(t: str) -> str:
     t = re.sub(r"\(\s*" + gap + r"\s*\)", _GAP, t)      # a parenthesis's full stop never ends the sentence around it
     while (m := re.search(gap, t)) is not None:
         x, y, stop = t[:m.start()].rstrip(), t[m.end():].lstrip(), m.group(0) == _GAP_STOP
-        if y and y[0] in ".,;:!?)":
+        if y and y[0] in ".!?" and _SENTENCE_END.search(x):
+            t = x + y[1:]                                # the model's full stop after a removed copy: the sentence has one
+        elif y and y[0] in ".,;:!?)":
             t = (x[:-1] if y[0] != "," and x.endswith(",") else x) + y
         elif not y:
             x = x.rstrip(",:;").rstrip()
@@ -516,8 +557,9 @@ def _close_gaps(t: str) -> str:
     return t
 
 
-def settle_copies(body: str, tally: Counter) -> str:
-    """A bullet's final text from its marked copies (see above); `tally` counts them 'removed' and 'quoted'."""
+def settle_copies(body: str, tally: Counter, strict: bool = False) -> str:
+    """A bullet's final text from its marked copies (see above); `tally` counts them 'removed' and 'quoted'. `strict`: from
+    prompt v8 on, only a copy that stands as a whole sentence comes out."""
     if _OPEN not in body:
         return body
     tokens: list[str] = []                               # own text and copies, alternating: own, copy, own, ..., own
@@ -557,7 +599,7 @@ def settle_copies(body: str, tally: Counter) -> str:
         if not quoted & set(chain) and before.rstrip().endswith("(") and after.lstrip().startswith(")"):
             ok = True                                    # copies in their own parentheses go with them
         else:
-            ok = _start_ok(before) and _end_ok(tokens[last], after)
+            ok = _start_ok(before, strict) and _end_ok(tokens[last], after, strict)
         for k in chain:
             if ok:
                 acts[k] = "remove"
@@ -588,11 +630,14 @@ def settle_copies(body: str, tally: Counter) -> str:
 
 def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
           changed: dict[int, list[tuple[int, int]]] | None = None, full_text: dict[int, str] | None = None,
-          drop_copies: bool = False, check_quotes: bool = False) -> Checked:
+          drop_copies: bool = False, check_quotes: bool = False, strict_copies: bool = False,
+          check_repeats: bool = False) -> Checked:
     """Check a reply against our copies of the documents it was given (`sources`; `full_text` by document id when a
     source is a segment). `changed`: for statement_diff_summary, each document's changed spans. `drop_copies`: for
     statement_diff_summary from prompt v4 on (`ai_batch.COPIES_FROM`), the copies rule above; `check_quotes`: from v7 on
-    (`ai_batch.QUOTES_FROM`), the quotations rule above. Both are ignored for other tasks."""
+    (`ai_batch.QUOTES_FROM`), the quotations rule above; `strict_copies` and `check_repeats`: from v8 on
+    (`ai_batch.STRICT_COPIES_FROM`, `REPEATS_FROM`), the copies rule's strict form and the repeats rule. All four are
+    ignored for other tasks."""
     lo, hi = BULLETS[task]
     mapping: Counter = Counter()
     copies: Counter = Counter()
@@ -600,10 +645,12 @@ def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
     diff = drop_copies and task == "statement_diff_summary"
     found, stray = split_bullets(mark_copies(parts) if diff else parts)
     if diff:
-        found = [(settle_copies(body, copies), cites) for body, cites in found]
+        found = [(settle_copies(body, copies, strict=strict_copies), cites) for body, cites in found]
         stray = [unmark(x) for x in stray]
     quotes = check_quotes and task == "statement_diff_summary"
-    bullets = [verify_bullet(body, cites, sources, mapping, changed=changed, full_text=full_text, quotes=quotes)
+    repeats = check_repeats and task == "statement_diff_summary"
+    bullets = [verify_bullet(body, cites, sources, mapping, changed=changed, full_text=full_text, quotes=quotes,
+                             repeats=repeats)
                for body, cites in found]
     problems = []
     if stray:

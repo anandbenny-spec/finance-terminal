@@ -1,7 +1,9 @@
 """#445, round 6 (Anand's decision of 12 Nov 2026, 22:36 IST, after the judge failed round 5): `statement_diff_summary` v7 is
 v6's text plus a paragraph on what to cover and four rules, it runs on Sonnet 5.5, and from it every quotation in a bullet
 must be found in that bullet's own cited passages (`summaries.quote_problem`, a tightening). A target pinned to v1 to v6 is
-asked and checked exactly as before. No database and no model: the runs are in test_ai_batch_task.py."""
+asked and checked exactly as before. Round 7: v8 sends v7's text on Sonnet, and from it only a copy that stands as a whole
+sentence comes out (the rest are quoted) and a bullet that repeats 12 or more of its own words fails. No database and no
+model: the runs are in test_ai_batch_task.py."""
 import pytest
 from ai_fakes import cite
 from policy_docs import FOMC_A, FOMC_B
@@ -10,7 +12,7 @@ from test_diff_summary_copies import FRONT_PAGE
 
 from ft.ai import summaries
 from ft.ai.client import HAIKU, SONNET, load_prompt
-from ft.ai.summaries import check, quote_problem
+from ft.ai.summaries import check, quote_problem, repeat_problem
 from ft.engines.document.diff import diff_texts
 from ft.jobs.tasks import ai_batch
 from ft.jobs.tasks.ai_batch import PROMPT_VERSION, Work
@@ -63,6 +65,22 @@ def diff_check(blocks, check_quotes=True):
                  check_quotes=check_quotes)
 
 
+def own(text):
+    return {"type": "text", "text": text}
+
+
+def copy_of(doc, idx, span, *, stop=True):
+    """A cited block copying its cited sentence word for word (`stop=False`: without its full stop)."""
+    s, e = span
+    t = doc[s:e] if stop else doc[s:e].rstrip(".")
+    return {"type": "text", "text": t, "citations": [cite(doc, s, e, idx)]}
+
+
+def at(version, blocks):
+    w = Work("statement_diff_summary", NEW, OLD, D.segments)
+    return w.check(w.request(load_prompt("statement_diff_summary", version)), reply(blocks))
+
+
 # ---------------------------------------------------------------------------------------------- the prompt and the model
 def test_v7_is_v6_plus_a_paragraph_on_coverage_and_four_rules_and_v6_is_left_as_it_ran():
     v6 = load_prompt("statement_diff_summary", "v6")
@@ -75,11 +93,11 @@ def test_v7_is_v6_plus_a_paragraph_on_coverage_and_four_rules_and_v6_is_left_as_
     assert seven.index(COVER) == next(i for i, x in enumerate(seven) if x.startswith("Write bullets on the changes")) + 2
     rule = next(i for i, x in enumerate(seven) if x.startswith("- Every bullet must cite the changed sentences"))
     assert seven[rule + 1:rule + 1 + len(RULES)] == RULES
-    assert PROMPT_VERSION["statement_diff_summary"] == "v7" and ai_batch.QUOTES_FROM == 7 and ai_batch.COPIES_FROM == 4
+    assert ai_batch.QUOTES_FROM == 7 and ai_batch.COPIES_FROM == 4
 
 
 def test_v7_runs_on_sonnet_with_the_tasks_settings_and_every_earlier_version_on_haiku():
-    assert REQ.model_id == SONNET and summaries.DIFF_MODEL_OF == {"v7": SONNET}
+    assert REQ.model_id == SONNET and summaries.DIFF_MODEL_OF == {"v7": SONNET, "v8": SONNET}
     assert (REQ.spec.route, REQ.spec.effort, REQ.spec.max_tokens) == ("citations", "low", 8_000)
     for version in ("v1", "v2", "v3", "v4", "v5", "v6"):
         req = summaries.diff_summary_request(NEW, OLD, D.segments, load_prompt("statement_diff_summary", version))
@@ -180,3 +198,81 @@ def test_the_copies_rule_still_applies_at_v7_and_its_quoted_copies_pass():
                     {"type": "text", "text": FOMC_B[slice(*B_RATE)], "citations": [new(B_RATE)]}, *DECISION])
     assert c.ok, c.reasons()
     assert c.kept[0].text == f'Revised: "{FOMC_B[slice(*B_RATE)]}"' and c.copies["quoted"] == 1
+
+
+# ---------------------------------------------------------------------------------------------- v8 (round 7)
+A_GROWTH, B_GROWTH = (0, 73), (0, 81)
+DECISION_COPIES = [own('\n- The decision changed from "maintain" to "lower". '), copy_of(FOMC_A, 0, A_RATE), own(" "),
+                   copy_of(FOMC_B, 1, B_RATE)]
+
+
+def test_v8_sends_v7s_text_on_sonnet_and_is_current():
+    v8 = load_prompt("statement_diff_summary", "v8")
+    assert v8.text == V7.text and "<!--" not in v8.text
+    assert summaries.diff_summary_request(NEW, OLD, D.segments, v8).model_id == SONNET
+    assert PROMPT_VERSION["statement_diff_summary"] == "v8"
+    assert (ai_batch.QUOTES_FROM, ai_batch.STRICT_COPIES_FROM, ai_batch.REPEATS_FROM) == (7, 8, 8)
+
+
+def test_from_v8_a_copy_inside_the_models_sentence_is_quoted_not_cut():
+    """Regression (round 6, v7 on Sonnet: dev's 2491, 2485, 2490, 2484 and 2486): Sonnet wrote its cited blocks as
+    fragments inside its own sentences, and the looser rule took them out, leaving "…says the Committee."."""
+    fragment = FOMC_B[slice(*B_RISKS)][len("The Committee "):].rstrip(".")
+    blocks = [own("- The new wording says the Committee "),
+              {"type": "text", "text": fragment, "citations": [new(B_RISKS)]}, own("."), *DECISION_COPIES]
+    v7 = at("v7", blocks)
+    assert v7.ok and v7.kept[0].text == "The new wording says the Committee."              # the round 6 bug, pinned
+    v8 = at("v8", blocks)
+    assert v8.ok, v8.reasons()
+    assert v8.kept[0].text == f'The new wording says the Committee "{fragment}".'
+    assert v8.kept[1].text == 'The decision changed from "maintain" to "lower".'           # whole sentences still go
+    assert dict(v8.copies) == {"quoted": 1, "removed": 2}
+    # Followed by a comma, the sentence goes on: the copy is quoted too.
+    blocks = [own("- The previous statement said growth "), copy_of(FOMC_A, 0, A_GROWTH, stop=False),
+              own(', while the new one says it "has moderated further".'), *DECISION_COPIES]
+    blocks[1] = {**blocks[1], "text": FOMC_A[slice(*A_GROWTH)].rstrip(".")[len("Recent indicators suggest that growth "):]}
+    c = at("v8", [*blocks[:2], {**blocks[2], "citations": [new(B_GROWTH)]}, *blocks[3:]])
+    assert c.ok, c.reasons()
+    assert c.kept[0].text.startswith('The previous statement said growth "of economic activity has moderated", while')
+
+
+def test_from_v8_whole_sentence_copies_still_come_out_as_before():
+    blocks = [own('- Growth changed from "has moderated" to "has moderated further". '), copy_of(FOMC_A, 0, A_GROWTH),
+              own(" ... "), copy_of(FOMC_B, 1, B_GROWTH), *DECISION_COPIES]
+    v7, v8 = at("v7", blocks), at("v8", blocks)
+    assert v8.ok and [b.text for b in v8.kept] == [b.text for b in v7.kept] == [
+        'Growth changed from "has moderated" to "has moderated further".',
+        'The decision changed from "maintain" to "lower".']
+
+
+@pytest.mark.parametrize("version", ["v4", "v6", "v7", "v8"])
+def test_a_removed_copy_closed_by_the_models_own_full_stop_leaves_one_full_stop(version):
+    """Regression (round 7's trial): "…further". <copy without its stop>." read "…further".." once the copy came out."""
+    blocks = [own('- Growth changed from "has moderated" to "has moderated further". '),
+              copy_of(FOMC_B, 1, B_GROWTH, stop=False), own("."), *DECISION_COPIES]
+    c = at(version, blocks)
+    assert c.ok, c.reasons()
+    assert c.kept[0].text == 'Growth changed from "has moderated" to "has moderated further".'
+
+
+SENTENCE = "The Committee decided to lower the target range for the federal funds rate this time."
+
+
+def test_repeat_problem_finds_twelve_of_its_own_words_twice():
+    assert repeat_problem(f"{SENTENCE} {SENTENCE}").startswith("repeats its own words: ")
+    assert repeat_problem(SENTENCE) is None
+    eleven = "one two three four five six seven eight nine ten eleven"
+    assert repeat_problem(f"{eleven}, then {eleven}.") is None
+    names = "Dr. Ashima Goyal and Prof. Jayanth R. Varma voted"                 # round 6's 2490: 9 words twice
+    assert repeat_problem(f'"{names} to reduce the policy repo rate", and "{names} for a change in stance"') is None
+
+
+def test_from_v8_a_bullet_that_repeats_itself_is_dropped():
+    """Round 6's retry for dev's 2492 wrote its first sentence twice."""
+    text = ('The decision changed from "maintain" to "lower" the target range for the federal funds rate this time. '
+            'The decision changed from "maintain" to "lower" the target range for the federal funds rate this time.')
+    blocks = bullet(text, old(A_RATE), new(B_RATE), first=True) + DECISION
+    assert at("v7", blocks).ok
+    c = at("v8", blocks)
+    assert c.bullets[0].problem.startswith("repeats its own words: ") and c.bullets[1].problem is None
+    assert reasons.categorise("rejected", "; ".join(c.reasons())) == ("format", True)
