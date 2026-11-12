@@ -263,3 +263,15 @@ def test_a_copy_in_its_own_quotation_marks_comes_out_with_them_only_where_the_te
         f'The growth sentence changed from "{FOMC_A[slice(*A_GROWTH)]}" to "{FOMC_B[slice(*B_GROWTH)]}"',
         f'The new statement records a dissent: "{FOMC_B[1157:1286]}"']
     assert c.copies == {"removed": 1}
+
+
+def test_a_removed_copys_full_stop_never_lands_inside_a_sentence():
+    """Regression (dev's output 2480, round 5, v6): a copy with its full stop, in its own parentheses inside the model's
+    sentence, left "…December". to "…"" behind. The stop stays only before a new sentence."""
+    blocks = [own('- Growth changed from "has moderated" ('), old(A_GROWTH), own(') to "has moderated further".'),
+              own("\n- The decision changed. "), new(B_RATE), own(" Risks to employment were added. "), new(B_RISKS)]
+    c = diff_check(blocks)
+    assert c.ok, c.reasons()
+    assert [b.text for b in c.kept] == ['Growth changed from "has moderated" to "has moderated further".',
+                                        "The decision changed. Risks to employment were added."]
+    assert c.copies == {"removed": 3}

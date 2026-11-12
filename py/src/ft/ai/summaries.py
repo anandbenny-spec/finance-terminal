@@ -446,7 +446,7 @@ def _close_gaps(t: str) -> str:
     gap = f"[{_GAP}{_GAP_STOP}]"
     t = re.sub(_SEP + "*(" + gap + ")" + r"(?:\s|\.\.\.|…|[;|/]|[-–—](?=\s))*", r"\1", t)
     t = re.sub(gap + "{2,}", lambda m: m.group(0)[-1], t)
-    t = re.sub(r"\(\s*(" + gap + r")\s*\)", r"\1", t)
+    t = re.sub(r"\(\s*" + gap + r"\s*\)", _GAP, t)      # a parenthesis's full stop never ends the sentence around it
     while (m := re.search(gap, t)) is not None:
         x, y, stop = t[:m.start()].rstrip(), t[m.end():].lstrip(), m.group(0) == _GAP_STOP
         if y and y[0] in ".,;:!?)":
@@ -455,8 +455,8 @@ def _close_gaps(t: str) -> str:
             x = x.rstrip(",:;").rstrip()
             t = x + ("." if stop and not _SENTENCE_END.search(x) else "")
         else:
-            if stop and not _SENTENCE_END.search(x):
-                x = x.rstrip(",:;").rstrip() + "."
+            if stop and not _SENTENCE_END.search(x) and (y[0].isupper() or y[0] in '"\u201c'):
+                x = x.rstrip(",:;").rstrip() + "."           # the copy's full stop, before a new sentence only
             t = x + " " + y
     return t
 
