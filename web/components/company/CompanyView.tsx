@@ -47,7 +47,7 @@ import {
 } from "@/lib/equity/company";
 import type { WindowKey } from "@/lib/equity/rate";
 import { FEEDS } from "@/lib/feeds";
-import { formatDate } from "@/lib/format";
+import { filingDay, formatDate } from "@/lib/format";
 import type { CompanyPageData } from "@/lib/queries/company";
 import type { CompanyFinancialRow, TaskFreshnessRow } from "@/lib/queries/api";
 import { panelFreshness } from "@/lib/shell/freshness";
@@ -64,8 +64,8 @@ const BANK_LINES: LineSpec[] = [
 
 const latest = (dates: (string | null | undefined)[]): string | null => dates.filter((d): d is string => Boolean(d)).sort().at(-1) ?? null;
 
-/** The date part of the newest filing time among the rows. */
-const lastFiled = (rows: readonly CompanyFinancialRow[]): string | null => latest(rows.map((r) => r.filed_at?.slice(0, 10)));
+/** The day of the newest filing among the rows, in the filing's market (lib/format.ts `filingDay`). */
+const lastFiled = (rows: readonly CompanyFinancialRow[]): string | null => latest(rows.map((r) => filingDay(r.filed_at, r.market)));
 
 export function companyHref(slug: string, tab: TabId, basis?: Basis): string {
   const params = new URLSearchParams();
