@@ -130,7 +130,7 @@ export function ScreenerView({
       header: "Company",
       sortValue: (r) => (r.short_name ?? r.name).toLowerCase(),
       cell: (r) => (
-        <Link href={`/companies/${r.slug}`} className="text-ink-1 hover:text-highlight">
+        <Link href={`/companies/${r.slug}`} className="text-ink-1 underline hover:text-ink-2">
           {r.short_name ?? r.name}
           <span className="ml-1.5 text-meta text-ink-3">{r.nse_symbol}</span>
         </Link>

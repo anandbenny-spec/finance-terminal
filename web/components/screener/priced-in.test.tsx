@@ -74,6 +74,9 @@ describe("PricedInView", () => {
   it("links each row to its Valuation tab", () => {
     expect(html()).toContain('href="/companies/top?tab=valuation"');
   });
+  it("underlines each company name as a link, with its Valuation-tab target unchanged (R05-7)", () => {
+    expect(html()).toMatch(/<a[^>]*class="[^"]*\bunderline\b[^"]*"[^>]*href="\/companies\/top\?tab=valuation"|<a[^>]*href="\/companies\/top\?tab=valuation"[^>]*class="[^"]*\bunderline\b/);
+  });
   it("lists held, N/A and no-delivered-figure rows below, each with its reason, and gives them no rank", () => {
     const t = text(html());
     expect(t).toContain("With no figure");
