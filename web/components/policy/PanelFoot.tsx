@@ -19,17 +19,20 @@ export function Foot({
   dataTo,
   freshness,
   now,
+  checkedTasks,
 }: {
   sources: (string | null | undefined)[];
   tasks: readonly TaskKey[];
   dataTo: string | null;
   freshness: TaskFreshnessRow[] | null;
   now: string;
+  /** Which of `tasks` set the "checked" time (default: all); `delayed` still counts every task (#440). */
+  checkedTasks?: readonly string[];
 }) {
   return (
     <>
       <SourceLine lines={sources} />
-      <Freshness freshness={panelFreshness(freshness, tasks, dataTo, now)} />
+      <Freshness freshness={panelFreshness(freshness, tasks, dataTo, now, checkedTasks)} />
     </>
   );
 }

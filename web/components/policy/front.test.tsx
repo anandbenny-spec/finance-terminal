@@ -268,3 +268,28 @@ describe("the front page's What changed panels keep their own height (R05-4, #43
     both(html(<FrontView front={front({ fed: { kind: "no-decision" } }, { fed: no, history: no, changes: no, fieldPolicy: no })} />));
   });
 });
+
+describe("the front page's Where rates stand footer checks on the daily tasks (#440)", () => {
+  const row = (task_key: string, last_success_at: string, status: "ok" | "failed" = "ok") => ({ task_key, status, last_success_at, last_checked_at: last_success_at });
+  const rowsWith = (calendarStatus: "ok" | "failed") => [
+    row("policy.calendar", "2026-10-01T10:00:00Z", calendarStatus),
+    row("policy.fed_documents", "2026-10-23T22:40:00Z"),
+    row("policy.rbi_documents", "2026-10-23T22:40:00Z"),
+    row("policy.ai_batch", "2026-10-23T22:40:00Z"),
+  ];
+  const section = (calendarStatus: "ok" | "failed") => {
+    const f = front({ freshness: { ok: true, tasks: rowsWith(calendarStatus), readAt: NOW } });
+    const markup = html(<FrontView front={f} />);
+    return text(markup.slice(markup.indexOf('id="front-where-rates-stand"')));
+  };
+
+  it("reads the daily tasks' time, not the calendar's October date", () => {
+    const t = section("ok");
+    expect(t).toContain("checked 24 Oct, 04:10 IST");
+    expect(t).not.toContain("checked 1 Oct");
+  });
+
+  it("still reads Update delayed when the calendar failed", () => {
+    expect(section("failed")).toContain("Update delayed");
+  });
+});
