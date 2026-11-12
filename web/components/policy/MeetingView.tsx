@@ -363,7 +363,7 @@ async function Changes({ ctx, flat = false }: { ctx: Ctx; flat?: boolean }) {
   return (
     <div className={flat ? undefined : "mt-5"}>
       {panel(
-        <div className={flat ? "flex max-h-96 flex-col gap-5 overflow-auto" : "flex flex-col gap-5"}>
+        <div className="flex flex-col gap-5">
           <p className="text-data text-ink-2">Compared with the {model.baseLabel}.</p>
           <div data-changes-top className="grid grid-cols-1 items-start gap-x-8 gap-y-5 xl:grid-cols-2">
             <div className="max-w-(--reading-width)">
@@ -378,13 +378,17 @@ async function Changes({ ctx, flat = false }: { ctx: Ctx; flat?: boolean }) {
             <NumbersPart ctx={ctx} base={read.base} />
           </div>
           {model.keys && model.redline ? (
-            <KeyChanges
-              model={model.keys}
-              before={model.before}
-              now={model.now}
-              unchangedParagraphs={model.redline.unchangedParagraphs}
-              redline={<Redline model={model.redline} added={model.wordsAdded} removed={model.wordsRemoved} />}
-            />
+            flat ? (
+              <KeyChanges model={model.keys} before={model.before} now={model.now} limit={3} seeAllHref={meetingTabHref(ctx.bank, ctx.m.decision_date, "changes")} />
+            ) : (
+              <KeyChanges
+                model={model.keys}
+                before={model.before}
+                now={model.now}
+                unchangedParagraphs={model.redline.unchangedParagraphs}
+                redline={<Redline model={model.redline} added={model.wordsAdded} removed={model.wordsRemoved} />}
+              />
+            )
           ) : (
             <StateNote kind="unavailable">The redline isn&apos;t available for this document.</StateNote>
           )}
