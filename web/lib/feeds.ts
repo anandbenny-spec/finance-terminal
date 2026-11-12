@@ -25,6 +25,7 @@ export type TaskKey =
   | "equity.call_transcripts"
   | "equity.call_text"
   | "equity.calls_ai"
+  | "equity.results_reactions"
   | "site.quality_summary";
 
 /** Live surfaces and their feeding tasks. */

@@ -5,8 +5,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cacheLife, cacheTag } from "next/cache";
 import { selectCall } from "@/lib/equity/calls";
+import { RESULTS_FIELD } from "@/lib/equity/resultsMoves";
 import { guidanceFiguresOpen, unattributedAll } from "@/lib/equity/guidance";
-import type { AiCitationRow, AiOutputRow, ApiDatabase, CallFigureRow, CallGuidanceRow, CitationPageRow, GuidanceHitRateRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
+import type { AiCitationRow, ResultsMoveRow, AiOutputRow, ApiDatabase, CallFigureRow, CallGuidanceRow, CitationPageRow, GuidanceHitRateRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
 import { readFieldPolicy } from "@/lib/queries/policy";
 import { readAll } from "@/lib/queries/read";
 import { publicClient } from "@/lib/supabase/public";
@@ -37,6 +38,13 @@ export type GuidanceRecordData = GuidanceRecordReads & {
   unattributed: number | null;
 };
 
+/**
+ * The results-day moves (#471): not read while equity.results_move is hidden (today's reads stay as they are; the merge is safe
+ * before migration 0044 reaches production); the company's rows once it is shown or labelled; "error" when that one read failed,
+ * which holds back only this panel (#328).
+ */
+export type ResultsMovesRead = { state: "hidden" } | { state: "error" } | { state: "ok"; rows: ResultsMoveRow[] };
+
 export type CallsTabData = {
   calls: EarningsCallRow[];
   selected: EarningsCallRow | null;
@@ -49,6 +57,8 @@ export type CallsTabData = {
   pages: CitationPageRow[];
   /** The Guidance record panel's rows (company-wide, not the selected call's); null when its own reads failed (#328), and the panel then says so. */
   guidance: GuidanceRecordData | null;
+  /** The results-day moves panel's rows (company-wide; the panel picks the selected call's). */
+  results: ResultsMovesRead;
   /** With no call: the company's earnings_latest row, whose window says what the transcript discovery covered. */
   latest: EarningsLatestRow | null;
 };
@@ -63,6 +73,35 @@ export async function readCompanyCalls(db: Db, slug: string): Promise<EarningsCa
       .order("call_slug")
       .range(from, to),
   );
+}
+
+const RESULTS_COLUMNS =
+  "company_slug, company_name, currency, results_slug, call_slug, fiscal_label, occurs_at, window_key, pre_date, post_date, own_change_pct, nifty_change_pct, excess_pct, left_out_reason, attribution";
+
+/** The company's rows of api.results_moves, read whole against the exact count, filtered to the company (the view answers well inside anon's 3 s that way). */
+export async function readResultsMoves(db: Db, slug: string): Promise<ResultsMoveRow[]> {
+  return readAll<ResultsMoveRow>("api.results_moves", (from, to) =>
+    db
+      .from("results_moves")
+      .select(RESULTS_COLUMNS, { count: "exact" })
+      .eq("company_slug", slug)
+      .order("occurs_at")
+      .order("results_slug")
+      .order("window_key")
+      .range(from, to),
+  );
+}
+
+/** Reads the moves only when the field is shown or labelled; a failed read is logged and holds back only the panel. */
+async function readResults(db: Db, slug: string, policies: readonly FieldPolicyRow[]): Promise<ResultsMovesRead> {
+  const policy = policies.find((p) => p.field_key === RESULTS_FIELD);
+  if (!policy || policy.status === "hidden") return { state: "hidden" };
+  try {
+    return { state: "ok", rows: await readResultsMoves(db, slug) };
+  } catch (error) {
+    console.error(`[company] ${slug} results moves read failed: ${error instanceof Error ? error.message : String(error)}`);
+    return { state: "error" };
+  }
 }
 
 export async function readCallFigures(db: Db, slug: string, call: string): Promise<CallFigureRow[]> {
@@ -169,16 +208,17 @@ export async function readCallsTab(db: Db, slug: string, call: string | undefine
         .order("company_slug")
         .range(from, to),
     );
-    return { calls, selected, policies, summary: null, figures: [], citations: [], pages: [], guidance, latest: latest[0] ?? null };
+    return { calls, selected, policies, summary: null, figures: [], citations: [], pages: [], guidance, results: { state: "hidden" }, latest: latest[0] ?? null };
   }
   const outputIds = [selected.summary_output_id, selected.figures_output_id].filter((n): n is number => n !== null);
-  const [summary, figures, citations, pages] = await Promise.all([
+  const [summary, figures, citations, pages, results] = await Promise.all([
     selected.summary_output_id !== null ? readOutput(db, selected.summary_output_id) : Promise.resolve(null),
     selected.figures_output_id !== null ? readCallFigures(db, slug, selected.call_slug) : Promise.resolve([]),
     readOutputCitations(db, outputIds),
     readOutputPages(db, outputIds),
+    readResults(db, slug, policies),
   ]);
-  return { calls, selected, policies, summary, figures, citations, pages, guidance, latest: null };
+  return { calls, selected, policies, summary, figures, citations, pages, guidance, results, latest: null };
 }
 
 const LIST_COLUMNS =
