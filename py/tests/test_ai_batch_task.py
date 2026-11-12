@@ -230,9 +230,9 @@ def test_decision_day_publishes_cited_summaries_and_embeddings_in_real_time():
     assert [b["messages"][0]["content"][0]["title"] for b in fake.requests] == [
         "FOMC statement, 14 Mar 2046", "Previous FOMC statement, 24 Jan 2046"]
     got = outputs(new)
-    assert [(g[0], g[1], g[3], g[5], g[6]) for g in got] == [
+    assert [(g[0], g[1], g[3], g[5], g[6]) for g in got] == [   # a new decision gets the current versions (v2: #445)
         ("doc_summary", "published", 3, "v1", "claude-haiku-5-5"),
-        ("statement_diff_summary", "published", 3, "v1", "claude-haiku-5-5")]
+        ("statement_diff_summary", "published", 3, "v2", "claude-haiku-5-5")]
     assert all(g[4] > 0 for g in got) and r["cost"] > 0                      # every call's cost; the run's total
     assert outputs(old) == [] and [x[:2] for x in requests(new)] == [
         ("doc_summary", "succeeded"), ("statement_diff_summary", "succeeded")]
@@ -455,9 +455,21 @@ def test_a_new_prompt_version_supersedes_the_published_output(monkeypatch):
     monkeypatch.setattr(ai_batch, "load_prompt", v2)
     again(task([s0, s1], fake), date(2047, 12, 10), decision_day(date(2047, 12, 10), 30))
     got = [(g[0], g[1], g[5]) for g in outputs(new)]
-    assert got == [("doc_summary", "superseded", "v1"), ("statement_diff_summary", "superseded", "v1"),
+    assert got == [("doc_summary", "superseded", "v1"), ("statement_diff_summary", "superseded", "v2"),   # v2: #445
                    ("doc_summary", "published", "v2"), ("statement_diff_summary", "published", "v2")]
     assert as_anon("select count(*) from api.ai_outputs where document_id = %s", new) == [(2,)]
+
+
+@pytest.mark.db
+def test_a_new_decisions_what_changed_is_asked_with_the_quotation_mark_rule():
+    # #445 (R05-2): a decision-day target has never been answered, so it gets statement_diff_summary's current version.
+    (s0, s1), _, new = two_statements(date(2071, 1, 28), date(2071, 3, 18))
+    fake = FakeClaude(["ok"])
+    watch_once(task([s0, s1], fake), decision_day(date(2071, 3, 18)))
+    (diff,) = [b for b in fake.requests if len(b["messages"][0]["content"]) > 2]     # two documents and the instruction
+    assert "double quotation marks" in diff["system"]
+    assert [(g[0], g[1], g[5]) for g in outputs(new)] == [("doc_summary", "published", "v1"),
+                                                         ("statement_diff_summary", "published", "v2")]
 
 
 # ---------------------------------------------------------------------------------------------- the Batch API (B7.2)
@@ -1085,3 +1097,107 @@ def test_a_run_with_a_data_task_and_the_ai_task_without_a_key_loads_the_data_and
     assert last_run(DATA_KEY)["status"] == "success" and last_run()["status"] == "success"
     assert outputs(doc) == [] and not last_run()["checks"]["ai_available"]["passed"]
     resolve_paused()
+
+
+# ---------------------------------------------------------------------------------------------- the re-run (#445, R05-2)
+def backfill(t: AiBatch, when: datetime, monkeypatch, rerun: str | None) -> int:
+    if rerun is None:
+        monkeypatch.delenv(ai_batch.RERUN_ENV, raising=False)
+    else:
+        monkeypatch.setenv(ai_batch.RERUN_ENV, rerun)
+    try:
+        return run(JOB, "backfill", [t], only=KEY, force=True, clock=lambda: when)
+    finally:
+        monkeypatch.delenv(ai_batch.RERUN_ENV, raising=False)
+
+
+def published_with_v1(monkeypatch, days: list[date]) -> tuple[list[str], list[int]]:
+    """FOMC statements on `days`, each diffed against the one before, summarised by a daily run while
+    statement_diff_summary was v1 (as dev's and production's are): (the meetings' slugs, the documents)."""
+    slugs, docs = [], []
+    for i, d in enumerate(days):
+        s, e = meeting(d)
+        slugs.append(s)
+        docs.append(statement(d, e, (FOMC_A, FOMC_B)[i % 2], base=docs[-1] if docs else None))
+    with monkeypatch.context() as m:
+        m.setitem(ai_batch.PROMPT_VERSION, "statement_diff_summary", "v1")
+        assert daily(task(slugs, FakeClaude(["ok"])), datetime(days[-1].year, 12, 30, 12, tzinfo=UTC)) == 0
+    for doc in docs[1:]:
+        assert sorted((g[0], g[1], g[5]) for g in outputs(doc)) == [("doc_summary", "published", "v1"),
+                                                                    ("statement_diff_summary", "published", "v1")]
+    return slugs, docs
+
+
+def sent(fake: FakeClaude) -> list[dict]:
+    return [r["params"] for b in fake.batches.values() for r in b["requests"]]
+
+
+@pytest.mark.db
+def test_older_diff_summaries_move_to_v2_only_through_the_rerun_and_each_target_is_sent_once(monkeypatch):
+    slugs, (old, new) = published_with_v1(monkeypatch, [date(2068, 1, 25), date(2068, 3, 14)])
+    # Merging v2 changes nothing by itself: a scheduled run finds every target answered (v1, pinned) and sends nothing.
+    quiet = FakeClaude(["ok"])
+    assert daily(task(slugs, quiet), datetime(2069, 1, 2, 12, tzinfo=UTC)) == 0
+    assert quiet.create_calls == 0 and last_run()["rows"] == 0
+    # The re-run: this task's older outputs only, with v2; no other target, no embeddings.
+    fake, voyage = FakeClaude(["ok"]), FakeVoyage()
+    assert backfill(task(slugs, fake, voyage), datetime(2069, 1, 3, 12, tzinfo=UTC), monkeypatch, "all") == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    (body,) = sent(fake)
+    assert "double quotation marks" in body["system"] and len(body["messages"][0]["content"]) > 2
+    assert voyage.calls == []
+    got = [(g[0], g[1], g[5]) for g in outputs(new)]
+    assert sorted(got) == [("doc_summary", "published", "v1"), ("statement_diff_summary", "published", "v2"),
+                           ("statement_diff_summary", "superseded", "v1")]
+    assert [(g[0], g[1]) for g in outputs(old)] == [("doc_summary", "published")]
+    rerun = json.loads(r["checks"]["rerun"]["detail"])
+    assert r["checks"]["rerun"]["passed"] and (rerun["meetings"], rerun["older"], rerun["targets"]) == ("all", 1, 1)
+    assert rerun["outcomes"] == {"published": 1} and rerun["rejected_documents"] == []
+    assert as_anon("""select prompt_version from api.ai_outputs where document_id = %s
+                       and task = 'statement_diff_summary'""", new) == [("v2",)]
+    # Once: the same re-run again sends nothing, and neither does a scheduled run.
+    again_fake = FakeClaude(["ok"])
+    assert backfill(task(slugs, again_fake), datetime(2069, 1, 4, 12, tzinfo=UTC), monkeypatch, "all") == 0
+    assert again_fake.create_calls == 0 and json.loads(last_run()["checks"]["rerun"]["detail"])["targets"] == 0
+    assert daily(task(slugs, again_fake), datetime(2069, 1, 5, 12, tzinfo=UTC)) == 0 and again_fake.create_calls == 0
+
+
+@pytest.mark.db
+def test_a_rerun_reply_rejected_twice_leaves_the_old_output_published_and_is_never_sent_again(monkeypatch):
+    slugs, (_, new) = published_with_v1(monkeypatch, [date(2069, 1, 27), date(2069, 3, 17)])
+    fake = FakeClaude(["uncited"])
+    assert backfill(task(slugs, fake), datetime(2070, 1, 3, 12, tzinfo=UTC), monkeypatch, "all") == 0
+    r = last_run()
+    assert fake.create_calls == 2                                       # the first reply, then its retry, in one run
+    diffs = [(g[1], g[5]) for g in outputs(new) if g[0] == "statement_diff_summary"]
+    assert diffs == [("published", "v1"), ("rejected", "v2"), ("rejected", "v2")]
+    assert not r["checks"]["rerun"]["passed"]
+    assert json.loads(r["checks"]["rerun"]["detail"])["rejected_documents"] == [new]
+    assert as_anon("""select prompt_version from api.ai_outputs where document_id = %s
+                       and task = 'statement_diff_summary'""", new) == [("v1",)]
+    assert q("select count(*) from ops.alert where dedupe_key = %s and resolved_at is null",
+             f"ai_rejected:statement_diff_summary:{new}") == [(0,)]       # the old output still stands
+    later = FakeClaude(["ok"])
+    assert backfill(task(slugs, later), datetime(2070, 1, 4, 12, tzinfo=UTC), monkeypatch, "all") == 0
+    assert daily(task(slugs, later), datetime(2070, 1, 5, 12, tzinfo=UTC)) == 0 and later.create_calls == 0
+
+
+@pytest.mark.db
+def test_a_rerun_can_name_its_meetings_and_an_unknown_meeting_stops_it_before_anything_is_sent(monkeypatch):
+    slugs, (_, mid, last) = published_with_v1(monkeypatch, [date(2070, 1, 29), date(2070, 3, 18), date(2070, 4, 29)])
+    for bad in ("fomc-2070-12-31", "FOMC 2070"):
+        none = FakeClaude(["ok"])
+        assert backfill(task(slugs, none), datetime(2071, 1, 2, 12, tzinfo=UTC), monkeypatch, bad) != 0
+        r = last_run()
+        assert r["status"] == "failed" and none.create_calls == 0 and "POLICY_AI_RERUN" in r["error"]
+    fake = FakeClaude(["ok"])
+    assert backfill(task(slugs, fake), datetime(2071, 1, 3, 12, tzinfo=UTC), monkeypatch, slugs[2]) == 0
+    assert len(sent(fake)) == 1 and json.loads(last_run()["checks"]["rerun"]["detail"])["meetings"] == [slugs[2]]
+    assert [(g[1], g[5]) for g in outputs(last) if g[0] == "statement_diff_summary"] == [("superseded", "v1"),
+                                                                                       ("published", "v2")]
+    assert [(g[1], g[5]) for g in outputs(mid) if g[0] == "statement_diff_summary"] == [("published", "v1")]
+    # A re-run is a backfill's: a daily run that somehow has the variable set stops before sending.
+    monkeypatch.setenv(ai_batch.RERUN_ENV, "all")
+    assert daily(task(slugs, fake), datetime(2071, 1, 4, 12, tzinfo=UTC)) != 0
+    assert last_run()["status"] == "failed" and fake.create_calls == 1
