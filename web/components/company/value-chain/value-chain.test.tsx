@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { CompanyView } from "@/components/company/CompanyView";
 import { ValueChainPage } from "@/components/company/value-chain/ValueChainPage";
 import { ValueChainFlow } from "@/components/company/value-chain/ValueChainFlow";
-import { AS_REPORTED, VC_HELD, flowOf, yearsOf } from "@/lib/equity/valuechain";
+import { AS_REPORTED, RESTATED_NOTE, VC_HELD, flowOf, yearsOf } from "@/lib/equity/valuechain";
 import type { FieldPolicyRow, TaskFreshnessRow } from "@/lib/queries/api";
 import type { ValueChainPageData } from "@/lib/queries/valuechain";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -180,6 +180,16 @@ describe("each state, in its words", () => {
     expect(t).toContain("Restated in the FY 2026-27 BRSR to 89.9%");
   });
 
+  it("the explainer says the figures are the XBRL's, and says what a shown restatement is, only where the year has one (#433)", () => {
+    const plain = text(panel(overview(), "panel-value-chain"));
+    expect(plain).toContain("tagged in the BRSR's XBRL file");
+    expect(plain).toContain("Not applicable");
+    expect(plain).toContain("where the XBRL file carries 0");
+    expect(plain).not.toContain(RESTATED_NOTE);
+    const restated = text(panel(overview([...card(FY26, { fields: { within_india_share: { restated: true, next: 89.9 } } })]), "panel-value-chain"));
+    expect(restated).toContain(RESTATED_NOTE);
+  });
+
   it("a year of other than 12 months says how long it was", () => {
     const t = text(panel(overview(card({ label: "FY 2023-24", start: "2023-01-01", end: "2024-03-31" }, { months: 15 }), ALL_SHOWN), "panel-value-chain"));
     expect(t).toContain("15 months, 1 Jan 2023 – 31 Mar 2024");
@@ -306,6 +316,17 @@ describe("the sub-page once released", () => {
     expect(fields).toContain("Inputs sourced directly from MSMEs and small producers, FY 2025-26: Restated in the FY 2026-27 BRSR to 9.9%");
   });
 
+  it("shows each year's filing day in India, never the stored instant's UTC date (#191: the Filed row was a day early)", () => {
+    // The exchange's list gives a date; it is stored as that day's midnight IST, which is 18:30 UTC on the day before.
+    const rows = [...card(FY25, { filed: "2025-08-01T18:30:00+00:00" }), ...card(FY26, { filed: "2026-07-19T18:30:00+00:00" })];
+    const page = sub(pageData({ rows }));
+    const fields = text(panel(page, "panel-vc-fields"));
+    for (const day of ["2 Aug 2025", "20 Jul 2026"]) expect(fields).toContain(day);
+    for (const dayBefore of ["1 Aug 2025", "19 Jul 2026"]) expect(fields).not.toContain(dayBefore);
+    expect(text(panel(page, "panel-vc-flow"))).toContain("Filed 20 Jul 2026");
+    expect(text(panel(overview(rows), "panel-value-chain"))).toContain("Filed 20 Jul 2026");
+  });
+
   it("shows the top five related-party sales and purchases in crore, as filed, with the period and the basis", () => {
     const g = text(panel(out, "panel-vc-group"));
     expect(g).toContain("Transactions M&M itself entered into; its subsidiaries' aren't included");
@@ -347,6 +368,8 @@ describe("the sub-page once released", () => {
   it("states the source and the caveat on the figures", () => {
     expect(t).toContain(AS_REPORTED);
     expect(t).toContain("Source: the company's BRSR, filed on NSE");
+    expect(t).toContain("tagged in the BRSR's XBRL file");
+    expect(t).toContain(RESTATED_NOTE);
   });
 
   it("uses none of the banned words in its own text", () => {
@@ -383,8 +406,19 @@ describe("segments and peers states", () => {
     const s = text(panel(sub(pageData({ segments: [segment(1, "All", 1e12, null, { reporting: "single", state: "single_segment" })] })), "panel-vc-segments"));
     expect(s).toContain("One reportable segment, as filed.");
   });
-  it("a company with no segment rows is not available", () => {
-    expect(text(panel(sub(pageData({ segments: [] })), "panel-vc-segments"))).toContain("Not available: no segment revenue was read");
+  it("a company with no segment rows is not available, and the panel names the results filings, not the BRSR", () => {
+    const s = text(panel(sub(pageData({ segments: [] })), "panel-vc-segments"));
+    expect(s).toContain("Not available: no segment revenue was read");
+    expect(s).toContain("From the results filings");
+    expect(s).not.toContain("BRSR");
+  });
+  it("held-back segments name the results filings too", () => {
+    const only = ALL_SHOWN.filter((p) => p.field_key !== "equity.segments");
+    const s = text(panel(sub(pageData({ policies: only })), "panel-vc-segments"));
+    expect(s).toContain("Segments held back until they pass review");
+    expect(s).toContain("From the results filings");
+    expect(s).not.toContain("BRSR");
+    expect(s).not.toContain("Automotive");
   });
   it("peers with the peer-group policy hidden are held back", () => {
     const only = ALL_SHOWN.filter((p) => p.field_key !== "equity.peer_group");

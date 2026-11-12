@@ -37,6 +37,7 @@ import {
   formatReleaseTime,
   formatShortDate,
   dateInZone,
+  filingDay,
   formatTableDate,
   formatTally,
   formatUsdInr,
@@ -264,6 +265,17 @@ describe("instants", () => {
     expect(dateInZone("2026-10-28T03:59Z", "America/New_York")).toBe("2026-10-27");
     expect(dateInZone("2026-10-28T04:00Z", "America/New_York")).toBe("2026-10-28");
     expect(dateInZone("2026-12-03T18:30Z", "Asia/Kolkata")).toBe("2026-12-04");
+  });
+
+  it("gives an Indian filing's day in IST and leaves a US filing on the instant's UTC date", () => {
+    // NSE's list date, stored as midnight IST: 20 Oct 2026 is 18:30 UTC on the 19th.
+    expect(filingDay("2026-10-19T18:30:00+00:00", "IN")).toBe("2026-10-20");
+    // A results filing broadcast at 00:40 IST.
+    expect(filingDay("2026-07-24T19:10:00+00:00", "IN")).toBe("2026-07-25");
+    expect(filingDay("2026-07-24T10:00:00+00:00", "IN")).toBe("2026-07-24");
+    expect(filingDay("2026-10-29T01:30:00+00:00", "US")).toBe("2026-10-29");
+    expect(filingDay(null, "IN")).toBeNull();
+    expect(filingDay(undefined, "US")).toBeNull();
   });
 });
 

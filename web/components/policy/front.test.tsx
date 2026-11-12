@@ -246,3 +246,25 @@ describe("the front page when a read fails", () => {
     expect(t).toContain("Fed monitoring sentence.");
   });
 });
+
+describe("the front page's What changed panels keep their own height (R05-4, #434)", () => {
+  // The panels share a grid row; without self-start the shorter one stretches to the taller one's height.
+  const own = (markup: string, id: string) => {
+    const tag = markup.match(new RegExp(`<section[^>]*aria-labelledby="${id}"[^>]*>`));
+    return tag ? tag[0] : "";
+  };
+  const both = (markup: string) => {
+    for (const id of ["panel-front-changes-fed", "panel-front-changes-rbi"]) {
+      expect(own(markup, id)).toContain("self-start");
+    }
+  };
+  it("is self-start on both panels when the summaries are published", () => both(html(<FrontView front={front()} />)));
+  it("is self-start when a bank's part failed", () => both(html(<FrontView front={front({ fed: { kind: "error" } })} />)));
+  it("is self-start when there is no earlier document, or no document yet", () => {
+    both(html(<FrontView front={front({ rbi: { kind: "no-earlier" } })} />));
+    both(html(<FrontView front={front({ fed: { kind: "no-document" } })} />));
+  });
+  it("is self-start when no decision is published", () => {
+    both(html(<FrontView front={front({ fed: { kind: "no-decision" } }, { fed: no, history: no, changes: no, fieldPolicy: no })} />));
+  });
+});

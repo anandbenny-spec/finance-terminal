@@ -7,6 +7,7 @@ import {
   EN_DASH,
   NOT_AVAILABLE,
   formatCount,
+  dateInZone,
   formatCountChangeWords,
   formatDate,
   formatFiledShare,
@@ -27,6 +28,12 @@ export const SEGMENTS_HELD = "Segments held back until they pass review";
 export const PEERS_HELD = "Peer comparison held back until the value chain passes review";
 
 export const AS_REPORTED = "As reported by the company; not verified by this site";
+/** The figures are the XBRL's; the company's PDF of the same report may differ (VC-06c, #433; Anand's ruling of 12 Nov 2026 on #191). */
+export const XBRL_NOTE =
+  "The figures are the ones the company tagged in the BRSR's XBRL file filed with the exchange. The company's PDF of the same report may round a figure differently, or say \"Not applicable\" where the XBRL file carries 0.";
+/** What a restated note means, so a restatement missing here is not read as none (VC-06c, #433). */
+export const RESTATED_NOTE =
+  "A restatement is shown where the next year's XBRL file carries the earlier year's figure; a comparative that appears only in the next year's PDF is not shown.";
 export const NOT_REPORTED = "Not reported in the company's BRSR";
 
 /** The openness-of-business figures, the only ones the filing's assurance flag covers (Principle 1, Essential Indicator 9; decision 5 of #191). */
@@ -45,6 +52,12 @@ export function brsrSourceLine(sourceKey: string | null | undefined): string {
 export function boundaryText(boundary: "standalone" | "consolidated"): string {
   return `${boundary === "standalone" ? "Standalone" : "Consolidated"}, as reported in the BRSR`;
 }
+
+/**
+ * The day a BRSR was filed, as `YYYY-MM-DD` in India. The exchange's list gives a date, stored as that day's midnight IST
+ * (`2026-07-19T18:30:00+00:00` is 20 Jul 2026), so the instant's UTC date is the day before: never slice the string (#191).
+ */
+export const filedDay = (at: string | null | undefined): string | null => (at ? dateInZone(at, "Asia/Kolkata") : null);
 
 /** The https link of an exchange list page, else null (a stored URL that isn't https renders as text, #367). */
 export const httpsOnly = (url: string | null | undefined): string | null => (url?.startsWith("https://") ? url : null);
@@ -354,7 +367,7 @@ export function fieldsTable(years: readonly YearCards[], family: string | null |
       key: "_filed",
       label: "Filed",
       itemRef: "The exchange's BRSR list",
-      cells: years.map((y) => ({ year: y.label, text: y.filedAt ? formatDate(y.filedAt.slice(0, 10)) : NOT_AVAILABLE, marks: [] })),
+      cells: years.map((y) => ({ year: y.label, text: y.filedAt ? formatDate(filedDay(y.filedAt)) : NOT_AVAILABLE, marks: [] })),
     },
   ];
   const fields = first.cells.map((c) => c.field_key);

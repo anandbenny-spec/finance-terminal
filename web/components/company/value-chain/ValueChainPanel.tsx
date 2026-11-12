@@ -13,18 +13,22 @@ import { StateNote } from "@/components/data/StateNote";
 import { Foot } from "@/components/policy/PanelFoot";
 import {
   AS_REPORTED,
+  RESTATED_NOTE,
+  XBRL_NOTE,
   VC_HELD,
   VC_VALUES_FIELD,
   assuranceLine,
   brsrSourceLine,
+  filedDay,
   flowOf,
   httpsOnly,
   monthsNote,
+  restatedNote,
   stateNotes,
   valueChainModel,
 } from "@/lib/equity/valuechain";
 import { FEEDS } from "@/lib/feeds";
-import { dateInZone, formatDate } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import type { TaskFreshnessRow } from "@/lib/queries/api";
 import type { ValueChainOverviewData } from "@/lib/queries/valuechain";
 
@@ -52,7 +56,7 @@ export function ValueChainPanel({
   const shown = policy !== null && policy.status !== "hidden";
   const model = valueChainModel(data?.rows, shown);
   const year = model.kind === "years" ? model.years[model.years.length - 1] : null;
-  const filed = year?.filedAt ? dateInZone(year.filedAt, "Asia/Kolkata") : null;
+  const filed = filedDay(year?.filedAt);
   const footer = year ? (
     <Foot sources={[brsrSourceLine(year.sourceKey), filed ? `Filed ${formatDate(filed)}` : null]} tasks={TASKS} dataTo={filed} freshness={freshness} now={now} />
   ) : (
@@ -74,6 +78,8 @@ export function ValueChainPanel({
         <ValueChainFlow flow={flow} />
         <div className="flex flex-col gap-1 text-meta text-ink-2" data-vc-notes>
           <p>{AS_REPORTED}</p>
+          <p>{XBRL_NOTE}</p>
+          {year.cells.some((c) => restatedNote(c) !== null) && <p>{RESTATED_NOTE}</p>}
           {assurance && <p>{assurance}</p>}
           {notes.map((n) => (
             <p key={n}>{n}</p>
