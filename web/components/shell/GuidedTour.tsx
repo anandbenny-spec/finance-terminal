@@ -10,18 +10,25 @@
 // Reduced motion: the page jumps to a target, and nothing pulses. A stop on another page opens that page and waits
 // for its target; a target that never appears ends the tour with one line, never a blank overlay. No tour library:
 // the placement, the keyboard and the state are lib/tour.ts's pure parts.
+// A full page load (Next falls back to one when a page's render fails) remounts this provider, so the tour keeps its
+// stop in sessionStorage (#466; lib/tour.ts "the stored stop") and resumes it once on mount, when it is fresh and the
+// page is that stop's own. The key is cleared on every end, and storage that throws changes nothing.
 import { Compass } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { Button } from "@/components/ui/button";
 import {
   atRoute,
   clampBox,
+  clearTourStop,
   cycleFocus,
   dimRects,
   keyAction,
+  loadTourStop,
   MOBILE_MAX,
   PANEL_WIDTH,
+  persistTour,
   placePanel,
   scrollBehavior,
   scrollTarget,
@@ -29,6 +36,7 @@ import {
   TOUR_IDLE,
   TOUR_STOPS,
   tourReducer,
+  tourStorage,
   type Box,
   type TourAction,
   type TourState,
@@ -41,32 +49,66 @@ type TourContextValue = { shown: boolean; start: (trigger: HTMLElement | null) =
 
 const TourContext = createContext<TourContextValue>({ shown: false, start: () => {} });
 
+/** What `restoreFocus` needs of the page (a stand-in in tests). */
+type FocusPage = {
+  readonly activeElement: unknown;
+  getElementById(id: string): { focus(): void } | null;
+};
+
+/**
+ * Puts focus back when the tour ends: on the button that started it, or on the page's main when that button is gone or
+ * can't take focus. It checks where focus landed, because `focus()` does nothing on a button that is connected but
+ * hidden or inert (one in a drawer that has closed), and a keyboard user must never be left on the body. With no
+ * starting button at all (a resumed tour), focus goes to the main.
+ */
+export function restoreFocus(from: { readonly isConnected: boolean; focus(): void } | null, page: FocusPage = document): void {
+  if (from?.isConnected) from.focus();
+  if (!from || page.activeElement !== from) page.getElementById("main")?.focus();
+}
+
 export function TourProvider({ shown, children }: { shown: boolean; children: ReactNode }) {
   const [state, dispatch] = useReducer((s: TourState, a: TourAction) => tourReducer(s, a), TOUR_IDLE);
   const trigger = useRef<HTMLElement | null>(null);
+  const resumed = useRef(false);
+
+  // After a full page load the state starts at idle: resume the stored stop, once. This waits for the mount (not the
+  // first render), so the markup the server sent and the client's first render still agree.
+  useEffect(() => {
+    if (resumed.current) return;
+    resumed.current = true;
+    const stop = loadTourStop(tourStorage(), Date.now(), window.location.pathname, window.location.search, shown);
+    if (stop.active) dispatch({ type: "resume", index: stop.index });
+  }, [shown]);
+
+  // A move saves the stop it leads to. The reducer is pure (React may run it twice), so the save sits here, beside it.
+  const move = useCallback(
+    (action: TourAction) => {
+      persistTour(tourStorage(), tourReducer(state, action), Date.now());
+      dispatch(action);
+    },
+    [state],
+  );
 
   const start = useCallback(
     (from: HTMLElement | null) => {
       if (!shown) return;
       trigger.current = from;
-      dispatch({ type: "start" });
+      move({ type: "start" });
     },
-    [shown],
+    [shown, move],
   );
 
   const end = useCallback(() => {
-    dispatch({ type: "end" });
-    // Focus goes back to the button that started the tour; when that button is gone (the page changed, or the drawer
-    // closed), to the page's main, so a keyboard user is never left on nothing.
-    requestAnimationFrame(() => {
-      const from = trigger.current;
-      if (from?.isConnected) from.focus();
-      else document.getElementById("main")?.focus();
-    });
+    clearTourStop(tourStorage()); // first, so that whatever happens next, a reload never resumes a tour that was ended
+    // The panel holds focus and leaves the page now (not on the next frame: a page that is hidden runs no frame, and the
+    // body kept focus after Done on 12 Nov 2026), and then focus goes back at once.
+    flushSync(() => dispatch({ type: "end" }));
+    restoreFocus(trigger.current);
+    trigger.current = null;
   }, []);
 
-  const next = useCallback(() => (state.active && state.index + 1 >= TOUR_STOPS.length ? end() : dispatch({ type: "next" })), [state, end]);
-  const back = useCallback(() => dispatch({ type: "back" }), []);
+  const next = useCallback(() => (state.active && state.index + 1 >= TOUR_STOPS.length ? end() : move({ type: "next" })), [state, end, move]);
+  const back = useCallback(() => move({ type: "back" }), [move]);
   const missing = useCallback(() => dispatch({ type: "missing" }), []);
 
   return (
