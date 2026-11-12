@@ -30,7 +30,7 @@ function render(reactions: MarketReactionRow[], today = "2024-09-20", own = fals
       <MeetingReactionView
         model={model}
         footer={<p>Footer all: {model.sources.filter(Boolean).join(" | ")}</p>}
-        chartFooter={own ? (src) => <p>Footer own: {src}</p> : undefined}
+        chartFooters={own ? Object.fromEntries(model.entries.filter((e) => e.source !== null).map((e) => [e.source as string, <p key={e.key}>Footer own: {e.source}</p>])) : undefined}
       />
     </TooltipProvider>,
   );
@@ -87,5 +87,18 @@ describe("MeetingReactionView", () => {
     const html = render([row("fred.DGS2", -9, "bps")], "2024-09-20", true, bare);
     expect(html).not.toContain("Footer own:");
     expect(html).toContain("Footer all:");
+  });
+  it("takes the charts' footers as nodes, never a function: a client component can't be handed one by the server page (12 Nov 2026's failed builds)", () => {
+    const model = meetingReaction({ bank: "Fed", decisionDate: "2024-09-18", today: "2024-09-20", reactions: [row("fred.DGS2", -9, "bps")], series, observations: Object.fromEntries(ALL.map((k) => [k, obs(k)])) });
+    // @ts-expect-error a function is not a map of nodes
+    const bad = <MeetingReactionView model={model} footer={null} chartFooters={(source: string) => source} />;
+    expect(bad).toBeTruthy();
+    const html = renderToStaticMarkup(
+      <TooltipProvider>
+        <MeetingReactionView model={model} footer={<p>Footer all</p>} chartFooters={{ "Source: fred.DGS2": <p>Footer own: DGS2</p>, constructor: <p>never</p> }} />
+      </TooltipProvider>,
+    );
+    expect(html).toContain("Footer own: DGS2");
+    expect(html).not.toContain("never");
   });
 });
