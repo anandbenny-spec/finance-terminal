@@ -12,11 +12,11 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { CompanyError, CompanyView } from "@/components/company/CompanyView";
-import { StateNote } from "@/components/data/StateNote";
+import { PageLoading } from "@/components/data/PageLoading";
 import { callOf } from "@/lib/equity/calls";
 import { basisOf, tabOf } from "@/lib/equity/company";
 import { windowOf } from "@/lib/equity/rate";
-import { readCompanyExists, readCompanyPage } from "@/lib/queries/company";
+import { readCompanyExists, readCompanyName, readCompanyPage } from "@/lib/queries/company";
 import { readFreshness } from "@/lib/queries/shell";
 
 type Props = PageProps<"/companies/[slug]">;
@@ -27,10 +27,15 @@ export function generateStaticParams(): { slug: string }[] {
   return [{ slug: "adanient" }];
 }
 
-export const metadata: Metadata = {
-  title: "Company · Finance Terminal",
-  description: "A Nifty 50 company's price, key figures, peers, filed financials and corporate actions. Informational only, not investment advice.",
-};
+// The tab's title names the company (12 Nov 2026): every company page used to be "Company · Finance Terminal", so two
+// open tabs, a bookmark or a shared link couldn't be told apart. An unknown slug or a failed read keeps the plain title.
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const name = await readCompanyName((await params).slug);
+  return {
+    title: `${name ?? "Company"} · Finance Terminal`,
+    description: "A Nifty 50 company's price, key figures, peers, filed financials and corporate actions. Informational only, not investment advice.",
+  };
+}
 
 async function Company({ slug, searchParams }: { slug: string; searchParams: Props["searchParams"] }) {
   const query = await searchParams;
@@ -45,7 +50,7 @@ export default async function Page({ params, searchParams }: Props) {
   if (exists === false) notFound();
   if (exists === null) return <CompanyError />;
   return (
-    <Suspense fallback={<StateNote kind="empty">Loading the company…</StateNote>}>
+    <Suspense fallback={<PageLoading>Loading the company…</PageLoading>}>
       <Company slug={slug} searchParams={searchParams} />
     </Suspense>
   );

@@ -6,7 +6,12 @@ import { Suspense, isValidElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const exists = vi.fn<(slug: string) => Promise<boolean | null>>();
-vi.mock("@/lib/queries/company", () => ({ readCompanyExists: (slug: string) => exists(slug), readCompanyPage: () => Promise.resolve({ ok: false }) }));
+const name = vi.fn<(slug: string) => Promise<string | null>>();
+vi.mock("@/lib/queries/company", () => ({
+  readCompanyExists: (slug: string) => exists(slug),
+  readCompanyName: (slug: string) => name(slug),
+  readCompanyPage: () => Promise.resolve({ ok: false }),
+}));
 vi.mock("@/lib/queries/shell", () => ({ readFreshness: () => Promise.resolve({ ok: false }) }));
 
 const route = await import("@/app/companies/[slug]/page");
@@ -33,5 +38,20 @@ describe("the company page", () => {
   });
   it("names a sample slug for the build", () => {
     expect(route.generateStaticParams()).toEqual([{ slug: "adanient" }]);
+  });
+});
+
+// 12 Nov 2026: every company page had the same tab title, "Company · Finance Terminal".
+describe("the company page's title", () => {
+  beforeEach(() => name.mockReset());
+
+  it("names the company", async () => {
+    name.mockResolvedValue("Tata Consultancy Services Ltd.");
+    expect((await route.generateMetadata(props("tcs"))).title).toBe("Tata Consultancy Services Ltd. · Finance Terminal");
+    expect(name).toHaveBeenCalledWith("tcs");
+  });
+  it("keeps the plain title when the name can't be read or no company has the slug", async () => {
+    name.mockResolvedValue(null);
+    expect((await route.generateMetadata(props("nope"))).title).toBe("Company · Finance Terminal");
   });
 });

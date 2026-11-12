@@ -125,7 +125,7 @@ export default function MethodologyPage() {
 
       <Section id="alignment" title="Alignment note">
         <PanelGrid>
-          <Panel title="Responsible AI use" titleId="alignment-title" variant="prose">
+          <Panel title="Responsible AI use" titleId="alignment-title" variant="columns">
             <p className="text-ink-1">
               Written with SEBI&apos;s consultation paper &ldquo;Guidelines for Responsible Usage of AI/ML in Indian Securities Markets&rdquo; (20 June
               2025) in mind, and the final guidelines SEBI said in August 2026 were coming, which it said would stress human oversight, data controls and kill switches. This site is not a
@@ -138,7 +138,7 @@ export default function MethodologyPage() {
       {BLOCKS.map((b) => (
         <Section key={b.id} id={b.id} title={b.title}>
           <PanelGrid>
-            <Panel title={b.title} titleId={`${b.id}-title`} variant="prose">
+            <Panel title={b.title} titleId={`${b.id}-title`} variant="columns">
               <div className="space-y-3 text-ink-2">
                 {b.paragraphs.map((p, i) => (
                   <p key={i}>{p}</p>

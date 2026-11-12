@@ -9,7 +9,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { CompanyError } from "@/components/company/CompanyView";
 import { ValueChainPage } from "@/components/company/value-chain/ValueChainPage";
-import { StateNote } from "@/components/data/StateNote";
+import { PageLoading } from "@/components/data/PageLoading";
 import { readCompanyExists, readHeader } from "@/lib/queries/company";
 import { readFreshness } from "@/lib/queries/shell";
 import { readValueChainPage } from "@/lib/queries/valuechain";
@@ -63,7 +63,7 @@ export default async function Page({ params, searchParams }: Props) {
   if (exists === false) notFound();
   if (exists === null) return <CompanyError />;
   return (
-    <Suspense fallback={<StateNote kind="empty">Loading the value chain…</StateNote>}>
+    <Suspense fallback={<PageLoading>Loading the value chain…</PageLoading>}>
       <Content slug={slug} searchParams={searchParams} />
     </Suspense>
   );
