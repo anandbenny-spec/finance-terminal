@@ -56,3 +56,39 @@ delivered_roe:
     decided by Claude (standing delegation, 1 Nov 2026, #120), as Anand's note of 30 Oct 2026 on #120 asked (his
     example: "the average over the fiscal years with filed opening and closing equity, n shown, held back below 3
     years")
+
+# The US slice's market parameters (Spec 02A.1 §5.4; job US-04, #403), read by ft/equity/us_inputs.py. The engine's
+# `model` settings above apply to the US unchanged. Rates are fractions.
+us:
+  marginal_tax_rate:
+    rate: 0.25
+    source: >-
+      US marginal rate: the federal 21% (26 USC §11(b)) plus state taxes, the 25% Damodaran uses for US companies
+      (Data Audit 02 E8; Spec 02A.1 §5.4)
+    in_force: 2018-01-01      # the Tax Cuts and Jobs Act's 21% federal rate, for tax years from 1 Jan 2018
+  risk_free:
+    series: fred.DGS10        # the 10-year Treasury yield at the price date (Data Audit 02 E2; Spec 02A.1 §5.4)
+    netted: false
+    source: >-
+      Spec 02A.1 §5.4 asked whether Damodaran nets a US default spread from the USD risk-free rate as well as from the
+      ERP. His files settle it: he does, and he adds it back. ERPbymonth.xlsx (the Oct 2026 file in the fixtures),
+      sheet "Historical ERP": from 1 Jun 2025 ("updated growth and added default-adjusted riskfree rate") the sheet
+      carries a "$ Riskfree Rate", the T.Bond rate less the US default spread (1 Oct 2026: 5.29% to 5.07%), and an
+      "ERP (T12m) with adj riskfree rate" (3.92% against 3.70% on the T.Bond rate); the expected return is the same
+      either way (8.99%). ctrypremJuly26.xlsx, sheet "ERPs by country": the mature-market premium 4.20% is the "Implied
+      ERP for S&P 500 with adjusted dollar riskfree rate (for US Aa1 rating)", the US's own premium is 4.42%, and the
+      United States row (Aa1) has a default spread and a country risk premium of 0.2186% each. So for a US company he
+      uses the netted rate with the mature premium plus the US's 0.22% country premium. The spec's other two rules (the
+      mature-market ERP, no country risk premium) with a netted rate would leave the spread out of the cost of equity
+      altogether; the gross yield with the mature ERP gives his market cost of equity exactly at a beta of 1 (and
+      differs from his by 0.22% x (1 - beta) otherwise). Decided by Claude (standing delegation, 12 Nov 2026, #403);
+      the alternative is his method in full (the netted rate, and the mature ERP plus the US default spread as a
+      country premium), which needs the US spread stored per ctryprem edition. The engine's EDGAR test made the same
+      pairing (the T.Bond rate with the mature ERP; tests/equity_edgar.py, 1 Nov 2026).
+  erp:
+    series: damodaran.ERP_IMPLIED   # the implied mature-market premium of the latest month on or before the price date
+    country_risk_premium: none
+    source: Spec 02A.1 §5.4 (no country risk premium); Data Audit 02 E3
+  betas:
+    file: betas.xls           # Damodaran's US industries (us.valuation_inputs stores it in equity.industry_benchmark, market US)
+    index: yf.^GSPC           # the regression beta's index (Spec 02A.1 §5.4)

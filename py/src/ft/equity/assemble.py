@@ -27,6 +27,7 @@ basis's margins against another's capital.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from decimal import Decimal
@@ -46,6 +47,36 @@ YEAR_KEYS = ("revenue_cagr_3y", "revenue_cagr_5y", "roe")
 FILINGS = "results filings (NSE)"
 LEASE_MATERIAL = ("This company's lease payments are material against its EBIT, and results filings don't report "
                   "lease liabilities, so the model would understate its debt.")
+CLOSE_SOURCE = "the latest close (Source: NSE; equity.metrics)"
+
+
+@dataclass(frozen=True)
+class Lines:
+    """How one market's filings give the DCF's statement figures, and how its sources are named. India's by default,
+    so India's inputs (and the stored runs' `inputs`) are exactly what they were before the US slice (Spec 02A.1 §5.4;
+    job US-04: "`assemble.py`, a `market` argument with India's default unchanged"). The US's are in
+    `ft/equity/us_inputs.py`."""
+    calc: type = mx.Calc                      # how a line is read (and held)
+    ebit: Callable = mx._ebit                 # (calc, row) -> EBIT
+    ebit_name: str = "ebit_derived"
+    ebit_words: str = "derived EBIT"
+    debt: Callable = mx._debt                 # (calc, row) -> borrowings
+    cash_inv: Callable = mx._cash_inv         # (calc, row) -> cash (and investments)
+    cash_words: str = "cash and investments"
+    opening_ic: Callable = mx._opening_ic     # (calc, book, basis, opening) -> invested capital
+    debt_label: str = mx.LEASE_LABEL
+    filings: str = FILINGS
+    columns: tuple = st.COLUMNS               # the equity.financials columns `fetch` reads
+    cap_source: str = "market capitalisation at the latest close (Source: NSE; equity.metrics)"
+    close_source: str = CLOSE_SOURCE
+    beta_source: str = "bottom-up beta: Damodaran's India industry beta relevered at market D/E (equity.beta)"
+    pb_source: str = ("price-to-book: market capitalisation ÷ equity to owners at the latest balance sheet (Source: NSE; "
+                      "equity.metrics)")
+    lender_beta_source: str = "the industry's levered beta: Damodaran's India industry beta, not relevered (equity.beta)"
+    lease_rule: bool = True                   # Anand's 30 Oct 2026 rule (#117): results filings carry no lease liabilities
+
+
+INDIA = Lines()
 
 
 # ------------------------------------------------------------------------------------------------ settings and rates
@@ -113,8 +144,9 @@ class Stored:
     breaks: list[mx.Break] = field(default_factory=list)          # demergers and mergers, recorded and curated
 
 
-def fetch(db, entity_ids: list[int] | None = None) -> dict[int, Stored]:
-    """The rows `company_inputs` reads, for the given companies (all of India's companies in `equity.company` when None)."""
+def fetch(db, entity_ids: list[int] | None = None, columns: tuple = st.COLUMNS) -> dict[int, Stored]:
+    """The rows `company_inputs` reads, for the given companies (all of India's companies in `equity.company` when None);
+    `columns` are the `equity.financials` columns read (the US's add `operating_income`: `us_inputs.US.columns`)."""
     out: dict[int, Stored] = {}
     for eid, slug, family, fy, market, currency in db.execute(
             """select c.entity_id, e.slug, c.valuation_family, c.fy_end_month, e.market, e.currency
@@ -123,7 +155,7 @@ def fetch(db, entity_ids: list[int] | None = None) -> dict[int, Stored]:
             (entity_ids, entity_ids)).fetchall():
         out[eid] = Stored(mx.Company(eid, slug, family, fy), market, currency, [])
     ids = list(out)
-    cols = st.COLUMNS
+    cols = columns
     for row in db.execute(
             f"""select x.entity_id, x.document_id, x.basis, x.period_kind, x.period_start, x.period_end, x.tags,
                        fl.format, fl.filed_at, {", ".join(cols)}
@@ -159,9 +191,9 @@ def _reason(h: mx.Held | str) -> str:
     return r.removeprefix("N/A: ")
 
 
-def _figure(unit: str, source: str, fn, as_of: date | None = None) -> Input:
+def _figure(unit: str, source: str, fn, as_of: date | None = None, calc: type = mx.Calc) -> Input:
     """fn(calc) → value, with the lines it read as the detail; a Held becomes a held input."""
-    c = mx.Calc()
+    c = calc()
     try:
         v = fn(c)
     except mx.Held as h:
@@ -236,21 +268,24 @@ def price_date(s: Stored, as_of: date) -> date | None:
     return _frame(s, as_of).t
 
 
-def company_inputs(s: Stored, as_of: date) -> Company:
-    """The engine's inputs for one company at the newest price date on or before `as_of`."""
+def company_inputs(s: Stored, as_of: date, lines: Lines = INDIA) -> Company:
+    """The engine's inputs for one company at the newest price date on or before `as_of` (`lines`: the market's
+    filings, India's by default)."""
     fr = _frame(s, as_of)
     book, t, upto, q_end, basis = fr.book, fr.t, fr.upto, fr.q_end, fr.basis
     ttm_rows, ttm_held, years, fy_end = fr.ttm_rows, fr.ttm_held, fr.years, fr.fy_end
+    filings, calc = lines.filings, lines.calc
+
+    def figure(unit, source, fn, when=None):
+        return _figure(unit, source, fn, when, calc)
 
     def market(key, unit, source, missing):
         return _stored(s, key, "none", "market", t, unit, source, missing)
 
     shares = market("shares_today", "shares", "shares outstanding today: the latest filing's, after share actions "
                     "since (equity.metrics)", "Shares outstanding today aren't stored.")
-    cap = market("market_cap", "money", "market capitalisation at the latest close (Source: NSE; equity.metrics)",
-                 "Market capitalisation isn't stored.")
-    beta = market("beta_bottom_up", "beta", "bottom-up beta: Damodaran's India industry beta relevered at market D/E "
-                  "(equity.beta)", "The bottom-up beta isn't stored.")
+    cap = market("market_cap", "money", lines.cap_source, "Market capitalisation isn't stored.")
+    beta = market("beta_bottom_up", "beta", lines.beta_source, "The bottom-up beta isn't stored.")
 
     def ttm_sum(fn, name):
         def f(c):
@@ -260,10 +295,10 @@ def company_inputs(s: Stored, as_of: date) -> Company:
             return mx._sum(c, ttm_rows, fn, name)
         return f
 
-    revenue_ttm = _figure("money", f"revenue over the last four quarters ({FILINGS})",
-                          ttm_sum(mx._col("revenue"), "revenue"), q_end)
-    ebit_ttm = _figure("money", f"derived EBIT over the last four quarters ({FILINGS})",
-                       ttm_sum(mx._ebit, "ebit_derived"), q_end)
+    revenue_ttm = figure("money", f"revenue over the last four quarters ({filings})",
+                         ttm_sum(mx._col("revenue"), "revenue"), q_end)
+    ebit_ttm = figure("money", f"{lines.ebit_words} over the last four quarters ({filings})",
+                      ttm_sum(lines.ebit, lines.ebit_name), q_end)
 
     def three(fn, name):
         def f(c):
@@ -272,27 +307,28 @@ def company_inputs(s: Stored, as_of: date) -> Company:
         return f
 
     def opening_ic(c, f):
-        return mx._opening_ic(c, book, basis, mx.month_end(f.end, -12))
+        return lines.opening_ic(c, book, basis, mx.month_end(f.end, -12))
 
-    src = f"over the last three financial years ({FILINGS})"
-    revenue_3fy = _figure("money", f"revenue {src}", three(mx._col("revenue"), "revenue"), fy_end)
-    ebit_3fy = _figure("money", f"derived EBIT {src}", three(mx._ebit, "ebit_derived"), fy_end)
-    tax_3fy = _figure("money", f"tax expense {src}", three(mx._col("tax"), "tax"), fy_end)
-    pbt_3fy = _figure("money", f"profit before tax {src}", three(mx._col("pbt"), "pbt"), fy_end)
-    capital_3fy = _figure("money", f"invested capital at the start of each of the last three financial years "
-                          f"({FILINGS})", three(opening_ic, "opening_invested_capital"), fy_end)
+    src = f"over the last three financial years ({filings})"
+    revenue_3fy = figure("money", f"revenue {src}", three(mx._col("revenue"), "revenue"), fy_end)
+    ebit_3fy = figure("money", f"{lines.ebit_words} {src}", three(lines.ebit, lines.ebit_name), fy_end)
+    tax_3fy = figure("money", f"tax expense {src}", three(mx._col("tax"), "tax"), fy_end)
+    pbt_3fy = figure("money", f"profit before tax {src}", three(mx._col("pbt"), "pbt"), fy_end)
+    capital_3fy = figure("money", f"invested capital at the start of each of the last three financial years "
+                         f"({filings})", three(opening_ic, "opening_invested_capital"), fy_end)
 
     def latest_fy(c):
         return years.need()[-1]
 
-    finance_cost = _figure("money", f"finance costs in the latest financial year ({FILINGS})",
-                           lambda c: c.take(latest_fy(c), "finance_cost"), fy_end)
-    debt_open = _figure("money", f"borrowings at the start of the latest financial year ({FILINGS}; "
-                        f"{mx.LEASE_LABEL})",
-                        lambda c: mx._debt(c, mx._instant(book, basis, mx.month_end(latest_fy(c).end, -12), "start")),
-                        mx.month_end(fy_end, -12) if fy_end else None)
-    debt_close = _figure("money", f"borrowings at the end of the latest financial year ({FILINGS}; {mx.LEASE_LABEL})",
-                         lambda c: mx._debt(c, mx._instant(book, basis, latest_fy(c).end, "end")), fy_end)
+    finance_cost = figure("money", f"finance costs in the latest financial year ({filings})",
+                          lambda c: c.take(latest_fy(c), "finance_cost"), fy_end)
+    debt_open = figure("money", f"borrowings at the start of the latest financial year ({filings}; "
+                       f"{lines.debt_label})",
+                       lambda c: lines.debt(c, mx._instant(book, basis, mx.month_end(latest_fy(c).end, -12), "start")),
+                       mx.month_end(fy_end, -12) if fy_end else None)
+    debt_close = figure("money", f"borrowings at the end of the latest financial year ({filings}; "
+                        f"{lines.debt_label})",
+                        lambda c: lines.debt(c, mx._instant(book, basis, latest_fy(c).end, "end")), fy_end)
 
     # the latest balance sheet, on the same basis
     bs_end = mx._latest(book, "instant", upto, where=mx._has_balance_sheet)
@@ -307,19 +343,19 @@ def company_inputs(s: Stored, as_of: date) -> Company:
             return fn(c, book.get(basis, "instant", bs_end))
         return f
 
-    debt = _figure("money", f"borrowings at the latest balance sheet ({FILINGS}; {mx.LEASE_LABEL})",
-                   sheet(mx._debt), bs_end)
-    cash = _figure("money", f"cash and investments at the latest balance sheet ({FILINGS})", sheet(mx._cash_inv),
-                   bs_end)
-    nci = _figure("money", f"non-controlling interests at the latest balance sheet ({FILINGS})",
-                  sheet(lambda c, f: c.take(f, "nci")), bs_end)
+    debt = figure("money", f"borrowings at the latest balance sheet ({filings}; {lines.debt_label})",
+                  sheet(lines.debt), bs_end)
+    cash = figure("money", f"{lines.cash_words} at the latest balance sheet ({filings})", sheet(lines.cash_inv),
+                  bs_end)
+    nci = figure("money", f"non-controlling interests at the latest balance sheet ({filings})",
+                 sheet(lambda c, f: c.take(f, "nci")), bs_end)
 
     cagr = _stored(s, "revenue_cagr_3y", basis, "year", fy_end, "fraction",
                    "revenue growth a year over the last three financial years (equity.metrics)",
                    "The three-year revenue growth isn't stored.")
 
     held: list[str] = []
-    if s.company.family == "operating" and t is not None and cap.value is not None:
+    if lines.lease_rule and s.company.family == "operating" and t is not None and cap.value is not None:
         held += _lease(s, t)
     return Company(s.company.slug, s.market, s.currency, s.company.family, revenue_ttm, ebit_ttm, revenue_3fy,
                    ebit_3fy, tax_3fy, pbt_3fy, capital_3fy, cagr, finance_cost, debt_open, debt_close, debt, cash, nci,
@@ -341,7 +377,6 @@ def _lease(s: Stored, t: date) -> list[str]:
 
 # ------------------------------------------------------------------------------------------------ 2A-14's inputs
 NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
-CLOSE_SOURCE = "the latest close (Source: NSE; equity.metrics)"
 ROE_SOURCE = ("return on equity (profit to owners ÷ average equity to owners), averaged over consecutive financial "
               "years ending with the latest (equity.metrics)")
 
@@ -363,14 +398,14 @@ def load_delivered_roe(path: Path | None = None) -> DeliveredRoe:
     return out
 
 
-def price(s: Stored, as_of: date) -> Input:
+def price(s: Stored, as_of: date, lines: Lines = INDIA) -> Input:
     """The latest close: the one the market capitalisation at the price date was computed at (equity.metrics)."""
     t = _frame(s, as_of).t
     rows = [v for k, v in s.metrics.items() if k[0] == "market_cap" and k[2] == "market" and k[3] == t]
     p = (rows[0][2] or {}).get("price") if rows else None
     if not p:
-        return Input.withheld("The latest close isn't stored.", "money", CLOSE_SOURCE, t)
-    return Input.of(Decimal(str(p["close"])), "money", date.fromisoformat(p["trade_date"]), CLOSE_SOURCE)
+        return Input.withheld("The latest close isn't stored.", "money", lines.close_source, t)
+    return Input.of(Decimal(str(p["close"])), "money", date.fromisoformat(p["trade_date"]), lines.close_source)
 
 
 def delivered_growth(s: Stored, as_of: date) -> Input:
@@ -428,15 +463,12 @@ def delivered_roe(s: Stored, as_of: date, rule: DeliveredRoe | None = None) -> I
     return Input.of(average, "fraction", last, ROE_SOURCE, **detail)
 
 
-def lender_inputs(s: Stored, as_of: date, rule: DeliveredRoe | None = None) -> Lender:
+def lender_inputs(s: Stored, as_of: date, rule: DeliveredRoe | None = None, lines: Lines = INDIA) -> Lender:
     """A lender's implied-ROE inputs at the newest price date on or before `as_of`: P/B (2A-11), the industry's levered
     beta (2A-12 stores it as `beta_bottom_up` for lenders), the delivered average and the latest close."""
     fr = _frame(s, as_of)
-    pb = _stored(s, "pb", _pb_basis(s, fr), "market", fr.t, "multiple",
-                 "price-to-book: market capitalisation ÷ equity to owners at the latest balance sheet (Source: NSE; "
-                 "equity.metrics)", "Price-to-book isn't stored.")
-    beta = _stored(s, "beta_bottom_up", "none", "market", fr.t, "beta",
-                   "the industry's levered beta: Damodaran's India industry beta, not relevered (equity.beta)",
+    pb = _stored(s, "pb", _pb_basis(s, fr), "market", fr.t, "multiple", lines.pb_source, "Price-to-book isn't stored.")
+    beta = _stored(s, "beta_bottom_up", "none", "market", fr.t, "beta", lines.lender_beta_source,
                    "The industry beta isn't stored.")
     return Lender(s.company.slug, s.market, s.currency, s.company.family, pb, beta, delivered_roe(s, as_of, rule),
-                  price(s, as_of))
+                  price(s, as_of, lines))
