@@ -40,7 +40,7 @@ Checks, B blocking, W warning:
 - (W) `kept_fuller`: the filings whose rows weren't stored because they lack figures an earlier filing's row for the
   same period has (#455);
 - (W) `gaps`: for each operating company, the lines a valuation reads (GAP_WORDS) that are empty in its latest
-  3 fiscal years, 8 quarters and their balance sheets, with the us-gaap tags that filing files for the period whose
+  3 fiscal years, 8 quarters and their balance sheets (the first year's opening one too), with the us-gaap tags that filing files for the period whose
   names suggest the line (tag names only, never a value): where to look before a tag joins a chain (#455);
 - (W) `loaded`: what the run registered (always passing).
 """
@@ -490,7 +490,7 @@ class UsFilings(Task):
     @staticmethod
     def _gaps(ok: list[Company]) -> Check:
         """Each operating company's empty valuation lines in its latest 3 fiscal years, 8 quarters and their balance
-        sheets (the latest stored row per period), grouped by line, with the us-gaap tags filed for those periods whose
+        sheets, the first year's opening one included (the latest stored row per period), grouped by line, with the us-gaap tags filed for those periods whose
         names suggest the line. Tag names and dates only."""
         found = []
         for x in ok:
@@ -500,10 +500,11 @@ class UsFilings(Task):
             for b in sorted(x.built, key=lambda b: (b.filing.filed, b.filing.accn)):
                 for r in b.rows:
                     latest[(r.period_kind, r.period_end)] = (r, b)
-            years = sorted({b.period_end for b in x.built if b.filing.annual})[-3:]
+            ends = sorted({b.period_end for b in x.built if b.filing.annual})
+            years, opening = ends[-3:], ends[-4:-3]           # and the balance sheet the first of them opens with
             quarters = sorted({b.period_end for b in x.built})[-8:]
             want = [("year", e) for e in years] + [("quarter", e) for e in quarters] + \
-                   [("instant", e) for e in sorted(set(years) | set(quarters[-1:]))]
+                   [("instant", e) for e in sorted(set(opening) | set(years) | set(quarters[-1:]))]
             per: dict[str, tuple[list[str], set[str]]] = {}
             for kind, end in want:
                 got = latest.get((kind, end))
