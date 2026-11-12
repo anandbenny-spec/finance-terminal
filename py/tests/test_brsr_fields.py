@@ -115,3 +115,18 @@ def test_the_semantic_view_names_every_field():
     for key in EXPECTED_KEYS:
         assert f"v.field_key = '{key}'" in block, key
         assert f"as {key}" in block, key
+
+
+def test_the_live_semantic_view_keeps_every_field_and_the_shown_date():
+    # A later migration may replace semantic.value_chain (0041 made it India-only, #404): the newest definition, the one the
+    # command bar reads, still names every field and filters on the first shown entry point, as 0034's did.
+    defs = [p for p in sorted((ROOT / "supabase" / "migrations").glob("*.sql"))
+            if re.search(r"create (or replace )?view semantic\.value_chain\b", p.read_text(encoding="utf-8"))]
+    assert defs and defs[0] == MIGRATION
+    sql = defs[-1].read_text(encoding="utf-8")
+    block = re.split(r"create (?:or replace )?view semantic\.value_chain\b", sql)[-1].split("\n\n", 1)[0]
+    first = _yaml()["entry_points"]["shown"][0]
+    assert f"format_version >= date '{first}'" in block
+    for key in EXPECTED_KEYS:
+        assert f"v.field_key = '{key}'" in block, key
+        assert f"as {key}" in block, key
