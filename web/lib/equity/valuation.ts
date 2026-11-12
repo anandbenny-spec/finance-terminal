@@ -162,8 +162,15 @@ function erpNote(d: Json): string | null {
   return `Implied mature-market premium ${m} plus India's country risk premium ${c}${ed ? ` (Damodaran edition of ${ed})` : ""}`;
 }
 
+/** What the weights' debt is, by market: India's results filings carry no lease liabilities; a US filing does, and the US
+ * model doesn't count them (py/src/ft/equity/us_inputs.py, Spec 02A.1 §5.4). */
+const WEIGHTS_NOTE: Record<Market, string> = {
+  IN: "Market capitalisation and borrowings; borrowings exclude lease liabilities (not in results filings)",
+  US: "Market capitalisation and debt as filed; lease liabilities aren't counted",
+};
+
 /** Every input a run stored, as the assumptions table's rows (value, as-of date, source), in the order they enter the model. */
-export function assumptionRows(run: CompanyValuationRow): AssumptionRow[] {
+export function assumptionRows(run: CompanyValuationRow, companyMarket: Market = "IN"): AssumptionRow[] {
   const inputs = rec(run.inputs);
   if (!inputs) return [];
   const market = rec(inputs.market) ?? {};
@@ -216,13 +223,13 @@ export function assumptionRows(run: CompanyValuationRow): AssumptionRow[] {
       capital.cost_of_debt,
       fin?.asOf ?? null,
       DRIVER_SOURCE,
-      bound === "floor" ? "Bounded up to the gross 10-year yield" : bound === "cap" ? "Bounded down to that yield plus the spread cap" : "Finance costs over average borrowings",
+      bound === "floor" ? "Bounded up to the gross 10-year yield" : bound === "cap" ? "Bounded down to that yield plus the spread cap" : companyMarket === "US" ? "Interest expense over average debt" : "Finance costs over average borrowings",
     ),
   );
   const we = num(capital.weight_equity);
   const wd = num(capital.weight_debt);
   if (we !== null && wd !== null) {
-    rows.push({ id: "weights", label: "Weights, equity and debt", kind: "fraction", value: we, value2: wd, held: null, asOf: mcap?.asOf ?? null, source: DRIVER_SOURCE, derived: true, note: "Market capitalisation and borrowings; borrowings exclude lease liabilities (not in results filings)" });
+    rows.push({ id: "weights", label: "Weights, equity and debt", kind: "fraction", value: we, value2: wd, held: null, asOf: mcap?.asOf ?? null, source: DRIVER_SOURCE, derived: true, note: WEIGHTS_NOTE[companyMarket] });
   }
   rows.push(
     derived("wacc", "Cost of capital (WACC)", "fraction", capital.wacc ?? drivers.wacc, rf?.asOf ?? null, DRIVER_SOURCE),

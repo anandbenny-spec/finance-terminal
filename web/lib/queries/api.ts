@@ -241,12 +241,13 @@ export type EvalSummaryRow = {
 /** One column's note on a snapshot row (api.screener `notes`): its label and the reason it is held back, either may be null. */
 export type ScreenerNote = { label: string | null; reason: string | null };
 
-/** api.screener (0024): one row per company from its latest weekly snapshot. Ratios are fractions; money in full units of `currency`. */
+/** api.screener (0024; the ticker from 0041): one row per company from its latest weekly snapshot. Ratios are fractions; money in full units of `currency`. */
 export type ScreenerRow = {
   slug: string;
   name: string;
   short_name: string | null;
-  nse_symbol: string;
+  /** India's identifier; null for a US company (0041). */
+  nse_symbol: string | null;
   market: "IN" | "US";
   currency: "INR" | "USD";
   peer_group_key: string | null;
@@ -285,9 +286,11 @@ export type ScreenerRow = {
   implied_roe_label: string | null;
   index_slugs: string[] | null;
   source_key: string;
+  /** A US company's ticker (0041); null for India. Optional: older test rows and reads that don't select it leave it out. */
+  ticker?: string | null;
 };
 
-/** api.index_members (0024): each index's latest member set. */
+/** api.index_members (0024; the ticker from 0041): each index's latest member set. */
 export type IndexMemberRow = {
   index_slug: string;
   index_name: string;
@@ -295,14 +298,14 @@ export type IndexMemberRow = {
   slug: string;
   name: string;
   short_name: string | null;
-  nse_symbol: string;
+  nse_symbol: string | null;
   market: "IN" | "US";
   currency: "INR" | "USD";
 };
 
 type Num = number | null;
 
-/** api.companies (0024): one row per company: its identifiers, peer group, index memberships and the last two closes. */
+/** api.companies (0024; the ticker and CIK from 0041): one row per company: its identifiers, peer group, index memberships and the last two closes. */
 export type CompanyRow = {
   slug: string;
   name: string;
@@ -310,7 +313,8 @@ export type CompanyRow = {
   market: "IN" | "US";
   currency: "INR" | "USD";
   isin: string | null;
-  nse_symbol: string;
+  /** India's identifier; null for a US company (0041). */
+  nse_symbol: string | null;
   bse_code: string | null;
   nse_industry: string | null;
   peer_group_key: string | null;
@@ -328,6 +332,9 @@ export type CompanyRow = {
   previous_close: Num;
   previous_close_date: string | null;
   price_source_key: string | null;
+  /** A US company's ticker and SEC CIK (0041); null for India. Optional: older test rows leave them out. */
+  ticker?: string | null;
+  cik?: string | null;
 };
 
 /** api.company_prices (0024): one row per session; `adj_close` is null while a held corporate action lies after it. */
@@ -388,6 +395,8 @@ export type PeerCompRow = {
   median_n: Record<string, number> | null;
   median_note: string | null;
   source_key: string;
+  /** A US peer's ticker (0041); null for India. */
+  peer_ticker?: string | null;
 };
 
 /** The statement lines api.company_financials carries (full units of the reporting currency; ratios as fractions). */
@@ -676,6 +685,8 @@ export type PricedInRow = {
   label: string | null;
   gap_rank: Num;
   source_key: string;
+  /** A US company's ticker (0041); null for India. */
+  ticker?: string | null;
 };
 
 /** api.valuation_scenarios (0024): one stored cell of the latest default run's grid (growth × EBIT margin × WACC, fractions). */

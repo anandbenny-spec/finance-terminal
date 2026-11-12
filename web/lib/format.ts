@@ -178,20 +178,21 @@ export function formatUsdInr(value: Num): string {
 
 /**
  * Money in its own reporting currency, grouped by that currency's market, never the viewer's:
- * INR 12345 crore → `₹12,345 cr`. Nothing converts, compares or sums across currencies (CLAUDE.md §1).
- * The units module 2 needs for USD (million, billion) are added with module 2's spec.
+ * INR 12345 crore → `₹12,345 cr`; USD 12345 million → `$12,345 mn`. Nothing converts, compares or sums across
+ * currencies (CLAUDE.md §1). Each unit belongs to one currency: crore to INR, million to USD (US-06, #405).
  */
 export function formatMoney(
   amount: Num,
   currency: Currency,
-  { unit, decimals = 0 }: { unit?: "crore"; decimals?: number } = {},
+  { unit, decimals = 0 }: { unit?: "crore" | "million"; decimals?: number } = {},
 ): string {
   if (isMissing(amount)) return NOT_AVAILABLE;
   if (unit === "crore" && currency !== "INR") throw new RangeError("formatMoney: crore is an INR unit");
+  if (unit === "million" && currency !== "USD") throw new RangeError("formatMoney: million is a USD unit here");
   const { symbol, market } = CURRENCY[currency];
   const body = digits(Math.abs(amount), { decimals, locale: LOCALE[market] });
   const sign = amount < 0 && /[1-9]/.test(body) ? MINUS : ""; // a value that rounds to zero carries no sign
-  return `${sign}${symbol}${body}${unit === "crore" ? " cr" : ""}`;
+  return `${sign}${symbol}${body}${unit === "crore" ? " cr" : unit === "million" ? " mn" : ""}`;
 }
 
 /** A projection as published (RBI projections carry 1 decimal): `3.5`, `3.8` → `3.5–3.8%`; one value `7` → `7.0%`. */
@@ -460,6 +461,17 @@ export function formatPrice(value: Num, currency: Currency): string {
 export function formatRupeesAsCrore(rupees: Num): string {
   if (isMissing(rupees)) return NOT_AVAILABLE;
   return formatMoney(rupees / 10_000_000, "INR", { unit: "crore" });
+}
+
+/** Dollars given in full, shown in millions with US grouping (US-06, #405; the US twin of crore): `3.94328e11` → `$394,328 mn`. */
+export function formatDollarsAsMillion(dollars: Num): string {
+  if (isMissing(dollars)) return NOT_AVAILABLE;
+  return formatMoney(dollars / 1_000_000, "USD", { unit: "million" });
+}
+
+/** Money given in full units of its currency, in that currency's display unit: crore for rupees, millions for dollars. */
+export function formatAmount(value: Num, currency: Currency): string {
+  return currency === "INR" ? formatRupeesAsCrore(value) : formatDollarsAsMillion(value);
 }
 
 /** A percentage level that may exceed 100 and is grouped by the figure's market, for a value shown as filed (the promoter note, #116): `6613` → `6,613.00%`, `66.13` → `66.13%`. */

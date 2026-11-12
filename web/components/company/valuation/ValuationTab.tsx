@@ -3,6 +3,8 @@
 // source, and "Set your own scenario" over the stored grid. Every model-implied part goes through Gated (hidden until
 // 2A-26's checks); nothing is computed here; the latest close is shown only in the assumptions table, never beside a
 // scenario value. Server-rendered; the two client pieces are the tables and the selects.
+// A US company (US-06, #405; Spec 02A.1 §5.4, §7): the same tab in dollars, its inputs' sources the US slice's own (SEC EDGAR
+// filings, Yahoo Finance prices, Damodaran's US betas and implied ERP, the 10-year Treasury yield via FRED); no IMF panel for India.
 import { TabError } from "@/components/company/TabError";
 import type { ReactNode } from "react";
 import { AssumptionsTable } from "@/components/company/valuation/AssumptionsTable";
@@ -14,11 +16,11 @@ import { Qualifier } from "@/components/data/Qualifier";
 import { Stat, StatRow } from "@/components/data/Stat";
 import { StateNote } from "@/components/data/StateNote";
 import { Foot } from "@/components/policy/PanelFoot";
-import { DAMODARAN, sourceLineFor } from "@/lib/equity/company";
+import { DAMODARAN, SEC_EDGAR, YAHOO, sourceLineFor } from "@/lib/equity/company";
 import { GATE, assumptionRows, gridCentre, gridOptions, imfContext, leadKind, leadOf, runOf, type Lead } from "@/lib/equity/valuation";
-import { FEEDS } from "@/lib/feeds";
+import { FEEDS, PREVIEW_FEEDS } from "@/lib/feeds";
 import { NOT_AVAILABLE, formatCount, formatDate, formatFraction, formatFractionPoints } from "@/lib/format";
-import { IN_10Y } from "@/lib/policy/longrates";
+import { IN_10Y, US_10Y } from "@/lib/policy/longrates";
 import type { TaskFreshnessRow } from "@/lib/queries/api";
 import type { CompanyPageData } from "@/lib/queries/company";
 
@@ -72,10 +74,13 @@ export function ValuationTab({ data, freshness }: { data: Ok; freshness: TaskFre
   const run = runOf(valuation.runs, kind);
   const def = runOf(valuation.runs, "dcf_default");
   const lead = run ? leadOf(run) : null;
-  const nse = sourceLineFor(company.price_source_key);
+  const us = company.market === "US";
+  // The company's own data sources: NSE for India; SEC EDGAR (filings) and Yahoo Finance (prices) for the US.
+  const own = us ? [SEC_EDGAR, YAHOO] : [sourceLineFor(company.price_source_key)];
   const attribution = (key: string) => valuation.series?.find((s) => s.key === key)?.attribution ?? null;
+  const tasks = us ? PREVIEW_FEEDS.usValuation : TASKS;
   const foot = (sources: (string | null)[], dataTo: string | null): ReactNode => (
-    <Foot sources={sources} tasks={TASKS} dataTo={dataTo} freshness={freshness} now={now} />
+    <Foot sources={sources} tasks={tasks} dataTo={dataTo} freshness={freshness} now={now} />
   );
   const none = (
     <div className="p-3">
@@ -94,7 +99,7 @@ export function ValuationTab({ data, freshness }: { data: Ok; freshness: TaskFre
         titleId="panel-implied"
         subtitle={lender ? "Read through the return on equity, the way a bank is valued." : "The reverse DCF: the growth the latest close needs, against the growth delivered."}
         variant="flush"
-        footer={foot([nse, DAMODARAN], run?.as_of ?? null)}
+        footer={foot([...own, DAMODARAN], run?.as_of ?? null)}
       >
         <Gated policies={valuation.policies} field={GATE[kind]} heldBackNote={HELD} showLabel={false}>
           {lead ? <LeadBody lead={lead} lender={lender} /> : none}
@@ -124,12 +129,12 @@ export function ValuationTab({ data, freshness }: { data: Ok; freshness: TaskFre
         titleId="panel-assumptions"
         subtitle="Every input the model used, with its date and source."
         variant="flush"
-        footer={foot([nse, DAMODARAN, attribution(IN_10Y)], run?.as_of ?? null)}
+        footer={foot([...own, DAMODARAN, attribution(us ? US_10Y : IN_10Y)], run?.as_of ?? null)}
       >
         <Gated policies={valuation.policies} field={GATE[kind]} heldBackNote={HELD} showLabel={false}>
           {run ? (
             <AssumptionsTable
-              rows={assumptionRows(run)}
+              rows={assumptionRows(run, company.market)}
               currency={company.currency}
               market={company.market}
               caption={`${company.name}: each input to the ${lender ? "implied return on equity" : "reverse DCF"}, with its value, date and source`}
@@ -145,7 +150,7 @@ export function ValuationTab({ data, freshness }: { data: Ok; freshness: TaskFre
         titleId="panel-scenario"
         subtitle="Choose revenue growth, EBIT margin and the cost of capital; the value is read from the stored grid."
         variant="flush"
-        footer={foot([nse, DAMODARAN], valuation.scenarios[0]?.as_of ?? null)}
+        footer={foot([...own, DAMODARAN], valuation.scenarios[0]?.as_of ?? null)}
       >
         <Gated policies={valuation.policies} field={GATE.dcf_default} heldBackNote={HELD} showLabel={false}>
           {centre ? (
