@@ -514,10 +514,16 @@ def test_a_daily_run_sends_one_batch_polls_it_and_publishes_in_the_same_run():
     assert sorted((g[0], g[1]) for g in outputs(new)) == [("doc_summary", "published"),
                                                           ("statement_diff_summary", "published")]
     assert [(g[0], g[1]) for g in outputs(old)] == [("doc_summary", "published")]
-    # Priced at the batch rate (half the real-time price of the same tokens); the run's spend and the batch's agree.
-    rows = q("select input_tokens, output_tokens, cost_usd from core.ai_output where document_id = any(%s)", [old, new])
-    for tin, tout, cost in rows:
-        assert cost == ((tin * Decimal("0.10") + tout * Decimal("0.50")) / 1_000_000 / 2).quantize(Decimal("0.000001"))
+    # Priced at the batch rate (half the real-time price of the same tokens), at the rate of the model that answered (the
+    # diff summary's v7 is Sonnet 5.5's, #445); the run's spend and the batch's agree.
+    rows = q("""select input_tokens, output_tokens, cost_usd, model from core.ai_output
+                 where document_id = any(%s)""", [old, new])
+    rate = {"claude-haiku-5-5": (Decimal("0.10"), Decimal("0.50")), "claude-sonnet-5-5": (Decimal("2.00"), Decimal("10.00"))}
+    assert sorted(m for *_, m in rows) == ["claude-haiku-5-5", "claude-haiku-5-5", "claude-sonnet-5-5"]
+    for tin, tout, cost, model in rows:
+        i, o = rate[model]
+        assert cost == ((tin * i + tout * o) / 1_000_000 / 2).quantize(Decimal("0.000001"))
+    rows = [r_[:3] for r_ in rows]
     total = sum(c for *_, c in rows)
     assert r["cost"] == total.quantize(Decimal("0.0001"))
     (row,) = q("""select status, request_count, succeeded, errored, expired, cost_usd, task_run_id, collected_at
