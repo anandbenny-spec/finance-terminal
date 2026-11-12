@@ -23,12 +23,12 @@ import {
   stateNotes,
   valueChainModel,
 } from "@/lib/equity/valuechain";
-import { PREVIEW_FEEDS } from "@/lib/feeds";
+import { FEEDS } from "@/lib/feeds";
 import { dateInZone, formatDate } from "@/lib/format";
 import type { TaskFreshnessRow } from "@/lib/queries/api";
 import type { ValueChainOverviewData } from "@/lib/queries/valuechain";
 
-const TASKS = PREVIEW_FEEDS.valueChain;
+const TASKS = FEEDS.valueChain;
 
 export const valueChainHref = (slug: string): string => `/companies/${slug}/value-chain`;
 
