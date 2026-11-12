@@ -861,3 +861,20 @@ def test_a_stored_row_that_displaced_a_fuller_one_is_removed_by_the_rebuild(s3, 
     assert q("select count(*) from equity.financials where document_id = %s", doc) == [(0,)]
     assert q("select parse_status, parser_version from equity.filing where document_id = %s", doc) == [
         ("parsed", str(E.PARSER_VERSION))]
+
+
+def test_the_gaps_warning_reads_the_first_years_opening_balance_sheet_too():
+    """A valuation's first year opens with the balance sheet of the year end before it (#403: 3M's cash)."""
+    acc = lambda y: f"0000000004-{y % 100:02d}-000001"
+    yr = lambda y, v: fact(v, f"{y}-12-31", f"{y}-01-01", accn=acc(y), form="10-K", filed=f"{y + 1}-02-10")
+    at = lambda y, v: fact(v, f"{y}-12-31", accn=acc(y), form="10-K", filed=f"{y + 1}-02-10")
+    years = (2022, 2023, 2024, 2025)
+    cf = facts({"Revenues": {"USD": [yr(y, 9001) for y in years]}, "NetIncomeLoss": {"USD": [yr(y, 9002) for y in years]},
+                "Assets": {"USD": [at(y, 9003) for y in years]},
+                "CashAndCashEquivalentsAtCarryingValue": {"USD": [at(y, 9004) for y in years[1:]]},
+                "CashAndDueFromBanks": {"USD": [at(2022, 9005)]}})
+    s = E.Statements([(1, cf)], E.load_tags())
+    x = task_module.Company(next(c for c in us.load_us_config().companies if c.valuation_family == "operating"), 1)
+    x.stmts, x.built = s, [s.build(s.filings[acc(y)]) for y in years]
+    got = UsFilings._gaps([x]).detail
+    assert f"{x.c.ticker} cash empty in 1 of its periods (instant 2022-12-31); filed for them: CashAndDueFromBanks" in got
