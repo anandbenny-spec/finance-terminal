@@ -48,11 +48,11 @@ describe("the tab and the call in the URL", () => {
   it("is a tab in the URL, marked current", () => {
     expect(tabOf("calls")).toBe("calls");
     const out = html(calls());
-    expect(out).toContain('href="/companies/tcs?tab=calls"');
+    expect(out).toContain('href="/companies/tcs/calls"');
     expect(out).toMatch(/aria-current="page"[^>]*>Earnings calls</);
   });
 
-  it("opens on the default call and selects another with &call=", () => {
+  it("opens on the default call and selects another with /calls/<call>", () => {
     const old = call({ call_slug: "q1-fy27", fiscal_label: "Q1 FY27", period_end: "2026-06-30", is_default: false, is_newest: false, status: "on_company_website" });
     const now = call();
     expect(selectCall([old, now], undefined)?.call_slug).toBe("q2-fy27");
@@ -61,8 +61,8 @@ describe("the tab and the call in the URL", () => {
     expect(callOf("q1-fy27")).toBe("q1-fy27");
     expect(callOf("../x")).toBeUndefined();
     const out = html(calls({ calls: [old, now], selected: old }));
-    expect(out).toContain('href="/companies/tcs?tab=calls&amp;call=q1-fy27"');
-    expect(out).toContain('href="/companies/tcs?tab=calls&amp;call=q2-fy27"');
+    expect(out).toContain('href="/companies/tcs/calls/q1-fy27"');
+    expect(out).toContain('href="/companies/tcs/calls/q2-fy27"');
     expect(text(out)).toContain("Q1 FY27 call: what was said");
     expect(text(out)).toContain("Transcript on the company's website");
   });

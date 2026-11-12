@@ -1,6 +1,8 @@
 // web/lib/equity/company.ts: the company page's selection rules (2A-19; Spec 02A §8). Pure. Nothing here computes a
 // figure for display beyond what the spec asks (the day's change from the two closes `api.companies` returns): it
 // picks which stored rows and periods a panel shows, and what words a state is told in.
+import { callOf } from "@/lib/equity/calls";
+import type { WindowKey } from "@/lib/equity/rate";
 import type {
   CompanyFinancialRow,
   CompanyMetricRow,
@@ -21,14 +23,73 @@ export const TABS: readonly { id: TabId; label: string }[] = [
   { id: "calls", label: "Earnings calls" },
 ];
 
-/** The tab in the URL (?tab=…); anything else is the Overview. */
+/** The tab in a path segment (/companies/tcs/valuation); anything else is the Overview, so a caller that wants a 404 uses `tabParam`. */
 export function tabOf(value: string | string[] | undefined): TabId {
   return value === "financials" || value === "valuation" || value === "rate-decisions" || value === "calls" ? value : "overview";
 }
 
-/** The basis in the URL (?basis=…); consolidated unless standalone is asked for. */
+/** The basis in a path segment (/companies/tcs/financials/standalone); consolidated unless standalone is asked for. */
 export function basisOf(value: string | string[] | undefined): Basis {
   return value === "standalone" ? "standalone" : "consolidated";
+}
+
+// ---- the company page's addresses (R05-9b, 12 Nov 2026) ----
+// The tab and its view are path segments, never query strings, so each page is built ahead and cached like Policy Day:
+//   /companies/tcs                           the Overview (no segment)
+//   /companies/tcs/valuation                 a tab
+//   /companies/tcs/financials/standalone     a tab's view: the basis,
+//   /companies/tcs/rate-decisions/d5         the rate-decision window,
+//   /companies/tcs/calls/q2-fy27             or a call. The default view has no segment.
+// /companies/tcs/value-chain is its own static route and is not a tab.
+
+/** A tab with its own segment: every tab but the Overview. */
+export type PathTab = Exclude<TabId, "overview">;
+
+/** The tab a path segment names, or null (the route answers 404): `overview` and `value-chain` are not tab segments. */
+export function tabParam(segment: string | undefined): PathTab | null {
+  return segment === "financials" || segment === "valuation" || segment === "rate-decisions" || segment === "calls" ? segment : null;
+}
+
+/** What a tab's view segment selects: the basis, the rate-decision window or a call's slug. */
+export type CompanyViewSelection = { basis: Basis; window: WindowKey; call: string | undefined };
+
+/** A tab's default view: consolidated, one day, the default call. */
+export const DEFAULT_VIEW: CompanyViewSelection = { basis: "consolidated", window: "d1", call: undefined };
+
+/**
+ * The view a tab's second segment names; null when the tab doesn't take that value (the route answers 404). No segment is the
+ * tab's default view (consolidated, one day, the default call). A call slug is any slug-shaped string (`callOf`); one the
+ * company doesn't have shows the default call, as the old query link did.
+ */
+export function viewParam(tab: PathTab, segment: string | undefined): CompanyViewSelection | null {
+  const base = DEFAULT_VIEW;
+  if (segment === undefined) return base;
+  if (tab === "financials") return segment === "standalone" ? { ...base, basis: "standalone" } : null;
+  if (tab === "rate-decisions") return segment === "d5" ? { ...base, window: "d5" } : null;
+  if (tab === "calls") {
+    const call = callOf(segment);
+    return call ? { ...base, call } : null;
+  }
+  return null;
+}
+
+/** The tab and view a catch-all path (`["financials", "standalone"]`) names, or null when it names none (the route answers 404). */
+export function pathParam(path: string[] | undefined): { tab: PathTab; view: CompanyViewSelection } | null {
+  if (!path || path.length < 1 || path.length > 2) return null;
+  const tab = tabParam(path[0]);
+  const view = tab ? viewParam(tab, path[1]) : null;
+  return tab && view ? { tab, view } : null;
+}
+
+/**
+ * The path of a company's tab and, for a tab that has views, its view (`standalone`, `d5` or a call's slug). The one builder
+ * of company links: a view the tab doesn't take is left out, so a link never points at a 404. The Overview is the bare slug.
+ */
+export function companyHref(slug: string, tab: TabId, view?: string): string {
+  const base = `/companies/${slug}`;
+  if (tab === "overview") return base;
+  const selection = viewParam(tab, view);
+  return `${base}/${tab}${view !== undefined && selection ? `/${view}` : ""}`;
 }
 
 export const SOURCE_LINE: Record<string, string> = { nse: "Source: NSE", bse: "Source: BSE" };

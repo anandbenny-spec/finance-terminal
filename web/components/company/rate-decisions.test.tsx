@@ -24,7 +24,7 @@ const html = (r: RateTabData | null, window: "d1" | "d5" = "d1") =>
 describe("the Rate decisions tab", () => {
   it("is a tab in the URL, marked current", () => {
     const out = html(rates());
-    expect(out).toContain('href="/companies/tcs?tab=rate-decisions"');
+    expect(out).toContain('href="/companies/tcs/rate-decisions"');
     expect(out).toMatch(/aria-current="page"[^>]*>Rate decisions</);
   });
 
@@ -53,7 +53,7 @@ describe("the Rate decisions tab", () => {
     const t = text(html(rates(), "d5"));
     expect(t).toContain("+0.91");
     expect(t).not.toContain("−0.30");
-    expect(html(rates(), "d5")).toMatch(/aria-current="page"[^>]*href="\/companies\/tcs\?tab=rate-decisions&amp;window=d5"/);
+    expect(html(rates(), "d5")).toMatch(/aria-current="page"[^>]*href="\/companies\/tcs\/rate-decisions\/d5"/);
   });
 
   it("lists the cycles with their dates, n and the stock's, the Nifty 50's and the excess, an ongoing one labelled", () => {

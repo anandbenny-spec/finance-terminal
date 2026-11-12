@@ -17,6 +17,7 @@ import { PageHeader, type Crumb } from "@/components/data/PageHeader";
 import { Panel } from "@/components/data/Panel";
 import { SourceLine } from "@/components/data/SourceLine";
 import { StateNote } from "@/components/data/StateNote";
+import { companyHref } from "@/lib/equity/company";
 import { FEEDS, PREVIEW_FEEDS } from "@/lib/feeds";
 import { dateInZone, formatDate } from "@/lib/format";
 import { summaryBlock } from "@/lib/policy/ai";
@@ -82,7 +83,7 @@ export const PRIVATE_TEXT_NOTE = "This transcript isn't reproduced here. Read it
 function PrivateTextPage({ doc, readAt, freshness }: { doc: DocumentRow; readAt: string; freshness: TaskFreshnessRow[] | null }) {
   const date = doc.published_at ? dateInZone(doc.published_at, "Asia/Kolkata") : null;
   const official = doc.source_url?.startsWith("https://") ? doc.source_url : null;
-  const callHref = `/companies/${doc.entity_slug}?tab=calls${doc.event_slug ? `&call=${doc.event_slug}` : ""}`;
+  const callHref = companyHref(doc.entity_slug, "calls", doc.event_slug ?? undefined);
   const fresh = panelFreshness(freshness, PREVIEW_FEEDS.calls, date, readAt);
   const source = doc.attribution ?? "Source: NSE";
   const link = (
