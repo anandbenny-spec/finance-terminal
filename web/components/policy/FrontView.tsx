@@ -23,7 +23,7 @@ import { RateStats } from "@/components/policy/RateStats";
 import { TakeTourButton } from "@/components/shell/GuidedTour";
 import { VotesPanel } from "@/components/policy/VotesPanel";
 import { Button } from "@/components/ui/button";
-import { FEEDS, type TaskKey } from "@/lib/feeds";
+import { DAILY_TASKS, FEEDS, type TaskKey } from "@/lib/feeds";
 import { formatDate, formatReleaseTime } from "@/lib/format";
 import { buildChangeStrips, stripScale } from "@/lib/policy/changestrip";
 import { decisionLine, meetingTabHref, tally } from "@/lib/policy/decisions";
@@ -169,8 +169,8 @@ export function FrontView({ front }: { front: Front }) {
   const decisions = o.history.ok ? o.history.decisions : null;
   const fed = o.fed.ok ? o.fed : null;
   const rbi = o.rbi.ok ? o.rbi : null;
-  const foot = (sources: (string | null | undefined)[], tasks: readonly TaskKey[], dataTo: string | null) => (
-    <Foot sources={sources} tasks={tasks} dataTo={dataTo} freshness={freshness} now={now} />
+  const foot = (sources: (string | null | undefined)[], tasks: readonly TaskKey[], dataTo: string | null, checkedTasks?: readonly string[]) => (
+    <Foot sources={sources} tasks={tasks} dataTo={dataTo} freshness={freshness} now={now} checkedTasks={checkedTasks} />
   );
   const fedSource = sourceOf("Fed", o.fed);
   const rbiSource = sourceOf("RBI", o.rbi);
@@ -250,7 +250,7 @@ export function FrontView({ front }: { front: Front }) {
             variant="flush"
             footer={
               <>
-                {foot([fedSource, rbiSource], FEEDS.policyRatesStand, latestOf(fed?.meeting?.decision_date, rbi?.meeting?.decision_date))}
+                {foot([fedSource, rbiSource], FEEDS.policyRatesStand, latestOf(fed?.meeting?.decision_date, rbi?.meeting?.decision_date), DAILY_TASKS)}
                 <Link href="/policy" className="text-ink-1 underline">
                   Open the Fed vs RBI tracker →
                 </Link>
