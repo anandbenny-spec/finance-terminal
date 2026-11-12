@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { CompanyView } from "@/components/company/CompanyView";
 import { ValueChainPage } from "@/components/company/value-chain/ValueChainPage";
 import { ValueChainFlow } from "@/components/company/value-chain/ValueChainFlow";
-import { AS_REPORTED, VC_HELD, flowOf, yearsOf } from "@/lib/equity/valuechain";
+import { AS_REPORTED, RESTATED_NOTE, VC_HELD, flowOf, yearsOf } from "@/lib/equity/valuechain";
 import type { FieldPolicyRow, TaskFreshnessRow } from "@/lib/queries/api";
 import type { ValueChainPageData } from "@/lib/queries/valuechain";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -180,6 +180,16 @@ describe("each state, in its words", () => {
     expect(t).toContain("Restated in the FY 2026-27 BRSR to 89.9%");
   });
 
+  it("the explainer says the figures are the XBRL's, and says what a shown restatement is, only where the year has one (#433)", () => {
+    const plain = text(panel(overview(), "panel-value-chain"));
+    expect(plain).toContain("tagged in the BRSR's XBRL file");
+    expect(plain).toContain("Not applicable");
+    expect(plain).toContain("where the XBRL file carries 0");
+    expect(plain).not.toContain(RESTATED_NOTE);
+    const restated = text(panel(overview([...card(FY26, { fields: { within_india_share: { restated: true, next: 89.9 } } })]), "panel-value-chain"));
+    expect(restated).toContain(RESTATED_NOTE);
+  });
+
   it("a year of other than 12 months says how long it was", () => {
     const t = text(panel(overview(card({ label: "FY 2023-24", start: "2023-01-01", end: "2024-03-31" }, { months: 15 }), ALL_SHOWN), "panel-value-chain"));
     expect(t).toContain("15 months, 1 Jan 2023 – 31 Mar 2024");
@@ -347,6 +357,8 @@ describe("the sub-page once released", () => {
   it("states the source and the caveat on the figures", () => {
     expect(t).toContain(AS_REPORTED);
     expect(t).toContain("Source: the company's BRSR, filed on NSE");
+    expect(t).toContain("tagged in the BRSR's XBRL file");
+    expect(t).toContain(RESTATED_NOTE);
   });
 
   it("uses none of the banned words in its own text", () => {
