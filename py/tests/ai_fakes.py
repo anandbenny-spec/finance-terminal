@@ -197,7 +197,9 @@ class FakeClaude:
             blocks[1] = {**blocks[1], "text": blocks[1]["text"] + "\x00"}
         stop = mode if mode in ("max_tokens", "refusal") else "end_turn"
         chars = sum(len(t) for _, t in docs)
-        return message(blocks, stop=stop, input_tokens=600 + chars // 4, mid=f"msg_{self.n}")
+        # the model that answers is the one the request named (#445: statement_diff_summary v7 runs on Sonnet 5.5)
+        return message(blocks, stop=stop, input_tokens=600 + chars // 4, mid=f"msg_{self.n}",
+                       model=body.get("model") or "claude-haiku-5-5")
 
     # ---------------------------------------------------------------------------------------- batches
     def _create(self, body: dict, request: httpx2.Request) -> httpx2.Response:

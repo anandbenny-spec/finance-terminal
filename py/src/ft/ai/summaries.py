@@ -19,6 +19,10 @@ passages they cite.
 - For `statement_diff_summary` from prompt v4 on (#445, R05-2; Anand's option 1, 12 Nov 2026; `drop_copies`), before
   these checks: a cited text block that is a word-for-word copy of its own cited text comes out of the bullet's text, and
   its citations stay on the bullet (`mark_copies`, `settle_copies`). The checks then run on the final text, unchanged.
+- For `statement_diff_summary` from prompt v7 on (#445, round 6; Anand's decision of 12 Nov 2026, 22:36 IST;
+  `check_quotes`), one more check, a tightening: every stretch a bullet puts in double quotation marks is found in that
+  bullet's own cited passages, and its quotation marks are balanced (`quote_problem`). v7 also runs on Sonnet 5.5
+  (`DIFF_MODEL_OF`).
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
 (`policy.ai_batch`). The database checks the published output's citations again at commit (Architecture 01 §1.4).
@@ -31,9 +35,14 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from ft.ai.citations import map_api_citation
-from ft.ai.client import Prompt, Reply, Request, Source, TextPart
+from ft.ai.client import SONNET, Prompt, Reply, Request, Source, TextPart
 
 BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
+# The model of a statement_diff_summary prompt version that doesn't run on the task's (Haiku 5.5). v7 is Sonnet 5.5's (#445,
+# round 6; Anand's decision of 12 Nov 2026, 22:36 IST): the judge failed Haiku's round 5 (v6) on 7 of 10 targets, mostly on
+# the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
+# Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
+DIFF_MODEL_OF = {"v7": SONNET}
 _MARK = re.compile(r"^[ \t]*(?:[-*•–—]|\d{1,2}[.)])[ \t]+")
 
 
@@ -158,7 +167,8 @@ def diff_summary_request(new: Doc, old: Doc, segments: dict, prompt: Prompt, *, 
                    f"({_when(new.day)}). These sentences changed between them:\n\n"
                    f"{redline_text(segments, old.text, new.text)}\n\n"
                    f"In {lo} to {hi} bullets, explain what changed, following the rules.")
-    return Request("statement_diff_summary", prompt, sources, instruction, note=_note(note))
+    return Request("statement_diff_summary", prompt, sources, instruction, model=DIFF_MODEL_OF.get(prompt.version),
+                   note=_note(note))
 
 
 # ---------------------------------------------------------------------------------------------- checking a reply
@@ -262,18 +272,20 @@ def _overlaps(s: int, e: int, spans: list[tuple[int, int]]) -> bool:
 # tests run `check` on crafted bad replies and assert each phrase still lands where it says). Regexes, case-insensitive.
 # Change a message above and this table together.
 REASON_PHRASES: dict[str, tuple[str, ...]] = {
-    "citation": (r"no verified citation",),
+    "citation": (r"no verified citation", r"quoted words not in its cited passages"),
     "numbers": (r"numbers not in its cited passages",),
-    "format": (r"text outside the bullets", r"no bullets \(each bullet", r"\d+ bullets, not \d+ to \d+"),
+    "format": (r"text outside the bullets", r"no bullets \(each bullet", r"\d+ bullets, not \d+ to \d+",
+               r"an unclosed quotation mark"),
 }
 
 
 def verify_bullet(body: str, cites: list, sources: tuple[Source, ...], mapping: Counter, *,
                   changed: dict[int, list[tuple[int, int]]] | None = None,
-                  full_text: dict[int, str] | None = None) -> Bullet:
+                  full_text: dict[int, str] | None = None, quotes: bool = False) -> Bullet:
     """One bullet against our copies of the documents: each citation mapped into them (`citations.map_api_citation`),
     then the bullet kept only with a verified citation and only figures from its cited passages. `mapping` counts how
-    the citations mapped. `changed`: for statement_diff_summary, each document's changed spans."""
+    the citations mapped. `changed`: for statement_diff_summary, each document's changed spans. `quotes`: also only
+    quotations from its cited passages (`quote_problem`; statement_diff_summary from v7 on)."""
     b = Bullet(body)
     seen = set()
     passages = []
@@ -307,7 +319,50 @@ def verify_bullet(body: str, cites: list, sources: tuple[Source, ...], mapping: 
                      else "no verified citation")
     elif extra := unsupported_figures(body, passages):
         b.problem = "numbers not in its cited passages: " + ", ".join(extra)
+    elif quotes and (q := quote_problem(body, passages)):
+        b.problem = q
     return b
+
+
+# ---------------------------------------------------------------------------------------------- quotations (statement_diff_summary)
+# #445, round 6 (Anand's decision of 12 Nov 2026, 22:36 IST, after the judge failed round 5): from prompt v7 on
+# (`ai_batch.QUOTES_FROM`), a bullet's quotations come only from its own cited passages. The citation check proves each
+# citation exists, not that the words a bullet quotes come from them, and the judge's rule (b) fails were exactly that:
+# words quoted from the previous statement in a bullet that cited only the new one. A tightening (the card allows it):
+# - Each stretch between a pair of double quotation marks (`match_form`: curly ones straightened) is found in one of the
+#   bullet's cited passages, or in its passages joined in order (a quoted copy of two cited sentences, `settle_copies`),
+#   case aside. Punctuation the sentence puts just inside the closing mark (".", ",", ";", ":", "!", "?") doesn't count.
+#   An elision ("...", "…") or a bracketed insertion ("reinvest[ed]") splits it: the pieces are found in order in one
+#   haystack. Its ends are word-bounded where they are words ("solid" isn't found in "solidly").
+# - An odd number of double quotation marks fails the bullet: what is quoted can't be told.
+# A bullet that fails is dropped, so the reply is retried once with a note, then rejected (the published output stays).
+_QUOTED = re.compile(r'"([^"]*)"')
+_ELISION = re.compile(r"\s*(?:\.\.\.|…|\[[^\]]*\])\s*")
+_INNER_END = ".,;:!?"
+
+
+def _quote_found(q: str, hay: list[str]) -> bool:
+    q = q.strip().rstrip(_INNER_END).strip().casefold()
+    pieces = [x for x in _ELISION.split(q) if _WORD.search(x)]
+    if not pieces:
+        return True                                      # a quoted mark or elision alone quotes no words
+    body = r".*?".join(re.escape(x) for x in pieces)
+    head = r"(?<!\w)" if re.match(r"\w", q) else ""
+    tail = r"(?!\w)" if re.search(r"\w$", q) else ""
+    t = re.compile(head + body + tail)
+    return any(t.search(h) for h in hay)
+
+
+def quote_problem(body: str, passages: list[str]) -> str | None:
+    """Why a bullet's quotations fail (see above), or None."""
+    t = match_form(body)
+    if t.count('"') % 2:
+        return "an unclosed quotation mark"
+    hay = [match_form(h).casefold() for h in [*passages, " ".join(passages)]]
+    bad = [q for q in _QUOTED.findall(t) if not _quote_found(q, hay)]
+    if bad:
+        return "quoted words not in its cited passages: " + ", ".join(f'"{q.strip()[:80]}"' for q in bad)
+    return None
 
 
 # ---------------------------------------------------------------------------------------------- copies (statement_diff_summary)
@@ -533,10 +588,11 @@ def settle_copies(body: str, tally: Counter) -> str:
 
 def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
           changed: dict[int, list[tuple[int, int]]] | None = None, full_text: dict[int, str] | None = None,
-          drop_copies: bool = False) -> Checked:
+          drop_copies: bool = False, check_quotes: bool = False) -> Checked:
     """Check a reply against our copies of the documents it was given (`sources`; `full_text` by document id when a
     source is a segment). `changed`: for statement_diff_summary, each document's changed spans. `drop_copies`: for
-    statement_diff_summary from prompt v4 on (`ai_batch.COPIES_FROM`), the copies rule above; ignored for other tasks."""
+    statement_diff_summary from prompt v4 on (`ai_batch.COPIES_FROM`), the copies rule above; `check_quotes`: from v7 on
+    (`ai_batch.QUOTES_FROM`), the quotations rule above. Both are ignored for other tasks."""
     lo, hi = BULLETS[task]
     mapping: Counter = Counter()
     copies: Counter = Counter()
@@ -546,7 +602,8 @@ def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
     if diff:
         found = [(settle_copies(body, copies), cites) for body, cites in found]
         stray = [unmark(x) for x in stray]
-    bullets = [verify_bullet(body, cites, sources, mapping, changed=changed, full_text=full_text)
+    quotes = check_quotes and task == "statement_diff_summary"
+    bullets = [verify_bullet(body, cites, sources, mapping, changed=changed, full_text=full_text, quotes=quotes)
                for body, cites in found]
     problems = []
     if stray:
