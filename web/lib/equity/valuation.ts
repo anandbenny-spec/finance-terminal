@@ -115,6 +115,35 @@ export type AssumptionRow = {
 
 const DRIVER_SOURCE = "Derived by the model from the filings";
 
+const INTERNAL_KEY = "(?:equity|us|policy|core|ops|site|ai|semantic|api)\\.[a-z_]+";
+
+/**
+ * A stored source, held reason or note in visitor words (Review 05, finding 3; CLAUDE.md §4: visitors never see task
+ * names). It only removes or renames: a task key (`equity.metrics`) goes with its brackets or its "; ", Damodaran's two
+ * files are named in words, and what the removal leaves (empty brackets, a dangling "; ", double spaces) is tidied.
+ */
+export function visitorText(value: string): string;
+export function visitorText(value: string | null): string | null;
+export function visitorText(value: string | null): string | null {
+  if (value === null) return null;
+  return value
+    .replace(/ERPbymonth, ctryprem/g, "implied equity risk premium by month; country risk premiums")
+    .replace(/ERPbymonth/g, "implied equity risk premium by month")
+    .replace(/ctryprem(?:[A-Za-z]+\d+)?/g, "country risk premiums")
+    .replace(new RegExp(`\\s*;\\s*${INTERNAL_KEY}(?=\\s*\\))`, "g"), "")
+    .replace(new RegExp(`\\s*\\(\\s*${INTERNAL_KEY}\\s*\\)`, "g"), "")
+    .replace(new RegExp(`\\b${INTERNAL_KEY}\\b`, "g"), "")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s*;\s*(?=[;)])/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;)])/g, "$1")
+    .trim();
+}
+
+function inVisitorWords(row: AssumptionRow): AssumptionRow {
+  return { ...row, source: visitorText(row.source), held: visitorText(row.held), note: visitorText(row.note) };
+}
+
 function fromInput(id: string, label: string, kind: AssumptionKind, input: StoredInput | null, note: string | null = null): AssumptionRow | null {
   if (!input) return null;
   return { id, label, kind, value: input.value, held: input.held, asOf: input.asOf, source: input.source, derived: false, note };
@@ -191,7 +220,7 @@ export function assumptionRows(run: CompanyValuationRow, companyMarket: Market =
       derived("g", "Terminal growth", "fraction", model.terminal_growth, rf?.asOf ?? null, DRIVER_SOURCE, "Set equal to the risk-free rate"),
       fromInput("delivered", "Delivered return on equity, average", "fraction", storedInput(lender.delivered_roe)),
     );
-    return rows.filter((r): r is AssumptionRow => r !== null);
+    return rows.filter((r): r is AssumptionRow => r !== null).map(inVisitorWords);
   }
   const company = rec(inputs.company) ?? {};
   const drivers = rec(inputs.drivers) ?? {};
@@ -236,7 +265,7 @@ export function assumptionRows(run: CompanyValuationRow, companyMarket: Market =
     derived("gt", "Terminal growth", "fraction", drivers.terminal_growth, rf?.asOf ?? null, DRIVER_SOURCE, "Set equal to the risk-free rate"),
     fromInput("shares", "Shares outstanding today", "shares", storedInput(company.shares)),
   );
-  return rows.filter((r): r is AssumptionRow => r !== null);
+  return rows.filter((r): r is AssumptionRow => r !== null).map(inVisitorWords);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

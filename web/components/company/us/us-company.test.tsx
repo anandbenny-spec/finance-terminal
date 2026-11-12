@@ -217,6 +217,10 @@ describe("a US company's Valuation", () => {
     expect(t).toContain("Interest expense over average debt");
     expect(t).not.toContain("results filings");
   });
+  it("shows no internal task name or file key in the Assumptions table's Source column (Review 05, finding 3)", () => {
+    expect(t).not.toMatch(/\b(equity|us|policy|core|ops|site|ai|semantic|api)\.[a-z_]+\b/);
+    expect(t).not.toMatch(/ERPbymonth|ctryprem/);
+  });
 });
 
 describe("every US tab", () => {
