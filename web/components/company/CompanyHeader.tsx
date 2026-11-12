@@ -2,7 +2,8 @@
 // and BSE code, the curated peer group (a Qualifier: curated), the indexes it belongs to, and the last close with its date
 // and the day's change (a market move: sign and triangle, via Delta). The day's change is the two closes `api.companies`
 // returns; it is held back when a split, bonus or consolidation went ex between those two sessions. Source and freshness
-// sit in the page header's meta row.
+// sit in the page header's meta row. A US company (US-06, #405; Spec 02A.1 §7) shows its ticker, listing exchange and SEC CIK
+// where an Indian one shows the NSE symbol, ISIN and BSE code; its close is in dollars.
 import type { ReactNode } from "react";
 import { Delta } from "@/components/data/Delta";
 import { Panel } from "@/components/data/Panel";
@@ -31,11 +32,21 @@ export function CompanyHeader({ company, day, indexNames }: { company: CompanyRo
     <Panel label={`${company.name}: identifiers and last close`} className="mt-6">
       <div className="grid gap-4 md:grid-cols-3">
         <dl className="grid grid-cols-2 gap-x-6 gap-y-3 md:col-span-2">
-          <Item label="NSE symbol">
-            <span className="font-mono">{company.nse_symbol}</span>
-          </Item>
-          <Item label="ISIN">{company.isin ? <span className="font-mono">{company.isin}</span> : absent}</Item>
-          <Item label="BSE code">{company.bse_code ? <span className="font-mono">{company.bse_code}</span> : absent}</Item>
+          {company.market === "US" ? (
+            <>
+              <Item label="Ticker">{company.ticker ? <span className="font-mono">{company.ticker}</span> : absent}</Item>
+              <Item label="Exchange">{company.price_exchange ? <span className="font-mono">{company.price_exchange}</span> : absent}</Item>
+              <Item label="SEC CIK">{company.cik ? <span className="font-mono">{company.cik}</span> : absent}</Item>
+            </>
+          ) : (
+            <>
+              <Item label="NSE symbol">
+                <span className="font-mono">{company.nse_symbol}</span>
+              </Item>
+              <Item label="ISIN">{company.isin ? <span className="font-mono">{company.isin}</span> : absent}</Item>
+              <Item label="BSE code">{company.bse_code ? <span className="font-mono">{company.bse_code}</span> : absent}</Item>
+            </>
+          )}
           <Item label="Peer group">
             {company.peer_group_label ? (
               <span>

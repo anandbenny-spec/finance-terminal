@@ -36,7 +36,7 @@ import { readValueChainOverview, type ValueChainOverviewData } from "@/lib/queri
 import { publicClient } from "@/lib/supabase/public";
 import type { TabId } from "@/lib/equity/company";
 import { IMF_CPI, IMF_GDP } from "@/lib/equity/valuation";
-import { IN_10Y } from "@/lib/policy/longrates";
+import { IN_10Y, US_10Y } from "@/lib/policy/longrates";
 
 export type CompanyDb = SupabaseClient<ApiDatabase, "api">;
 
@@ -233,6 +233,21 @@ export async function readCompanyName(slug: string): Promise<string | null> {
   }
 }
 
+/** The company's market, for the page's description (US-06, #405): null when no company has the slug or the read fails. */
+export async function readCompanyMarket(slug: string): Promise<"IN" | "US" | null> {
+  "use cache";
+  cacheLife("minutesNoExpire");
+  cacheTag("equity", `company-${slug}`);
+  const db = publicClient();
+  if (!db) return null;
+  try {
+    return (await readCompany(db, slug))?.market ?? null;
+  } catch (error) {
+    logFailure(`${slug} market`, error);
+    return null;
+  }
+}
+
 /** What one tab reads; exactly one field is set, the rest null. */
 export type TabData = {
   overview: OverviewData | null;
@@ -249,9 +264,12 @@ export async function loadHeader(db: CompanyDb, slug: string) {
   return { company, actions, indexNames };
 }
 
-/** The reads of one tab, each whole or not at all. Throws on a failed read, except the few that may fail on their own (promoter holding, IMF). */
-export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: string): Promise<TabData> {
+/** The reads of one tab, each whole or not at all. Throws on a failed read, except the few that may fail on their own (promoter holding, IMF).
+ * A US company (US-06, #405; Spec 02A.1 §7) reads only what its page shows: no calls or rate-decision reads (those tabs don't apply),
+ * no value chain, promoter, segment-change or IMF India reads (Indian disclosures), and the 10-year Treasury's source line. */
+export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: string, market: "IN" | "US" = "IN"): Promise<TabData> {
   const data: TabData = { overview: null, financials: null, valuation: null, rates: null, calls: null };
+  if (market === "US") return loadUsTab(db, slug, tab, data);
   if (tab === "calls") {
     data.calls = await readCallsTab(db, slug, call);
   } else if (tab === "rate-decisions") {
@@ -301,6 +319,29 @@ export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: st
   return data;
 }
 
+/** A US company's tab reads (Spec 02A.1 §7). Earnings calls and rate decisions read nothing: the page says they don't apply. */
+async function loadUsTab(db: CompanyDb, slug: string, tab: TabId, data: TabData): Promise<TabData> {
+  if (tab === "overview") {
+    const [prices, metrics, peers] = await Promise.all([readCompanyPrices(db, slug), readCompanyMetrics(db, slug), readPeers(db, slug)]);
+    data.overview = { prices, metrics, peers };
+  } else if (tab === "financials") {
+    const [rows, metrics] = await Promise.all([readFinancials(db, slug), readCompanyMetrics(db, slug)]);
+    data.financials = { financials: rows, metrics, promoter: null };
+  } else if (tab === "valuation") {
+    const [runs, scenarios, policies, series] = await Promise.all([
+      readValuationRuns(db, slug),
+      readScenarios(db, slug),
+      readFieldPolicy(db as PolicyDb),
+      readSeriesInfo(db as PolicyDb, [US_10Y]).catch((error: unknown) => {
+        logFailure(`${slug} valuation series`, error);
+        return null;
+      }),
+    ]);
+    data.valuation = { runs, scenarios, policies, imf: null, series };
+  }
+  return data;
+}
+
 // The page is two cached reads and an uncached join (#328). A read that throws out of a `'use cache'` function is not stored
 // (Next 16), so a failure never outlives the database's recovery, and neither cached read needs a shorter cache profile
 // (lib/queries/cache-profiles.test.ts allows only the no-expiry ones). The header stays all-or-nothing; a failed tab read
@@ -315,13 +356,13 @@ export async function readHeader(slug: string) {
   return { readAt, ...(await loadHeader(db, slug)) };
 }
 
-async function readTab(slug: string, tab: TabId, call?: string): Promise<TabData> {
+async function readTab(slug: string, tab: TabId, call: string | undefined, market: "IN" | "US"): Promise<TabData> {
   "use cache";
   cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);
   const db = publicClient();
   if (!db) throw new Error("NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
-  return loadTab(db, slug, tab, call);
+  return loadTab(db, slug, tab, call, market);
 }
 
 /** The page's reads for one tab. The header (company row, actions, index names) is all-or-nothing: if it fails, or no company has the slug, the result is `{ ok: false }`. A failed tab read gives `ok: true` with that tab's data null and `tabFailed` set. */
@@ -338,7 +379,7 @@ export async function readCompanyPage(slug: string, tab: TabId, call?: string): 
   let data: TabData = { overview: null, financials: null, valuation: null, rates: null, calls: null };
   let tabFailed = false;
   try {
-    data = await readTab(slug, tab, call);
+    data = await readTab(slug, tab, call, company.market);
   } catch (error) {
     logFailure(`${slug} ${tab} tab`, error);
     tabFailed = true;

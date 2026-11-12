@@ -15,7 +15,7 @@ import type { CorporateActionRow } from "@/lib/queries/api";
 
 const key = (a: CorporateActionRow) => `${a.kind}|${a.ex_date}|${a.subject ?? ""}|${a.exchange}`;
 
-function columns(upcoming: boolean): Column<CorporateActionRow>[] {
+function columns(upcoming: boolean, market: "IN" | "US"): Column<CorporateActionRow>[] {
   return [
     {
       id: "ex",
@@ -26,7 +26,8 @@ function columns(upcoming: boolean): Column<CorporateActionRow>[] {
     { id: "kind", header: "Kind", cell: (a) => KIND_LABEL[a.kind] ?? a.kind, sortValue: (a) => a.kind },
     {
       id: "subject",
-      header: "As filed",
+      // A US action's wording is Yahoo Finance's listing (US-06, #405), not an exchange filing.
+      header: market === "US" ? "As listed" : "As filed",
       // A stored URL that isn't https:// renders as text, not a link (the check the other filing links make; #367).
       cell: (a) =>
         a.source_url?.startsWith("https://") ? (
@@ -60,9 +61,19 @@ function columns(upcoming: boolean): Column<CorporateActionRow>[] {
   ];
 }
 
-export function ActionsPanel({ upcoming, past, footer }: { upcoming: CorporateActionRow[]; past: CorporateActionRow[]; footer: ReactNode }) {
-  const upcomingColumns = useMemo(() => columns(true), []);
-  const pastColumns = useMemo(() => columns(false), []);
+export function ActionsPanel({
+  upcoming,
+  past,
+  footer,
+  market = "IN",
+}: {
+  upcoming: CorporateActionRow[];
+  past: CorporateActionRow[];
+  footer: ReactNode;
+  market?: "IN" | "US";
+}) {
+  const upcomingColumns = useMemo(() => columns(true, market), [market]);
+  const pastColumns = useMemo(() => columns(false, market), [market]);
   return (
     <Panel
       title="Corporate actions"

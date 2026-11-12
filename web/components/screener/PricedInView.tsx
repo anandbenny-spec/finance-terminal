@@ -12,7 +12,7 @@ import { Gated, type FieldPolicies } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
 import { Qualifier } from "@/components/data/Qualifier";
 import { StateNote } from "@/components/data/StateNote";
-import { companyHref } from "@/lib/equity/company";
+import { companyHref, symbolOf } from "@/lib/equity/company";
 import { splitRanked, unrankedReason } from "@/lib/equity/priced-in";
 import { formatCount, formatFraction, formatFractionPoints, NOT_AVAILABLE, NOT_AVAILABLE_LABEL } from "@/lib/format";
 import type { PricedInRow } from "@/lib/queries/api";
@@ -31,7 +31,7 @@ function CompanyLink({ row }: { row: PricedInRow }) {
   return (
     <Link href={companyHref(row.slug, "valuation")} className="text-ink-1 underline hover:text-ink-2">
       {name(row)}
-      {row.nse_symbol && <span className="ml-1.5 text-meta text-ink-3">{row.nse_symbol}</span>}
+      {symbolOf(row) && <span className="ml-1.5 text-meta text-ink-3">{symbolOf(row)}</span>}
     </Link>
   );
 }
@@ -138,12 +138,17 @@ export function PricedInView({
   lenders,
   policies,
   footer,
+  market = "IN",
 }: {
   operating: readonly PricedInRow[];
   lenders: readonly PricedInRow[];
   policies: FieldPolicies;
   footer: ReactNode;
+  /** The one market these rows are in (the page's market control, US-06, #405): it names the currency and the book value used. */
+  market?: "IN" | "US";
 }) {
+  const currency = market === "US" ? "dollars" : "rupees";
+  const book = market === "US" ? "the latest balance sheet's book value to owners" : "the latest half-year book value to owners";
   return (
     <div className="flex flex-col gap-4">
       <Table spec={OPERATING} rows={operating} policies={policies} footer={footer} />
@@ -156,7 +161,7 @@ export function PricedInView({
           </p>
           <p>
             Operating companies. A reverse discounted cash flow solves for the revenue growth, held for years 1 to 5, that makes the model&apos;s value per share equal the latest close. After
-            year 5 growth fades in a straight line to the terminal rate, the risk-free rate in rupees, by year 10. Every other assumption is the one the Valuation tab shows: the EBIT margin and
+            year 5 growth fades in a straight line to the terminal rate, the risk-free rate in {currency}, by year 10. Every other assumption is the one the Valuation tab shows: the EBIT margin and
             the sales-to-capital ratio from the last three filed years, tax moving from the company&apos;s recent rate to the marginal rate, discounting at the cost of capital, and no excess
             returns after year 10. Where faster growth would lower the model&apos;s value, because the return on capital is below the cost of capital, where the return on capital is so
             close to the cost of capital that growth earns little more than it costs, or where the price implies growth outside the range the solver searches, no figure is shown and the
@@ -169,7 +174,7 @@ export function PricedInView({
           </p>
           <p>
             Lenders. For a stable lender the model&apos;s price to book is (ROE − g) ÷ (Ke − g), where g is the terminal growth rate and Ke the cost of equity. Solving for ROE gives implied ROE =
-            g + P/B × (Ke − g), using the latest half-year book value to owners. It is never placed in the same table as the operating companies, because a growth rate and a return on equity are
+            g + P/B × (Ke − g), using {book}. It is never placed in the same table as the operating companies, because a growth rate and a return on equity are
             different measures. Insurers, and companies that include a lending or insurance business, are not applicable and are listed with their reasons.
           </p>
           <p>Informational only, not investment advice.</p>

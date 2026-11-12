@@ -6,7 +6,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { CompanyError, CompanyView } from "@/components/company/CompanyView";
 import type { CompanyViewSelection, TabId } from "@/lib/equity/company";
-import { readCompanyExists, readCompanyName, readCompanyPage } from "@/lib/queries/company";
+import { readCompanyExists, readCompanyMarket, readCompanyName, readCompanyPage } from "@/lib/queries/company";
 import { readFreshness } from "@/lib/queries/shell";
 
 export async function renderCompany(slug: string, tab: TabId, view: CompanyViewSelection) {
@@ -20,10 +20,14 @@ export async function renderCompany(slug: string, tab: TabId, view: CompanyViewS
 
 // The tab's title names the company (12 Nov 2026): every company page used to be "Company · Finance Terminal", so two
 // open tabs, a bookmark or a shared link couldn't be told apart. An unknown slug or a failed read keeps the plain title.
+// A US company's description names the Dow 30 and its sources (US-06, #405); India's is unchanged.
 export async function companyMetadata(slug: string): Promise<Metadata> {
-  const name = await readCompanyName(slug);
+  const [name, market] = await Promise.all([readCompanyName(slug), readCompanyMarket(slug)]);
   return {
     title: `${name ?? "Company"} · Finance Terminal`,
-    description: "A Nifty 50 company's price, key figures, peers, filed financials and corporate actions. Informational only, not investment advice.",
+    description:
+      market === "US"
+        ? "A Dow 30 company's price, key figures, peers, SEC filings and valuation, in dollars. Informational only, not investment advice."
+        : "A Nifty 50 company's price, key figures, peers, filed financials and corporate actions. Informational only, not investment advice.",
   };
 }

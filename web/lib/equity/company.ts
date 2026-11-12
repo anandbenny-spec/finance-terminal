@@ -3,6 +3,7 @@
 // picks which stored rows and periods a panel shows, and what words a state is told in.
 import { callOf } from "@/lib/equity/calls";
 import type { WindowKey } from "@/lib/equity/rate";
+import type { Market } from "@/lib/format";
 import type {
   CompanyFinancialRow,
   CompanyMetricRow,
@@ -92,7 +93,13 @@ export function companyHref(slug: string, tab: TabId, view?: string): string {
   return `${base}/${tab}${view !== undefined && selection ? `/${view}` : ""}`;
 }
 
-export const SOURCE_LINE: Record<string, string> = { nse: "Source: NSE", bse: "Source: BSE" };
+export const SOURCE_LINE: Record<string, string> = {
+  nse: "Source: NSE",
+  bse: "Source: BSE",
+  // The US slice (US-06, #405; Spec 02A.1 §7): prices and corporate actions from Yahoo Finance, statements from SEC EDGAR.
+  yfinance: "Source: Yahoo Finance",
+  sec: "Source: SEC EDGAR",
+};
 
 /** The source line for a stored `source_key` (NSE when it names none we know: the posture's default). */
 export function sourceLineFor(key: string | null | undefined): string {
@@ -100,6 +107,33 @@ export function sourceLineFor(key: string | null | undefined): string {
 }
 
 export const DAMODARAN = "Source: Aswath Damodaran, NYU Stern";
+export const SEC_EDGAR = SOURCE_LINE.sec;
+export const YAHOO = SOURCE_LINE.yfinance;
+
+// ---------------------------------------------------------------------------------------------------------------
+// The US slice (US-06, #405; Spec 02A.1 §1, §7): a US company's page in dollars, with the tabs that apply to it
+
+/** The index a market's companies are screened in, as the page names it. */
+export const UNIVERSE: Record<Market, string> = { IN: "Nifty 50", US: "Dow 30" };
+
+/** The tabs a US company's page shows: no earnings calls (no free transcript source) and no rate decisions (rate sensitivity
+ * for US stocks comes after 18 Nov). Their reasons, for a deep link to one (Spec 02A.1 §7). */
+export const US_TABS: readonly TabId[] = ["overview", "financials", "valuation"];
+export const NOT_COVERED_US: Partial<Record<TabId, string>> = {
+  calls: "US earnings calls aren't covered: no free transcript source.",
+  "rate-decisions": "Rate decisions aren't covered for US companies yet: the decision-day moves are measured for the Nifty 50 only.",
+};
+export const VALUE_CHAIN_NOT_COVERED_US = "The value chain isn't covered for US companies: it is read from Indian filings (BRSR and related-party disclosures).";
+
+/** The tabs a company's page shows, in order: every tab for India, the three that apply for the US. */
+export function tabsFor(market: Market): readonly { id: TabId; label: string }[] {
+  return market === "US" ? TABS.filter((t) => US_TABS.includes(t.id)) : TABS;
+}
+
+/** The symbol shown beside a company's name: the ticker for a US company, the NSE symbol for an Indian one. */
+export function symbolOf(row: { market: Market; nse_symbol: string | null; ticker?: string | null }): string | null {
+  return row.market === "US" ? (row.ticker ?? null) : row.nse_symbol;
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Overview: the price series
@@ -275,6 +309,40 @@ export const BALANCE_LINES: Record<FamilyKind, LineSpec[]> = {
   ],
 };
 
+/** A US company's statements (Spec 02A.1 §5.2): the lines US-02's adapter fills from SEC EDGAR, one set for every family
+ * (10-K and 10-Q filings carry no bank or insurer schedule the adapter reads). EBIT is operating income as filed. */
+export const US_PNL_LINES: LineSpec[] = [
+  { id: "revenue", label: "Revenue", kind: "money" },
+  { id: "ebit_derived", label: "EBIT", kind: "money" },
+  { id: "finance_cost", label: "Interest expense", kind: "money" },
+  { id: "pbt", label: "Income before income taxes", kind: "money" },
+  { id: "tax", label: "Income tax", kind: "money" },
+  { id: "pat_owners", label: "Net income attributable to the company", kind: "money" },
+  { id: "eps_basic", label: "Earnings per share, basic", kind: "price" },
+  { id: "eps_diluted", label: "Earnings per share, diluted", kind: "price" },
+];
+
+export const US_BALANCE_LINES: LineSpec[] = [
+  { id: "total_assets", label: "Total assets", kind: "money" },
+  { id: "cash", label: "Cash and cash equivalents", kind: "money" },
+  { id: "total_equity", label: "Total equity", kind: "money" },
+  { id: "equity_owners", label: "Stockholders' equity", kind: "money" },
+  { id: "borrowings_current", label: "Current debt", kind: "money" },
+  { id: "borrowings_noncurrent", label: "Long-term debt", kind: "money" },
+];
+
+export const US_CASH_FLOW_LINES: LineSpec[] = [
+  { id: "cfo", label: "Cash from operations", kind: "money" },
+  { id: "cfi", label: "Cash from investing", kind: "money" },
+  { id: "cff", label: "Cash from financing", kind: "money" },
+  { id: "capex", label: "Capital expenditure", kind: "money" },
+];
+
+/** What a US quarter's figures are (Spec 02A.1 §5.2): a 10-K reports the year, so the fourth quarter is derived. */
+export const US_QUARTER_NOTE = "A fourth quarter is the fiscal year less the first nine months: a 10-K reports only the full year.";
+/** What the US debt lines are (us_inputs.py's label, Spec 02A.1 §5.4). */
+export const US_DEBT_NOTE = "Debt is as filed; lease liabilities aren't counted.";
+
 export const CASH_FLOW_LINES: LineSpec[] = [
   { id: "cfo", label: "Cash from operations", kind: "money" },
   { id: "cfi", label: "Cash from investing", kind: "money" },
@@ -293,6 +361,15 @@ export const PERIODS = {
   annual: { kinds: ["year"], count: 5 },
   balance: { kinds: ["instant"], count: 6 },
   cashFlow: { kinds: ["half_year", "year"], count: 6 },
+} as const satisfies Record<string, PeriodSpec>;
+
+/** A US company's periods (Spec 02A.1 §7: fiscal years and quarters): balance sheets at each quarter end, and cash flow by
+ * fiscal year only, as filed (a quarter's cash flow would be a difference of two year-to-date figures). */
+export const US_PERIODS = {
+  quarterly: { kinds: ["quarter"], count: 8 },
+  annual: { kinds: ["year"], count: 5 },
+  balance: { kinds: ["instant"], count: 8 },
+  cashFlow: { kinds: ["year"], count: 5 },
 } as const satisfies Record<string, PeriodSpec>;
 
 export const KIND_WORDS: Record<string, string> = {

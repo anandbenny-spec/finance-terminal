@@ -9,9 +9,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const exists = vi.fn<(slug: string) => Promise<boolean | null>>();
 const readPage = vi.fn<(slug: string, tab: string, call?: string) => Promise<{ ok: false }>>();
 const name = vi.fn<(slug: string) => Promise<string | null>>();
+const market = vi.fn<(slug: string) => Promise<"IN" | "US" | null>>(() => Promise.resolve("IN"));
 vi.mock("@/lib/queries/company", () => ({
   readCompanyExists: (slug: string) => exists(slug),
   readCompanyName: (slug: string) => name(slug),
+  readCompanyMarket: (slug: string) => market(slug),
   readCompanyPage: (slug: string, tab: string, call?: string) => readPage(slug, tab, call),
 }));
 vi.mock("@/lib/queries/shell", () => ({ readFreshness: () => Promise.resolve({ ok: false }) }));
