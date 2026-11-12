@@ -46,12 +46,12 @@ import {
   yearParam,
   type YearCards,
 } from "@/lib/equity/valuechain";
-import { PREVIEW_FEEDS } from "@/lib/feeds";
+import { FEEDS } from "@/lib/feeds";
 import { dateInZone, formatDate, formatFiledShare, formatShare } from "@/lib/format";
 import type { CompanyRow, CorporateActionRow, TaskFreshnessRow } from "@/lib/queries/api";
 import type { ValueChainPageData } from "@/lib/queries/valuechain";
 
-const TASKS = PREVIEW_FEEDS.valueChain;
+const TASKS = FEEDS.valueChain;
 const ERROR = <StateNote kind="error">Couldn&apos;t load this panel. Try again.</StateNote>;
 
 const isShown = (policies: FieldPolicies, ...fields: string[]): boolean =>

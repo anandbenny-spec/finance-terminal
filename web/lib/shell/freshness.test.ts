@@ -110,11 +110,14 @@ describe("feeds", () => {
     // policy.reactions, live once enabled in tasks.yaml.
     expect(FEEDS.policyReactions).toEqual(["policy.reactions"]);
     // Module 2's four surfaces joined FEEDS at 2A-26 (#132): their tasks count, each once, with policy.rate_cycles.
+    // The value chain's two tasks joined on 12 Nov 2026 (VC-06, #191), once production's runs had left their freshness rows.
     expect(liveTasks()).toEqual([
       "equity.beta",
+      "equity.brsr",
       "equity.metrics",
       "equity.prices",
       "equity.rate_reactions",
+      "equity.related_parties",
       "equity.snapshot",
       "equity.statements",
       "equity.universe",
