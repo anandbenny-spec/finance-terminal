@@ -1,10 +1,10 @@
 """#445 (R05-2): the measure for the What changed summaries' judge, never a publish check (the card: "a measure only").
 
-Prompt v2 of `statement_diff_summary` asks the model to put words taken from a statement in double quotation marks. This
-counts, for each bullet, the stretches of `MIN_WORDS` or more words copied from its cited passages that sit outside
-quotation marks: v1's bullets have them ("changed from Economic activity is expanding at a solid pace. to …"), and v2's
-should have none or fewer. The judge reads it beside v1's and v2's bullets (part 2); nothing here can drop or reject a
-bullet.
+Prompts v2 and v3 of `statement_diff_summary` ask the model to put words taken from a statement in double quotation
+marks. This counts, for each bullet, the stretches of `MIN_WORDS` or more words copied from its cited passages that sit
+outside quotation marks: v1's bullets have them ("changed from Economic activity is expanding at a solid pace. to …"),
+and a later version's should have none or fewer. The judge reads it beside v1's bullets and the new version's (part 2);
+nothing here can drop or reject a bullet.
 
 Words are compared as written (case aside), after `summaries.match_form` (curly quotes straight, dashes one hyphen). A
 word is inside quotation marks when an odd number of double quotation marks comes before it in the bullet. A stretch is

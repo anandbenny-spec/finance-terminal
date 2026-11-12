@@ -144,9 +144,10 @@ from ft.policy import rbi_resolution
 
 # stance_extraction v2 (Anand, 27 Oct 2026, issue #16): the quote is the stance sentence with the sentence before it,
 # since resolutions repeat the stance sentence word for word and a quote must be found exactly once (Arch 03 §1.2).
-# statement_diff_summary v2 (#445, R05-2): words taken from a statement go in quotation marks. Its older targets keep v1
-# until the re-run (`PINNED_TASKS`, `RERUN_ENV`).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v2", "stance_extraction": "v2",
+# statement_diff_summary v2 (#445, R05-2): words taken from a statement go in quotation marks; v3 (the same job, after v2's
+# dev sample): quote only the changed words and don't repeat the cited sentence after them. Its older targets keep the
+# version they were answered with until the re-run (`PINNED_TASKS`, `RERUN_ENV`).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v3", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 PINNED_TASKS = ("statement_diff_summary",)   # a target keeps the version it was answered with (module docstring)
 RERUN_TASK = "statement_diff_summary"        # the one task the re-run sends (#445)
