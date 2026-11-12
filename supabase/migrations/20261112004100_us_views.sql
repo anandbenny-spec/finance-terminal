@@ -41,7 +41,9 @@ select e.slug, e.name, e.short_name, e.market, e.currency, c.isin, c.nse_symbol,
        ix.index_slugs, ix.index_as_of,
        p0.close as last_close, p0.trade_date as last_close_date,
        p1.close as previous_close, p1.trade_date as previous_close_date,
-       case when p0.trade_date is not null then case c.price_exchange when 'NYSE' then 'yfinance' when 'NASDAQ' then 'yfinance' else lower(c.price_exchange) end end as price_source_key
+       case when p0.trade_date is not null
+            then case c.price_exchange when 'NYSE' then 'yfinance' when 'NASDAQ' then 'yfinance' else lower(c.price_exchange) end
+       end as price_source_key
 from equity.company c
 join core.entity e on e.id = c.entity_id
 cross join g
@@ -171,7 +173,8 @@ select e.slug, e.name, e.market, e.currency, mv.metric_key,
        mv.period_end as as_of,
        case when k.shown then mv.value end as value,
        case when k.shown then coalesce(case when e.market = 'US' and mv.metric_key in ('ebit_derived','ebit_margin','ev_ebit_ttm','roic')
-                                            then 'operating income as filed' else k.label end, m.label_kind)
+                                            then 'operating income as filed' else k.label end,
+                                       m.label_kind)
             else null end as label_kind,
        case when not k.shown then k.reason
             else regexp_replace(mv.held_reason, '^N/A: ', '') end as held_reason,
@@ -203,12 +206,14 @@ select e.slug, e.market, e.currency, ca.kind, ca.ex_date, ca.record_date, ca.sub
        case when af.event_id is null then 'none' else af.status end as factor_status,
        case when af.status = 'applied' then af.price_factor end as price_factor,
        case when af.status = 'held' then af.reason end as factor_reason,
-       case ca.exchange when 'NYSE' then 'yfinance' when 'NASDAQ' then 'yfinance' else lower(ca.exchange) end as source_key, src.attribution
+       case ca.exchange when 'NYSE' then 'yfinance' when 'NASDAQ' then 'yfinance' else lower(ca.exchange) end as source_key,
+       src.attribution
 from equity.corporate_action ca
 join core.event ev on ev.id = ca.event_id
 join core.entity e on e.id = ev.entity_id
 left join equity.adjustment_factor af on af.event_id = ca.event_id
-left join core.source src on src.key = case ca.exchange when 'NYSE' then 'yfinance' when 'NASDAQ' then 'yfinance' else lower(ca.exchange) end
+left join core.source src
+       on src.key = case ca.exchange when 'NYSE' then 'yfinance' when 'NASDAQ' then 'yfinance' else lower(ca.exchange) end
 where ev.status <> 'withdrawn';
 
 ------------------------------------------------------------------ api.screener
