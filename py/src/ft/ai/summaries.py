@@ -16,6 +16,9 @@ passages they cite.
   counts only if it falls on a sentence the redline marks changed, added or removed: so additions cite the new text
   and removals the old, as only the new text holds an addition and only the old a removal.
 - The bullet count must be in range (3-6, 2-5).
+- For `statement_diff_summary` from prompt v4 on (#445, R05-2; Anand's option 1, 12 Nov 2026; `drop_copies`), before
+  these checks: a cited text block that is a word-for-word copy of its own cited text comes out of the bullet's text, and
+  its citations stay on the bullet (`mark_copies`, `settle_copies`). The checks then run on the final text, unchanged.
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
 (`policy.ai_batch`). The database checks the published output's citations again at commit (Architecture 01 §1.4).
@@ -72,6 +75,7 @@ class Checked:
     bullets: list[Bullet]
     problems: list[str]               # reply-level: the count, no bullets
     mapping: Counter                  # citations by how they mapped: offsets, search, failed, wrong_place, ...
+    copies: Counter = field(default_factory=Counter)   # statement_diff_summary: copied blocks 'removed' or 'quoted' (#445)
 
     @property
     def kept(self) -> list[Bullet]:
@@ -306,13 +310,242 @@ def verify_bullet(body: str, cites: list, sources: tuple[Source, ...], mapping: 
     return b
 
 
+# ---------------------------------------------------------------------------------------------- copies (statement_diff_summary)
+# #445 (R05-2; Anand's option 1, 12 Nov 2026). On the citations route the model's cited text blocks are often word-for-word
+# copies of the sentences they cite, and `scan` joins them into the bullet: "The assessment of economic growth changed from
+# "solid" to "strong". Economic activity is expanding at a solid pace. ... Economic activity is expanding at a strong pace."
+# Prompts v2 and v3 didn't stop it (two dev samples), so for this task only, from prompt v4 on, before the checks:
+# - A copy is a cited text block whose text is found word for word, in `match_form`, in its own cited text (one citation's,
+#   or its citations' joined in order), a closing punctuation mark aside ("…in several parts of the world." from "…world,
+#   especially …"), with at least COPY_MIN_WORDS words. Its list marker, the whitespace around it and a pair of
+#   parentheses or quotation marks around it don't count; it is one line. A block whose pieces, joined by " / ", " ... "
+#   or "; ", are each such a copy holds one copy per piece. A block with any words of the model's own isn't a copy and is
+#   never touched.
+# - Copies joined only by separators share one fate. They come out of the bullet's text, with the separators, when the
+#   text around them reads without them. Before: the bullet's start, a sentence's end, or a word that doesn't need what
+#   follows (not a colon, nor "in", "as", "from", "reads" and the like: `_NEEDS_MORE`). After: the bullet's end,
+#   punctuation, or a new sentence. Copies in their own parentheses go with them ("…to "been little changed" (<copy> /
+#   <copy>)."), and so does a copy in its own quotation marks ("…retained at neutral." "<copy>""). A full stop that ended
+#   a removed copy stays where the sentence would otherwise have none. Their citations stay on the bullet: the page shows
+#   each cited sentence through its chip.
+# - Any other copy is part of the model's own sentence ("…described as "moderate" in <copy>"): it goes in quotation marks
+#   (one pair per piece), or keeps its own. So does every copy of a bullet that would otherwise keep fewer than
+#   OWN_MIN_WORDS words, or none outside quotation marks (no sentence of the model's own: "Revised:", or nothing).
+# - A copy inside the model's quotation marks with other words is left as it is.
+# Our code only removes words copied from the source (with the separators, parentheses and quotation marks that held them),
+# or puts them in quotation marks; it never adds a word. The checks then run on the final text: the figures check can only
+# get stricter, since a copy's figures are in its cited text.
+COPY_MIN_WORDS = 5                # the judge's measure counts copied stretches from five words (ft/eval/diff_quotes.py)
+OWN_MIN_WORDS = 3                 # fewer words left, or none outside quotation marks, isn't a sentence of the model's own
+_OPEN, _CLOSE = "\x01", "\x02"    # around a copy between `mark_copies` and `settle_copies`; never stored
+_GAP, _GAP_STOP = "\x03", "\x04"  # where a removed copy was (`_GAP_STOP`: it ended with a full stop); never stored
+_COPY = re.compile("\x01([^\x01\x02]*)\x02")
+_WORD = re.compile(r"[^\W_]+")
+_PIECES = re.compile(r"\s*;\s+|\s+(?:/|\||\.\.\.|…)\s+")   # between the pieces of a joined copy
+_SEP = r"(?:\s|\.\.\.|…|[;|/]|(?<=\s)[-–—](?=\s|$))"
+_SEP_TAIL = re.compile(_SEP + "+$")
+_SEP_HEAD = re.compile(r"^(?:\s|\.\.\.|…|[;|/]|[-–—](?=\s))+")
+_SENTENCE_END = re.compile("(?:^|[.!?][\"'”’)\\]]*)$")
+_CLOSING_QUOTE = "\"'”’"
+_LAST_WORD = re.compile(r"([^\W_][\w'’-]*)$")
+# A word that leaves the sentence open when the copy after it comes out ("…described as "moderate" in <copy>").
+_NEEDS_MORE = frozenset({"a", "an", "the", "in", "into", "as", "from", "to", "that", "which", "with", "by", "of",
+    "for", "on", "at", "and", "or", "but", "nor", "than", "like", "including", "namely", "while", "whereas", "is",
+    "are", "was", "were", "be", "been", "being", "become", "becomes", "became", "read", "reads", "reading", "say",
+    "says", "said", "saying", "state", "states", "stated", "stating", "note", "notes", "noted", "noting", "add",
+    "adds", "adding", "replace", "replaces", "replaced", "replacing", "now", "then", "where", "when"})
+
+
+def _found(text: str, hay: list[str]) -> bool:
+    if len(_WORD.findall(text)) < COPY_MIN_WORDS:
+        return False
+    words = match_form(text).rstrip(".,;:!? ")          # a full stop the model put after a shortened copy isn't a word
+    t = re.compile(r"(?<!\w)" + re.escape(words) + r"(?!\w)")
+    return any(t.search(h) for h in hay)
+
+
+def copy_spans(core: str, cited: list[str]) -> list[tuple[int, int]]:
+    """Where `core` (a cited block's text) copies its cited text: all of it, or each of its joined pieces; else nothing."""
+    hay = [match_form(h) for h in [*cited, " ".join(cited)]]
+    if _found(core, hay):
+        return [(0, len(core))]
+    spans, pos = [], 0
+    for m in [*_PIECES.finditer(core), None]:
+        a, b = pos, (m.start() if m else len(core))
+        if not _found(core[a:b], hay):
+            return []
+        spans.append((a, b))
+        pos = m.end() if m else b
+    return spans if len(spans) > 1 else []
+
+
+_PAIRS = ((("(",), r"\)[.,;:!?]?$"), (('"', "\u201c"), r"[\"\u201d][.,;:!?]?$"))
+
+
+def mark_copies(parts: list[TextPart]) -> list[TextPart]:
+    """The reply's text blocks with each copy of its own cited text marked for `settle_copies` (see above)."""
+    if any(c in p.text for p in parts for c in (_OPEN, _CLOSE, _GAP, _GAP_STOP)):
+        return parts                                     # never: our markers would be ambiguous, so nothing is touched
+    out = []
+    for p in parts:
+        cited = [c.cited_text for c in p.citations if c.kind == "char_location" and c.cited_text.strip()]
+        lead = _LEAD.match(p.text)
+        s = lead.end() if lead else 0
+        e = len(p.text.rstrip())
+        for opens, closes in _PAIRS * 2:                 # parentheses or quotation marks around a copy stay outside it
+            if p.text[s:s + 1] in opens and (m := re.search(closes, p.text[s + 1:e])):
+                s, e = s + 1, s + 1 + m.start()
+                s, e = s + len(p.text[s:e]) - len(p.text[s:e].lstrip()), s + len(p.text[s:e].rstrip())
+        core = p.text[s:e]
+        spans = copy_spans(core, cited) if cited and core and "\n" not in core else []
+        if spans:
+            text, pos = p.text[:s], 0
+            for a, b in spans:
+                text += core[pos:a] + _OPEN + core[a:b] + _CLOSE
+                pos = b
+            p = TextPart(text + core[pos:] + p.text[e:], p.citations)
+        out.append(p)
+    return out
+
+
+def _own_words(text: str) -> int:
+    """The words of `text` outside double quotation marks."""
+    t, n, inside = match_form(text), 0, False
+    for piece in re.split('(")', t):
+        if piece == '"':
+            inside = not inside
+        elif not inside:
+            n += len(_WORD.findall(piece))
+    return n
+
+
+def unmark(text: str) -> str:
+    return text.replace(_OPEN, "").replace(_CLOSE, "")
+
+
+def _start_ok(before: str) -> bool:
+    """Whether the bullet's text before a copy reads on without it (see above)."""
+    b = _SEP_TAIL.sub("", before).rstrip()
+    if not b or _SENTENCE_END.search(b) or b[-1] in _CLOSING_QUOTE:
+        return True
+    b = b.rstrip(",").rstrip()
+    m = _LAST_WORD.search(b)
+    return bool(m) and m.group(1).lower() not in _NEEDS_MORE
+
+
+def _end_ok(copy: str, after: str) -> bool:
+    """Whether the bullet's text after a copy reads on without it (see above)."""
+    a = _SEP_HEAD.sub("", after)
+    return (not a or a[0] in ".,;:!?)"
+            or (bool(_SENTENCE_END.search(copy.rstrip())) and (a[0].isupper() or a[0] in "\"“")))
+
+
+def _close_gaps(t: str) -> str:
+    """The text with each removed copy's gap closed: its separators and its own parentheses go with it, a chain of gaps is
+    one gap, and a full stop that ended the copy stays where the sentence would otherwise have none."""
+    gap = f"[{_GAP}{_GAP_STOP}]"
+    t = re.sub(_SEP + "*(" + gap + ")" + r"(?:\s|\.\.\.|…|[;|/]|[-–—](?=\s))*", r"\1", t)
+    t = re.sub(gap + "{2,}", lambda m: m.group(0)[-1], t)
+    t = re.sub(r"\(\s*" + gap + r"\s*\)", _GAP, t)      # a parenthesis's full stop never ends the sentence around it
+    while (m := re.search(gap, t)) is not None:
+        x, y, stop = t[:m.start()].rstrip(), t[m.end():].lstrip(), m.group(0) == _GAP_STOP
+        if y and y[0] in ".,;:!?)":
+            t = (x[:-1] if y[0] != "," and x.endswith(",") else x) + y
+        elif not y:
+            x = x.rstrip(",:;").rstrip()
+            t = x + ("." if stop and not _SENTENCE_END.search(x) else "")
+        else:
+            if stop and not _SENTENCE_END.search(x) and (y[0].isupper() or y[0] in '"\u201c'):
+                x = x.rstrip(",:;").rstrip() + "."           # the copy's full stop, before a new sentence only
+            t = x + " " + y
+    return t
+
+
+def settle_copies(body: str, tally: Counter) -> str:
+    """A bullet's final text from its marked copies (see above); `tally` counts them 'removed' and 'quoted'."""
+    if _OPEN not in body:
+        return body
+    tokens: list[str] = []                               # own text and copies, alternating: own, copy, own, ..., own
+    pos = 0
+    for m in _COPY.finditer(body):
+        tokens += [unmark(body[pos:m.start()]), m.group(1)]
+        pos = m.end()
+    tokens.append(unmark(body[pos:]))
+    copies = range(1, len(tokens), 2)
+    marks = {i: match_form("".join(tokens[:i])).count('"') for i in copies}
+    quoted = {i for i in copies if marks[i] % 2 and tokens[i - 1].rstrip()[-1:] in '"\u201c'
+              and tokens[i + 1].lstrip()[:1] in '"\u201d' and '"' not in match_form(tokens[i])}
+    inside = {i for i in copies if i not in quoted and (marks[i] % 2 or '"' in match_form(tokens[i]))}
+
+    def bare(i: int, side: int) -> str:
+        """The own text on one side of copy `i` (-1 before, +1 after) without the quotation marks of the copies it lies
+        between."""
+        t = tokens[i + side]
+        if (side < 0 and i in quoted) or (side > 0 and i + 2 in quoted):
+            t = t.rstrip()[:-1]
+        if (side < 0 and i - 2 in quoted) or (side > 0 and i in quoted):
+            t = t.lstrip()[1:]
+        return t
+
+    acts: dict[int, str] = {}                            # a copy's index → 'remove' | 'quote'; else it stays as it is
+    chains: list[list[int]] = []                         # copies joined by separators only (" / ", " ... ", "; ") share a fate
+    for i in copies:
+        if i in inside:
+            continue
+        if chains and chains[-1][-1] == i - 2 and not _SEP_TAIL.sub("", bare(i, -1)):
+            chains[-1].append(i)
+        else:
+            chains.append([i])
+    for chain in chains:
+        first, last = chain[0], chain[-1]
+        before, after = "".join(tokens[:first - 1]) + bare(first, -1), bare(last, +1)
+        if not quoted & set(chain) and before.rstrip().endswith("(") and after.lstrip().startswith(")"):
+            ok = True                                    # copies in their own parentheses go with them
+        else:
+            ok = _start_ok(before) and _end_ok(tokens[last], after)
+        for k in chain:
+            if ok:
+                acts[k] = "remove"
+            elif k not in quoted:
+                acts[k] = "quote"                        # a copy already in its own marks stays as it is
+
+    def build(remove: bool) -> str:
+        out = list(tokens)
+        for k in sorted(acts):
+            if acts[k] == "remove" and remove:
+                out[k] = _GAP_STOP if _SENTENCE_END.search(tokens[k].rstrip()) else _GAP
+                if k in quoted:                          # its own quotation marks go with it
+                    out[k - 1], out[k + 1] = out[k - 1].rstrip()[:-1], out[k + 1].lstrip()[1:]
+            elif k not in quoted:
+                out[k] = f'"{tokens[k]}"'
+        return " ".join(_close_gaps("".join(out)).split())
+
+    removed = sum(1 for a in acts.values() if a == "remove")
+    text = build(remove=True)
+    if removed and (len(_WORD.findall(text)) < OWN_MIN_WORDS or not _own_words(text)):
+        text, removed = build(remove=False), 0           # no sentence of the model's own would be left: quote them all
+    quoted_now = sum(1 for k, a in acts.items() if k not in quoted and (a == "quote" or not removed))
+    for key, n in (("removed", removed), ("quoted", quoted_now)):
+        if n:
+            tally[key] += n
+    return text
+
+
 def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
-          changed: dict[int, list[tuple[int, int]]] | None = None, full_text: dict[int, str] | None = None) -> Checked:
+          changed: dict[int, list[tuple[int, int]]] | None = None, full_text: dict[int, str] | None = None,
+          drop_copies: bool = False) -> Checked:
     """Check a reply against our copies of the documents it was given (`sources`; `full_text` by document id when a
-    source is a segment). `changed`: for statement_diff_summary, each document's changed spans."""
+    source is a segment). `changed`: for statement_diff_summary, each document's changed spans. `drop_copies`: for
+    statement_diff_summary from prompt v4 on (`ai_batch.COPIES_FROM`), the copies rule above; ignored for other tasks."""
     lo, hi = BULLETS[task]
     mapping: Counter = Counter()
-    found, stray = split_bullets(reply.parts())
+    copies: Counter = Counter()
+    parts = reply.parts()
+    diff = drop_copies and task == "statement_diff_summary"
+    found, stray = split_bullets(mark_copies(parts) if diff else parts)
+    if diff:
+        found = [(settle_copies(body, copies), cites) for body, cites in found]
+        stray = [unmark(x) for x in stray]
     bullets = [verify_bullet(body, cites, sources, mapping, changed=changed, full_text=full_text)
                for body, cites in found]
     problems = []
@@ -322,7 +555,7 @@ def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
         problems.append("no bullets (each bullet is a line starting with '- ')")
     elif not lo <= len(bullets) <= hi:
         problems.append(f"{len(bullets)} bullets, not {lo} to {hi}")
-    return Checked(task, bullets, problems, mapping)
+    return Checked(task, bullets, problems, mapping, copies)
 
 
 def retry_note(c: Checked) -> str:
@@ -349,6 +582,8 @@ def content(c: Checked, *, attempt: int, reply: Reply) -> tuple[dict, str, list[
         bullets.append({"text": b.text, "citations": nos, **({"list": b.section} if b.section else {})})
     doc = {"bullets": bullets, "attempt": attempt, "stop_reason": reply.stop_reason,
            "citation_mapping": dict(sorted(c.mapping.items()))}
+    if +c.copies:
+        doc["copies"] = dict(sorted((+c.copies).items()))  # the diff summary's copied blocks our code removed or quoted (#445)
     if not c.ok:
         doc["problems"] = c.reasons()
         doc["dropped"] = [{"text": b.text, "problem": b.problem} for b in c.dropped]
