@@ -1,5 +1,6 @@
 -- 0041: the US slice's read layer (lane U, job US-05, issue #404; Spec 02A.1 §6; Plan 05 D4). Approved by Anand,
--- 11 Nov 2026, about 17:52 IST (tracker #30). Only views change: no table, column, policy, grant, owner or comment.
+-- 11 Nov 2026, about 17:52 IST (tracker #30). Views change, plus two nullable columns on equity.company (the ticker and
+-- CIK, below); no policy, grant, owner or existing comment changes.
 -- Each view below is its current definition (0024, 0026, 0034) copied verbatim, changed only where a US row needs it;
 -- every change reads `market` (or the US exchanges), so an Indian row's output is byte-identical (tests 0041 compare
 -- every api and semantic view before and after this migration). `create or replace` keeps each view's owner, grants and
@@ -23,8 +24,23 @@
 --  * the priced-in tables rank within one market: `partition by market` (India's ranks can't move when US rows publish).
 -- The semantic views stay India-only (Spec 02A.1 §6): each company-level one gains `market = 'IN'`, comments unchanged
 -- ("currency INR" stays true). The policy ones (Fed and RBI) hold no company rows and are unchanged.
--- Not here yet: the ticker and CIK (Spec 02A.1 §6), which wait on Anand's answer on #404 (visitors can't read
--- core.entity_identifier, and no other table holds them).
+--
+-- The ticker and CIK (Spec 02A.1 §6; Anand's answer on #404, 12 Nov 2026: option B, which approves this table change in
+-- 0041). Visitors can't read core.entity_identifier (0005), so India's pattern is copied: equity.company holds the current
+-- values (as it holds the ISIN and NSE symbol), us.universe writes them next to the dated history it keeps in
+-- core.entity_identifier, and the views read them like nse_symbol. Each new view column is added at the end of its view
+-- (`create or replace` can only append), null for India: api.companies (ticker, cik); api.screener, api.index_members and
+-- both priced-in tables (ticker); api.peer_comps (peer_ticker). Their formats are the ones us.universe accepts (decided by
+-- Claude, standing delegation, 24 Oct 2026, recorded on #404: a check that only tightens).
+
+------------------------------------------------------------------ equity.company: the US ticker and CIK
+alter table equity.company
+  add column ticker text check (ticker ~ '^[A-Z][A-Z0-9.-]{0,9}$'),
+  add column cik    text check (cik ~ '^[1-9][0-9]{0,9}$');
+comment on column equity.company.ticker is
+  'US only (null for India): the current ticker, as in core.entity_identifier''s open ticker range; written by us.universe.';
+comment on column equity.company.cik is
+  'US only (null for India): the current SEC CIK without leading zeros, as in core.entity_identifier''s open cik range; written by us.universe.';
 
 ------------------------------------------------------------------ api.companies
 create or replace view api.companies with (security_invoker = true) as
@@ -43,7 +59,8 @@ select e.slug, e.name, e.short_name, e.market, e.currency, c.isin, c.nse_symbol,
        p1.close as previous_close, p1.trade_date as previous_close_date,
        case when p0.trade_date is not null
             then case c.price_exchange when 'NYSE' then 'yfinance' when 'NASDAQ' then 'yfinance' else lower(c.price_exchange) end
-       end as price_source_key
+       end as price_source_key,
+       c.ticker, c.cik
 from equity.company c
 join core.entity e on e.id = c.entity_id
 cross join g
@@ -61,6 +78,17 @@ left join lateral (select d.close, d.trade_date from equity.price_daily d
 left join lateral (select d.close, d.trade_date from equity.price_daily d
                    where d.entity_id = c.entity_id and d.exchange = c.price_exchange
                    order by d.trade_date desc limit 1 offset 1) p1 on true;
+
+------------------------------------------------------------------ api.index_members
+create or replace view api.index_members with (security_invoker = true) as
+select i.slug as index_slug, i.name as index_name, m.snapshot_date, e.slug, e.name, e.short_name, c.nse_symbol,
+       e.market, e.currency,
+       c.ticker
+from equity.index_membership m
+join core.entity i on i.id = m.index_entity_id
+join core.entity e on e.id = m.entity_id
+join equity.company c on c.entity_id = m.entity_id
+where m.snapshot_date = (select max(x.snapshot_date) from equity.index_membership x where x.index_entity_id = m.index_entity_id);
 
 ------------------------------------------------------------------ api.company_prices
 create or replace view api.company_prices with (security_invoker = true) as
@@ -271,7 +299,8 @@ select e.slug, e.name, e.short_name, c.nse_symbol, e.market, e.currency, c.peer_
           join core.entity i on i.id = m.index_entity_id
          where m.entity_id = c.entity_id
            and m.snapshot_date = (select max(x.snapshot_date) from equity.index_membership x where x.index_entity_id = m.index_entity_id)) as index_slugs,
-       case when e.market = 'US' then 'sec' else 'nse' end as source_key
+       case when e.market = 'US' then 'sec' else 'nse' end as source_key,
+       c.ticker
 from latest l
 join equity.company c on c.entity_id = l.entity_id
 join core.entity e on e.id = l.entity_id
@@ -307,7 +336,7 @@ latest as (select distinct on (s.entity_id) s.* from equity.screener_snapshot s
 members as (
   select c.entity_id, c.peer_group_key, e.slug, e.name, e.short_name, c.nse_symbol, e.market, e.currency,
          l.snapshot_date, l.pe_ttm, l.pb, case when g.ebit then l.ev_ebit end as ev_ebit, l.ev_sales, l.roe,
-         case when g.ebit then l.ebit_margin end as ebit_margin, l.revenue_cagr_3y
+         case when g.ebit then l.ebit_margin end as ebit_margin, l.revenue_cagr_3y, c.ticker
   from equity.company c
   join core.entity e on e.id = c.entity_id
   join latest l on l.entity_id = c.entity_id
@@ -323,7 +352,8 @@ select p.company_slug, p.market, p.currency, p.peer_group_key, 'peer'::text as r
        p.name as peer_name, p.short_name as peer_short_name, p.nse_symbol as peer_nse_symbol, p.snapshot_date,
        p.pe_ttm, p.pb, p.ev_ebit, p.ev_sales, p.roe, p.ebit_margin, p.revenue_cagr_3y,
        null::integer as peer_count, null::jsonb as median_n, null::text as median_note,
-       case when p.market = 'US' then 'sec' else 'nse' end as source_key
+       case when p.market = 'US' then 'sec' else 'nse' end as source_key,
+       p.ticker as peer_ticker
 from pairs p
 union all
 select p.company_slug, p.market, p.currency, p.peer_group_key, 'median', null, null, null, null, max(p.snapshot_date),
@@ -340,7 +370,8 @@ select p.company_slug, p.market, p.currency, p.peer_group_key, 'median', null, n
                           'revenue_cagr_3y', count(p.revenue_cagr_3y)),
        case when count(*) < 3 then case when p.market = 'US' then 'Too few peers in the Dow 30 for a median'
                                         else 'Too few peers in the Nifty 50 for a median' end end,
-       case when p.market = 'US' then 'sec' else 'nse' end
+       case when p.market = 'US' then 'sec' else 'nse' end,
+       null
 from pairs p
 group by p.company_slug, p.market, p.currency, p.peer_group_key;
 
@@ -428,7 +459,7 @@ s as (
          case when (g.ig and g.dam) and r.result is not null and r.delivered is not null then r.result - r.delivered end as gap,
          case when (g.ig and g.dam) and r.inputs ->> 'delivered_years' ~ '^[0-9]+$' then (r.inputs ->> 'delivered_years')::integer end as delivered_years,
          case when (g.ig and g.dam) then r.delivered_reason end as delivered_reason,
-         (g.ig_label) as label
+         (g.ig_label) as label, c.ticker
   from r
   join core.entity e on e.id = r.entity_id
   join equity.company c on c.entity_id = r.entity_id
@@ -440,7 +471,8 @@ select s.slug, s.name, s.short_name, s.nse_symbol, s.market, s.currency, s.peer_
        case when s.state = 'value' and s.gap is not null
             then rank() over (partition by s.market, (s.state = 'value' and s.gap is not null) order by s.gap desc)
        end as gap_rank,
-       case when s.market = 'US' then 'sec' else 'nse' end as source_key
+       case when s.market = 'US' then 'sec' else 'nse' end as source_key,
+       s.ticker
 from s;
 
 ------------------------------------------------------------------ api.priced_in_lenders
@@ -479,7 +511,7 @@ s as (
          case when (g.iroe and g.dam) and r.result is not null and r.delivered is not null then r.result - r.delivered end as gap,
          case when (g.iroe and g.dam) and r.inputs ->> 'delivered_years' ~ '^[0-9]+$' then (r.inputs ->> 'delivered_years')::integer end as delivered_years,
          case when (g.iroe and g.dam) then r.delivered_reason end as delivered_reason,
-         (g.iroe_label) as label
+         (g.iroe_label) as label, c.ticker
   from r
   join core.entity e on e.id = r.entity_id
   join equity.company c on c.entity_id = r.entity_id
@@ -491,7 +523,8 @@ select s.slug, s.name, s.short_name, s.nse_symbol, s.market, s.currency, s.peer_
        case when s.state = 'value' and s.gap is not null
             then rank() over (partition by s.market, (s.state = 'value' and s.gap is not null) order by s.gap desc)
        end as gap_rank,
-       case when s.market = 'US' then 'sec' else 'nse' end as source_key
+       case when s.market = 'US' then 'sec' else 'nse' end as source_key,
+       s.ticker
 from s;
 
 ------------------------------------------------------------------ semantic.companies

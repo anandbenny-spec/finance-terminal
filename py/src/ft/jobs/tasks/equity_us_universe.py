@@ -15,7 +15,9 @@ the `curated` source's raw file the Dow snapshot points to. Then, in one transac
   flag: the go-live flip is Anand's SQL after US-08's judge (Spec 02A.1 §3);
 - identifiers `cik` and `ticker` (source sec) with dated ranges, a change closing the old range where the new one starts
   (India's `plan_identifier`);
-- `equity.company`: peer group, valuation family and note, fiscal-year-end month, price exchange (NYSE or NASDAQ);
+- `equity.company`: peer group, valuation family and note, fiscal-year-end month, price exchange (NYSE or NASDAQ), and
+  the current ticker and CIK (0041: the views read them there, as India's NSE symbol, since visitors can't read
+  `core.entity_identifier`);
 - `equity.index_membership`: one `dow-jones` snapshot dated the YAML's `as_of`, written when the member set differs from
   the latest stored one.
 A second identical load writes nothing.
@@ -23,7 +25,8 @@ A second identical load writes nothing.
 Checks, B blocking, W warning:
 - (B) `submissions`: every company's SEC record read;
 - (B) `identity`: each CIK lists the YAML's ticker; it files 10-Ks and no 20-F or 40-F (Spec 02A.1 §9.4);
-- (B) `master`: the 30 companies in the master, market US, currency USD; none published by this run;
+- (B) `master`: the 30 companies in the master, market US, currency USD, each with `equity.company`'s ticker and CIK
+  equal to its open identifiers; none published by this run;
 - (B) `membership`: the latest Dow snapshot holds exactly the YAML's 30;
 - (W) `exchange`, (W) `sic_fy`: SEC's exchange, SIC and fiscal-year end against the YAML, each mismatch naming the
   company (Spec 02A.1 §5.1);
@@ -92,6 +95,9 @@ class UsUniverse(Task):
     def due(self, db, workflow: str, now=None) -> Due:
         if not db.execute("select exists (select 1 from core.source where key = 'sec')").fetchone()[0]:
             return Due(False, "not set up: migration 0039 (us_market) isn't pushed to this project")
+        if not db.execute("""select exists (select 1 from pg_attribute where attrelid = 'equity.company'::regclass
+                                               and attname = 'cik' and not attisdropped)""").fetchone()[0]:
+            return Due(False, "not set up: migration 0041 (us_views) isn't pushed to this project")
         return equity_due(db, self.key, workflow, super().due(db, workflow, now), requires="equity.company")
 
     # ------------------------------------------------------------------ fetch (no transaction)
@@ -140,7 +146,8 @@ class UsUniverse(Task):
                 by_cik[value] = eid
         by_slug = dict(tx.execute("select slug, id from core.entity where kind = 'company' and market = 'US'").fetchall())
         company = {r[0]: r[1:] for r in tx.execute(
-            """select c.entity_id, c.peer_group_key, c.valuation_family, c.family_note, c.fy_end_month, c.price_exchange
+            """select c.entity_id, c.peer_group_key, c.valuation_family, c.family_note, c.fy_end_month, c.price_exchange,
+                      c.ticker, c.cik
                  from equity.company c join core.entity e on e.id = c.entity_id where e.market = 'US'""").fetchall()}
 
         created, id_changes, members = [], [], {}
@@ -167,14 +174,15 @@ class UsUniverse(Task):
                                       values (%s, %s, %s, daterange(%s, %s, '[)'), %s)""",
                                    (eid, scheme, op.range.value, op.range.start, op.range.end, sec))
                     written += 1
-            row = (c.peer_group, c.valuation_family, c.family_note, c.fy_end_month, c.exchange)
+            row = (c.peer_group, c.valuation_family, c.family_note, c.fy_end_month, c.exchange, c.ticker, cik)
             if company.get(eid) != row:
                 tx.execute("""insert into equity.company (entity_id, peer_group_key, valuation_family, family_note,
-                                                          fy_end_month, price_exchange)
-                              values (%s, %s, %s, %s, %s, %s)
+                                                          fy_end_month, price_exchange, ticker, cik)
+                              values (%s, %s, %s, %s, %s, %s, %s, %s)
                               on conflict (entity_id) do update set peer_group_key = excluded.peer_group_key,
                                   valuation_family = excluded.valuation_family, family_note = excluded.family_note,
-                                  fy_end_month = excluded.fy_end_month, price_exchange = excluded.price_exchange""",
+                                  fy_end_month = excluded.fy_end_month, price_exchange = excluded.price_exchange,
+                                  ticker = excluded.ticker, cik = excluded.cik""",
                            (eid, *row))
                 written += 1
 
@@ -220,9 +228,20 @@ class UsUniverse(Task):
                                 where e.id = any(%s)""", (ids,)).fetchone()
         published_now = tx.execute("""select count(*) from core.entity
                                        where kind = 'company' and market = 'US' and is_published""").fetchone()[0]
+        # the views read the ticker and CIK from equity.company (0041): each must be its open identifier's value
+        stale = [s for (s,) in tx.execute(
+            """select e.slug from core.entity e join equity.company c on c.entity_id = e.id
+                where e.id = any(%s)
+                  and (c.ticker is distinct from (select i.value from core.entity_identifier i where i.entity_id = e.id
+                                                     and i.scheme = 'ticker' and upper_inf(i.valid))
+                       or c.cik is distinct from (select i.value from core.entity_identifier i where i.entity_id = e.id
+                                                     and i.scheme = 'cik' and upper_inf(i.valid)))
+                order by 1""", (ids,)).fetchall()]
         bad = []
         if master[0] != n:
             bad.append(f"{master[0]} of {n} companies are in the master as US/USD companies")
+        if stale:
+            bad.append("the ticker or CIK in equity.company isn't the current identifier for: " + ", ".join(stale))
         if published_now != r["published_before"]:
             bad.append(f"published US companies went from {r['published_before']} to {published_now}")
         out.append(Check("master", not bad, "; ".join(bad) or

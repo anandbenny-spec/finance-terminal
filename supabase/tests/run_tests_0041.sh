@@ -11,7 +11,9 @@
 #      (D4: flag off equals today);
 #   4. inside transactions that roll back, the US companies are published (the go-live flip): India's rows in every api
 #      view, and every semantic view, don't move; the US rows read in dollars from their own sources and are compared,
-#      ranked and given medians only within their own market.
+#      ranked and given medians only within their own market;
+#   5. the ticker and CIK (Anand's option B on #404, 12 Nov 2026): equity.company's two new columns, and the views that
+#      read them like nse_symbol, each new column appended and nothing else added, removed or moved.
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DB=${PGDATABASE:-ft}
 CONN="-h ${PGHOST:-localhost} -p ${PGPORT:-5432}"
@@ -70,6 +72,12 @@ select e.id, case when '$M' = 'IN' then 'INE41' || upper(substr(c.slug, 8, 1)) |
        case when '$M' = 'IN' then 'T41IN' || upper(substr(c.slug, 8, 1)) end, c.grp, c.fam,
        case '$M' when 'IN' then 3 else 12 end, c.ex
 from c41 c join core.entity e on e.slug = c.slug;
+$(if [ "$M" = US ]; then cat <<'V'
+-- the current ticker and CIK (0041's columns; us.universe writes them): T41A and 41097 for A, and so on
+update equity.company c set ticker = 'T41' || upper(substr(e.slug, 8, 1)), cik = (41000 + ascii(substr(e.slug, 8, 1)))::text
+from core.entity e where e.id = c.entity_id and e.slug like 't41-us-%';
+V
+fi)
 insert into core.raw_file (object_key, source_id, source_url, sha256, bytes, media_type, fetched_at, task_run_id)
 select 't41-raw-$M-' || s.key, s.id, null, sha256(('t41$M' || s.key)::bytea), 1, 'text/csv', now(), (select max(id) from ops.task_run)
 from core.source s where s.key in ('nse', 'bse', 'yfinance', 'sec', 'curated');
@@ -209,26 +217,48 @@ select string_agg(format('select %L || ''|'' || count(*) || ''|'' || md5(coalesc
 from v;
 SQL
 }
-# Each api and semantic view's owner, options, grants, view comment and column comments (md5), one line each.
+# Each api and semantic view's owner, options, grants, view comment and the comments of the columns it had before 0041
+# (COLS; 0041's new columns are checked by V26), md5'd, one line each.
 meta() {
-  q "select n.nspname || '.' || c.relname || '|' || pg_get_userbyid(c.relowner) || '|' || coalesce(array_to_string(c.reloptions, ','), '')
-            || '|' || coalesce(c.relacl::text, '') || '|' || md5(coalesce(obj_description(c.oid, 'pg_class'), ''))
-            || '|' || md5(coalesce((select string_agg(a.attname || '=' || coalesce(col_description(c.oid, a.attnum), ''), ';' order by a.attnum)
-                                    from pg_attribute a where a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped), ''))
+  $P -d "$T" -v cols="$COLS" 2>&1 <<'SQL'
+with pre as (select split_part(l, '=', 1) as k, string_to_array(split_part(l, '=', 2), ', ') as cols
+             from unnest(string_to_array(:'cols', E'\n')) l where l <> '')
+select n.nspname || '.' || c.relname || '|' || pg_get_userbyid(c.relowner) || '|' || coalesce(array_to_string(c.reloptions, ','), '')
+       || '|' || coalesce(c.relacl::text, '') || '|' || md5(coalesce(obj_description(c.oid, 'pg_class'), ''))
+       || '|' || md5(coalesce((select string_agg(a.attname || '=' || coalesce(col_description(c.oid, a.attnum), ''), ';' order by a.attnum)
+                               from pg_attribute a where a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+                                 and quote_ident(a.attname) = any(coalesce((select pre.cols from pre where pre.k = n.nspname || '.' || c.relname),
+                                                                           array[quote_ident(a.attname)]))), ''))
+from pg_class c join pg_namespace n on n.oid = c.relnamespace
+where n.nspname in ('api', 'semantic') and c.relkind = 'v' order by 1;
+SQL
+}
+# The view columns, "<schema>.<view>=<col>, <col>, ...", one line per view.
+cols() {
+  q "select n.nspname || '.' || c.relname || '=' || string_agg(quote_ident(a.attname), ', ' order by a.attnum)
      from pg_class c join pg_namespace n on n.oid = c.relnamespace
-     where n.nspname in ('api', 'semantic') and c.relkind = 'v' order by 1"
+     join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+     where n.nspname in ('api', 'semantic') and c.relkind = 'v' group by n.nspname, c.relname order by 1"
+}
+# What 0041 added to each view's columns: "<view>:<appended columns>" per view that changed, or what else changed.
+added() {
+  local line k new old
+  while IFS= read -r line; do
+    k="${line%%=*}"; new="${line#*=}"; old="$(echo "$COLS" | grep -F "$k=" | grep "^$k=" | cut -d= -f2-)"
+    if [ -z "$old" ]; then echo "new view $k"
+    elif [ "$new" != "$old" ]; then case "$new" in "$old, "*) echo "$k:${new#"$old, "}" ;; *) echo "changed $k" ;; esac
+    fi
+  done <<< "$1"
+  echo "$COLS" | cut -d= -f1 | while read -r k; do echo "$1" | grep -q "^$k=" || echo "dropped $k"; done
 }
 same() { [ "$1" = "$2" ] && echo "identical ($(echo "$1" | wc -l) lines)" || echo "differ: $(diff <(echo "$1") <(echo "$2") | head -8 | tr '\n' ' ')"; }
 
 if build; then
   rows IN | $P -d "$T" -f - >/dev/null 2>&1 || echo "india rows failed"
-  COLS="$(q "select n.nspname || '.' || c.relname || '=' || string_agg(quote_ident(a.attname), ', ' order by a.attnum)
-             from pg_class c join pg_namespace n on n.oid = c.relnamespace
-             join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
-             where n.nspname in ('api', 'semantic') and c.relkind = 'v' group by n.nspname, c.relname order by 1")"
+  COLS="$(cols)"
   A="$(reads pre full "")"; META_A="$(meta)"
   APPLY="$(sed -E '/^create role /d' "$MIG" | $P -d "$T" -f - 2>&1 | grep -v NOTICE)"
-  B="$(reads pre full "")"; META_B="$(meta)"
+  B="$(reads pre full "")"; META_B="$(meta)"; COLS_B="$(cols)"
   B_ALL="$(reads all full "")"
   US_ROWS="$(rows US | $P -d "$T" -f - 2>&1)"
   C_ALL="$(reads all full "")"
@@ -352,6 +382,35 @@ check "V24 the US screener rows read in dollars with their notes passed through 
   "$(flip "select string_agg(market || ':' || currency || ':' || coalesce(promoter_pct::text, 'null') || ':' || (notes ? 'promoter_pct'), ',' order by market)
          from api.screener where slug in ('t41-in-a', 't41-us-a')")" '^IN:INR:50:false,US:USD:null:true$'
 
+############################################################ 5. the ticker and CIK (option B on #404)
+check "V25 0041 appends the ticker and CIK where India shows the NSE symbol and ISIN, and adds, drops or moves no other view column" \
+  "$(added "$COLS_B" | sort | tr '\n' ';')" \
+  '^api\.companies:ticker, cik;api\.index_members:ticker;api\.peer_comps:peer_ticker;api\.priced_in_lenders:ticker;api\.priced_in_operating:ticker;api\.screener:ticker;$'
+bad41() { q "update equity.company set $1 where entity_id = (select id from core.entity where slug = 't41-us-a')" | grep -o 'violates check constraint "[a-z_]*"'; }
+V26_COLS="$(q "select string_agg(column_name || ':' || data_type || ':' || is_nullable || ':' || (col_description('equity.company'::regclass, ordinal_position::int) ~ '^US only'), ',' order by column_name)
+               from information_schema.columns where table_schema = 'equity' and table_name = 'company' and column_name in ('ticker', 'cik')")"
+V26_GOOD="$(printf "%s\n" "begin;" "update equity.company set ticker = 'BRK.B', cik = '1067983' where entity_id = (select id from core.entity where slug = 't41-us-a') returning ticker || ' ' || cik;" "rollback;" \
+            | $P -d "$T" 2>&1 | grep -v '^BEGIN$\|^ROLLBACK$\|^UPDATE')"
+check "V26 equity.company's ticker and cik: nullable text commented US only, refusing a CIK with leading zeros, a lower-case ticker or one with a space" \
+  "$V26_COLS | $(bad41 "cik = '0000320193'") | $(bad41 "ticker = 'aapl'") | $(bad41 "ticker = 'BRK B'") | $V26_GOOD" \
+  '^cik:text:YES:true,ticker:text:YES:true \| violates check constraint "company_cik_check" \| violates check constraint "company_ticker_check" \| violates check constraint "company_ticker_check" \| BRK\.B 1067983$'
+check "V27 published, the US rows carry their ticker (and CIK) in every view that has the columns; India's are null in all of them" \
+  "$(flip "select (select string_agg(slug || '=' || ticker || ':' || cik, ',' order by slug) from api.companies where slug in ('t41-us-a', 't41-us-e'))
+         || ' | ' || (select string_agg(slug || '=' || ticker, ',' order by slug) from api.screener where slug in ('t41-us-a', 't41-us-d'))
+         || ' | ' || (select string_agg(index_slug || ':' || slug || '=' || ticker, ',') from api.index_members where slug = 't41-us-b')
+         || ' | ' || (select string_agg(peer_slug || '=' || peer_ticker, ',' order by peer_slug) from api.peer_comps where company_slug = 't41-us-a' and row_kind = 'peer')
+         || ' | ' || (select count(*) from api.peer_comps where row_kind = 'median' and peer_ticker is not null)
+         || ' | ' || (select string_agg(slug || '=' || ticker, ',') from api.priced_in_operating where slug = 't41-us-h')
+         || ' | ' || (select string_agg(slug || '=' || ticker, ',') from api.priced_in_lenders where slug = 't41-us-f')
+         || ' | India: ' || ((select count(*) from api.companies where slug like 't41-in-%' and (ticker is not null or cik is not null))
+                + (select count(*) from api.screener where slug like 't41-in-%' and ticker is not null)
+                + (select count(*) from api.index_members where slug like 't41-in-%' and ticker is not null)
+                + (select count(*) from api.peer_comps where company_slug like 't41-in-%' and peer_ticker is not null)
+                + (select count(*) from api.priced_in_operating where slug like 't41-in-%' and ticker is not null)
+                + (select count(*) from api.priced_in_lenders where slug like 't41-in-%' and ticker is not null))
+         || ' of ' || (select count(*) from api.companies where slug like 't41-in-%')")" \
+  '^t41-us-a=T41A:41097,t41-us-e=T41E:41101 \| t41-us-a=T41A,t41-us-d=T41D \| dow-jones:t41-us-b=T41B \| t41-us-b=T41B,t41-us-c=T41C,t41-us-d=T41D,t41-us-h=T41H \| 0 \| t41-us-h=T41H \| t41-us-f=T41F \| India: 0 of 7$'
+
 $P -d postgres -c "drop database if exists $T" >/dev/null 2>&1
-check "V25 the throwaway database is gone" "$($P -d postgres -c "select count(*) from pg_database where datname = '$T'")" '^0$'
+check "V28 the throwaway database is gone" "$($P -d postgres -c "select count(*) from pg_database where datname = '$T'")" '^0$'
 echo "0041 tests: passed $pass, failed $fail"
