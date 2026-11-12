@@ -155,16 +155,17 @@ FRONT_PAGE = [own('- Growth of economic activity changed from "has moderated" to
 
 def test_the_rule_applies_from_v4_and_a_pinned_older_reply_is_checked_as_before():
     """`ai_batch.Work.check` asks for the rule only for a v4 (or later) request; a target pinned to v1, v2 or v3 keeps
-    its copies, exactly as before this change."""
+    its copies, exactly as before this change. v5 (the current version) and v4 are checked the same way."""
     w = Work("statement_diff_summary", NEW, OLD, D.segments)
     texts = {}
-    for version in ("v1", "v2", "v3", "v4"):
+    for version in ("v1", "v2", "v3", "v4", "v5"):
         req = w.request(load_prompt("statement_diff_summary", version))
         c = w.check(req, reply(FRONT_PAGE))
         assert c.ok, (version, c.reasons())
         texts[version] = ([b.text for b in c.kept], dict(c.copies))
     assert texts["v4"] == (['Growth of economic activity changed from "has moderated" to "has moderated further".',
                             'The policy decision changed from "maintain" to "lower" the target range.'], {"removed": 3})
+    assert texts["v5"] == texts["v4"]
     plain = check("statement_diff_summary", reply(FRONT_PAGE), REQ.sources, changed=CHANGED)
     assert texts["v1"] == texts["v2"] == texts["v3"] == ([b.text for b in plain.kept], {})
     assert texts["v1"][0][0].endswith(FOMC_A[slice(*A_GROWTH)] + " ... " + FOMC_B[slice(*B_GROWTH)])
@@ -185,3 +186,47 @@ def test_a_shortened_copy_ending_in_the_models_full_stop_is_still_a_copy():
     assert [b.text for b in c.kept] == ['The guidance drops "the extent and timing of" from its first clause.',
                                         "Growth of economic activity changed."]
     assert c.copies == {"removed": 2}
+
+
+def test_copies_in_their_own_parentheses_go_with_them():
+    """Dev's output 2445 (round 3, v4): "…to "been little changed in recent months" (<copy> / <copy>)." The pair may come
+    as one cited block or as two blocks with the separator between them."""
+    one = {"type": "text", "text": "(" + FOMC_A[slice(*A_GROWTH)] + " / " + FOMC_B[slice(*B_GROWTH)] + ").",
+           "citations": [cite(FOMC_A, *A_GROWTH, 0), cite(FOMC_B, *B_GROWTH, 1)]}
+    blocks = [own('- Growth of economic activity changed from "has moderated" to "has moderated further" '), one,
+              own('\n- The policy decision changed from "maintain" to "lower" the target range ('),
+              old(A_RATE), own(" / "), new(B_RATE), own(").")]
+    c = diff_check(blocks)
+    assert c.ok, c.reasons()
+    assert [b.text for b in c.kept] == [
+        'Growth of economic activity changed from "has moderated" to "has moderated further".',
+        'The policy decision changed from "maintain" to "lower" the target range.']
+    assert [len(b.citations) for b in c.kept] == [2, 2] and c.copies == {"removed": 3}
+
+
+def test_a_copy_after_a_word_that_closes_the_clause_comes_out_and_one_after_an_open_word_is_quoted():
+    """Dev's output 2452 (round 3, v4): "…in the previous resolution <copy>, and is now described as …" and "…was added
+    <copy>" read on without the copy (the copy's full stop stays); "…described as "moderate" in <copy>" doesn't."""
+    blocks = [own('- Growth was described as having "moderated" in the previous statement '), old(A_GROWTH),
+              own(', and is now described as having "moderated further" '), new(B_GROWTH),
+              own("\n- A sentence on the risks to employment was added "), new(B_RISKS),
+              own('\n- The decision was described as "lower" in '), new(B_RATE)]
+    c = diff_check(blocks)
+    assert c.ok, c.reasons()
+    assert [b.text for b in c.kept] == [
+        ('Growth was described as having "moderated" in the previous statement, and is now described as having '
+         '"moderated further".'),
+        "A sentence on the risks to employment was added.",
+        f'The decision was described as "lower" in "{FOMC_B[slice(*B_RATE)]}"']
+    assert c.copies == {"removed": 3, "quoted": 1}
+
+
+def test_a_joined_copy_inside_the_models_sentence_is_quoted_piece_by_piece():
+    joined = {"type": "text", "text": FOMC_A[slice(*A_GROWTH)] + " / " + FOMC_B[slice(*B_GROWTH)],
+              "citations": [cite(FOMC_A, *A_GROWTH, 0), cite(FOMC_B, *B_GROWTH, 1)]}
+    blocks = [own("- The growth sentence now reads "), joined, own("\n- The decision changed. "), new(B_RATE)]
+    c = diff_check(blocks)
+    assert c.ok, c.reasons()
+    assert c.kept[0].text == (f'The growth sentence now reads "{FOMC_A[slice(*A_GROWTH)]}" / '
+                              f'"{FOMC_B[slice(*B_GROWTH)]}"')
+    assert c.copies == {"quoted": 1, "removed": 1}
