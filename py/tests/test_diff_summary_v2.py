@@ -34,7 +34,7 @@ def test_v2_is_v1_plus_the_quotation_mark_rule_and_v1_is_left_as_it_ran():
     assert len(two) == len(one) + 1 and len(added) == 1 and added[0].startswith(RULE)
     assert [line for line in two if line != added[0]] == one        # nothing else changed, in the same order
     # The other tasks keep their versions (the card's "must not change").
-    assert PROMPT_VERSION == {"doc_summary": "v1", "statement_diff_summary": "v3", "stance_extraction": "v2",
+    assert PROMPT_VERSION == {"doc_summary": "v1", "statement_diff_summary": "v4", "stance_extraction": "v2",
                               "projection_extraction": "v1"}
     assert ai_batch.PINNED_TASKS == ("statement_diff_summary",) and ai_batch.RERUN_TASK == "statement_diff_summary"
 
@@ -49,7 +49,14 @@ def test_v3_is_v2_plus_one_rule_and_v2_is_left_as_it_ran():
     assert len(three) == len(two) + 1 and added == [RULE_V3]
     assert [line for line in three if line != RULE_V3] == two
     assert three.index(RULE_V3) == next(i for i, line in enumerate(two) if line.startswith(RULE)) + 1
-    assert PROMPT_VERSION["statement_diff_summary"] == "v3"
+
+
+def test_v4_sends_v3s_instructions_word_for_word():
+    """v4 marks the outputs checked with our copies rule (option 1, test_diff_summary_copies.py): the model is asked
+    exactly what v3 asked, and only the note at the top of the file differs."""
+    v3, v4 = load_prompt("statement_diff_summary", "v3"), load_prompt("statement_diff_summary", "v4")
+    assert v4.version == "v4" and v4.text == v3.text and "<!--" not in v4.text
+    assert PROMPT_VERSION["statement_diff_summary"] == "v4" and ai_batch.COPIES_FROM == 4
 
 
 def test_quoted_words_pass_the_checks_as_before():
@@ -104,22 +111,23 @@ class PinDB:
 
 def test_a_target_keeps_the_version_it_was_answered_with_unless_the_run_reruns_it():
     works = [Work("statement_diff_summary", Doc(i, *list(NEW.__dict__.values())[1:]), OLD, {"pairs": []})
-             for i in (10, 11, 12, 13, 14)]
+             for i in (10, 11, 12, 13, 14, 15)]
     works.append(Work("doc_summary", NEW))
-    db = PinDB([(10, "v1"), (11, "v1"), (11, "v3"), (13, "v1"), (14, "v2")])
+    db = PinDB([(10, "v1"), (11, "v1"), (11, "v4"), (13, "v1"), (14, "v2"), (15, "v3")])
     t = AiBatch()
     t._rerun_docs = {13}
     t._pin(db, works)
     by = {w.document_id: w for w in works if w.task == "statement_diff_summary"}
     assert by[10].prompt.version == "v1" and by[10].prompt.text == load_prompt("statement_diff_summary", "v1").text
-    assert by[11].prompt is None          # answered with v3 already: the current version
+    assert by[11].prompt is None          # answered with v4 already: the current version
     assert by[14].prompt.version == "v2"  # answered with v2 (dev's first sample): keeps v2 until a re-run
+    assert by[15].prompt.version == "v3"  # answered with v3 (dev's second sample): keeps v3 until a re-run
     assert by[12].prompt is None          # never answered (a new decision): the current version
     assert by[13].prompt is None          # re-run: the current version
     assert works[-1].prompt is None       # another task is never pinned
     # A pinned target's request is v1's, so its stored request is found and nothing is sent again.
     current = load_prompt("statement_diff_summary", PROMPT_VERSION["statement_diff_summary"])
-    assert by[10].request(current).prompt.version == "v1" and by[12].request(current).prompt.version == "v3"
+    assert by[10].request(current).prompt.version == "v1" and by[12].request(current).prompt.version == "v4"
     # Stale and errored requests don't pin: the query keeps answered and waiting ones only.
     (sql,) = db.sql
     assert "status in ('pending', 'succeeded')" in sql and "not like 'stale:%%'" in sql

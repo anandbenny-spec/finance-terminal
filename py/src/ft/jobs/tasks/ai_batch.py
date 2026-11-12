@@ -88,7 +88,9 @@ target whose published output was made with an earlier version, and nothing else
 retired projections). Each target is sent once (the input hash). A published reply supersedes the old output; a rejected one
 leaves it published. No scheduled run sets the variable. The other tasks re-send their targets when their version
 changes, as before. (The alternative, a re-run that bumps the version for every target at once, would have re-sent all of
-production's summaries on its next `daily`, before the judge's verdict.)
+production's summaries on its next `daily`, before the judge's verdict.) From v4 on (`COPIES_FROM`), a reply is checked
+with `summaries.check(..., drop_copies=True)`: its copies of its cited text come out of the bullets; a pinned v1-v3
+target's reply is checked as before.
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -145,10 +147,13 @@ from ft.policy import rbi_resolution
 # stance_extraction v2 (Anand, 27 Oct 2026, issue #16): the quote is the stance sentence with the sentence before it,
 # since resolutions repeat the stance sentence word for word and a quote must be found exactly once (Arch 03 §1.2).
 # statement_diff_summary v2 (#445, R05-2): words taken from a statement go in quotation marks; v3 (the same job, after v2's
-# dev sample): quote only the changed words and don't repeat the cited sentence after them. Its older targets keep the
-# version they were answered with until the re-run (`PINNED_TASKS`, `RERUN_ENV`).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v3", "stance_extraction": "v2",
+# dev sample): quote only the changed words and don't repeat the cited sentence after them. v4 (Anand's option 1, 12 Nov
+# 2026): v3's instructions word for word, with our assembly taking the reply's copies of its cited text out of the bullets
+# (`summaries.mark_copies`; from `COPIES_FROM` on). Its older targets keep the version they were answered with until the
+# re-run (`PINNED_TASKS`, `RERUN_ENV`).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v4", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
+COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 PINNED_TASKS = ("statement_diff_summary",)   # a target keeps the version it was answered with (module docstring)
 RERUN_TASK = "statement_diff_summary"        # the one task the re-run sends (#445)
 RERUN_ENV = "POLICY_AI_RERUN"                # empty or 'none' (the default) | 'all' | meeting slugs, comma-separated
@@ -220,11 +225,12 @@ class Work:
     def check(self, req: Request, reply: Reply) -> Checked | extraction.Checked:
         if self.task in EXTRACTION_TASKS:
             return self.recheck(extraction.answer_of(reply))
-        changed = None
+        changed, drop_copies = None, False
         if self.task == "statement_diff_summary":
             old, new = summaries.changed_spans(self.segments)
             changed = {self.base.document_id: old, self.doc.document_id: new}
-        return summaries.check(self.task, reply, req.sources, changed=changed)
+            drop_copies = _vnum(req.prompt.version) >= COPIES_FROM      # a pinned v1-v3 reply is checked as before
+        return summaries.check(self.task, reply, req.sources, changed=changed, drop_copies=drop_copies)
 
 
 
