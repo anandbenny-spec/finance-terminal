@@ -1,7 +1,7 @@
 // readAll: a list read either returns every row the database holds or throws (Review 01, N2). The mocked client
 // cuts every response at `cap` rows, as the Data API's max_rows does, without an error.
 import { describe, expect, it, vi } from "vitest";
-import { IncompleteReadError, MAX_ROWS, readAll, type PageQuery, type PageResult } from "./read";
+import { IncompleteReadError, MAX_ROWS, RETRY_DELAY_MS, RETRY_JITTER_MS, readAll, retryDelayMs, type PageQuery, type PageResult } from "./read";
 
 function table(n: number) {
   return Array.from({ length: n }, (_, i) => ({ id: i }));
@@ -119,6 +119,35 @@ describe("readAll", () => {
       await expect(readAll("company_prices", query)).rejects.toThrow(IncompleteReadError);
       expect(calls).toBe(2);
       warn.mockRestore();
+    });
+
+    it("waits 300 ms plus a random share of 900 ms before the retry, so reads that timed out together don't retry together (#516)", () => {
+      expect(retryDelayMs(() => 0)).toBe(RETRY_DELAY_MS);
+      expect(retryDelayMs(() => 1)).toBe(RETRY_DELAY_MS + RETRY_JITTER_MS);
+      expect(retryDelayMs(() => 0.5)).toBe(750);
+      expect(retryDelayMs(() => -3)).toBe(300);
+      expect(retryDelayMs(() => 7)).toBe(1200);
+      const waits = new Set(Array.from({ length: 50 }, () => retryDelayMs()));
+      expect(waits.size).toBeGreaterThan(1);
+      for (const w of waits) expect(w >= 300 && w <= 1200).toBe(true);
+    });
+
+    it("retries after the random wait, not a fixed one (#516)", async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+      let calls = 0;
+      const query: PageQuery<{ id: number }> = async () =>
+        calls++ === 0 ? { data: null, error: timeout, count: null } : { data: table(1), error: null, count: 1 };
+      const read = readAll("earnings_calls", query);
+      await vi.advanceTimersByTimeAsync(749);
+      expect(calls).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await read).toHaveLength(1);
+      expect(calls).toBe(2);
+      random.mockRestore();
+      warn.mockRestore();
+      vi.useRealTimers();
     });
 
     it("does not retry any other error", async () => {

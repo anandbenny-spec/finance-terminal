@@ -192,7 +192,8 @@ describe("the read", () => {
     // earnings_latest is absent from the store, so a request for it would answer 404 and the read would throw.
     const { db, seen } = fakeClient({ call_guidance: [], guidance_hit_rates: [], ai_citations: [], citation_pages: [] });
     const got = await readGuidanceRecord(db, "tcs");
-    expect(Object.keys(got).sort()).toEqual(["citations", "pages", "rate", "rows"]);
+    // Its quotes' citations and pages are read with the selected call's, in one read each (#516).
+    expect(Object.keys(got).sort()).toEqual(["rate", "rows"]);
     expect(seen.some((s) => s.view === "earnings_latest")).toBe(false);
   });
 });
