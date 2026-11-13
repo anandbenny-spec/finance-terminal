@@ -202,7 +202,8 @@ def test_a_daily_run_publishes_each_stance_and_the_projections_the_regex_missed_
 
     # One batch: the summaries, the cut's "what changed", a stance for each resolution and the cut's projections.
     assert [len(b["requests"]) for b in fake.batches.values()] == [6]
-    assert sorted(k for k, _ in fake.answered) == ["projections", "stance", "stance"]
+    # the What changed summary's request is on the json route too, from v11 (#445): "bullets"
+    assert sorted(k for k, _ in fake.answered) == ["bullets", "projections", "stance", "stance"]
     assert sorted(x[:2] for x in requests(base)) == [("doc_summary", "succeeded"), ("stance_extraction", "succeeded")]
     assert sorted(x[:2] for x in requests(cut)) == [("doc_summary", "succeeded"), ("projection_extraction", "succeeded"),
                                                    ("stance_extraction", "succeeded"),
