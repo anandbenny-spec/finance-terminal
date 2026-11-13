@@ -82,6 +82,7 @@ export async function readPricedInPage(): Promise<PricedInPageData> {
   try {
     return { ok: true, readAt, ...(await readPricedIn(db)) };
   } catch (error) {
+    cacheLife("failedRead");
     console.error(`[equity] priced-in read failed: ${error instanceof Error ? error.message : String(error)}`);
     return { ok: false, readAt };
   }
@@ -102,6 +103,7 @@ export async function readScreenerPage(): Promise<ScreenerPageData> {
     const [rows, members, policies] = await Promise.all([readScreener(db), readIndexMembers(db), readFieldPolicy(db as PolicyDb)]);
     return { ok: true, readAt, rows, indexes: indexesWithMarket(members), policies };
   } catch (error) {
+    cacheLife("failedRead");
     console.error(`[equity] screener read failed: ${error instanceof Error ? error.message : String(error)}`);
     return { ok: false, readAt };
   }

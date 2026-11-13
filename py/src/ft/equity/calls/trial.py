@@ -395,7 +395,7 @@ def read_base(conn, run_ids: list[int], works) -> dict[int, tuple[int, CallResul
         raise SystemExit(f"eval runs {wrong} aren't first-pass trial runs ({EVAL_SET})")
     stored: dict[tuple[int, int], list[tuple[int, dict]]] = {}
     for rid, key, predicted in conn.execute(
-            "select eval_run_id, item_key, predicted from ops.eval_result where eval_run_id = any(%s) order by eval_run_id, id",
+            "select eval_run_id, item_key, predicted from ops.eval_result where eval_run_id = any(%s) order by eval_run_id, item_key",
             (run_ids,)).fetchall():
         event, _, index = key.partition(":")
         stored.setdefault((rid, int(event)), []).append((int(index), dict(predicted)))

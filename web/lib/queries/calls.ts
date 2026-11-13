@@ -315,6 +315,7 @@ export async function readEarningsListPage(): Promise<EarningsListData> {
   try {
     return { ok: true, readAt, rows: await readEarningsList(db) };
   } catch (error) {
+    cacheLife("failedRead");
     console.error("[earnings] list read failed: " + (error instanceof Error ? error.message : String(error)));
     return { ok: false, readAt };
   }

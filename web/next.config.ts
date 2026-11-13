@@ -10,9 +10,19 @@ const nextConfig: NextConfig = {
   // last deploy instead, so after a quiet hour the first visitor saw data as old as that deploy (days, once). The
   // route's expiry is the shortest of the reads it uses, so every read uses one of these; lib/queries/cache-profiles.test.ts
   // fails on a read that doesn't.
+  //
+  // `failedRead` is for a read that failed (#499, 13 Nov 2026), called in the failure branch after the read's own profile:
+  // Next keeps the smallest `stale`, `revalidate` and `expire` of the calls a cached function makes, and a route keeps the
+  // smallest of the reads it used. A failure is cached as a value (`{ ok: false }`, a held part), so on a no-expiry profile
+  // it was served for a minute or an hour, and again to the next visitor however much later. With this one, the first
+  // request 5 s after the failure starts a fresh render, and an unvisited failure is dropped after five minutes. 300 s is
+  // the floor for both `stale` and `expire`: below it Next leaves the read out of the prerendered page or its shell
+  // (node_modules/next/dist/docs/01-app/03-api-reference/04-functions/cacheLife.md, "Prerendering behavior"), which
+  // would need a Suspense boundary. A build with no Data API keeps its read's own profile (re-reading can't heal it).
   cacheLife: {
     minutesNoExpire: { stale: 300, revalidate: 60, expire: 31_536_000 },
     hoursNoExpire: { stale: 300, revalidate: 3600, expire: 31_536_000 },
+    failedRead: { stale: 300, revalidate: 5, expire: 300 },
   },
   // /favicon.ico answered 404; the icon route (app/icon.tsx) is the site's icon (1 Nov 2026, #228).
   async rewrites() {
