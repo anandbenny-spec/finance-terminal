@@ -276,7 +276,7 @@ def test_the_workflow_passes_its_inputs_through_the_environment():
     run = next(st["run"] for st in wf["jobs"]["run"]["steps"] if st.get("name") == "Draw")
     assert "${{" not in run and '"$GATE"' in run and '"$SEED"' in run
     assert wf["on"]["workflow_dispatch"]["inputs"]["gate"]["options"] == ["all", "sitting2", "round", *s.ALL_GATES]
-    assert '"$ROUND"' in run and wf["on"]["workflow_dispatch"]["inputs"]["round"]["options"] == ["none", s.ROUND]
+    assert '"$ROUND"' in run and wf["on"]["workflow_dispatch"]["inputs"]["round"]["options"] == ["none", *s.ROUNDS]
     assert wf["on"]["workflow_dispatch"]["inputs"]["round"]["default"] == "none"
 
 
@@ -603,7 +603,7 @@ def test_the_round_has_its_own_seeds_and_leaves_out_sets_a_and_b():
     assert not set(s.ROUND_SEEDS.values()) & set(s.SEEDS.values()) and s.ROUND_RULE_VERSION == 4 > s.RULE_VERSION
     assert set(s.ROUND_EXCLUDED_EVENTS) == {3743, 3780, 4002, 3855, 3863, 3689, 3850, 4003, 4011, 3714}
     from ft.jobs.tasks import equity_calls_ai as eca
-    assert s.ROUND_VERSION == eca.GUIDANCE_RERUN_VERSION
+    assert s.ROUND_VERSION == "v5" and s.ROUND_F_VERSION == eca.GUIDANCE_RERUN_VERSION     # the re-run moved to #533's v6
 
 
 @pytest.mark.parametrize("sql", [s.POOL_TARGETS_ROUND, s.POOL_STATED_ROUND, s.POOL_RECALL_ROUND, s.POOL_SCORING_ROUND])
@@ -668,5 +668,77 @@ def test_the_round_draws_its_four_samples_from_the_round_pools_with_its_seeds(mo
 def test_the_round_refuses_gates_it_does_not_draw_and_a_round_gate_without_the_round():
     for argv in (["--gate", "round"], ["--gate", "summaries", "--round", s.ROUND], ["--gate", "links", "--round", s.ROUND],
                  ["--gate", "round", "--round", s.ROUND, "--seed", "5"]):
+        with pytest.raises(SystemExit):
+            s.main(argv, env={"JOB_DATABASE_URL": "postgresql://dev"})
+
+
+# ---------------------------------------------------------------------------------------------- #533's v6 round (rule version 5)
+
+def test_the_v6_round_has_its_own_seeds_and_names_the_judged_ids():
+    assert s.ROUND_F == "2b15f" and s.ROUNDS == (s.ROUND, s.ROUND_F) and s.ROUND_F_RULE_VERSION == 5 > s.ROUND_RULE_VERSION
+    assert s.ROUND_F_SEEDS == {"recall": 2026111401, "targets": 2026111402, "scoring": 2026111403, "stated": 2026111404}
+    assert not set(s.ROUND_F_SEEDS.values()) & (set(s.ROUND_SEEDS.values()) | set(s.SEEDS.values()))
+    assert set(s.ROUND_F_CALLS) == set(s.ROUND_EXCLUDED_EVENTS) | {3945, 3952, 3933, 3886, 3716} and len(s.ROUND_F_CALLS) == 15
+    assert len(set(s.ROUND_F_GUIDANCE)) == len(s.ROUND_F_GUIDANCE) == 50          # #511's 40 extraction rows and 20 scoring rows, 10 in both
+    assert len(set(s.ROUND_F_STATED)) == len(s.ROUND_F_STATED) == 20
+    assert s.ROUND_F_STAND_INS == {"life-insurance": "banks", "power": "it_services"}
+    assert set(s.ROUND_F_STAND_INS.values()) <= set(s.RECALL_BUCKETS)
+
+
+@pytest.mark.parametrize("sql", [s.POOL_TARGETS_ROUND_F, s.POOL_STATED_ROUND_F, s.POOL_SCORING_ROUND_F])
+def test_the_v6_rounds_item_pools_read_v6_and_leave_out_the_judged_calls_not_their_companies(sql):
+    assert sql.count("%s") == (5 if sql is s.POOL_TARGETS_ROUND_F else 4) and "prompt_version = %s" in sql
+    assert "call_event_id not in (select ecx.event_id from equity.earnings_call ecx where ecx.event_id = any(%s)" in sql
+    assert "union select gx.call_event_id from equity.guidance gx where gx.id = any(%s)" in sql
+    assert "union select sx.call_event_id from equity.stated_figure sx where sx.id = any(%s))" in sql
+    assert "entity_id not in" not in sql
+
+
+def test_the_v6_rounds_recall_pool_leaves_out_every_company_with_a_judged_call_or_item():
+    sql = s.POOL_RECALL_ROUND_F
+    assert sql.count("%s") == 4 and "ec.unknown_role_share <= 0.10" in sql and "r.prompt_version = %s" in sql
+    assert "ec.entity_id not in (select ecx.entity_id from equity.earnings_call ecx where ecx.event_id = any(%s)" in sql
+    assert "union select gx.entity_id from equity.guidance gx where gx.id = any(%s)" in sql
+    assert "union select sx.entity_id from equity.stated_figure sx where sx.id = any(%s))" in sql
+
+
+def test_the_v6_round_draws_from_its_pools_with_its_seeds_and_the_stand_in_peer_groups(monkeypatch):
+    import contextlib
+    import json as _json
+
+    from ft.jobs import runner
+    base = round_pools()
+    # the six companies dev has left for recall: no IT-services company and no bank among them
+    recall = [(9001, 1, "life-insurance", 1), (9002, 1, "life-insurance", 2), (9003, 2, "power", 3), (9004, 2, "power", 4),
+              (9005, 3, "fmcg", 5), (9006, 4, "autos", 6), (9007, 5, "steel", 7), (9008, 6, "energy-fuels", 8)]
+    conn = FakeConn({s.POOL_RECALL_ROUND_F: recall, s.POOL_TARGETS_ROUND_F: base[s.POOL_TARGETS_ROUND],
+                     s.POOL_STATED_ROUND_F: base[s.POOL_STATED_ROUND], s.POOL_SCORING_ROUND_F: base[s.POOL_SCORING_ROUND]})
+
+    @contextlib.contextmanager
+    def connect(dsn, autocommit=True, role=""):
+        yield conn
+    monkeypatch.setattr(runner, "connect", connect)
+    lines = []
+    assert s.main(["--gate", "round", "--round", s.ROUND_F], env={"JOB_DATABASE_URL": "postgresql://dev"}, out=lines.append) == 0
+    bodies = [_json.loads(x.split("::", 2)[2]) for x in lines]
+    assert [b["gate"] for b in bodies] == list(s.ROUND_GATES) and [b["seed"] for b in bodies] == [s.ROUND_F_SEEDS[g] for g in s.ROUND_GATES]
+    assert all(b["rule_version"] == 5 and b["round"] == s.ROUND_F and b["prompt_version"] == "v6" and b["judged_calls"] == 15
+               and b["judged_guidance"] == 50 and b["judged_stated"] == 20 and "excluded_events" not in b for b in bodies)
+    recall_body, targets, scoring, stated = bodies
+    assert recall_body["n"] == 5 and not [x for x in recall_body["shortfalls"] if "extra" not in x]      # all five buckets filled
+    assert len({(i - 9001) // 2 if i < 9005 else i for i in recall_body["ids"]}) == 5                   # one call a company
+    assert {9001, 9002} & set(recall_body["ids"]) and {9003, 9004} & set(recall_body["ids"])            # the two stand-ins
+    assert len(recall_body["extra_ids"]) == 1                                # six companies: one left for the extras
+    assert targets["n"] == 40 and scoring["n"] == 20 and stated["n"] == 20
+    judged = (list(s.ROUND_F_CALLS), list(s.ROUND_F_GUIDANCE), list(s.ROUND_F_STATED))
+    assert (s.POOL_TARGETS_ROUND_F, ("management", "v6", *judged)) in conn.seen and (s.POOL_STATED_ROUND_F, ("v6", *judged)) in conn.seen
+    assert (s.POOL_RECALL_ROUND_F, ("v6", *judged)) in conn.seen and (s.POOL_SCORING_ROUND_F, ("v6", *judged)) in conn.seen
+    assert not any(sql in (s.POOL_TARGETS, s.POOL_RECALL, s.POOL_SCORING, s.POOL_STATED, s.POOL_TARGETS_ROUND, s.POOL_RECALL_ROUND,
+                           s.POOL_SCORING_ROUND, s.POOL_STATED_ROUND) for sql, _ in conn.seen)
+
+
+def test_the_v6_round_refuses_gates_it_does_not_draw():
+    for argv in (["--gate", "summaries", "--round", s.ROUND_F], ["--gate", "links", "--round", s.ROUND_F],
+                 ["--gate", "round", "--round", s.ROUND_F, "--seed", "5"], ["--gate", "round", "--round", "2b15x"]):
         with pytest.raises(SystemExit):
             s.main(argv, env={"JOB_DATABASE_URL": "postgresql://dev"})

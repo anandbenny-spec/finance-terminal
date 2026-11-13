@@ -16,9 +16,9 @@ on:
         type: string
         default: ""
       round:
-        description: '#511''s fresh draw from the v5 re-run, sets A and B left out (gate round, recall, targets, scoring or stated); none for the sittings'
+        description: 'A round''s fresh draw (gate round, recall, targets, scoring or stated): 2b15d is #511''s (v5, sets A and B left out), 2b15f is #533''s (v6, the judged calls left out); none for the sittings'
         type: choice
-        options: [none, 2b15d]
+        options: [none, 2b15d, 2b15f]
         default: none
 concurrency:
   group: gate-samples
