@@ -196,7 +196,7 @@ def test_v12_is_v11_plus_the_evidence_rule_with_v11s_schema():
     assert load_schema("statement_diff_summary", "v12") == load_schema("statement_diff_summary", "v11")
     req = summaries.diff_summary_request(NEW, OLD, D.segments, V12)
     assert (req.spec.route, req.model_id, req.spec.effort) == ("json", SONNET, "medium")
-    assert summaries.DIFF_STRICT_FROM == 12        # v14 is current (test_diff_summary_v14.py)
+    assert summaries.DIFF_STRICT_FROM == 12        # v15 is current (test_diff_summary_v15.py)
 
 
 DOC = ("Two members - Dr. Nagesh Kumar and Prof. Ram Singh - were of the view that the stance be retained at neutral. "

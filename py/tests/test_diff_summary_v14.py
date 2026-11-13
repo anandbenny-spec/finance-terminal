@@ -15,7 +15,6 @@ from ft.ai import summaries
 from ft.ai.client import SONNET, load_prompt, load_schema
 from ft.ai.summaries import check_diff_json, previous_problem, retry_note, same_problem
 from ft.engines.document.diff import diff_texts
-from ft.jobs.tasks.ai_batch import PROMPT_VERSION
 from ft.quality import reasons
 
 D = diff_texts(FOMC_A, FOMC_B)
@@ -41,7 +40,7 @@ def check(version, *rows):
 
 
 # ---------------------------------------------------------------------------------------------- the prompt
-def test_v14_is_v13_plus_two_rules_after_the_same_claim_rule_with_v13s_schema_on_sonnet_and_is_current():
+def test_v14_is_v13_plus_two_rules_after_the_same_claim_rule_with_v13s_schema_on_sonnet():
     thirteen, fourteen = V13.text.splitlines(), V14.text.splitlines()
     assert [x for x in fourteen if x not in thirteen] == [AGAIN_RULE, SIDES_RULE]
     assert [x for x in fourteen if x not in (AGAIN_RULE, SIDES_RULE)] == thirteen
@@ -50,7 +49,7 @@ def test_v14_is_v13_plus_two_rules_after_the_same_claim_rule_with_v13s_schema_on
     assert "<!--" not in V14.text
     assert load_schema("statement_diff_summary", "v14") == load_schema("statement_diff_summary", "v13")
     assert (REQ.spec.route, REQ.model_id, REQ.spec.effort) == ("json", SONNET, "medium")
-    assert PROMPT_VERSION["statement_diff_summary"] == "v14" and summaries.DIFF_SIDES_FROM == 14
+    assert summaries.DIFF_SIDES_FROM == 14               # v15 is current (test_diff_summary_v15.py)
     assert summaries.DIFF_WHOLE_FROM == 13 and summaries.DIFF_STRICT_FROM == 12
 
 
@@ -76,7 +75,8 @@ def test_again_inside_quotation_marks_is_the_documents_word():
 
 
 # ---------------------------------------------------------------------------------------------- previous_problem
-PREVIOUS_MESSAGE = "a claim about the previous document with no quote from it: "
+PREVIOUS_MESSAGE = ("a claim about the previous document with no quote from it (quote the previous document, or leave "
+                    "the claim out): ")
 
 
 @pytest.mark.parametrize("text, said", [

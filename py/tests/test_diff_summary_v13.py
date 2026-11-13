@@ -60,7 +60,7 @@ def test_v13_is_v12_plus_two_rules_with_v12s_schema_on_sonnet():
     assert "<!--" not in V13.text
     assert load_schema("statement_diff_summary", "v13") == load_schema("statement_diff_summary", "v12")
     assert (REQ.spec.route, REQ.model_id, REQ.spec.effort) == ("json", SONNET, "medium")
-    assert summaries.DIFF_WHOLE_FROM == 13               # v14 is current (test_diff_summary_v14.py)
+    assert summaries.DIFF_WHOLE_FROM == 13               # v15 is current (test_diff_summary_v15.py)
     assert summaries.DIFF_STRICT_FROM == 12 and summaries.diff_json("v13")
 
 
