@@ -96,7 +96,7 @@ in that bullet's cited passages. Sonnet's batch price is 20 times Haiku's, so th
 at Sonnet's price (the request's own model), and a re-run of all of production's targets may need to be split by meetings.
 From v8 on (`STRICT_COPIES_FROM`, `REPEATS_FROM`), only a copy that stands as a whole sentence comes out (the rest go in
 quotation marks), and a bullet that repeats 12 or more of its own words fails. From v11 on (`summaries.DIFF_JSON_FROM`;
-Anand's decision of 13 Nov 2026, 07:21 IST) the request takes the json route and the reply is checked with
+Anand's decision of 13 Nov 2026, by 07:18 IST) the request takes the json route and the reply is checked with
 `summaries.check_diff_json`: each bullet's quotes found in its document's changed sentences, which become its citations.
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
@@ -165,7 +165,7 @@ from ft.policy import rbi_resolution
 # rule's strict form and the repeats check (round 7, after v7's dev sample: `STRICT_COPIES_FROM`, `REPEATS_FROM`). v9: v8
 # plus three rules (under 60 words; quotations fitted to the sentence; no bullet for a date, a title or attendance), on Sonnet.
 # v10: v9 plus a rule against words written only to hold a citation, on Sonnet at effort medium, with `ENDS_FROM`'s check.
-# v11 (Anand's decision of 13 Nov 2026, 07:21 IST): the structured route (summaries.DIFF_JSON_FROM, check_diff_json).
+# v11 (Anand's decision of 13 Nov 2026, by 07:18 IST): the structured route (summaries.DIFF_JSON_FROM, check_diff_json).
 PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v11", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies

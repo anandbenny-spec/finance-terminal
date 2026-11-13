@@ -27,7 +27,7 @@ passages they cite.
   every other copy goes in quotation marks; and a bullet that repeats a stretch of its own words fails (`repeat_problem`).
 - From v10 on (#445, round 9; `check_ends`): a bullet that doesn't end as a sentence ends fails (`end_problem`). v10 runs at
   effort medium (`DIFF_EFFORT_OF`).
-- From v11 on (#445, round 10; Anand's decision of 13 Nov 2026, 07:21 IST): the structured route (`DIFF_JSON_FROM`). The reply
+- From v11 on (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST): the structured route (`DIFF_JSON_FROM`). The reply
   is the schema's JSON, each bullet its text and its quotes by document; `check_diff_json` finds each quote in that
   document's changed sentences, cites them, and gives the bullet the checks above (figures, quotations, repeats, ends).
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
@@ -55,7 +55,7 @@ DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11":
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
 DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium"}
-# From v11 (#445, round 10; Anand's decision of 13 Nov 2026, 07:21 IST, after rounds 6 to 9 on the citations route kept
+# From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
 DIFF_JSON_FROM = 11

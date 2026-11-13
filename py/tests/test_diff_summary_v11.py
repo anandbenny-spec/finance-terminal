@@ -1,4 +1,4 @@
-"""#445, round 10 (Anand's decision of 13 Nov 2026, 07:21 IST, after rounds 6 to 9 on the citations route kept showing words
+"""#445, round 10 (Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept showing words
 written only to hold a citation): `statement_diff_summary` v11 takes the json route. The reply is v11.schema.json's JSON, each
 bullet its text and its quotes by document; `summaries.check_diff_json` finds each quote in that document's changed
 sentences, cites them, and gives the bullet the checks of v7 to v10 (figures, quotations, repeats, ends). Targets pinned to
