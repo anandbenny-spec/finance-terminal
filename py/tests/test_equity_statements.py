@@ -487,6 +487,58 @@ def test_every_saved_filing_parses_or_fails_with_its_reason():
     assert kinds == {"quarter": 1365, "half_year": 318, "nine_months": 345, "year": 364, "instant": 654}
 
 
+# ---------------------------------------------------------------------------------------------- the year-to-date repeat
+RELIANCE_H1 = "INTEGRATED_FILING_INDAS_1552804_17102025073600_WEB.xml"        # Q2 FY26: quarter and half-year
+RELIANCE_9M = "INTEGRATED_FILING_INDAS_1602861_16012026073814_WEB.xml"        # Q3 FY26: quarter and nine months
+RELIANCE_FY25 = "INTEGRATED_FILING_INDAS_1425444_25042025095641_WEB.xml"      # Q4 FY25: quarter and year
+REPEAT_NOTE = "year-to-date column repeats the quarter's figures"
+
+
+def repeating(data: bytes) -> bytes:
+    """The instance with every year-to-date (FourD) duration fact given the quarter's (OneD) value, as Tech Mahindra's
+    Q3 FY26 filings file them (a test instance, not a real figure)."""
+    root = etree.fromstring(data, xbrl.PARSER)
+    one = {etree.QName(el).localname: el.text for el in root if isinstance(el.tag, str) and el.get("contextRef") == "OneD"}
+    for el in root:
+        if isinstance(el.tag, str) and el.get("contextRef") == "FourD" and etree.QName(el).localname in one:
+            el.text = one[etree.QName(el).localname]
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8")
+
+
+@needs_fixtures
+@pytest.mark.parametrize("name, kind", [(RELIANCE_9M, "nine_months"), (RELIANCE_H1, "half_year"),
+                                        (RELIANCE_FY25, "year")])
+def test_a_year_to_date_column_that_repeats_the_quarter_stores_no_year_to_date_row(name, kind):
+    was = [r.period_kind for r in parse("RELIANCE", name).rows]
+    assert kind in was                                                  # the real file has the row
+    p = parse("RELIANCE", name, repeating(raw("RELIANCE", name)))
+    assert [r.period_kind for r in p.rows] == [k for k in was if k != kind]   # parsed, minus that row
+    assert f"{REPEAT_NOTE}: no {kind} row" in p.note
+    assert all("cfo" not in r.values for r in p.rows)                   # the column's cash flow goes with the row
+
+
+@needs_fixtures
+def test_a_year_to_date_row_that_differs_in_pat_pbt_or_revenue_is_stored():
+    base = repeating(raw("RELIANCE", RELIANCE_9M))
+    # PBT and PAT both move by the same amount (the PAT tie holds): only the revenue repeats
+    moved = edited(edited(base, "ProfitBeforeTax", "FourD", add=10**9), "ProfitLossForPeriod", "FourD", add=10**9)
+    p = parse("RELIANCE", RELIANCE_9M, moved)
+    assert [r.period_kind for r in p.rows] == ["quarter", "nine_months"] and REPEAT_NOTE not in p.note
+    # revenue differs, PBT and PAT repeat (total income moves with it, so its tie holds)
+    rev = edited(edited(base, "RevenueFromOperations", "FourD", add=10**9), "Income", "FourD", add=10**9)
+    assert "nine_months" in by_kind(parse("RELIANCE", RELIANCE_9M, rev))
+
+
+@needs_fixtures
+def test_a_normal_year_to_date_row_is_stored_and_a_q1_file_is_unchanged():
+    p = parse("RELIANCE", RELIANCE_9M)                                  # a Q3 file: no balance sheet
+    assert [r.period_kind for r in p.rows] == ["quarter", "nine_months"] and REPEAT_NOTE not in p.note
+    q1 = [n.name[:-3] for n in sorted((XBRL / "RELIANCE").glob("INTEGRATED_FILING_INDAS_*.xml.gz"))
+          if "|".join(r.period_kind for r in parse("RELIANCE", n.name[:-3]).rows) == "quarter"]
+    if q1:                                                              # a Q1 file: the quarter is its year to date
+        assert REPEAT_NOTE not in parse("RELIANCE", q1[0]).note
+
+
 # ---------------------------------------------------------------------------------------------- config and schema
 def test_the_tag_map_names_only_columns_of_equity_financials():
     sql = (REPO / "supabase" / "migrations" / "20261028001900_equity_schema.sql").read_text()
