@@ -95,7 +95,9 @@ on Sonnet 5.5 (`summaries.DIFF_MODEL_OF`) and the reply is also checked with `ch
 in that bullet's cited passages. Sonnet's batch price is 20 times Haiku's, so the $5 run estimate above counts each v7 request
 at Sonnet's price (the request's own model), and a re-run of all of production's targets may need to be split by meetings.
 From v8 on (`STRICT_COPIES_FROM`, `REPEATS_FROM`), only a copy that stands as a whole sentence comes out (the rest go in
-quotation marks), and a bullet that repeats 12 or more of its own words fails.
+quotation marks), and a bullet that repeats 12 or more of its own words fails. From v11 on (`summaries.DIFF_JSON_FROM`;
+Anand's decision of 13 Nov 2026, 07:21 IST) the request takes the json route and the reply is checked with
+`summaries.check_diff_json`: each bullet's quotes found in its document's changed sentences, which become its citations.
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -163,7 +165,8 @@ from ft.policy import rbi_resolution
 # rule's strict form and the repeats check (round 7, after v7's dev sample: `STRICT_COPIES_FROM`, `REPEATS_FROM`). v9: v8
 # plus three rules (under 60 words; quotations fitted to the sentence; no bullet for a date, a title or attendance), on Sonnet.
 # v10: v9 plus a rule against words written only to hold a citation, on Sonnet at effort medium, with `ENDS_FROM`'s check.
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v10", "stance_extraction": "v2",
+# v11 (Anand's decision of 13 Nov 2026, 07:21 IST): the structured route (summaries.DIFF_JSON_FROM, check_diff_json).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v11", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
@@ -245,6 +248,12 @@ class Work:
         if self.task == "statement_diff_summary":
             old, new = summaries.changed_spans(self.segments)
             changed = {self.base.document_id: old, self.doc.document_id: new}
+            if summaries.diff_json(req.prompt.version):                 # v11 on: the structured route
+                try:
+                    answer = reply.json()
+                except ValueError:
+                    answer = None
+                return summaries.check_diff_json(answer, req.sources, changed)
             drop_copies = _vnum(req.prompt.version) >= COPIES_FROM      # a pinned v1-v3 reply is checked as before
             check_quotes = _vnum(req.prompt.version) >= QUOTES_FROM     # a pinned v1-v6 reply, likewise
             strict = _vnum(req.prompt.version) >= STRICT_COPIES_FROM    # a pinned v4-v7 reply keeps the looser rule

@@ -15,7 +15,7 @@ from ft.ai.client import HAIKU, SONNET, load_prompt
 from ft.ai.summaries import check, end_problem, quote_problem, repeat_problem
 from ft.engines.document.diff import diff_texts
 from ft.jobs.tasks import ai_batch
-from ft.jobs.tasks.ai_batch import PROMPT_VERSION, Work
+from ft.jobs.tasks.ai_batch import Work
 from ft.quality import reasons
 
 D = diff_texts(FOMC_A, FOMC_B)
@@ -97,7 +97,7 @@ def test_v7_is_v6_plus_a_paragraph_on_coverage_and_four_rules_and_v6_is_left_as_
 
 
 def test_v7_runs_on_sonnet_with_the_tasks_settings_and_every_earlier_version_on_haiku():
-    assert REQ.model_id == SONNET and summaries.DIFF_MODEL_OF == {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET}
+    assert REQ.model_id == SONNET and summaries.DIFF_MODEL_OF == {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET}
     assert (REQ.spec.route, REQ.spec.effort, REQ.spec.max_tokens) == ("citations", "low", 8_000)
     for version in ("v1", "v2", "v3", "v4", "v5", "v6"):
         req = summaries.diff_summary_request(NEW, OLD, D.segments, load_prompt("statement_diff_summary", version))
@@ -308,7 +308,7 @@ CARRIER_RULE = ("- Put each citation on the words of yours that use the cited pa
                 "wording.")
 
 
-def test_v10_is_v9_plus_the_carrier_rule_on_sonnet_at_effort_medium_and_is_current():
+def test_v10_is_v9_plus_the_carrier_rule_on_sonnet_at_effort_medium():
     """Round 8 (v9 on dev): Sonnet wrote words only to hold a citation ("Previous new", dev's 2510; "The earlier figure was
     replaced by the new figure.", 2508)."""
     v9, v10 = load_prompt("statement_diff_summary", "v9"), load_prompt("statement_diff_summary", "v10")
@@ -319,8 +319,7 @@ def test_v10_is_v9_plus_the_carrier_rule_on_sonnet_at_effort_medium_and_is_curre
     req = summaries.diff_summary_request(NEW, OLD, D.segments, v10)
     assert (req.model_id, req.spec.effort, req.spec.route) == (SONNET, "medium", "citations")
     assert summaries.diff_summary_request(NEW, OLD, D.segments, v9).spec.effort == "low"     # v9 ran at the task's
-    assert summaries.DIFF_EFFORT_OF == {"v10": "medium"} and ai_batch.ENDS_FROM == 10
-    assert PROMPT_VERSION["statement_diff_summary"] == "v10"
+    assert summaries.DIFF_EFFORT_OF == {"v10": "medium", "v11": "medium"} and ai_batch.ENDS_FROM == 10
 
 
 @pytest.mark.parametrize("text, ok", [

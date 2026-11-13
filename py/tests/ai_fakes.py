@@ -66,6 +66,24 @@ def good_diff(docs: list[tuple[str, str]]) -> list[dict]:
     return bullets((added[:2] + removed[:1] + added[2:] + removed[1:])[:3])
 
 
+def good_diff_json(docs: list[tuple[str, str]], mode: str = "ok") -> dict:
+    """A statement_diff_summary reply on the json route (v11 on, #445): up to three sentences that differ, each a bullet that
+    quotes it (without its full stop) and names its document. 'uncited': every quote is words neither statement holds."""
+    (_, old), (_, new) = docs
+    olds = {old[s:e] for s, e in sentence_spans(old)}
+    news = {new[s:e] for s, e in sentence_spans(new)}
+    added = [("new", new[s:e]) for s, e in sentence_spans(new) if new[s:e] not in olds]
+    removed = [("previous", old[s:e]) for s, e in sentence_spans(old) if old[s:e] not in news]
+    rows = (added[:2] + removed[:1] + added[2:] + removed[1:])[:3]
+    out = []
+    for doc, sentence in rows:
+        q = sentence.strip().rstrip(".")
+        verb = "adds" if doc == "new" else "drops"
+        quote = "words that are in neither statement" if mode == "uncited" else q
+        out.append({"text": f'The new statement {verb} "{q}".', "quotes": [{"document": doc, "text": quote}]})
+    return {"bullets": out}
+
+
 def headed_lists(lists: list[tuple[str, list[tuple[str, list[dict]]]]]) -> list[dict]:
     """Text blocks as the API returns them for a reply of headed lists: each heading an uncited line, each claim a block
     (`bullets` per list)."""
@@ -125,7 +143,7 @@ class FakeClaude:
     -line (`cut='mid'`) or cleanly (`cut='clean'`, a short read). `archive(id)` archives an ended batch. Results come
     back in reverse order (the API promises no order). The list endpoint returns the newest batches first.
     JSON-route requests (structured outputs) are answered by `answer(body)` (default: `good_stance` for a stance
-    schema, no projections otherwise), or, in 'not_json', with text that isn't JSON; the error and stop modes apply to
+    schema, `good_diff_json` for a two-document bullets schema (statement_diff_summary v11 on), no projections otherwise), or, in 'not_json', with text that isn't JSON; the error and stop modes apply to
     them too, and `answered` lists (schema's first property, answer) for each."""
 
     def __init__(self, script=("ok",), *, creates=("ok",), ends_after: int | None = 1, truncate: int | None = None,
@@ -173,7 +191,9 @@ class FakeClaude:
             if self.answer is not None:
                 got = self.answer(body)
             else:
-                got = good_stance(docs) if kind == "stance" else {"projections": []}
+                got = (good_stance(docs) if kind == "stance"
+                       else good_diff_json(docs, mode) if kind == "bullets" and len(docs) == 2
+                       else {"projections": []})
             got = "Here is the stance: neutral" if mode == "not_json" else got
             self.answered.append((kind, got))
             stop = mode if mode in ("max_tokens", "refusal") else "end_turn"

@@ -27,6 +27,9 @@ passages they cite.
   every other copy goes in quotation marks; and a bullet that repeats a stretch of its own words fails (`repeat_problem`).
 - From v10 on (#445, round 9; `check_ends`): a bullet that doesn't end as a sentence ends fails (`end_problem`). v10 runs at
   effort medium (`DIFF_EFFORT_OF`).
+- From v11 on (#445, round 10; Anand's decision of 13 Nov 2026, 07:21 IST): the structured route (`DIFF_JSON_FROM`). The reply
+  is the schema's JSON, each bullet its text and its quotes by document; `check_diff_json` finds each quote in that
+  document's changed sentences, cites them, and gives the bullet the checks above (figures, quotations, repeats, ends).
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
 (`policy.ai_batch`). The database checks the published output's citations again at commit (Architecture 01 §1.4).
@@ -39,18 +42,29 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from ft.ai.citations import map_api_citation
-from ft.ai.client import SONNET, Prompt, Reply, Request, Source, TextPart
+from ft.ai.client import SONNET, Prompt, Reply, Request, Source, TextPart, load_schema
 
 BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # The model of a statement_diff_summary prompt version that doesn't run on the task's (Haiku 5.5). v7 is Sonnet 5.5's (#445,
 # round 6; Anand's decision of 12 Nov 2026, 22:36 IST): the judge failed Haiku's round 5 (v6) on 7 of 10 targets, mostly on
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
-DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET}   # v8: v7's text, marking the copies rule's
-# revision (round 7); v9: v8 plus three rules (round 8); v10: v9 plus a rule on citation carriers (round 9).
+DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET}   # v8: v7's text, marking the
+# copies rule's revision (round 7); v9: v8 plus three rules (round 8); v10: v9 plus a rule on citation carriers (round 9);
+# v11: the json route (round 10).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
-DIFF_EFFORT_OF = {"v10": "medium"}
+DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium"}
+# From v11 (#445, round 10; Anand's decision of 13 Nov 2026, 07:21 IST, after rounds 6 to 9 on the citations route kept
+# showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
+# our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
+DIFF_JSON_FROM = 11
+DIFF_MAX_QUOTES = 6                    # quotes a bullet may rest on
+
+
+def diff_json(version: str) -> bool:
+    """Whether a statement_diff_summary prompt version takes the json route (`DIFF_JSON_FROM`)."""
+    return int(version.lstrip("v")) >= DIFF_JSON_FROM
 _MARK = re.compile(r"^[ \t]*(?:[-*•–—]|\d{1,2}[.)])[ \t]+")
 
 
@@ -171,12 +185,28 @@ def diff_summary_request(new: Doc, old: Doc, segments: dict, prompt: Prompt, *, 
                       context=f"Document 1: the previous {old.label} ({old.bank}, released {_when(old.day)})"),
                Source(new.document_id, new.text, f"New {new.label}, {_when(new.day)}",
                       context=f"Document 2: the new {new.label} ({new.bank}, released {_when(new.day)})"))
+    structured = diff_json(prompt.version)
+    ask = (f"In {lo} to {hi} bullets, explain what changed, as the schema's JSON, following the rules." if structured
+           else f"In {lo} to {hi} bullets, explain what changed, following the rules.")
     instruction = (f"Document 1 is the previous {old.label} ({_when(old.day)}); document 2 is the new one "
                    f"({_when(new.day)}). These sentences changed between them:\n\n"
-                   f"{redline_text(segments, old.text, new.text)}\n\n"
-                   f"In {lo} to {hi} bullets, explain what changed, following the rules.")
+                   f"{redline_text(segments, old.text, new.text)}\n\n" + ask)
+    if structured:
+        return Request("statement_diff_summary", prompt, sources, instruction, model=DIFF_MODEL_OF.get(prompt.version),
+                       effort=DIFF_EFFORT_OF.get(prompt.version), route="json",
+                       schema=load_schema("statement_diff_summary", prompt.version), note=_json_note(note))
     return Request("statement_diff_summary", prompt, sources, instruction, model=DIFF_MODEL_OF.get(prompt.version),
                    effort=DIFF_EFFORT_OF.get(prompt.version), note=_note(note))
+
+
+def _json_note(note: str | None) -> str | None:
+    """The json route's retry note (v11 on): as `_note`, in the route's own words."""
+    if not note:
+        return None
+    return ("Your previous answer to this request couldn't be published: " + note
+            + "\nAnswer again as the schema's JSON, following every rule. Copy each quote exactly from one changed sentence of "
+              "the document it names, put every quotation of the text among the bullet's quotes, and write numbers only as "
+              "the quoted sentences write them.")
 
 
 # ---------------------------------------------------------------------------------------------- checking a reply
@@ -280,10 +310,12 @@ def _overlaps(s: int, e: int, spans: list[tuple[int, int]]) -> bool:
 # tests run `check` on crafted bad replies and assert each phrase still lands where it says). Regexes, case-insensitive.
 # Change a message above and this table together.
 REASON_PHRASES: dict[str, tuple[str, ...]] = {
-    "citation": (r"no verified citation", r"quoted words not in its cited passages"),
+    "citation": (r"no verified citation", r"quoted words not in its cited passages",
+                 r"isn't in the (?:previous|new) document's changed sentences"),
     "numbers": (r"numbers not in its cited passages",),
     "format": (r"text outside the bullets", r"no bullets \(each bullet", r"\d+ bullets, not \d+ to \d+",
-               r"an unclosed quotation mark", r"repeats its own words", r"doesn't end as a sentence ends"),
+               r"an unclosed quotation mark", r"repeats its own words", r"doesn't end as a sentence ends",
+               r"the reply isn't the schema's JSON", r"isn't the schema's object", r"\d+ quotes, not 1 to \d+"),
 }
 
 
@@ -681,6 +713,100 @@ def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
     elif not lo <= len(bullets) <= hi:
         problems.append(f"{len(bullets)} bullets, not {lo} to {hi}")
     return Checked(task, bullets, problems, mapping, copies)
+
+
+# ---------------------------------------------------------------------------------------------- the json route (v11 on)
+_JSON_DOC = {"previous": 0, "new": 1}     # a quote's document → its index in the request's sources (document 1, document 2)
+
+
+def _flat(text: str) -> tuple[str, list[int]]:
+    """`text` as `match_form` reads it (whitespace runs one space, curly quotes straight, dashes one hyphen), with each
+    character's index in `text`."""
+    out: list[str] = []
+    back: list[int] = []
+    for i, ch in enumerate(text):
+        if ch.isspace():
+            if not out or out[-1] == " ":
+                continue
+            ch = " "
+        out.append(ch)
+        back.append(i)
+    return "".join(out).translate(_STRAIGHT), back
+
+
+def _find_in_changed(text: str, quote: str, spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """The changed sentences (`spans`, in `text`) that an exact copy of `quote` lies in or overlaps; [] if none. Matched as
+    `match_form` reads both, case kept; failing that, case aside (a quote that opens with a capital the sentence lacks)."""
+    q = match_form(quote).strip()
+    if not q:
+        return []
+    flat, back = _flat(text)
+    found: list[tuple[int, int]] = []
+    for hay, needle in ((flat, q), (flat.lower(), q.lower())):
+        if len(hay) != len(flat) or len(needle) != len(q):
+            continue
+        at = hay.find(needle)
+        while at >= 0:
+            start, end = back[at], back[at + len(needle) - 1] + 1
+            found += [(s, e) for s, e in spans if s < end and start < e and (s, e) not in found]
+            at = hay.find(needle, at + 1)
+        if found:
+            break
+    return sorted(found)
+
+
+def check_diff_json(answer, sources: tuple[Source, ...], changed: dict[int, list[tuple[int, int]]]) -> Checked:
+    """Check a v11-on statement_diff_summary reply (`answer`: the reply's JSON) against our copies of the two documents
+    (`sources`: document 1, document 2) and their changed sentences (`changed`, by document id). Each bullet's quotes are
+    found in its document's changed sentences, which become its citations; then the bullet gets the citations route's
+    checks from v10: only figures and quotations from those sentences, no repeats, and it ends as a sentence ends. The
+    same `Checked` as `check`'s, so a published output and its citations read the same on either route."""
+    task, mapping = "statement_diff_summary", Counter()
+    rows = answer.get("bullets") if isinstance(answer, dict) else None
+    if not isinstance(rows, list):
+        return Checked(task, [], ["the reply isn't the schema's JSON ({bullets: [...]})"], mapping)
+    bullets = [_diff_json_bullet(raw, sources, changed, mapping) for raw in rows]
+    problems = []
+    lo, hi = BULLETS[task]
+    if not lo <= len(bullets) <= hi:
+        problems.append(f"{len(bullets)} bullets, not {lo} to {hi}")
+    return Checked(task, bullets, problems, mapping)
+
+
+def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[tuple[int, int]]], mapping: Counter) -> Bullet:
+    if not isinstance(raw, dict) or not isinstance(raw.get("text"), str) or not isinstance(raw.get("quotes"), list):
+        b = Bullet("")
+        b.problem = "isn't the schema's object"
+        return b
+    text = _LEAD.sub("", " ".join(raw["text"].split()), count=1)
+    b = Bullet(text)
+    quotes = raw["quotes"]
+    if not text or not all(isinstance(q, dict) and q.get("document") in _JSON_DOC and isinstance(q.get("text"), str)
+                           for q in quotes):
+        b.problem = "isn't the schema's object"
+        return b
+    if not 1 <= len(quotes) <= DIFF_MAX_QUOTES:
+        b.problem = f"{len(quotes)} quotes, not 1 to {DIFF_MAX_QUOTES}"
+        return b
+    passages: list[str] = []
+    for q in quotes:
+        src = sources[_JSON_DOC[q["document"]]]
+        hits = _find_in_changed(src.text, q["text"], changed.get(src.document_id, []))
+        mapping["search" if hits else "failed"] += 1
+        if not hits:
+            short = " ".join(q["text"].split())[:80]
+            b.problem = f"a quote (\"{short}\") isn't in the {q['document']} document's changed sentences"
+            return b
+        for s, e in hits:
+            cited = Cited(src.document_id, s, e, "search")
+            if cited not in b.citations:
+                b.citations.append(cited)
+                passages.append(src.text[s:e])
+    if extra := unsupported_figures(text, passages):
+        b.problem = "numbers not in its cited passages: " + ", ".join(extra)
+    else:
+        b.problem = quote_problem(text, passages) or repeat_problem(text) or end_problem(text)
+    return b
 
 
 def retry_note(c: Checked) -> str:

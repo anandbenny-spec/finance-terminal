@@ -34,7 +34,7 @@ def test_v2_is_v1_plus_the_quotation_mark_rule_and_v1_is_left_as_it_ran():
     assert len(two) == len(one) + 1 and len(added) == 1 and added[0].startswith(RULE)
     assert [line for line in two if line != added[0]] == one        # nothing else changed, in the same order
     # The other tasks keep their versions (the card's "must not change").
-    assert PROMPT_VERSION == {"doc_summary": "v1", "statement_diff_summary": "v10", "stance_extraction": "v2",
+    assert PROMPT_VERSION == {"doc_summary": "v1", "statement_diff_summary": "v11", "stance_extraction": "v2",
                               "projection_extraction": "v1"}
     assert ai_batch.PINNED_TASKS == ("statement_diff_summary",) and ai_batch.RERUN_TASK == "statement_diff_summary"
 
@@ -60,7 +60,7 @@ def test_v4_sends_v3s_instructions_word_for_word():
     for version in ("v5", "v6"):
         later = load_prompt("statement_diff_summary", version)
         assert later.version == version and later.text == v3.text and "<!--" not in later.text
-    assert PROMPT_VERSION["statement_diff_summary"] == "v10" and ai_batch.COPIES_FROM == 4
+    assert PROMPT_VERSION["statement_diff_summary"] == "v11" and ai_batch.COPIES_FROM == 4
 
 
 def test_quoted_words_pass_the_checks_as_before():
@@ -117,13 +117,13 @@ def test_a_target_keeps_the_version_it_was_answered_with_unless_the_run_reruns_i
     works = [Work("statement_diff_summary", Doc(i, *list(NEW.__dict__.values())[1:]), OLD, {"pairs": []})
              for i in (10, 11, 12, 13, 14, 15)]
     works.append(Work("doc_summary", NEW))
-    db = PinDB([(10, "v1"), (11, "v1"), (11, "v10"), (13, "v1"), (14, "v2"), (15, "v5")])
+    db = PinDB([(10, "v1"), (11, "v1"), (11, "v11"), (13, "v1"), (14, "v2"), (15, "v5")])
     t = AiBatch()
     t._rerun_docs = {13}
     t._pin(db, works)
     by = {w.document_id: w for w in works if w.task == "statement_diff_summary"}
     assert by[10].prompt.version == "v1" and by[10].prompt.text == load_prompt("statement_diff_summary", "v1").text
-    assert by[11].prompt is None          # answered with v10 already: the current version
+    assert by[11].prompt is None          # answered with v11 already: the current version
     assert by[14].prompt.version == "v2"  # answered with v2 (dev's first sample): keeps v2 until a re-run
     assert by[15].prompt.version == "v5"  # answered with v5 (dev's fourth sample): keeps v5 until a re-run
     assert by[12].prompt is None          # never answered (a new decision): the current version
@@ -131,7 +131,7 @@ def test_a_target_keeps_the_version_it_was_answered_with_unless_the_run_reruns_i
     assert works[-1].prompt is None       # another task is never pinned
     # A pinned target's request is v1's, so its stored request is found and nothing is sent again.
     current = load_prompt("statement_diff_summary", PROMPT_VERSION["statement_diff_summary"])
-    assert by[10].request(current).prompt.version == "v1" and by[12].request(current).prompt.version == "v10"
+    assert by[10].request(current).prompt.version == "v1" and by[12].request(current).prompt.version == "v11"
     # Stale and errored requests don't pin: the query keeps answered and waiting ones only.
     (sql,) = db.sql
     assert "status in ('pending', 'succeeded')" in sql and "not like 'stale:%%'" in sql
