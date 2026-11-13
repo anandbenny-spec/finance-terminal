@@ -26,9 +26,9 @@ def test_the_rerun_is_off_unless_asked_and_runs_only_in_a_dev_backfill_limited_t
         eca.guidance_rerun("backfill", "production", ge.TASK, {eca.GUIDANCE_RERUN_ENV: "all"})
 
 
-def test_production_keeps_v1_and_only_dev_takes_the_rerun_until_511_part_3():
+def test_production_keeps_v1_and_only_dev_takes_the_rerun_until_533_part_3():
     assert eca.PROMPT_VERSION[ge.TASK] == "v1"
-    assert eca.GUIDANCE_RERUN_VERSION == "v5" and eca.GUIDANCE_RERUN_TARGETS == ("dev",)
+    assert eca.GUIDANCE_RERUN_VERSION == "v6" and eca.GUIDANCE_RERUN_TARGETS == ("dev",)       # v5 for #511; v6 since #533
 
 
 def test_prompt_v5_is_v2_with_one_section_and_keeps_v1s_definition_and_field_rules_word_for_word():
@@ -46,5 +46,35 @@ def test_prompt_v5_is_v2_with_one_section_and_keeps_v1s_definition_and_field_rul
 def test_v5_asks_with_twice_the_tasks_max_tokens_and_v1_keeps_the_tasks_own():
     # #511: v5's first dev run stopped at 16,000 output tokens on 68 of 294 calls. v1's requests (production) are unchanged.
     from ft.ai.client import TASKS
-    assert TASKS[ge.TASK].max_tokens == 16_000 and ge.MAX_TOKENS_OF == {"v5": 32_000}
+    assert TASKS[ge.TASK].max_tokens == 16_000 and ge.MAX_TOKENS_OF["v5"] == 32_000
     assert ge.MAX_TOKENS_OF.get("v1") is None
+
+
+# ---------------------------------------------------------------------------------------------- prompt v6 (#533, 2B-15f)
+
+def test_prompt_v6_is_v5_with_one_section_and_two_field_rules_and_keeps_v1s_definition_word_for_word():
+    v1, v5, v6 = (load_prompt(ge.TASK, v).text for v in ("v1", "v5", "v6"))
+    assert v1[v1.index("TARGETS\n"):v1.index("STATED FIGURES\n")] in v6         # §5.9's definition, unchanged
+    assert v1[v1.index("STATED FIGURES\n"):v1.index("Both lists:")] in v6        # what a stated figure is, unchanged
+    assert v5[v5.index("COMPLETENESS\n"):v5.index("TARGETS\nA target is")] in v6  # v5's completeness and shapes sections
+    assert v6.index("SHAPES OF A TARGET\n") < v6.index("WHOSE FIGURE, AND WHICH FIGURE\n") < v6.index("TARGETS\nA target is")
+    section = v6[v6.index("WHOSE FIGURE, AND WHICH FIGURE\n"):v6.index("TARGETS\nA target is")]
+    assert "add nothing to the definition under TARGETS" in section
+    for point in ("What the figure is about.", "Which measure.", "Which figure.", "Whose view.", "Which period."):
+        assert point in section
+    rest = v6.replace(section, "")
+    old_unit = "A figure in basis points, and a rupee amount in any other scale (lakh, million, billion), can't be kept: leave that item out."
+    old_scope = '- "scope_text" names a segment, subsidiary, region or product line when the figure is about that rather than the whole company; otherwise null.\n'
+    assert old_unit in v5 and old_scope in v5 and old_unit not in v6 and old_scope not in v6
+    new_unit = rest[rest.index("For a target, a figure in basis points"):rest.index(' Null when the item has no figure.')]
+    new_scope = rest[rest.index('- "scope_text" says what the figure is about'):rest.index("- Use only what the transcript says.")]
+    assert 'the metric "other" with the unit "other"' in new_unit and "For a stated figure, leave such an item out." in new_unit
+    assert '"whole company"' in new_scope and "do not leave it null" in new_scope
+    assert rest.replace(new_unit, old_unit).replace(new_scope, old_scope) == v5   # nothing else changed
+    assert load_schema(ge.TASK, "v6") == load_schema(ge.TASK, "v1")              # the same schema is sent
+
+
+def test_v6_asks_with_24000_max_tokens_and_only_v6_takes_the_v6_rules():
+    # #533: 3 of v5's 294 published replies were over 24,000; at 32,000 a full dev re-run's estimate is over the $5 stop.
+    assert ge.MAX_TOKENS_OF == {"v5": 32_000, "v6": 24_000}
+    assert ge.V6_RULES == {"v6"} and eca.PROMPT_VERSION[ge.TASK] not in ge.V6_RULES      # production's v1 is checked as before

@@ -282,9 +282,9 @@ def target_row(t: dict) -> dict:
     return {k: v for k, v in t.items() if k != "quote"}
 
 
-def judge(result, work, arm_no: int):
+def judge(result, work, arm_no: int, *, version: str | None = None):
     """One batch result as a `CallResult`: checked like production checks a reply (a reply that didn't end its turn is a failure,
-    as in the wrapper)."""
+    as in the wrapper), with the checks of the arm's prompt version (`ge.V6_RULES`, #533)."""
     base = {"arm_no": arm_no, "event_id": work.event_id, "document_id": work.document_id}
     if result.kind != "succeeded" or result.reply is None:
         return CallResult(**base, status=result.kind if result.kind != "succeeded" else "errored",
@@ -295,7 +295,7 @@ def judge(result, work, arm_no: int):
     if reply.stop_reason != "end_turn":
         return CallResult(**base, status="stopped", **usage)
     answer = ge.answer_of(reply)
-    checked = ge.check(answer, work.call, work.metrics)
+    checked = ge.check(answer, work.call, work.metrics, version=version)
     if not checked.ok:
         return CallResult(**base, status="not_json", problems=tuple(checked.problems), **usage)
     return CallResult(**base, status="checked", targets=tuple(target_row(t) for t in checked.targets),
@@ -537,7 +537,7 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, sle
             if ids is None or r.custom_id not in model_of or ids[1] not in by_event:
                 out(f"::warning::result {r.custom_id!r} isn't one of this trial's requests (the same --events and --arms are needed)")
                 continue
-            parts.setdefault((ids[0], ids[1]), []).append(judge(r, by_event[ids[1]], ids[0]))
+            parts.setdefault((ids[0], ids[1]), []).append(judge(r, by_event[ids[1]], ids[0], version=arms[ids[0]].prompt))
         extra: dict[int, dict] = {}
         if second:
             results = []

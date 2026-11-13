@@ -41,6 +41,20 @@ retried once with a note, then rejected, as every extraction in `ft/ai/batch.py`
   marked a duplicate of the first in document order; an `unknown` target duplicates a management target of the same call
   whatever the order. A duplicate keeps its row and its citation, and isn't shown.
 
+**The checks that came with prompt v6 (#533, 2B-15f; `V6_RULES`; Anand, 14 Nov 2026).** A reply to a version listed in `V6_RULES`
+is checked with three rules more, and replies to v1 to v5 exactly as before (production's v1 is untouched until #533 part 3):
+- **figures are read by `quote_figures`**, which also reads a figure written against its currency code ("INR3,000 crore",
+  "Rs.9,000 crore") and the second figure of a hyphenated range ("10%-12%", "400 crores-500 crores"). The shared reader
+  (`citations._numbers`, built for the command bar's one-line answers) reads "INR3,000" as 000 and "-12%" as minus 12, so the
+  figure check dropped a right item: 444 items in v5's dev run, 3.1 to 5.5 a call where the transcript writes figures that
+  way against 0.5 elsewhere (#533's diagnosis). The rule itself is unchanged: every figure appears in the quote as written;
+- **a qualified measure isn't a filed metric** (`QUALIFIED`: constant currency, adjusted, underlying, normalised, excluding or
+  "ex-" an item, organic, like-for-like, pro forma, a contribution): a target under a listed metric key whose quote or
+  `metric_text` carries such a qualifier is moved to `other` (counted in `moved`), so it is never scored against the filed
+  figure (Spec 02B §5.10: `no_filed_figure`); a stated figure, which can't be `other`, is dropped (`qualified_stated`);
+- **"whole company" in `scope_text` is stored as no scope** (`WHOLE_COMPANY`): prompt v6 asks the model to decide the scope of
+  every item, and that answer means what null always meant.
+
 **Order, citations and rows.** Kept targets are ordered management first, then the separate list, each in document order; the
 stated figures follow, in document order. Each kept item has one citation, numbered in that order (targets, then stated
 figures), at the item's quote. `equity.guidance` and `equity.stated_figure` rows are written in that order, so a duplicate's
@@ -108,6 +122,7 @@ DROPS: dict[str, str] = {
     "period_over": "target's period ended on or before the call date",
     "period_after_call": "stated figure's period ends after the call date",
     "over_limit": f"more than {MAX_STATED} stated figures",
+    "qualified_stated": "stated figure is a qualified measure (constant currency, adjusted, excluding an item, a contribution)",
 }
 
 
@@ -165,7 +180,9 @@ def marked_text(call: CallDoc) -> str:
 # A prompt version's `max_tokens` where it isn't the task's (16,000; client.TASKS). v5 (#511): its first dev run stopped at
 # 16,000 on 68 of 294 calls (the longest: v1's published replies on those calls already reached about 11,400 tokens at the median),
 # so v5 has twice the headroom. Only the ceiling changes; the reply is billed for the tokens it uses.
-MAX_TOKENS_OF = {"v5": 32_000}
+# v6 (#533): 24,000. Three of v5's 294 published replies were longer (the longest 27,500), and at 32,000 the run estimate (a retry
+# each at worst) of a full dev re-run is over the $5 stop.
+MAX_TOKENS_OF = {"v5": 32_000, "v6": 24_000}
 
 
 def guidance_request(call: CallDoc, prompt: Prompt, schema: dict, *, note: str | None = None) -> Request:
@@ -224,6 +241,51 @@ CRORE = re.compile(r"\bcrores?\b|\bcr\b", re.IGNORECASE)
 OTHER_SCALE = re.compile(r"\b(?:lakhs?|millions?|billions?|trillions?|thousands?|mn|bn)\b", re.IGNORECASE)
 BASIS_POINTS = re.compile(r"\bbps\b|\bbp\b|\bbasis[\s-]+points?\b", re.IGNORECASE)
 
+# The checks that came with prompt v6 (#533; the module notes). A later version that keeps them is added here.
+V6_RULES = frozenset({"v6"})
+_FIGURE = re.compile(r"(?:\d{1,2}(?:,\d{2})+,\d{3}|\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")      # citations._NUM's number, unsigned
+_CODE_BEFORE = re.compile(r"(?<![A-Za-z])(?:INR|Rs\.?|USD|EUR|GBP|JPY|AUD|CAD|SGD|AED|CHF|CNY|RMB)$", re.IGNORECASE)
+QUALIFIED = re.compile(
+    r"\bconstant[\s-]+currency\b|\badjusted\b|\bunderlying\b|\bnormali[sz]ed\b|\bexcluding\b|\bex[\s-]+\w|\borganic(?:ally)?\b"
+    r"|\blike[\s-]+for[\s-]+like\b|\bpro[\s-]?forma\b|\bcontribut\w*", re.IGNORECASE)
+_CC = re.compile(r"\bCC\b")                           # "in CC terms": upper case only ("150 cc" is an engine)
+WHOLE_COMPANY = re.compile(
+    r"(?:the\s+)?(?:(?:whole|entire|overall|total)\s+)?(?:company|group|business)(?:\s+as\s+a\s+whole|\s+overall|[\s-]+level|[\s-]+wide)?",
+    re.IGNORECASE)
+
+
+def quote_figures(quote: str) -> set[Decimal]:
+    """The figures a quote holds, for the checks of `V6_RULES`. As the shared reader, a number that continues a word or follows
+    a full stop isn't a figure ("FY27", "Q3", "x.5"), with one exception: a number written against a currency code ("INR3,000",
+    "Rs.9,000", "USD4.5") is that number. A minus sign makes a figure negative only where a figure can start (after a space, an
+    opening bracket or at the start); a hyphen that joins a figure to what is before it ("10%-12%", "400 crores-500 crores",
+    "sub-10%") is a dash, and the figure after it is positive."""
+    out: set[Decimal] = set()
+    for m in _FIGURE.finditer(quote):
+        before = quote[:m.start()]
+        prev = before[-1:]
+        if prev and (prev.isalnum() or prev in "._") and not _CODE_BEFORE.search(before):
+            continue
+        try:
+            n = Decimal(m.group().replace(",", ""))
+        except InvalidOperation:
+            continue
+        if prev in ("-", "−") and (len(before) == 1 or before[-2].isspace() or before[-2] in "(["):
+            n = -n                                           # a sign; after anything else the hyphen is a dash
+        out.add(n)
+    return out
+
+
+def is_qualified(quote: str, metric_text: str | None) -> bool:
+    """A measure with a qualifier (`QUALIFIED`, or "CC" for constant currency), read from the quote and the speaker's name
+    for the figure: never the figure the company files."""
+    return any(QUALIFIED.search(t) or _CC.search(t) for t in (quote, metric_text or ""))
+
+
+def whole_company(scope_text: str | None) -> bool:
+    """`scope_text` that names the company as a whole (prompt v6's answer where the figure isn't about a part)."""
+    return scope_text is not None and WHOLE_COMPANY.fullmatch(scope_text.strip()) is not None
+
 
 def passes_content_test(quote: str) -> bool:
     """A statement in a turn whose role couldn't be read must be a first-person statement: no question mark, and a
@@ -269,6 +331,8 @@ class Checked:
     problems: list[str] = field(default_factory=list)       # a reply that isn't the schema's JSON: retried once, rejected
     drops: Counter = field(default_factory=Counter)         # items dropped, by `DROPS` key
     mapping: Counter = field(default_factory=Counter)       # quotes by how they were found (citation_integrity)
+    moved: Counter = field(default_factory=Counter)         # items kept with a field set by a v6 rule: `qualified_metric`, `whole_company`
+    v6: bool = False                                        # the reply is to a version of `V6_RULES`
     hold: str | None = None                                 # never set: an extraction here is published or empty
 
     @property
@@ -343,10 +407,10 @@ def _place(raw: dict, call: CallDoc, c: Checked, metrics: Metrics, *, target: bo
     return None
 
 
-def figures_ok(quote: str, metric: str, kind: str, value, low, high) -> bool:
+def figures_ok(quote: str, metric: str, kind: str, value, low, high, *, v6: bool = False) -> bool:
     """Every figure is in the quote as written ("double-digit" for a floor of 10; "net debt free" for a net-debt ceiling of
-    0). Never rounded, converted or added."""
-    have = set(_numbers(quote))
+    0). Never rounded, converted or added. `v6`: the quote is read by `quote_figures` (the module notes)."""
+    have = quote_figures(quote) if v6 else set(_numbers(quote))
     for v in (value, low, high):
         if v is None or v in have:
             continue
@@ -392,6 +456,16 @@ def _common(raw: dict, where: Where, c: Checked, metrics: Metrics, *, target: bo
     if any(len(t) > MAX_AS_SAID for t in (metric_text, period_text, scope_text) if t is not None):
         c.drops["text_too_long"] += 1
         return None
+    if c.v6:
+        if whole_company(scope_text):
+            scope_text = None                                # prompt v6's "whole company": what null always meant
+            c.moved["whole_company"] += 1
+        if metric != "other" and is_qualified(where.quote, metric_text):
+            if not target:
+                c.drops["qualified_stated"] += 1             # a stated figure can't be `other`
+                return None
+            metric = "other"                                 # never scored against the filed figure (§5.10: no_filed_figure)
+            c.moved["qualified_metric"] += 1
     return {"quote": where.quote, "span": [where.start, where.end], "metric": metric, "metric_label": allowed[metric],
             "metric_text": metric_text, "unit": unit, "period_text": period_text, "basis": basis,
             "growth_basis": growth, "scope_text": scope_text}
@@ -429,7 +503,7 @@ def _target(raw, call: CallDoc, c: Checked, metrics: Metrics) -> dict | None:
         return None
     if not figures:
         item["unit"] = None                                  # a unit with no figure means nothing
-    if not figures_ok(where.quote, item["metric"], kind, value, low, high):
+    if not figures_ok(where.quote, item["metric"], kind, value, low, high, v6=c.v6):
         c.drops["figure_not_in_quote"] += 1
         return None
     if (why := _unit_problem(where.quote, item["metric"], item["unit"], value, kind)) is not None:
@@ -475,7 +549,7 @@ def _stated(raw, call: CallDoc, c: Checked, metrics: Metrics) -> dict | None:
     if value is None or item["unit"] is None or pk not in STATED_PERIODS or fy is None:
         c.drops["shape" if value is None or item["unit"] is None else "malformed"] += 1
         return None
-    if not figures_ok(where.quote, item["metric"], "point", value, None, None):
+    if not figures_ok(where.quote, item["metric"], "point", value, None, None, v6=c.v6):
         c.drops["figure_not_in_quote"] += 1
         return None
     if (why := _unit_problem(where.quote, item["metric"], item["unit"], value, "point")) is not None:
@@ -518,9 +592,10 @@ def not_scored_reason(t: dict) -> str | None:
     return None
 
 
-def check(answer, call: CallDoc, metrics: Metrics) -> Checked:
-    """Check a reply against our copy of the transcript and its stored turns."""
-    c = Checked(answer if isinstance(answer, dict) else None)
+def check(answer, call: CallDoc, metrics: Metrics, *, version: str | None = None) -> Checked:
+    """Check a reply against our copy of the transcript and its stored turns. `version` is the prompt version the reply
+    answers: one of `V6_RULES` adds that version's checks (the module notes); None, or an earlier one, checks as v1 always did."""
+    c = Checked(answer if isinstance(answer, dict) else None, v6=version in V6_RULES)
     if (not isinstance(answer, dict) or not isinstance(answer.get("targets"), list)
             or not isinstance(answer.get("stated_figures"), list)):
         c.problems.append("the reply isn't the schema's JSON ({targets: [...], stated_figures: [...]})")
@@ -578,6 +653,8 @@ def content(c: Checked, *, attempt: int, reply: Reply | None, metrics: Metrics) 
                  "attempt": attempt, "stop_reason": reply.stop_reason if reply is not None else None,
                  "quote_mapping": dict(sorted(c.mapping.items())), "map_version": metrics.map_version,
                  "unattributed_targets": metrics.unattributed_targets}
+    if c.moved:
+        doc["moved"] = dict(sorted(c.moved.items()))
     if c.problems:
         doc["problems"] = list(c.problems)
     elif c.empty:

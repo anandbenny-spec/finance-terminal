@@ -74,6 +74,20 @@ where the round found nothing still counts against it). **No call of set A or se
 companies** (`ROUND_EXCLUDED_EVENTS`): #511's card excludes the calls, and excluding the companies too only tightens, since the
 prompt was written after reading those companies' misses (the alternative: the ten calls only). The recall comparison reads the
 round's published rows only (`recall_extraction_sql(..., prompt_version=ROUND_VERSION)`), never a superseded output's.
+
+The v6 round of #533 (2B-15f, 14 Nov 2026; `--round 2b15f`, rule version 5; posted on #533 with its seeds before any run). The same
+four samples with the same rules, from the v6 dev re-run, on new seeds. **What is left out (Anand, 14 Nov 2026, "Strict recall, calls
+out"):** #533's card left out every company with a judged call or item, which leaves 7 companies with 1 scorable target and 1 scored
+outcome on dev, so nothing could be drawn. Instead:
+- **recall** keeps the card's rule: no call of a company that had a call read in full for a recall gate (#178's sets A and B, #511's
+  five) or an item judged in #511 (its 50 `equity.guidance` ids and 20 `equity.stated_figure` ids). No IT-services company and no
+  bank is left, so two peer groups stand in (`ROUND_F_STAND_INS`): life insurance for banks (the closest: financials), and power
+  for IT services (none of the six companies left is close to IT services; energy and materials is the bucket with the most
+  companies left, so one of its peer groups gives the fifth call);
+- **targets, scoring and stated figures** leave out the judged calls only: a call read for a recall gate, or one that held a
+  judged item. Another call of the same company can be drawn.
+The lists are computed by the pool queries from the judged ids (`ROUND_F_CALLS`, `ROUND_F_GUIDANCE`, `ROUND_F_STATED`); the rows of a
+superseded output stay, so a judged v5 row still names its call and its company after the v6 re-run.
 """
 from __future__ import annotations
 
@@ -107,6 +121,21 @@ ROUND_SEEDS = {"recall": 2026111301, "targets": 2026111302, "scoring": 202611130
 ROUND_SET_A = (3743, 3780, 4002, 3855, 3863)     # #178's 8 Nov development calls (call event ids)
 ROUND_SET_B = (3689, 3850, 4003, 4011, 3714)     # #178's 12 Nov gate draw, on whose misses the round's prompt was written
 ROUND_EXCLUDED_EVENTS = ROUND_SET_A + ROUND_SET_B
+
+# #533's v6 round (module notes): the judged ids its pools leave out, and recall's two stand-in peer groups.
+ROUND_F = "2b15f"
+ROUND_F_RULE_VERSION = 5
+ROUND_F_VERSION = "v6"          # equity_calls_ai.GUIDANCE_RERUN_VERSION
+ROUND_F_SEEDS = {"recall": 2026111401, "targets": 2026111402, "scoring": 2026111403, "stated": 2026111404}
+ROUND_F_CALLS = ROUND_SET_A + ROUND_SET_B + (3945, 3952, 3933, 3886, 3716)       # read in full for a recall gate (call event ids)
+ROUND_F_GUIDANCE = (                                                             # #511's judged extraction and scoring rows
+    2418, 3459, 3452, 2258, 2563, 3809, 2371, 4162, 2209, 1861, 1844, 4401, 3240, 4295, 3334, 2864, 3734, 4063, 3423, 2691,
+    2042, 3846, 2055, 3842, 2099, 3422, 4015, 2056, 3318, 2796, 3915, 3927, 4170, 3238, 3914, 4445, 2083, 3299, 2186, 1920,
+    4010, 2302, 3122, 2150, 2136, 3156, 4048, 2015, 3836, 2685)
+ROUND_F_STATED = (1881, 1525, 2347, 1982, 1631, 1798, 2372, 2275, 2361, 1935, 2321, 2400, 2075, 1446, 1451, 1505, 1682, 2253,
+                  2274, 1532)                                                    # #511's judged stated figures
+ROUND_F_STAND_INS = {"life-insurance": "banks", "power": "it_services"}          # peer group -> the recall bucket it stands in for
+ROUNDS = (ROUND, ROUND_F)
 
 # Spec 02B §5.11 row 2 names five sectors; the peer groups that stand for each are a decision of the sampler (see the module notes).
 RECALL_BUCKETS = {
@@ -476,7 +505,40 @@ POOL_RECALL_ROUND = POOL_RECALL.replace(
 order by ec.event_id""")
 
 
-def read_pool(conn, gate: str, *, round_: bool = False) -> list[Item]:
+# #533's round: the pools of the v6 re-run. Parameters, in order: the pool's own (targets: the role), the prompt version, then the
+# judged call events, guidance ids and stated-figure ids. Recall leaves out the judged companies; the others the judged calls.
+_JUDGED = """(select ecx.{call} from equity.earnings_call ecx where ecx.event_id = any(%s)
+        union select gx.{item} from equity.guidance gx where gx.id = any(%s)
+        union select sx.{item} from equity.stated_figure sx where sx.id = any(%s))"""
+_JUDGED_CALLS = _JUDGED.format(call="event_id", item="call_event_id")
+_JUDGED_COMPANIES = _JUDGED.format(call="entity_id", item="entity_id")
+
+POOL_TARGETS_ROUND_F = POOL_TARGETS.replace(
+    "where g.speaker_role = %s and g.duplicate_of is null",
+    f"where g.speaker_role = %s and g.duplicate_of is null and o.prompt_version = %s and g.call_event_id not in {_JUDGED_CALLS}")
+
+POOL_STATED_ROUND_F = POOL_STATED.replace(
+    "where s.duplicate_of is null",
+    f"where s.duplicate_of is null and o.prompt_version = %s and s.call_event_id not in {_JUDGED_CALLS}")
+
+POOL_SCORING_ROUND_F = POOL_SCORING.replace(
+    "where o.outcome in ('delivered', 'missed') and o.speaker_role = 'management' and g.duplicate_of is null",
+    "where o.outcome in ('delivered', 'missed') and o.speaker_role = 'management' and g.duplicate_of is null"
+    f" and ao.prompt_version = %s and g.call_event_id not in {_JUDGED_CALLS}")
+
+POOL_RECALL_ROUND_F = POOL_RECALL.replace(
+    "order by ec.event_id",
+    """  and exists (select 1 from core.ai_output r where r.document_id = ec.transcript_document_id
+                and r.task = 'guidance_extraction' and r.prompt_version = %s)
+  and ec.entity_id not in """ + _JUDGED_COMPANIES + """
+order by ec.event_id""")
+assert all(a != b for a, b in ((POOL_TARGETS_ROUND_F, POOL_TARGETS), (POOL_STATED_ROUND_F, POOL_STATED),
+                               (POOL_SCORING_ROUND_F, POOL_SCORING), (POOL_RECALL_ROUND_F, POOL_RECALL)))    # each replace took
+
+
+def read_pool(conn, gate: str, *, round_: bool | str = False) -> list[Item]:
+    if round_ == ROUND_F:
+        return _read_round_f_pool(conn, gate)
     if round_:
         return _read_round_pool(conn, gate)
     if gate in ("targets", "unattributed"):
@@ -514,6 +576,25 @@ def _read_round_pool(conn, gate: str) -> list[Item]:
     if gate == "scoring":
         return [Item(id=i, company=co, kind=kind, family=family_of(metric), document=doc, counted=bool(counted))
                 for i, co, kind, metric, doc, counted in conn.execute(POOL_SCORING_ROUND, (ROUND_VERSION, ex)).fetchall()]
+    raise ValueError(f"the round draws {', '.join(ROUND_GATES)} only, not {gate!r}")
+
+
+def _read_round_f_pool(conn, gate: str) -> list[Item]:
+    judged = (list(ROUND_F_CALLS), list(ROUND_F_GUIDANCE), list(ROUND_F_STATED))
+    if gate == "targets":
+        return [Item(id=i, company=co, group=KIND_GROUP[kind], family=family_of(metric), not_scored=ns,
+                     role_held=rh, no_mgmt_turn=nm, document=doc)
+                for i, co, kind, metric, ns, rh, nm, doc
+                in conn.execute(POOL_TARGETS_ROUND_F, ("management", ROUND_F_VERSION, *judged)).fetchall()]
+    if gate == "stated":
+        return [Item(id=i, company=co, family=family_of(metric), document=doc)
+                for i, co, metric, doc in conn.execute(POOL_STATED_ROUND_F, (ROUND_F_VERSION, *judged)).fetchall()]
+    if gate == "recall":
+        return [Item(id=i, company=co, peer=peer or "", bucket=ROUND_F_STAND_INS.get(peer or "") or bucket_of(peer or ""), document=doc)
+                for i, co, peer, doc in conn.execute(POOL_RECALL_ROUND_F, (ROUND_F_VERSION, *judged)).fetchall()]
+    if gate == "scoring":
+        return [Item(id=i, company=co, kind=kind, family=family_of(metric), document=doc, counted=bool(counted))
+                for i, co, kind, metric, doc, counted in conn.execute(POOL_SCORING_ROUND_F, (ROUND_F_VERSION, *judged)).fetchall()]
     raise ValueError(f"the round draws {', '.join(ROUND_GATES)} only, not {gate!r}")
 
 
@@ -772,13 +853,14 @@ def main(argv: list[str] | None = None, *, env=None, out=print) -> int:
                    help='"all" is sitting 1\'s four gates and the page-map check; "sitting2" is summaries, recall and scoring')
     p.add_argument("--seed", type=int, default=None, help="a new sample after a failed gate: one gate only; record the seed")
     p.add_argument("--target", choices=("dev",), default="dev", help="logged; the workflow reads dev's credentials only")
-    p.add_argument("--round", choices=(ROUND,), default=None,
-                   help=f"#511's fresh draw from the {ROUND_VERSION} re-run, sets A and B left out: --gate round, or one of its gates")
+    p.add_argument("--round", choices=ROUNDS, default=None,
+                   help=f"a round's fresh draw: {ROUND} is #511's, from the {ROUND_VERSION} re-run with sets A and B's companies left out; "
+                        f"{ROUND_F} is #533's, from the {ROUND_F_VERSION} re-run with the judged calls left out: --gate round, or one of its gates")
     args = p.parse_args(argv)
     if args.seed is not None and args.gate in ("all", "sitting2", "round"):
         p.error("--seed needs one --gate")
     if args.round is None and args.gate == "round":
-        p.error("--gate round needs --round " + ROUND)
+        p.error("--gate round needs --round " + " or ".join(ROUNDS))
     if args.round is not None and args.gate not in (*ROUND_GATES, "round"):
         p.error(f"--round draws {', '.join(ROUND_GATES)} (or --gate round), not {args.gate}")
     env = os.environ if env is None else env
@@ -792,14 +874,20 @@ def main(argv: list[str] | None = None, *, env=None, out=print) -> int:
     with connect(dsn, autocommit=True, role="gate-samples") as conn:
         conn.execute("set default_transaction_read_only = on")
         for gate in gates:
-            pool = read_pool(conn, gate, round_=on_round)
-            seed = args.seed if args.seed is not None else (ROUND_SEEDS[gate] if on_round else None)
+            pool = read_pool(conn, gate, round_=args.round or False)
+            seeds = ROUND_F_SEEDS if args.round == ROUND_F else ROUND_SEEDS
+            seed = args.seed if args.seed is not None else (seeds[gate] if on_round else None)
             d = draw_recall(pool, seed) if gate == "recall" else draw(pool, gate, seed)
-            body = {"gate": gate, "sitting": SITTING_OF[gate], "rule_version": ROUND_RULE_VERSION if on_round else RULE_VERSION,
+            rule_version = {ROUND: ROUND_RULE_VERSION, ROUND_F: ROUND_F_RULE_VERSION}.get(args.round, RULE_VERSION)
+            body = {"gate": gate, "sitting": SITTING_OF[gate], "rule_version": rule_version,
                     "seed": d.seed, "attempt": d.attempt,
                     "target": args.target, "pool": d.pool, "n": len(d.items), "ids": [it.id for it in d.items],
                     "strata": d.strata(), "shortfalls": d.shortfalls}
-            if on_round:
+            if args.round == ROUND_F:
+                body.update({"round": args.round, "prompt_version": ROUND_F_VERSION, "left_out": "recall: judged companies; others: judged calls",
+                             "judged_calls": len(ROUND_F_CALLS), "judged_guidance": len(ROUND_F_GUIDANCE),
+                             "judged_stated": len(ROUND_F_STATED), "recall_stand_ins": ROUND_F_STAND_INS})
+            elif on_round:
                 body.update({"round": args.round, "prompt_version": ROUND_VERSION,
                              "excluded_events": list(ROUND_EXCLUDED_EVENTS)})
             if gate == "recall":

@@ -69,7 +69,8 @@ variable `CALLS_AI_TASK` (the backfill workflow's `calls_ai_task` input) is `bot
 extraction-only run skips); the open batches of an earlier run are still read for both tasks. `--task` was taken by the runner's
 task key, so the option has its own name.
 
-**The extraction's re-run (#511, 2B-15d; the #445 pattern, decided by Claude under the standing delegation of 24 Oct 2026).**
+**The extraction's re-run (#511, 2B-15d; the #445 pattern, decided by Claude under the standing delegation of 24 Oct 2026; #533,
+2B-15f, 14 Nov 2026: the re-run's version is v6, whose replies are checked with `ge.V6_RULES`' rules, and v1's as before).**
 `PROMPT_VERSION` keeps `guidance_extraction` at v1 for every scheduled run, so production's weekly asks for nothing new. A
 backfill limited to the extraction (`CALLS_AI_TASK=guidance_extraction`) with `CALLS_AI_GUIDANCE_RERUN` (the backfill workflow's
 `guidance_rerun` input) set to `all` sends `GUIDANCE_RERUN_VERSION` for each call whose published extraction was made with
@@ -78,8 +79,9 @@ choice and builds the same requests, then sends nothing and needs no key: the `g
 their estimated input tokens and the worst case (the run estimate's rule: one retry each at the batch price). A re-run reply
 supersedes the published output only when it passes every check in code and holds at least one item, as any extraction does
 (`_store_guidance`); a reply that finds nothing stays a `no_targets` draft and a rejected one stays rejected, and in both cases
-the old output stays published. The old output and its rows stay, superseded (`CLAUDE.md` §3). Only the projects in
-`GUIDANCE_RERUN_TARGETS` take it: dev, until #511 part 3 adds production with Anand's dated OK. A published or `no_targets`
+the old output stays published. The old output and its rows stay, superseded (`CLAUDE.md` §3). A call still published at an
+earlier round's version (`GUIDANCE_RERUN_EARLIER`: v5 on dev) is taken by the re-run and left alone by every other run. Only the projects in
+`GUIDANCE_RERUN_TARGETS` take it: dev, until #533 part 3 adds production with Anand's dated OK. A published or `no_targets`
 output of `GUIDANCE_RERUN_VERSION` counts as done for a later run of either version, so neither re-asks it. A batch still open
 when the poll ends is collected by a run with the same input (another run would store it as stale).
 
@@ -157,9 +159,10 @@ from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TA
 PROMPT_VERSION = {cs.TASK: "v11", ge.TASK: "v1", ct.TASK: "v3"}
 IST = "Asia/Kolkata"
 SHOWN = 12
-GUIDANCE_RERUN_VERSION = "v5"       # #511 (2B-15d): the prompt round's version, sent only by the re-run (module docstring)
+GUIDANCE_RERUN_VERSION = "v6"       # #533 (2B-15f): the round's version, sent only by the re-run (module docstring); #511's was v5
+GUIDANCE_RERUN_EARLIER = ("v5",)    # earlier rounds' versions: dev still holds published v5 outputs (`_calls`, `ge_done`)
 GUIDANCE_RERUN_ENV = "CALLS_AI_GUIDANCE_RERUN"   # empty or 'none' (the default) | 'price' | 'all'
-GUIDANCE_RERUN_TARGETS = ("dev",)   # #511 part 3 adds 'production', with Anand's dated OK on its price
+GUIDANCE_RERUN_TARGETS = ("dev",)   # #533 part 3 adds 'production', with Anand's dated OK on its price
 ONLY_ENV = "CALLS_AI_TASK"            # both (the default) | call_summary | guidance_extraction | call_tone: limits what a run asks for (#302)
 TONE_SET_ENV = "CALLS_AI_TONE_SET"    # empty (the default) | earnings_tone: a tone-only run limited to that evaluation set's calls (#175)
 _SETS_DIR = Path(__file__).resolve().parents[4] / "config" / "eval" / "sets"
@@ -202,7 +205,7 @@ def guidance_rerun(workflow: str, target: str, only: str | None, env=None) -> st
         raise ValueError(f"{GUIDANCE_RERUN_ENV} needs {ONLY_ENV}={ge.TASK}")
     if target not in GUIDANCE_RERUN_TARGETS:
         raise ValueError(f"{GUIDANCE_RERUN_ENV}: the re-run to {GUIDANCE_RERUN_VERSION} runs on "
-                         f"{', '.join(GUIDANCE_RERUN_TARGETS)} only, not {target!r} (#511 part 3)")
+                         f"{', '.join(GUIDANCE_RERUN_TARGETS)} only, not {target!r} (#533 part 3)")
     return v
 
 
@@ -259,7 +262,7 @@ class Work:
 
     def check(self, req: Request, reply: Reply):
         if self.task == ge.TASK:
-            return ge.check(ge.answer_of(reply), self.call, self.metrics)
+            return ge.check(ge.answer_of(reply), self.call, self.metrics, version=req.prompt.version)
         if self.task == ct.TASK:
             return ct.check(ct.answer_of(reply), self.passages)
         if req.spec.route == "json":                      # the summary's structured route (prompts from v6)
@@ -353,8 +356,11 @@ class EquityCallsAi(BatchSteps, Task):
         tone = tone and ct.TASK in PROMPT_VERSION
         newest_only = newest_only and lacking
         # The extraction is done for a call with a published (or `no_targets`) output of the version this run asks for, or of the
-        # re-run's version (#511: a call re-run to it is never asked again by a run of the older version).
-        ge_done = sorted({self.ge_version(), GUIDANCE_RERUN_VERSION}) if guidance else [""]
+        # re-run's version (#511: a call re-run to it is never asked again by a run of the older version). An earlier round's
+        # version counts as done too, except for the re-run itself, which is what takes such a call to the current version
+        # (#533: without this an ordinary run on dev would ask v1 again for every call still published at v5).
+        earlier = () if self._ge_version else GUIDANCE_RERUN_EARLIER
+        ge_done = sorted({self.ge_version(), GUIDANCE_RERUN_VERSION, *earlier}) if guidance else [""]
         args: list = [PROMPT_VERSION[cs.TASK], ge_done, PROMPT_VERSION.get(ct.TASK, "")]   # the lateral's placeholders come first
         if lacking:
             summarised = "(f.has_summary or not f.is_newest)" if newest_only else "f.has_summary"   # nothing to ask on an older call
@@ -1052,7 +1058,7 @@ class EquityCallsAi(BatchSteps, Task):
                     problem = f"its quote isn't inside one turn whose role is {role}"
                 elif role == "unknown" and not ge.passes_content_test(quote):
                     problem = "its quote fails the content test of the separate list"
-                elif not ge.figures_ok(quote, metric, kind, value, low, high):
+                elif not ge.figures_ok(quote, metric, kind, value, low, high, v6=chk.v6):      # the version's own reader (#533)
                     problem = "a figure isn't in its quote"
                 else:
                     continue

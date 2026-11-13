@@ -745,3 +745,128 @@ def test_a_v5_request_has_32000_max_tokens_and_a_v1_request_keeps_the_tasks_1600
     assert v5.params()["max_tokens"] == 32_000 and v1.params()["max_tokens"] == 16_000
     same = ge.guidance_request(call, PROMPT, SCHEMA)
     assert v1.input_sha256 == same.input_sha256 != v5.input_sha256
+
+
+# ---------------------------------------------------------------------------------------------- the checks that came with v6 (#533)
+def chk6(call: cs.CallDoc, targets=(), stated=()) -> ge.Checked:
+    return check({"targets": list(targets), "stated_figures": list(stated)}, call, METRICS, version="v6")
+
+
+@pytest.mark.parametrize("quote, figures", [
+    ("over INR3,000 crores EBITDA", {3000}), ("Rs.9,000 crores", {9000}), ("Rs. 9,000 crores", {9000}), ("₹2,263 crores", {2263}),
+    ("USD4.5 billion", {4.5}), ("US$4.5 billion", {4.5}), ("INR1,200 crores to INR1,400 crores", {1200, 1400}),
+    ("Rs.500-Rs.600 crore", {500, 600}), ("INR 1,23,456 crore", {123456}),
+    ("10%-12%", {10, 12}), ("400 crores-500 crores", {400, 500}), ("8-10%", {8, 10}), ("sub-10% growth", {10}),
+    ("a margin of -5% in the quarter", {-5}), ("(−2.5%) then", {-2.5}), ("-3% at the start", {-3}),
+    ("FY27 and Q3 and H2", set()), ("version x.5", set()), ("growth of 12.5 per cent in FY27", {12.5}),
+    ("PINR3,000 isn't a currency code", set()), ("1.5x to 2x", {1.5, 2}),
+])
+def test_the_v6_reader_reads_a_figure_against_its_currency_code_and_a_ranges_second_figure(quote, figures):
+    from decimal import Decimal
+    assert ge.quote_figures(quote) == {Decimal(str(f)) for f in figures}
+
+
+@pytest.mark.parametrize("quote", [
+    "We expect revenue growth of 14 per cent in FY27.", "Revenue from operations grew 12.5 per cent to 4,500 crore in Q2 FY27.",
+    "capex of ₹ 2,263 crores in FY'26", "between 17.5% and 18.5% for the year", "net debt below 1,00,000 crore by March 2027",
+    "a range of 8-10% in H2", "at least 25 per cent, up from 21.3 per cent",
+])
+def test_the_v6_reader_reads_what_the_shared_reader_reads_where_no_code_or_range_dash_is_involved(quote):
+    from ft.ai.citations import _numbers
+    assert ge.quote_figures(quote) == set(_numbers(quote))
+
+
+def test_a_figure_written_against_its_currency_code_is_dropped_under_v1_and_kept_under_v6():
+    # #533's diagnosis: the shared reader reads "INR3,000" as 000, so v1 to v5 dropped the item (`figure_not_in_quote`).
+    s = "We expect these assets to add over INR3,000 crores of revenue in FY27."
+    t = T(s, metric="revenue", metric_text="revenue", kind="floor", value=3000, unit="inr", growth_basis="level")
+    old, new = chk(one(s), [t]), chk6(one(s), [t])
+    assert old.targets == [] and old.drops == {"figure_not_in_quote": 1}
+    assert [(x["value"], x["unit"], x["not_scored_reason"]) for x in new.targets] == [("3000", "inr", None)] and not new.drops
+    rng = "Capex will be INR1,200 crores to INR1,400 crores in FY27."
+    r = T(rng, metric="capex", metric_text="capex", kind="range", value=None, low=1200, high=1400, unit="inr", growth_basis="level")
+    assert chk(one(rng), [r]).drops == {"figure_not_in_quote": 1} and len(chk6(one(rng), [r]).targets) == 1
+    # the rule itself is unchanged: a figure the quote doesn't hold is still dropped, and the artefact 000 is no figure
+    assert chk6(one(s), [t | {"value": 3500}]).drops == {"figure_not_in_quote": 1}
+    zero = "Net debt will be INR3,000 crores by FY27."
+    z = T(zero, metric="net_debt", metric_text="net debt", kind="ceiling", value=0, unit="inr", growth_basis="level")
+    assert chk6(one(zero), [z]).drops == {"figure_not_in_quote": 1}
+
+
+def test_a_hyphenated_ranges_second_figure_is_read_under_v6():
+    s = "We guide to EBITDA margin of 10%-12% in FY27."
+    t = T(s, metric="ebitda_margin", metric_text="EBITDA margin", kind="range", value=None, low=10, high=12, growth_basis="level")
+    assert chk(one(s), [t]).drops == {"figure_not_in_quote": 1}
+    assert [(x["low"], x["high"]) for x in chk6(one(s), [t]).targets] == [("10", "12")]
+
+
+@pytest.mark.parametrize("sentence, metric_text", [
+    ("The revenue growth guidance for FY27 is 14 per cent in constant currency.", "revenue growth"),
+    ("We expect 14 per cent growth in FY27.", "CC revenue growth"),
+    ("Adjusted revenue growth will be 14 per cent in FY27.", "revenue growth"),
+    ("Revenue growth excluding the divested unit will be 14 per cent in FY27.", "revenue growth"),
+    ("Revenue growth ex-fuel will be 14 per cent in FY27.", "revenue growth"),
+    ("Organic revenue growth will be 14 per cent in FY27.", "revenue growth"),
+    ("This deal is expected to contribute 14 per cent revenue growth in FY27.", "revenue growth from the deal"),
+    ("On a like-for-like basis revenue growth will be 14 per cent in FY27.", "revenue growth"),
+])
+def test_a_qualified_measure_under_a_listed_key_goes_to_other_under_v6_and_is_never_scored(sentence, metric_text):
+    t = T(sentence, metric_text=metric_text)
+    old, new = chk(one(sentence), [t]), chk6(one(sentence), [t])
+    assert [(x["metric"], x["not_scored_reason"]) for x in old.targets] == [("revenue_growth", None)]       # v1: as before
+    assert [(x["metric"], x["metric_label"], x["not_scored_reason"]) for x in new.targets] == [
+        ("other", METRICS.labels["other"], "no_filed_figure")]
+    assert new.targets[0]["metric_text"] == metric_text and new.moved == {"qualified_metric": 1} and not new.drops
+    assert content(new, attempt=1, reply=None, metrics=METRICS)["moved"] == {"qualified_metric": 1}
+
+
+def test_a_plain_measure_keeps_its_key_under_v6_and_v1s_content_has_no_moved_entry():
+    for sentence in (GROWTH, "We expect revenue growth of 14 per cent in FY27, with 150 cc bikes leading.",
+                     "We expect revenue growth of 14 per cent in FY27, as we execute the plan."):
+        c = chk6(one(sentence), [T(sentence)])
+        assert [(x["metric"], x["not_scored_reason"]) for x in c.targets] == [("revenue_growth", None)] and not c.moved
+    assert "moved" not in content(chk(one(GROWTH), [T(GROWTH)]), attempt=1, reply=None, metrics=METRICS)
+
+
+def test_a_qualified_stated_figure_is_dropped_under_v6_since_it_can_not_be_other():
+    s = "Adjusted EBITDA margin was 21.3 per cent in Q2 FY27."
+    st = S(s, metric="ebitda_margin", metric_text="adjusted EBITDA margin", value=21.3, unit="pct")
+    assert len(chk(one(s), stated=[st]).stated) == 1
+    c = chk6(one(s), stated=[st])
+    assert c.stated == [] and c.drops == {"qualified_stated": 1} and "qualified_stated" in ge.DROPS
+
+
+@pytest.mark.parametrize("scope, stored", [
+    ("whole company", None), ("Whole Company", None), ("the company as a whole", None), ("company", None), ("the group", None),
+    ("overall business", None), ("company-level", None), (None, None),
+    ("India business", "India business"), ("the company's jewellery division", "the company's jewellery division"),
+    ("group companies", "group companies"),
+])
+def test_whole_company_is_stored_as_no_scope_under_v6_and_a_part_keeps_its_name(scope, stored):
+    c = chk6(one(GROWTH), [T(GROWTH, scope_text=scope)])
+    assert [x["scope_text"] for x in c.targets] == [stored]
+    assert c.targets[0]["not_scored_reason"] == (None if stored is None else "scope")
+    if scope is not None and stored is None:
+        assert c.moved == {"whole_company": 1}
+        assert chk(one(GROWTH), [T(GROWTH, scope_text=scope)]).targets[0]["scope_text"] == scope       # v1: stored as given
+
+
+def test_a_basis_point_or_non_crore_target_is_kept_as_other_with_the_unit_as_spoken():
+    # Anand, 14 Nov 2026: prompt v6 keeps these under `other` (v1 to v5 said to leave them out). The 4 Nov unit rule in code
+    # stays: under a listed key, basis points and a non-crore rupee amount are still dropped.
+    bp = "We expect the restructuring impact to be 50 basis points in FY27."
+    kept = chk6(one(bp), [T(bp, metric="other", metric_text="restructuring impact", value=50, unit="other", growth_basis=None)])
+    assert [(x["metric"], x["value"], x["unit"], x["not_scored_reason"]) for x in kept.targets] == [("other", "50", "other", "no_filed_figure")]
+    margin = "We expect EBITDA margin to improve by 50 basis points in FY27."
+    assert chk6(one(margin), [T(margin, metric="ebitda_margin", metric_text="EBITDA margin", value=50)]).drops == {"unit_scale": 1}
+    bn = "We expect bookings of 2.5 billion dollars in FY27."
+    k2 = chk6(one(bn), [T(bn, metric="other", metric_text="bookings", value=2.5, unit="other", growth_basis="level")])
+    assert [(x["value"], x["unit"]) for x in k2.targets] == [("2.5", "other")]
+
+
+def test_a_v6_request_has_24000_max_tokens_and_its_own_input_hash():
+    call = doc((RAO, "management", GROWTH))
+    v5 = ge.guidance_request(call, load_prompt(ge.TASK, "v5"), load_schema(ge.TASK, "v5"))
+    v6 = ge.guidance_request(call, load_prompt(ge.TASK, "v6"), load_schema(ge.TASK, "v6"))
+    assert v6.max_tokens == 24_000 and v6.params()["max_tokens"] == 24_000 and v6.input_sha256 != v5.input_sha256
+    assert "WHOSE FIGURE, AND WHICH FIGURE" in v6.params()["system"] and "guidance_extraction v6" not in v6.params()["system"]
