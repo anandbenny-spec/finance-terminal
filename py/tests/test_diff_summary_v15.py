@@ -14,7 +14,6 @@ from ft.ai import summaries
 from ft.ai.client import SONNET, load_prompt, load_schema
 from ft.ai.summaries import check_diff_json, cut_quote_problem, previous_problem
 from ft.engines.document.diff import diff_texts
-from ft.jobs.tasks.ai_batch import PROMPT_VERSION
 
 D = diff_texts(FOMC_A, FOMC_B)
 OLD_CHANGED, NEW_CHANGED = summaries.changed_spans(D.segments)
@@ -34,11 +33,11 @@ def check(version, *rows):
     return check_diff_json({"bullets": list(rows)}, REQ.sources, CHANGED, version=version)
 
 
-def test_v15_sends_v14s_text_with_v14s_schema_on_sonnet_and_is_current():
+def test_v15_sends_v14s_text_with_v14s_schema_on_sonnet():
     assert V15.text == V14.text and "<!--" not in V15.text
     assert load_schema("statement_diff_summary", "v15") == load_schema("statement_diff_summary", "v14")
     assert (REQ.spec.route, REQ.model_id, REQ.spec.effort) == ("json", SONNET, "medium")
-    assert PROMPT_VERSION["statement_diff_summary"] == "v15" and summaries.DIFF_FP_FIX_FROM == 15
+    assert summaries.DIFF_FP_FIX_FROM == 15               # v16 is current (test_diff_summary_v16.py)
     assert summaries.DIFF_SIDES_FROM == 14 and summaries.DIFF_WHOLE_FROM == 13
 
 

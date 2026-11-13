@@ -102,7 +102,10 @@ From v12 on (`summaries.DIFF_STRICT_FROM`) a bullet also fails on an unquoted co
 on (`summaries.DIFF_WHOLE_FROM`; Anand's decision of 13 Nov 2026, 13:40 IST) on a claim in its own words that something stayed
 the same or a quotation cut in the middle of a phrase, and from v14 on (`summaries.DIFF_SIDES_FROM`; Anand's pick of 13 Nov
 2026, before 17:12 IST) on "again" or "as before" in its own words, or on a claim about the previous document with no quote
-from it. v15 (`summaries.DIFF_FP_FIX_FROM`) is v14's text, with two false positives of those checks fixed.
+from it. v15 (`summaries.DIFF_FP_FIX_FROM`) is v14's text, with two false positives of those checks fixed. v16
+(`summaries.DIFF_FIT_FROM`; Anand's decision of 14 Nov 2026, about 00:38 IST) is v15's text, and a bullet also fails on a
+quotation set where its grammar can't fit, on the statement's next words run on from a quotation outside quotation marks, and
+on a claim resting on a sentence next to a quoted one that it doesn't quote.
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -176,8 +179,9 @@ from ft.policy import rbi_resolution
 # (summaries.DIFF_WHOLE_FROM). v14 (Anand's pick of 13 Nov 2026, before 17:12 IST, after the build session's read of round 12):
 # v13 plus two rules, with the wider same-claim check and the previous-document check (summaries.DIFF_SIDES_FROM).
 # v15 (Anand's pick of 13 Nov 2026, before 17:36 IST, after round 13): v14's text, with two false positives fixed
-# (summaries.DIFF_FP_FIX_FROM).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v15", "stance_extraction": "v2",
+# (summaries.DIFF_FP_FIX_FROM). v16 (Anand's decision of 14 Nov 2026, about 00:38 IST, after the judge failed round 14): v15's
+# text, with the grammar-fit, run-on and neighbour checks (summaries.DIFF_FIT_FROM).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v16", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
@@ -264,7 +268,9 @@ class Work:
                     answer = reply.json()
                 except ValueError:
                     answer = None
-                return summaries.check_diff_json(answer, req.sources, changed, version=req.prompt.version)
+                old_all, new_all = summaries.sentence_spans(self.segments)       # the neighbour check (v16 on)
+                return summaries.check_diff_json(answer, req.sources, changed, version=req.prompt.version,
+                                                 sentences={self.base.document_id: old_all, self.doc.document_id: new_all})
             drop_copies = _vnum(req.prompt.version) >= COPIES_FROM      # a pinned v1-v3 reply is checked as before
             check_quotes = _vnum(req.prompt.version) >= QUOTES_FROM     # a pinned v1-v6 reply, likewise
             strict = _vnum(req.prompt.version) >= STRICT_COPIES_FROM    # a pinned v4-v7 reply keeps the looser rule
