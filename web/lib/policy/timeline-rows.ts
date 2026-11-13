@@ -111,6 +111,12 @@ const FED_DECISION: RowDef = {
  * sentence the first half of 2024 added about progress ("there has been ... progress toward" the goal, or "a lack of"
  * it): that statement's description of inflation is the sentence before it. (From September 2024 one sentence does both,
  * "Inflation has made progress toward the Committee's 2 percent objective but remains somewhat elevated.", and is the row.)
+ * Nor is the sentence about the policy stance that 28 Oct 2026's statement added under "Inflation" (#530). That statement came
+ * after the saved pages, and under that topic it holds two sentences that fit the rule:
+ *   2026-10  "Inflation remains elevated."   (the row)
+ *   2026-10  "The accumulation of more information will help the Committee determine the policy stance appropriate to ensure a
+ *            timely return of inflation to the Committee's 2 percent goal."   (about the stance, so left out)
+ * Without the exclusion those two make a gap on the Fed panel's newest column.
  *   2019-03  "On a 12-month basis, overall inflation has declined..."
  *   2020-04  "Weaker demand and significantly lower oil prices are holding down consumer price inflation."
  *   2022-03  "Inflation remains elevated, reflecting supply and demand imbalances..."
@@ -125,7 +131,10 @@ const FED_INFLATION: RowDef = {
     {
       topic: "Inflation",
       all: [/inflation/i],
-      none: [/inflation (compensation|expectations)|pressure on inflation|weigh on|(there has been|lack of)[^.]*progress toward/i],
+      none: [
+        /inflation (compensation|expectations)|pressure on inflation|weigh on|(there has been|lack of)[^.]*progress toward/i,
+        /\bpolicy stance\b|\bstance of monetary policy\b/i,
+      ],
     },
   ],
 };
