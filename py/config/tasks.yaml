@@ -110,7 +110,8 @@ equity.segment_changes:
 equity.kpi_tables:
   # The KPI-table pilot (DD-04, #512; Plan 05 §1.3). Hand-run only: the task's due() refuses the daily, weekly and watch
   # workflows (no schedule before 18 Nov, card), so the `weekly` rule here only satisfies config's "one every rule"; the
-  # dev run and the one production run (DD-06) are started by hand with refresh/backfill --task equity.kpi_tables.
+  # dev run and the one production run (DD-06) are started by hand with backfill --task equity.kpi_tables
+  # (refresh's 30-minute job timeout is too short for the run's page calls).
   description: The KPI-table pilot (7 IT and bank companies, Q3 FY25 to Q2 FY27) — the results press release, fact sheet or data sheet found in the announcements feed, read and not stored, its KPI metrics extracted per page through Haiku and written kept or filtered; shows nothing until DD-07's judge
   workflows: {weekly: every 6 days}
   run_after: [equity.universe]
