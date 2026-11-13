@@ -71,7 +71,7 @@ def clean():
     yield
     wipe()
     x("""update core.field_policy set status = 'hidden'
-          where field_key in ('ai.guidance_extraction', 'equity.guidance_outcome')""")
+          where field_key in ('ai.guidance_extraction', 'equity.guidance_outcome', 'equity.guidance_hit_rate')""")
 
 
 def company() -> tuple[int, str]:
@@ -217,13 +217,14 @@ def test_only_management_statements_are_scored_and_become_forecasts():
     links = dict(q("select id, forecast_series_id is not null from equity.guidance where entity_id = %s", eid))
     assert links == {unknown: False, growth: True, revenue: True, other: False}
     assert [q(sql)[0][0] for sql in C5_COUNTS] == [0, 0]
-    # the company's hit rate counts management's two first statements only (n < 5: no rate yet)
+    # the company's hit rate counts management's two first statements only (n < 5: no rate yet); since 0048 (#532) the hit rates
+    # also wait for equity.guidance_hit_rate, so it is flipped with the other two (setup only; the assertion is unchanged)
     x("""update core.field_policy set status = 'shown'
-          where field_key in ('ai.guidance_extraction', 'equity.guidance_outcome')""")
+          where field_key in ('ai.guidance_extraction', 'equity.guidance_outcome', 'equity.guidance_hit_rate')""")
     assert q("""select delivered, missed, n, rate from api.guidance_hit_rates
                  where scope = 'company' and scope_key = %s""", slug) == [(2, 0, 2, None)]
     x("""update core.field_policy set status = 'hidden'
-          where field_key in ('ai.guidance_extraction', 'equity.guidance_outcome')""")
+          where field_key in ('ai.guidance_extraction', 'equity.guidance_outcome', 'equity.guidance_hit_rate')""")
     # every stored outcome comes back from its stored inputs alone
     for gid, (outcome, relation, actual, base, *_, inputs) in got.items():
         assert sc.recompute(inputs) == (outcome, relation, actual, base), gid

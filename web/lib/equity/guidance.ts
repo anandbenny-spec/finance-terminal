@@ -11,6 +11,21 @@ import type { AiCitationRow, CallGuidanceRow, CitationPageRow, EarningsCallRow, 
 export const GUIDANCE_HELD = "Guidance record held back until it passes review";
 export const MIN_SCORED = 5;
 
+/**
+ * The hit rates' own key (migration 0048, #532; Spec 02B §3.5 as amended by Anand's option A, 13 Nov 2026): outcomes show once the
+ * extraction and scoring checks pass, but a rate, "in the rate?", first stated and the revision labels need a call's list of targets
+ * to be complete, so they wait for the recall check too. While it is hidden the views give those columns as null and no rate row.
+ */
+export const HIT_RATE_FIELD = "equity.guidance_hit_rate";
+export const HIT_RATE_HELD = "Hit rate held back: the AI extraction may not list every target on a call yet.";
+/** The Guidance record's subtitle adds this once the record shows: the targets are AI-extracted and a call's list may be partial. */
+export const GUIDANCE_INCOMPLETE = "Targets are AI-extracted, and a call's list may not be complete.";
+
+/** Whether the hit rates' key is shown or labelled (no row means hidden: field policy fails closed). */
+export function guidanceHitRateOpen(policies: ReadonlyArray<FieldPolicyRow>): boolean {
+  return policies.some((p) => p.field_key === HIT_RATE_FIELD && (p.status === "shown" || p.status === "labelled"));
+}
+
 const BASIS = { consolidated: "Consolidated", standalone: "Standalone" } as const;
 const REVISION = { first: "First stated", raised: "Raised", cut: "Cut", reiterated: "Reiterated", restated: "Restated" } as const;
 const RELATION = {
@@ -65,7 +80,7 @@ function row(r: CallGuidanceRow, i: number, citations: readonly AiCitationRow[],
     latest: r.vintage_date ? `${revision}, ${r.fiscal_label} call, ${formatDate(r.vintage_date)}` : `${revision}, ${r.fiscal_label} call`,
     actual: r.actual === null ? NOT_AVAILABLE : formatStatedValue(r.actual, r.unit),
     outcome: outcomeText(r),
-    inRate: r.counted ? "Yes" : "No",
+    inRate: r.counted === null ? NOT_AVAILABLE : r.counted ? "Yes" : "No",
     citation: cite ? citationOf(cite, pages) : null,
     page: page && page.url.startsWith("https://") ? page : null,
   };

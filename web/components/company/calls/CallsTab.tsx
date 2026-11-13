@@ -47,7 +47,7 @@ import {
 } from "@/lib/equity/resultsMoves";
 import { companyHref } from "@/lib/equity/company";
 import { REMARKS_FIELD, REMARKS_HELD, newSpeakerNote, remarksBars, remarksKeyChanges, remarksSource, similarityText, wordsChangedText } from "@/lib/equity/remarks";
-import { GUIDANCE_HELD, guidanceGroups, hitRate, unattributedLine } from "@/lib/equity/guidance";
+import { GUIDANCE_HELD, GUIDANCE_INCOMPLETE, HIT_RATE_FIELD, HIT_RATE_HELD, guidanceGroups, hitRate, unattributedLine } from "@/lib/equity/guidance";
 import { PREVIEW_FEEDS } from "@/lib/feeds";
 import { dateInZone, formatDate } from "@/lib/format";
 import type { EarningsCallRow, RemarksChangeRow, TaskFreshnessRow } from "@/lib/queries/api";
@@ -100,7 +100,11 @@ function Summary({ data, call, now }: { data: NonNullable<Ok["calls"]>; call: Ea
 
 const GUIDANCE_OUTCOME_FIELD = "equity.guidance_outcome";
 
-/** Company › Guidance record (2B-19b, #267; Spec 02B §8): did the company deliver the measurable targets management gave? Words, never colour. */
+/**
+ * Company › Guidance record (2B-19b, #267; Spec 02B §8): did the company deliver the measurable targets management gave? Words, never
+ * colour. Outcomes show once equity.guidance_outcome does; the hit rate and the columns that need a call's list of targets to be
+ * complete (first stated, the latest statement's revision, in the rate) wait for equity.guidance_hit_rate (#532, migration 0048).
+ */
 function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<Ok["calls"]>; name: string; companyName: string; foot: ReactNode }) {
   const g = data.guidance;
   const open = (f: string) => {
@@ -108,6 +112,7 @@ function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<O
     return p !== null && p.status !== "hidden";
   };
   const released = g !== null && open(FIGURES_FIELD) && open(GUIDANCE_OUTCOME_FIELD);
+  const rateOpen = released && open(HIT_RATE_FIELD);
   const outcomePolicy = fieldPolicy(data.policies, GUIDANCE_OUTCOME_FIELD);
   // g is null when the record's own reads failed (#328): the panel says so and the rest of the tab renders.
   const groups = g ? guidanceGroups(g.rows, g.citations, g.pages) : { scored: [], other: [] };
@@ -117,7 +122,7 @@ function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<O
     <Panel
       title="Guidance record"
       titleId="panel-guidance-record"
-      subtitle={`When ${name}'s management gave measurable targets, did the company deliver them?`}
+      subtitle={`When ${name}'s management gave measurable targets, did the company deliver them?${released ? ` ${GUIDANCE_INCOMPLETE}` : ""}`}
       qualifier={released ? <Qualifier>{outcomePolicy?.status === "labelled" && outcomePolicy.label ? `${AI_EXTRACTED}, ${outcomePolicy.label}` : AI_EXTRACTED}</Qualifier> : undefined}
       variant="flush"
       footer={foot}
@@ -129,15 +134,17 @@ function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<O
       ) : (
         <>
           <div className="p-3">
-            {rate.kind === "rate" ? (
+            {!rateOpen ? (
+              <StateNote kind="held">{HIT_RATE_HELD}</StateNote>
+            ) : rate.kind === "rate" ? (
               <Stat label="Delivered of scored targets" value={rate.value} context={rate.context} asOf={rate.asOf} />
             ) : (
               <StateNote kind="empty">{rate.note}</StateNote>
             )}
             {line && <p className="mt-3 text-data text-ink-2">{line}</p>}
           </div>
-          {groups.scored.length > 0 && <GuidanceTable rows={groups.scored} caption={`${companyName}: guidance targets scored as delivered or missed`} />}
-          {groups.other.length > 0 && <GuidanceTable rows={groups.other} caption={`${companyName}: guidance targets pending or not scored`} />}
+          {groups.scored.length > 0 && <GuidanceTable rows={groups.scored} caption={`${companyName}: guidance targets scored as delivered or missed`} withRate={rateOpen} />}
+          {groups.other.length > 0 && <GuidanceTable rows={groups.other} caption={`${companyName}: guidance targets pending or not scored`} withRate={rateOpen} />}
           {groups.scored.length === 0 && groups.other.length === 0 && <Note>No guidance targets are published for this company yet.</Note>}
         </>
       )}

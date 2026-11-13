@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { cacheLife, cacheTag } from "next/cache";
 import { selectCall } from "@/lib/equity/calls";
 import { RESULTS_FIELD } from "@/lib/equity/resultsMoves";
-import { guidanceFiguresOpen, unattributedAll } from "@/lib/equity/guidance";
+import { guidanceFiguresOpen, guidanceHitRateOpen, unattributedAll } from "@/lib/equity/guidance";
 import { REMARKS_FIELD } from "@/lib/equity/remarks";
 import { toneOpen } from "@/lib/equity/tone";
 import type { AiCitationRow, ResultsMoveRow, AiOutputRow, ApiDatabase, CallFigureRow, CallToneRow, CallGuidanceRow, RemarksChangeRow, CitationPageRow, GuidanceHitRateRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
@@ -26,7 +26,7 @@ const CITATION_COLUMNS = "ai_output_id, citation_no, claim_path, document_id, do
 const GUIDANCE_COLUMNS =
   "company_slug, company_name, short_name, call_slug, fiscal_label, call_date, metric, metric_label, kind, value, low, high, unit, direction, comparison, period_text, period_kind, target_start, target_end, basis, growth_basis, scope_text, vintage_date, ai_output_id, citation_no, not_scored_reason, extraction_label, outcome_label, is_first, revision, counted, outcome, relation, actual, reason, first_call_slug, first_stated_on";
 
-/** What readGuidanceRecord reads for the Guidance record panel (2B-19b, #267): the company's guidance rows, its hit-rate row, and their quotes' citations and pages. */
+/** What readGuidanceRecord reads for the Guidance record panel (2B-19b, #267): the company's guidance rows, its hit-rate row (null while equity.guidance_hit_rate is hidden, #532), and their quotes' citations and pages. */
 export type GuidanceRecordReads = {
   rows: CallGuidanceRow[];
   rate: GuidanceHitRateRow | null;
@@ -211,9 +211,10 @@ const HELD_RECORD: GuidanceRecordReads = { rows: [], rate: null, citations: [], 
 /**
  * The company's guidance rows and hit rate (#267). Every list is read whole against the exact count. Their quotes' citations and pages
  * are read by readCallsTab with the selected call's (#516). The count left out is not read here: api.earnings_latest builds every call
- * of every company to give it (#329), so readCallsTab derives it from the calls it already holds (#342).
+ * of every company to give it (#329), so readCallsTab derives it from the calls it already holds (#342). The hit rate is read only
+ * when `withRate` (equity.guidance_hit_rate shown or labelled, #532): while that key is hidden the view has no rows, so nothing is asked.
  */
-export async function readGuidanceRecord(db: Db, slug: string): Promise<Pick<GuidanceRecordReads, "rows" | "rate">> {
+export async function readGuidanceRecord(db: Db, slug: string, withRate = true): Promise<Pick<GuidanceRecordReads, "rows" | "rate">> {
   const [rows, rates] = await Promise.all([
     readAll<CallGuidanceRow>("api.call_guidance", (from, to) =>
       db
@@ -226,15 +227,17 @@ export async function readGuidanceRecord(db: Db, slug: string): Promise<Pick<Gui
         .order("citation_no")
         .range(from, to),
     ),
-    readAll<GuidanceHitRateRow>("api.guidance_hit_rates", (from, to) =>
-      db
-        .from("guidance_hit_rates")
-        .select("scope, scope_key, scope_label, delivered, missed, n, rate, first_stated_from, periods_to, outcome_label", { count: "exact" })
-        .eq("scope", "company")
-        .eq("scope_key", slug)
-        .order("scope_key")
-        .range(from, to),
-    ),
+    withRate
+      ? readAll<GuidanceHitRateRow>("api.guidance_hit_rates", (from, to) =>
+          db
+            .from("guidance_hit_rates")
+            .select("scope, scope_key, scope_label, delivered, missed, n, rate, first_stated_from, periods_to, outcome_label", { count: "exact" })
+            .eq("scope", "company")
+            .eq("scope_key", slug)
+            .order("scope_key")
+            .range(from, to),
+        )
+      : Promise.resolve([] as GuidanceHitRateRow[]),
   ]);
   return { rows, rate: rates[0] ?? null };
 }
@@ -289,7 +292,9 @@ export async function readCallsTab(db: Db, slug: string, call: string | undefine
   const [figures, remarks, record, results, toneRows] = await Promise.all([
     selected.figures_output_id !== null ? readCallFigures(db, slug, selected.call_slug) : Promise.resolve([]),
     open(policies, REMARKS_FIELD) ? readRemarksChanges(db, slug).catch(failed(slug, "remarks changes", null)) : Promise.resolve([]),
-    guidanceRecordOpen(policies) ? readGuidanceRecord(db, slug).catch(failed(slug, "guidance record", null)) : Promise.resolve(HELD_RECORD),
+    guidanceRecordOpen(policies)
+      ? readGuidanceRecord(db, slug, guidanceHitRateOpen(policies)).catch(failed(slug, "guidance record", null))
+      : Promise.resolve(HELD_RECORD),
     readResults(db, slug, policies),
     toneOpen(policies) ? readCallTone(db, slug).catch(failed(slug, "tone", null)) : Promise.resolve(null),
   ]);

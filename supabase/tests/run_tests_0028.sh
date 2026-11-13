@@ -89,7 +89,9 @@ check "S06 an outcome with speaker_role = 'unknown' fails (the check)" \
   "$(as_pg "$OI, speaker_role) select id, 'ec28|u2', true, 'first', 'delivered', true, jsonb_build_object(), 'r1', 'unknown' from equity.guidance where metric = 'ec28_m'")" \
   'guidance_outcome_speaker_role_check'
 
-BOTH="$(POL ai.guidance_extraction labelled); $(POL equity.guidance_outcome labelled)"
+# 0048 (#532): the hit rates also wait for equity.guidance_hit_rate, so "both released" flips that key too (setup only; no
+# assertion changed).
+BOTH="$(POL ai.guidance_extraction labelled); $(POL equity.guidance_outcome labelled); $(POL equity.guidance_hit_rate labelled)"
 check "V01 api.call_guidance returns the management row and not the unknown row of the same call" \
   "$(flip anon "$BOTH" "select count(*) filter (where metric = 'ec28_m') || ',' || count(*) filter (where metric = 'ec28_u') from api.call_guidance where company_slug = 'ec28-a'")" \
   '^1,0$'
