@@ -32,6 +32,8 @@ passages they cite.
   document's changed sentences, cites them, and gives the bullet the checks above (figures, quotations, repeats, ends).
 - From v12 on (#445, round 11; `DIFF_STRICT_FROM`): also no run of a statement's words outside quotation marks, and no two
   quotations side by side.
+- From v13 on (#445, round 12; Anand's decision of 13 Nov 2026, 13:40 IST; `DIFF_WHOLE_FROM`): also no claim in the bullet's
+  own words that something stayed the same, and no quotation cut in the middle of a phrase.
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
 (`policy.ai_batch`). The database checks the published output's citations again at commit (Architecture 01 §1.4).
@@ -52,12 +54,13 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # round 6; Anand's decision of 12 Nov 2026, 22:36 IST): the judge failed Haiku's round 5 (v6) on 7 of 10 targets, mostly on
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
-DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET}   # v8: v7's
-# text, marking the copies rule's revision (round 7); v9: v8 plus three rules (round 8); v10: v9 plus a rule on citation
-# carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with two more checks (round 11).
+DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
+                 "v13": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+# (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
+# two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
-DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium"}
+DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -71,6 +74,16 @@ DIFF_MAX_QUOTES = 6                    # quotes a bullet may rest on
 DIFF_STRICT_FROM = 12
 UNQUOTED_MIN_WORDS = 8
 COPY_PLAIN_WORDS = 5                   # of which at least this many aren't names, initials or capitalised words
+# From v13 (#445, round 12; Anand's decision of 13 Nov 2026, 13:40 IST, after the judge failed round 11; tightenings): a
+# bullet fails when its own words (outside quotation marks) say that something stayed the same (`same_problem`): on this route
+# its quotes come only from changed sentences, so nothing it cites can show that ("The repo rate sentence is not among the
+# changes.", 2541; "The policy repo rate decision is unchanged, but …", 2538). It also fails when a quotation it doesn't go
+# on from (punctuation or the bullet's end follows it, not a word of its own) stops where its cited sentence goes on with a
+# word, if the quotation starts where that sentence starts or ends on a word such as "the" or "to" (`cut_quote_problem`):
+# round 11's front-page bullet ended a sentence it had started quoting at "…determine the policy stance appropriate" (2546),
+# as round 10's did at "…the policy stance" (2537). A quotation the bullet goes on from ("…would continue to increase"
+# them, 2544) passes, as the judge passed it.
+DIFF_WHOLE_FROM = 13
 
 
 def diff_json(version: str) -> bool:
@@ -322,12 +335,13 @@ def _overlaps(s: int, e: int, spans: list[tuple[int, int]]) -> bool:
 # Change a message above and this table together.
 REASON_PHRASES: dict[str, tuple[str, ...]] = {
     "citation": (r"no verified citation", r"quoted words not in its cited passages",
-                 r"isn't in the (?:previous|new) document's changed sentences"),
+                 r"isn't in the (?:previous|new) document's changed sentences", r"a claim that something stayed the same"),
     "numbers": (r"numbers not in its cited passages",),
     "format": (r"text outside the bullets", r"no bullets \(each bullet", r"\d+ bullets, not \d+ to \d+",
                r"an unclosed quotation mark", r"repeats its own words", r"doesn't end as a sentence ends",
                r"the reply isn't the schema's JSON", r"isn't the schema's object", r"\d+ quotes, not 1 to \d+",
-               r"copies a statement's words without quotation marks", r"two quotations side by side"),
+               r"copies a statement's words without quotation marks", r"two quotations side by side",
+               r"a quotation cut in the middle of", r"a quotation that ends on "),
 }
 
 
@@ -775,13 +789,15 @@ def check_diff_json(answer, sources: tuple[Source, ...], changed: dict[int, list
     checks from v10: only figures and quotations from those sentences, no repeats, and it ends as a sentence ends. The
     same `Checked` as `check`'s, so a published output and its citations read the same on either route. `version`: the
     prompt version that asked for it; from v12 (`DIFF_STRICT_FROM`) a bullet also gets the unquoted-copy and side-by-side
-    checks, and an earlier version, or none, is checked as v11 was."""
+    checks, from v13 (`DIFF_WHOLE_FROM`) the same-claim and cut-quotation checks, and an earlier version, or none, is
+    checked as it ran (none: as v11 was)."""
     task, mapping = "statement_diff_summary", Counter()
-    strict = version is not None and int(version.lstrip("v")) >= DIFF_STRICT_FROM
+    number = int(version.lstrip("v")) if version is not None else 0
+    strict, whole = number >= DIFF_STRICT_FROM, number >= DIFF_WHOLE_FROM
     rows = answer.get("bullets") if isinstance(answer, dict) else None
     if not isinstance(rows, list):
         return Checked(task, [], ["the reply isn't the schema's JSON ({bullets: [...]})"], mapping)
-    bullets = [_diff_json_bullet(raw, sources, changed, mapping, strict=strict) for raw in rows]
+    bullets = [_diff_json_bullet(raw, sources, changed, mapping, strict=strict, whole=whole) for raw in rows]
     problems = []
     lo, hi = BULLETS[task]
     if not lo <= len(bullets) <= hi:
@@ -790,7 +806,7 @@ def check_diff_json(answer, sources: tuple[Source, ...], changed: dict[int, list
 
 
 def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[tuple[int, int]]], mapping: Counter, *,
-                      strict: bool = False) -> Bullet:
+                      strict: bool = False, whole: bool = False) -> Bullet:
     if not isinstance(raw, dict) or not isinstance(raw.get("text"), str) or not isinstance(raw.get("quotes"), list):
         b = Bullet("")
         b.problem = "isn't the schema's object"
@@ -825,6 +841,8 @@ def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[
         b.problem = quote_problem(text, passages) or repeat_problem(text) or end_problem(text)
     if b.problem is None and strict:
         b.problem = side_by_side_problem(text) or unquoted_copy_problem(text, [src.text for src in sources])
+    if b.problem is None and whole:
+        b.problem = same_problem(text) or cut_quote_problem(text, passages)
     return b
 
 
@@ -861,6 +879,69 @@ def side_by_side_problem(text: str) -> str | None:
     for (s1, e1), (s2, e2) in pairwise(marks):
         if not _WORD.search(t[e1:s2]):
             return f"two quotations side by side: {t[s1:e1][:60]} {t[s2:e2][:60]}"
+    return None
+
+
+# `same_problem` (v13 on): the bullet's own words saying that something stayed the same. Matched outside quotation marks, in
+# `match_form`, case aside; a document's own words in quotation marks ("unchanged at 5.50 per cent") never count, and
+# neither does a decision described in the model's words ("moved from holding the rate", "changed … to no change").
+_SAME = re.compile(
+    r"(?:\bnot|n't)\s+(?:among|one\s+of|part\s+of)\s+the\s+changes\b"
+    r"|\b(?:is|are|was|were|remains?|remained|stays?|stayed)\s+(?:still\s+)?(?:unchanged|the\s+same|kept|retained)\b"
+    r"|\b(?:remains?|remained|stays?|stayed)\s+(?:still\s+)?at\b"
+    r"|\b(?:did|does|do|has|have|had)\s+not\s+change\b|\b(?:didn't|doesn't|don't|hasn't|haven't|hadn't)\s+change\b"
+    r"|\b(?:is|are|was|were)\s+not\s+changed\b|\bno\s+change\s+(?:to|in)\s+(?:the\s+)?wording\b",
+    re.IGNORECASE)
+# `cut_quote_problem` (v13 on): a quotation ending on one of these words leaves its phrase open.
+_OPEN_END = frozenset({"a", "an", "the", "of", "to", "in", "into", "for", "by", "with", "on", "at", "from", "as", "than",
+                       "and", "or", "but", "nor", "that", "which", "its", "their", "is", "are", "was", "were", "be", "been",
+                       "will", "would", "shall", "should", "can", "could", "may", "might", "has", "have", "had"})
+_STARTS_SENTENCE = re.compile("(?:^|[.!?][\"'”’)\\]]*\\s)\\s*$")
+
+
+def same_problem(text: str) -> str | None:
+    """Why a bullet's own words say that something stayed the same (see `DIFF_WHOLE_FROM`), or None."""
+    t = match_form(text)
+    if t.count('"') % 2:
+        return None                                       # `quote_problem` has already failed it
+    for piece in _QUOTED.split(t)[::2]:                    # the text outside quotation marks
+        if m := _SAME.search(piece):
+            return f'a claim that something stayed the same, which no quote from a changed sentence can show: "{m.group(0)}"'
+    return None
+
+
+def cut_quote_problem(text: str, passages: list[str]) -> str | None:
+    """Why a bullet ends a quotation in the middle of a phrase (see `DIFF_WHOLE_FROM`), or None. Only a quotation the bullet
+    doesn't go on from: after its closing mark comes punctuation or the bullet's end, not a word. It is found in the cited
+    passages (each a whole changed sentence) as `quote_problem` finds it, case aside; it fails only when every place it is
+    found is cut: the passage goes on with a word, and the quotation either starts where the passage's sentence starts or
+    ends on a word such as "the" or "to" (`_OPEN_END`)."""
+    t = match_form(text)
+    if t.count('"') % 2:
+        return None
+    hays = [match_form(p) for p in passages]
+    for m in re.finditer(r'"([^"]*)"', t):
+        if _WORD.match(t[m.end():].lstrip()[:1] or " "):
+            continue                                       # the bullet goes on from it in its own words
+        q = m.group(1).strip().rstrip(_INNER_END).strip()
+        if not _WORD.search(q):
+            continue
+        last = _WORD.findall(q)[-1].casefold()
+        head = r"(?<!\w)" if re.match(r"\w", q) else ""
+        tail = r"(?!\w)" if re.search(r"\w$", q) else ""
+        cut = []
+        for h in hays:
+            same_length = len(h.lower()) == len(h) and len(q.lower()) == len(q)
+            hay, needle = (h.lower(), q.lower()) if same_length else (h, q)
+            for x in re.finditer(head + re.escape(needle) + tail, hay):
+                rest = h[x.end():].lstrip()
+                starts = bool(_STARTS_SENTENCE.search(h[:x.start()]))
+                cut.append(bool(_WORD.match(rest[:1] or " ")) and (starts or last in _OPEN_END))
+        if cut and all(cut):
+            shown = q if len(q) <= 80 else "…" + q[-79:]
+            if last in _OPEN_END:
+                return f'a quotation that ends on "{last}", in the middle of a phrase: "{shown}"'
+            return f'a quotation cut in the middle of a sentence it starts: "{shown}" stops before its end'
     return None
 
 
