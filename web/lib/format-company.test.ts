@@ -12,6 +12,7 @@ import {
   formatPercentLevel,
   formatPrice,
   formatRupeesAsCrore,
+  formatRupeesAsCroreFine,
   NOT_AVAILABLE,
 } from "@/lib/format";
 
@@ -42,6 +43,17 @@ describe("company figures", () => {
   it("shows full rupees as crore with Indian grouping", () => {
     expect(formatRupeesAsCrore(1_234_500_000_000)).toBe("₹1,23,450 cr");
     expect(formatRupeesAsCrore(null)).toBe(NOT_AVAILABLE);
+  });
+  // VC-06f (#518): a related-party value under ₹1 cr never reads as ₹0 cr (or rounds up to ₹1 cr).
+  it("shows a related-party rupee value with two decimals under ₹1 crore", () => {
+    expect(formatRupeesAsCroreFine(1_470_900_000)).toBe("₹147 cr");
+    expect(formatRupeesAsCroreFine(10_000_000)).toBe("₹1 cr");
+    expect(formatRupeesAsCroreFine(4_300_000)).toBe("₹0.43 cr");
+    expect(formatRupeesAsCroreFine(6_000_000)).toBe("₹0.60 cr");
+    expect(formatRupeesAsCroreFine(9_900_000)).toBe("₹0.99 cr");
+    expect(formatRupeesAsCroreFine(40_000)).toBe("less than ₹0.01 cr");
+    expect(formatRupeesAsCroreFine(0)).toBe("₹0 cr");
+    expect(formatRupeesAsCroreFine(null)).toBe(NOT_AVAILABLE);
   });
   // US-06 (#405): the US twin of crore, so a Dow 30 figure reads like a 10-K's ($ millions), grouped the US way.
   it("shows full dollars as millions with US grouping, a true minus, and no sign on a rounded zero", () => {
