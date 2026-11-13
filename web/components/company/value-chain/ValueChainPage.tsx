@@ -75,6 +75,7 @@ function YearNav({ slug, years, current }: { slug: string; years: readonly YearC
           <Link
             key={y.label}
             href={yearHref(slug, y.label)}
+            prefetch={false}
             aria-current={y.label === current ? "page" : undefined}
             className="border-r border-line px-2.5 py-1 text-meta text-ink-2 no-underline last:border-r-0 hover:text-ink-1 aria-[current=page]:bg-active aria-[current=page]:text-ink-1"
           >
@@ -350,14 +351,14 @@ export function ValueChainPage({
   return (
     <>
       <PageHeader
-        crumbs={["Company research", { label: "Screener", href: "/screener" }, { label: name, href: `/companies/${company.slug}` }, "Value chain"]}
+        crumbs={["Company research", { label: "Screener", href: "/screener" }, { label: name, href: `/companies/${company.slug}`, prefetch: false }, "Value chain"]}
         title={`${company.name}: value chain`}
         description="Where do the company's inputs come from, how does it reach its customers, and how much of that runs through its own group?"
         meta={<SourceLine lines={[brsrSourceLine(null)]} />}
       />
       <CompanyHeader company={company} day={dayChange(company, actions)} indexNames={indexNames} />
       <p className="mt-4 text-data">
-        <Link href={`/companies/${company.slug}`} className="text-ink-1 underline hover:text-ink-2">
+        <Link href={`/companies/${company.slug}`} prefetch={false} className="text-ink-1 underline hover:text-ink-2">
           ‹ Back to {name}
         </Link>
       </p>

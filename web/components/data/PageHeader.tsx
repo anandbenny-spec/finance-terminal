@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-export type Crumb = string | { label: string; href: string };
+export type Crumb = string | { label: string; href: string; prefetch?: boolean };
 
 export function PageHeader({
   crumbs,
@@ -28,7 +28,7 @@ export function PageHeader({
                 {typeof c === "string" ? (
                   <span aria-current={i === crumbs.length - 1 ? "page" : undefined}>{c}</span>
                 ) : (
-                  <Link href={c.href} className="text-ink-3 underline hover:text-ink-1">
+                  <Link href={c.href} {...(c.prefetch === undefined ? {} : { prefetch: c.prefetch })} className="text-ink-3 underline hover:text-ink-1">
                     {c.label}
                   </Link>
                 )}

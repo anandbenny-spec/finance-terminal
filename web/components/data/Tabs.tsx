@@ -6,7 +6,7 @@ import Link from "next/link";
 
 export type TabItem = { id: string; label: string; href: string };
 
-export function Tabs({ label, items, current }: { label: string; items: readonly TabItem[]; current: string }) {
+export function Tabs({ label, items, current, prefetch }: { label: string; items: readonly TabItem[]; current: string; prefetch?: boolean }) {
   return (
     <nav aria-label={label} className="mt-4 overflow-x-auto border-b border-line-strong">
       <ul className="flex min-w-max gap-4">
@@ -14,6 +14,7 @@ export function Tabs({ label, items, current }: { label: string; items: readonly
           <li key={t.id}>
             <Link
               href={t.href}
+              {...(prefetch === undefined ? {} : { prefetch })}
               aria-current={t.id === current ? "page" : undefined}
               className="-mb-px inline-block border-b-2 border-transparent py-2 text-ui text-ink-2 no-underline hover:text-ink-1 aria-[current=page]:border-highlight aria-[current=page]:text-ink-1"
             >
