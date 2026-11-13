@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "metrics": {
+      "type": "array",
+      "description": "One object per KPI metric printed on this page (an empty list if the page prints none).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "The metric's name exactly as printed on the page, including its breakdown member, copied character for character."
+          },
+          "member": {
+            "type": ["string", "null"],
+            "description": "The breakdown member alone (industry, geography, segment, class or basis), or null for a company-wide metric."
+          },
+          "measure": {
+            "type": "string",
+            "enum": ["percent", "percent_change", "bps", "count", "people", "amount", "currency_per_unit", "volume", "ratio", "days", "other"],
+            "description": "The kind of measure."
+          },
+          "value": {
+            "type": ["number", "null"],
+            "description": "The number as printed on this page (negative for a fall), or null for a phrase with no number."
+          },
+          "unit": {
+            "type": ["string", "null"],
+            "description": "The unit as printed, or null."
+          }
+        },
+        "required": ["label", "member", "measure", "value", "unit"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["metrics"],
+  "additionalProperties": false
+}
