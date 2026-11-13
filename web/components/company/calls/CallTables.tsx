@@ -51,7 +51,7 @@ export function CallsTable({
           <Link href={callHref(companySlug, r.call_slug)} prefetch={false} aria-current={r.call_slug === selected ? "true" : undefined} className="whitespace-nowrap text-ink-1 underline">
             {r.fiscal_label}
           </Link>
-          {r.call_slug === selected && <span className="block text-meta text-ink-3">Shown below</span>}
+          {r.call_slug === selected && <span className="block whitespace-nowrap text-meta text-ink-3">Shown below</span>}
         </>
       ),
     },

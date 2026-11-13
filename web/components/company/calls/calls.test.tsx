@@ -67,11 +67,13 @@ describe("the tab and the call in the URL", () => {
     expect(text(out)).toContain("Transcript on the company's website");
   });
 
-  it("keeps the Quarter cell's fiscal label on one line, with \"Shown below\" on its own line beneath it (#483)", () => {
+  it("keeps the Quarter cell's fiscal label and its \"Shown below\" marker each on one line, the marker on its own line beneath the label (#483)", () => {
     const old = call({ call_slug: "q1-fy27", fiscal_label: "Q1 FY27", is_default: false });
     const now = call();
     const out = html(calls({ calls: [old, now], selected: now }));
-    expect(out).toMatch(/<a [^>]*class="[^"]*whitespace-nowrap[^"]*"[^>]*>Q2 FY27<\/a><span class="block text-meta text-ink-3">Shown below<\/span>/);
+    // Measured on production at 320 and 375 px: without nowrap on the marker, "Shown below" wrapped inside the 75 px column
+    // and the selected row was three lines tall (the card's second fix, re-measured 13 Nov 2026).
+    expect(out).toMatch(/<a [^>]*class="[^"]*whitespace-nowrap[^"]*"[^>]*>Q2 FY27<\/a><span class="block whitespace-nowrap text-meta text-ink-3">Shown below<\/span>/);
     expect(out.match(/Shown below/g)).toHaveLength(1);
   });
 
