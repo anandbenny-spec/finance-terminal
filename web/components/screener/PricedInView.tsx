@@ -29,7 +29,7 @@ const missing = (
 
 function CompanyLink({ row }: { row: PricedInRow }) {
   return (
-    <Link href={companyHref(row.slug, "valuation")} className="text-ink-1 underline hover:text-ink-2">
+    <Link href={companyHref(row.slug, "valuation")} prefetch={false} className="text-ink-1 underline hover:text-ink-2">
       {name(row)}
       {symbolOf(row) && <span className="ml-1.5 text-meta text-ink-3">{symbolOf(row)}</span>}
     </Link>

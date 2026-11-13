@@ -2,7 +2,7 @@
 // Test rows shaped like the views; the names and figures are test data, not a record of real meetings.
 import { describe, expect, it } from "vitest";
 import type { PolicyMeetingRow, PolicyVoteRow } from "@/lib/queries/api";
-import { TABS, changeInWords, decisionLine, dissentLine, historyRows, lastMove, meetingHref, meetingTabHref, rateVoteLine, tabOf, tally, votedAgainstRate } from "./decisions";
+import { TABS, changeInWords, decisionLine, dissentLine, historyRows, lastMove, meetingHref, meetingTabHref, rateVoteLine, tabOf, tabSegment, tally, votedAgainstRate } from "./decisions";
 
 function meeting(over: Partial<PolicyMeetingRow>): PolicyMeetingRow {
   return {
@@ -68,18 +68,35 @@ describe("meeting page tabs (moved from MeetingView, #147)", () => {
 });
 
 describe("meetingTabHref: a meeting page on a given tab", () => {
-  it("is the bare meeting path for the Overview, and ?tab= for every other tab", () => {
+  it("is the bare meeting path for the Overview, and the tab as a path segment for every other tab", () => {
     expect(meetingTabHref("Fed", "2026-09-16", "overview")).toBe("/policy/fed/2026-09-16");
-    expect(meetingTabHref("Fed", "2026-09-16", "changes")).toBe("/policy/fed/2026-09-16?tab=changes");
-    expect(meetingTabHref("RBI", "2026-10-07", "statement")).toBe("/policy/rbi/2026-10-07?tab=statement");
+    expect(meetingTabHref("Fed", "2026-09-16", "changes")).toBe("/policy/fed/2026-09-16/changes");
+    expect(meetingTabHref("RBI", "2026-10-07", "statement")).toBe("/policy/rbi/2026-10-07/statement");
     for (const t of TABS) {
-      expect(tabOf(new URL(meetingTabHref("RBI", "2026-10-07", t.id), "https://x.test").searchParams.get("tab") ?? undefined)).toBe(t.id);
+      const segment = meetingTabHref("RBI", "2026-10-07", t.id).split("/")[4];
+      expect(segment === undefined ? "overview" : tabSegment(segment)).toBe(t.id === "overview" ? "overview" : t.id);
     }
   });
 
-  it("adds one more query parameter after the tab, or alone on the Overview", () => {
-    expect(meetingTabHref("RBI", "2026-10-07", "statement", "doc=governor")).toBe("/policy/rbi/2026-10-07?tab=statement&doc=governor");
-    expect(meetingTabHref("RBI", "2026-10-07", "overview", "doc=governor")).toBe("/policy/rbi/2026-10-07?doc=governor");
+  it("gives the RBI's Governor's statement its own path, and ignores it anywhere else", () => {
+    expect(meetingTabHref("RBI", "2026-10-07", "statement", { doc: "governor" })).toBe("/policy/rbi/2026-10-07/statement/governor");
+    expect(meetingTabHref("RBI", "2026-10-07", "overview", { doc: "governor" })).toBe("/policy/rbi/2026-10-07");
+    expect(meetingTabHref("RBI", "2026-10-07", "minutes", { doc: "governor" })).toBe("/policy/rbi/2026-10-07/minutes");
+    expect(meetingTabHref("Fed", "2026-10-28", "statement", { doc: "governor" })).toBe("/policy/fed/2026-10-28/statement");
+  });
+
+  it("never builds a query string", () => {
+    for (const bank of ["Fed", "RBI"] as const) for (const t of TABS) expect(meetingTabHref(bank, "2026-10-07", t.id, { doc: "governor" })).not.toContain("?");
+  });
+});
+
+describe("tabSegment: the tab a path segment names", () => {
+  it("names every tab but the Overview, which is the bare date's page", () => {
+    expect(TABS.filter((t) => t.id !== "overview").map((t) => tabSegment(t.id))).toEqual(["changes", "statement", "minutes", "press", "reaction"]);
+    expect(tabSegment("overview")).toBeNull();
+    expect(tabSegment("governor")).toBeNull();
+    expect(tabSegment("")).toBeNull();
+    expect(tabSegment("Changes")).toBeNull();
   });
 });
 

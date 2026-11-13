@@ -67,6 +67,14 @@ describe("the tab and the call in the URL", () => {
     expect(text(out)).toContain("Transcript on the company's website");
   });
 
+  it("keeps the Quarter cell's fiscal label on one line, with \"Shown below\" on its own line beneath it (#483)", () => {
+    const old = call({ call_slug: "q1-fy27", fiscal_label: "Q1 FY27", is_default: false });
+    const now = call();
+    const out = html(calls({ calls: [old, now], selected: now }));
+    expect(out).toMatch(/<a [^>]*class="[^"]*whitespace-nowrap[^"]*"[^>]*>Q2 FY27<\/a><span class="block text-meta text-ink-3">Shown below<\/span>/);
+    expect(out.match(/Shown below/g)).toHaveLength(1);
+  });
+
   it("lists the calls newest first with the call date, or the day the transcript was filed when the date is unknown", () => {
     const t = text(html(calls({ calls: [call({ call_slug: "q1-fy27", fiscal_label: "Q1 FY27", period_end: "2026-06-30", is_default: false, call_date: null, filed_at: "2026-07-21T09:00:00+05:30" }), call()] })));
     expect(t.indexOf("Q2 FY27")).toBeLessThan(t.indexOf("Q1 FY27 "));

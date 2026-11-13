@@ -1,7 +1,7 @@
 // The meeting page (C4; Spec 01 §4.3, §4.5; Design 01 §5.3), for /policy/fed/[date] and /policy/rbi/[date].
 // Header: breadcrumb, "FOMC meeting · {date}" or "MPC meeting no. {n} · {date}", DecisionLine · tally · release time
 // (the Fed's adds IST) · the official document (the Fed's only: the RBI's are named, never linked: Anand, 24 Oct
-// 2026) · previous and next meeting. Tabs in the URL (?tab=…): Overview, What changed, Statement, Minutes, Press
+// 2026) · previous and next meeting. Tabs in the URL (a path segment: /changes, /statement, …): Overview, What changed, Statement, Minutes, Press
 // conference Market reaction (Pass 1b, #75). Every figure is a row an `api` view returned; every empty case
 // is §4.5's copy; no hawk/dove UI (D9). The 2018 baselines get pages too.
 import Link from "next/link";
@@ -557,7 +557,7 @@ function StatementSwitch({ ctx, which }: { ctx: Ctx; which: "resolution" | "gove
       {items.map((x) => (
         <Link
           key={x.id}
-          href={meetingTabHref(ctx.bank, ctx.m.decision_date, "statement", x.id === "governor" ? "doc=governor" : "")}
+          href={meetingTabHref(ctx.bank, ctx.m.decision_date, "statement", x.id === "governor" ? { doc: "governor" } : {})}
           aria-current={which === x.id ? "page" : undefined}
           className="border-r border-line px-2.5 py-1 text-meta text-ink-2 no-underline last:border-r-0 hover:text-ink-1 aria-[current=page]:bg-active aria-[current=page]:text-ink-1"
         >
@@ -658,6 +658,17 @@ export async function PolicyDayMeeting({ bank, slug, date }: { bank: Bank; slug:
       <MarketReaction ctx={ctx} flat />
     </div>
   );
+}
+
+/**
+ * The meeting's Key facts rail for another page that sits beside one of its documents (`/documents/[id]`, from xl; R05-11).
+ * The same cached meeting read and freshness read as the meeting pages, then the existing `Rail` unchanged. Nothing when the
+ * meeting can't be built (a read failed, or no such meeting row): the document then stands alone.
+ */
+export async function MeetingRail({ bank, slug, date }: { bank: Bank; slug: string; date: string }) {
+  const [page, freshRead] = await Promise.all([readMeetingPage(bank, slug, date), readFreshness()]);
+  const ctx = buildCtx(bank, page, freshRead);
+  return ctx ? <Rail ctx={ctx} /> : null;
 }
 
 export async function MeetingView({ bank, slug, date, tab, doc }: { bank: Bank; slug: string; date: string; tab: TabId; doc: string | undefined }) {

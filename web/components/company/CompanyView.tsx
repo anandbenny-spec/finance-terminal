@@ -94,6 +94,7 @@ function BasisToggle({ slug, basis, available }: { slug: string; basis: Basis; a
           <Link
             key={b}
             href={companyHref(slug, "financials", b === "standalone" ? "standalone" : undefined)}
+            prefetch={false}
             aria-current={b === basis ? "page" : undefined}
             className={`border-r border-line px-2.5 py-1 text-meta no-underline last:border-r-0 hover:text-ink-1 aria-[current=page]:bg-active aria-[current=page]:text-ink-1 ${
               available.includes(b) ? "text-ink-2" : "text-ink-3"
@@ -410,6 +411,8 @@ export function CompanyView({
       />
       <CompanyHeader company={company} day={day} indexNames={data.indexNames} />
       <Tabs
+        prefetch={false}
+        scrollCurrent
         label={`${company.name} sections`}
         items={tabsFor(company.market).map((t) => ({ id: t.id, label: t.label, href: companyHref(company.slug, t.id) }))}
         current={tab}

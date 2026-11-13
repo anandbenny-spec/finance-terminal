@@ -11,7 +11,7 @@ from datetime import UTC, date, datetime
 
 import psycopg
 import pytest
-from ai_fakes import FakeClaude, FakeVoyage, claude, documents_of, good_stance, schema_of
+from ai_fakes import FakeClaude, FakeVoyage, claude, documents_of, good_diff_json, good_stance, schema_of
 from conftest import dsn
 from test_rbi_documents_task import (  # noqa: F401 - s3 and roster are fixtures
     PR,
@@ -109,6 +109,8 @@ def answers(projections=None, stance=None):
         docs, _ = documents_of(body)
         if "projections" in schema_of(body)["properties"]:
             return {"projections": projections if projections is not None else []}
+        if "bullets" in schema_of(body)["properties"]:             # the What changed summary's json route (#445, v11 on)
+            return good_diff_json(docs)
         return stance(docs) if callable(stance) else stance or good_stance(docs)
     return answer
 
@@ -200,7 +202,8 @@ def test_a_daily_run_publishes_each_stance_and_the_projections_the_regex_missed_
 
     # One batch: the summaries, the cut's "what changed", a stance for each resolution and the cut's projections.
     assert [len(b["requests"]) for b in fake.batches.values()] == [6]
-    assert sorted(k for k, _ in fake.answered) == ["projections", "stance", "stance"]
+    # the What changed summary's request is on the json route too, from v11 (#445): "bullets"
+    assert sorted(k for k, _ in fake.answered) == ["bullets", "projections", "stance", "stance"]
     assert sorted(x[:2] for x in requests(base)) == [("doc_summary", "succeeded"), ("stance_extraction", "succeeded")]
     assert sorted(x[:2] for x in requests(cut)) == [("doc_summary", "succeeded"), ("projection_extraction", "succeeded"),
                                                    ("stance_extraction", "succeeded"),

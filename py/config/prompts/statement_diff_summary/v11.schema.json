@@ -1,0 +1,53 @@
+{
+  "type": "object",
+  "properties": {
+    "bullets": {
+      "type": "array",
+      "description": "The bullets, two to five, the most important change first",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The bullet: one or two complete sentences of your own, under 60 words, with every word taken from a document inside double quotation marks"
+          },
+          "quotes": {
+            "type": "array",
+            "description": "The passages the bullet rests on: every stretch its text puts in quotation marks, each copied exactly from one changed sentence of the document it comes from",
+            "items": {
+              "type": "object",
+              "properties": {
+                "document": {
+                  "type": "string",
+                  "enum": [
+                    "previous",
+                    "new"
+                  ],
+                  "description": "previous: document 1; new: document 2"
+                },
+                "text": {
+                  "type": "string",
+                  "description": "Words copied exactly from one changed sentence of that document"
+                }
+              },
+              "required": [
+                "document",
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "text",
+          "quotes"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "bullets"
+  ],
+  "additionalProperties": false
+}

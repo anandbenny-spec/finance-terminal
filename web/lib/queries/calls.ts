@@ -6,7 +6,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { cacheLife, cacheTag } from "next/cache";
 import { selectCall } from "@/lib/equity/calls";
 import { guidanceFiguresOpen, unattributedAll } from "@/lib/equity/guidance";
-import type { AiCitationRow, AiOutputRow, ApiDatabase, CallFigureRow, CallGuidanceRow, RemarksChangeRow, CitationPageRow, GuidanceHitRateRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
+import { toneOpen } from "@/lib/equity/tone";
+import type { AiCitationRow, AiOutputRow, ApiDatabase, CallFigureRow, CallToneRow, CallGuidanceRow, RemarksChangeRow, CitationPageRow, GuidanceHitRateRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
 import { readFieldPolicy } from "@/lib/queries/policy";
 import { readAll } from "@/lib/queries/read";
 import { publicClient } from "@/lib/supabase/public";
@@ -37,6 +38,16 @@ export type GuidanceRecordData = GuidanceRecordReads & {
   unattributed: number | null;
 };
 
+/**
+ * The Tone panel's reads (#482): not made while ai.call_tone is hidden (today's reads stay as they are, so the merge is safe before migration
+ * 0045 reaches production); the company's api.call_tone rows once it is shown or labelled, with the selected call's output, citations and
+ * pages for its evidence; "error" when those reads failed, which holds back only this panel (#328).
+ */
+export type ToneRead =
+  | { state: "hidden" }
+  | { state: "error" }
+  | { state: "ok"; rows: CallToneRow[]; output: AiOutputRow | null; citations: AiCitationRow[]; pages: CitationPageRow[] };
+
 export type CallsTabData = {
   calls: EarningsCallRow[];
   selected: EarningsCallRow | null;
@@ -49,6 +60,8 @@ export type CallsTabData = {
   pages: CitationPageRow[];
   /** The Guidance record panel's rows (company-wide, not the selected call's); null when its own reads failed (#328), and the panel then says so. */
   guidance: GuidanceRecordData | null;
+  /** The Tone panel's reads (company-wide rows, the selected call's evidence); "hidden" without a read while the field is hidden. */
+  tone: ToneRead;
   /** api.remarks_changes for this company, every call (#388); null when its own read failed, and the panel then says so. Empty while the field is hidden. */
   remarks: RemarksChangeRow[] | null;
   /** With no call: the company's earnings_latest row, whose window says what the transcript discovery covered. */
@@ -81,6 +94,37 @@ export async function readRemarksChanges(db: Db, slug: string): Promise<RemarksC
       .order("call_slug")
       .range(from, to),
   );
+}
+
+const TONE_COLUMNS =
+  "company_slug, call_slug, fiscal_label, period_end, call_date, filed_at, exchange, ai_output_id, n, mean, sd, opening_n, opening_mean, answers_n, answers_mean, prev_call_slug, prev_fiscal_label, delta, se_delta, change, held_reason, rule_version, policy_label";
+
+/** The company's rows of api.call_tone, read whole against the exact count, filtered to the company (the view answers well inside anon's 3 s that way). */
+export async function readCallTone(db: Db, slug: string): Promise<CallToneRow[]> {
+  return readAll<CallToneRow>("api.call_tone", (from, to) =>
+    db
+      .from("call_tone")
+      .select(TONE_COLUMNS, { count: "exact" })
+      .eq("company_slug", slug)
+      .order("period_end", { ascending: false })
+      .order("call_slug")
+      .range(from, to),
+  );
+}
+
+/** Reads the tone only when the field is shown or labelled; a failed read is logged and holds back only the panel. No prefetch: the evidence is for the selected call's output only. */
+async function readTone(db: Db, slug: string, call: string, policies: readonly FieldPolicyRow[]): Promise<ToneRead> {
+  if (!toneOpen(policies)) return { state: "hidden" };
+  try {
+    const rows = await readCallTone(db, slug);
+    const id = rows.find((r) => r.call_slug === call)?.ai_output_id ?? null;
+    if (id === null) return { state: "ok", rows, output: null, citations: [], pages: [] };
+    const [output, citations, pages] = await Promise.all([readOutput(db, id), readOutputCitations(db, [id]), readOutputPages(db, [id])]);
+    return { state: "ok", rows, output, citations, pages };
+  } catch (error) {
+    console.error(`[company] ${slug} tone read failed: ${error instanceof Error ? error.message : String(error)}`);
+    return { state: "error" };
+  }
 }
 
 export async function readCallFigures(db: Db, slug: string, call: string): Promise<CallFigureRow[]> {
@@ -192,16 +236,17 @@ export async function readCallsTab(db: Db, slug: string, call: string | undefine
         .order("company_slug")
         .range(from, to),
     );
-    return { calls, selected, policies, summary: null, figures: [], citations: [], pages: [], guidance, remarks, latest: latest[0] ?? null };
+    return { calls, selected, policies, summary: null, figures: [], citations: [], pages: [], guidance, tone: { state: "hidden" }, remarks, latest: latest[0] ?? null };
   }
   const outputIds = [selected.summary_output_id, selected.figures_output_id].filter((n): n is number => n !== null);
-  const [summary, figures, citations, pages] = await Promise.all([
+  const [summary, figures, citations, pages, tone] = await Promise.all([
     selected.summary_output_id !== null ? readOutput(db, selected.summary_output_id) : Promise.resolve(null),
     selected.figures_output_id !== null ? readCallFigures(db, slug, selected.call_slug) : Promise.resolve([]),
     readOutputCitations(db, outputIds),
     readOutputPages(db, outputIds),
+    readTone(db, slug, selected.call_slug, policies),
   ]);
-  return { calls, selected, policies, summary, figures, citations, pages, guidance, remarks, latest: null };
+  return { calls, selected, policies, summary, figures, citations, pages, guidance, tone, remarks, latest: null };
 }
 
 const LIST_COLUMNS =

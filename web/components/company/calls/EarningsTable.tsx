@@ -20,7 +20,7 @@ export function EarningsTable({ rows }: { rows: EarningsListRow[] }) {
       id: "company",
       header: "Company",
       cell: (r) => (
-        <Link href={callsTabHref(r.company_slug)} className="text-ink-1 underline">
+        <Link href={callsTabHref(r.company_slug)} prefetch={false} className="text-ink-1 underline">
           {r.short_name ?? r.company_name}
         </Link>
       ),

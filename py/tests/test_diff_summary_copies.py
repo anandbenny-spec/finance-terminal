@@ -155,7 +155,8 @@ FRONT_PAGE = [own('- Growth of economic activity changed from "has moderated" to
 
 def test_the_rule_applies_from_v4_and_a_pinned_older_reply_is_checked_as_before():
     """`ai_batch.Work.check` asks for the rule only for a v4 (or later) request; a target pinned to v1, v2 or v3 keeps
-    its copies, exactly as before this change. v4, v5 and v6 (the current version) are checked the same way."""
+    its copies, exactly as before this change. v4, v5 and v6 are checked the same way (v7 too, with the
+    quotations check added: test_diff_summary_v7.py)."""
     w = Work("statement_diff_summary", NEW, OLD, D.segments)
     texts = {}
     for version in ("v1", "v2", "v3", "v4", "v5", "v6"):

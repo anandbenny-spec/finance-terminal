@@ -90,7 +90,14 @@ leaves it published. No scheduled run sets the variable. The other tasks re-send
 changes, as before. (The alternative, a re-run that bumps the version for every target at once, would have re-sent all of
 production's summaries on its next `daily`, before the judge's verdict.) From v4 on (`COPIES_FROM`), a reply is checked
 with `summaries.check(..., drop_copies=True)`: its copies of its cited text come out of the bullets; a pinned v1-v3
-target's reply is checked as before.
+target's reply is checked as before. From v7 on (`QUOTES_FROM`; Anand's decision of 12 Nov 2026, 22:36 IST) the request runs
+on Sonnet 5.5 (`summaries.DIFF_MODEL_OF`) and the reply is also checked with `check_quotes=True`: every quotation in a bullet is
+in that bullet's cited passages. Sonnet's batch price is 20 times Haiku's, so the $5 run estimate above counts each v7 request
+at Sonnet's price (the request's own model), and a re-run of all of production's targets may need to be split by meetings.
+From v8 on (`STRICT_COPIES_FROM`, `REPEATS_FROM`), only a copy that stands as a whole sentence comes out (the rest go in
+quotation marks), and a bullet that repeats 12 or more of its own words fails. From v11 on (`summaries.DIFF_JSON_FROM`;
+Anand's decision of 13 Nov 2026, by 07:18 IST) the request takes the json route and the reply is checked with
+`summaries.check_diff_json`: each bullet's quotes found in its document's changed sentences, which become its citations.
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -151,11 +158,22 @@ from ft.policy import rbi_resolution
 # 2026): v3's instructions word for word, with our assembly taking the reply's copies of its cited text out of the bullets
 # (`summaries.mark_copies`; from `COPIES_FROM` on). v5: the same instructions again, marking the outputs made with the
 # copies rule's revision after v4's dev sample (parentheses, joined copies, copies after a clause); v6 likewise, after v5's
-# ("; " joins, copies in their own quotation marks). Its older targets keep the version they were answered with until the
-# re-run (`PINNED_TASKS`, `RERUN_ENV`).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v6", "stance_extraction": "v2",
+# ("; " joins, copies in their own quotation marks). v7 (Anand's decision of 12 Nov 2026, 22:36 IST, after the judge failed
+# v6's round 5): v6's text plus a paragraph on what to cover and four rules, on Sonnet 5.5 (`summaries.DIFF_MODEL_OF`), with
+# its replies' quotations checked against each bullet's cited passages (`QUOTES_FROM`). Its older targets keep the version
+# they were answered with until the re-run (`PINNED_TASKS`, `RERUN_ENV`). v8: v7's text, on Sonnet 5.5, marking the copies
+# rule's strict form and the repeats check (round 7, after v7's dev sample: `STRICT_COPIES_FROM`, `REPEATS_FROM`). v9: v8
+# plus three rules (under 60 words; quotations fitted to the sentence; no bullet for a date, a title or attendance), on Sonnet.
+# v10: v9 plus a rule against words written only to hold a citation, on Sonnet at effort medium, with `ENDS_FROM`'s check.
+# v11 (Anand's decision of 13 Nov 2026, by 07:18 IST): the structured route (summaries.DIFF_JSON_FROM, check_diff_json).
+# v12: v11 plus a rule, with the unquoted-copy and side-by-side checks (summaries.DIFF_STRICT_FROM).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v12", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
+QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
+STRICT_COPIES_FROM = 8                       # ... and from v8 on with strict_copies (only whole-sentence copies come out)
+REPEATS_FROM = 8                             # ... and with check_repeats (summaries.repeat_problem)
+ENDS_FROM = 10                               # ... and from v10 on with check_ends (summaries.end_problem)
 PINNED_TASKS = ("statement_diff_summary",)   # a target keeps the version it was answered with (module docstring)
 RERUN_TASK = "statement_diff_summary"        # the one task the re-run sends (#445)
 RERUN_ENV = "POLICY_AI_RERUN"                # empty or 'none' (the default) | 'all' | meeting slugs, comma-separated
@@ -227,12 +245,26 @@ class Work:
     def check(self, req: Request, reply: Reply) -> Checked | extraction.Checked:
         if self.task in EXTRACTION_TASKS:
             return self.recheck(extraction.answer_of(reply))
-        changed, drop_copies = None, False
+        changed, drop_copies, check_quotes = None, False, False
         if self.task == "statement_diff_summary":
             old, new = summaries.changed_spans(self.segments)
             changed = {self.base.document_id: old, self.doc.document_id: new}
+            if summaries.diff_json(req.prompt.version):                 # v11 on: the structured route
+                try:
+                    answer = reply.json()
+                except ValueError:
+                    answer = None
+                return summaries.check_diff_json(answer, req.sources, changed, version=req.prompt.version)
             drop_copies = _vnum(req.prompt.version) >= COPIES_FROM      # a pinned v1-v3 reply is checked as before
-        return summaries.check(self.task, reply, req.sources, changed=changed, drop_copies=drop_copies)
+            check_quotes = _vnum(req.prompt.version) >= QUOTES_FROM     # a pinned v1-v6 reply, likewise
+            strict = _vnum(req.prompt.version) >= STRICT_COPIES_FROM    # a pinned v4-v7 reply keeps the looser rule
+            repeats = _vnum(req.prompt.version) >= REPEATS_FROM
+            ends = _vnum(req.prompt.version) >= ENDS_FROM
+            return summaries.check(self.task, reply, req.sources, changed=changed, drop_copies=drop_copies,
+                                   check_quotes=check_quotes, strict_copies=strict, check_repeats=repeats,
+                                   check_ends=ends)
+        return summaries.check(self.task, reply, req.sources, changed=changed, drop_copies=drop_copies,
+                               check_quotes=check_quotes)
 
 
 
