@@ -467,7 +467,9 @@ def test_a_new_decisions_what_changed_is_asked_with_the_quotation_mark_rule():
     fake = FakeClaude(["ok"])
     watch_once(task([s0, s1], fake), decision_day(date(2071, 3, 18)))
     (diff,) = [b for b in fake.requests if len(b["messages"][0]["content"]) > 2]     # two documents and the instruction
-    assert "double quotation marks" in diff["system"] and "don't repeat the sentence it came from" in diff["system"]
+    # v12's wording of the rule (v11 reworded v2 to v10's "don't repeat the sentence it came from" for the json route, #445)
+    assert ("double quotation marks" in diff["system"]
+            and "Never repeat a whole sentence of a document after describing it." in diff["system"])
     assert [(g[0], g[1], g[5]) for g in outputs(new)] == [("doc_summary", "published", "v1"),
                                                          ("statement_diff_summary", "published", "v12")]
 

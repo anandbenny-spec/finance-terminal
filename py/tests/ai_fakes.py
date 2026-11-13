@@ -114,10 +114,11 @@ def good_stance(docs: list[tuple[str, str]]) -> dict:
     return {"stance": "other", "quote": text[:80]}
 
 
-def json_message(answer, *, stop: str = "end_turn", mid: str = "msg_json", chars: int = 0) -> dict:
+def json_message(answer, *, stop: str = "end_turn", mid: str = "msg_json", chars: int = 0,
+                 model: str = "claude-haiku-5-5") -> dict:
     text = answer if isinstance(answer, str) else json.dumps(answer)
     return message([{"type": "text", "text": text}], stop=stop, input_tokens=900 + chars // 4, output_tokens=120,
-                   mid=mid)
+                   mid=mid, model=model)
 
 
 def _error(mode: str) -> httpx2.Response:
@@ -197,7 +198,9 @@ class FakeClaude:
             got = "Here is the stance: neutral" if mode == "not_json" else got
             self.answered.append((kind, got))
             stop = mode if mode in ("max_tokens", "refusal") else "end_turn"
-            return json_message(got, stop=stop, mid=f"msg_{self.n}", chars=sum(len(t) for _, t in docs))
+            # the model that answers is the one the request named (#445: statement_diff_summary v11 on is Sonnet's)
+            return json_message(got, stop=stop, mid=f"msg_{self.n}", chars=sum(len(t) for _, t in docs),
+                                model=body.get("model") or "claude-haiku-5-5")
         custom = self.reply(docs, mode) if self.reply is not None else None
         blocks = custom if custom is not None else (good_diff(docs) if len(docs) == 2 else good_summary(docs))
         if custom is not None:
