@@ -1,4 +1,4 @@
-"""#445, round 13 (Anand's pick of 13 Nov 2026, about 17:15 IST, after the build session's own read of round 12):
+"""#445, round 13 (Anand's pick of 13 Nov 2026, before 17:12 IST, after the build session's own read of round 12):
 `statement_diff_summary` v14 is v13 plus two rules, and from v14 `summaries.check_diff_json` gives a bullet one more check and
 widens another, both tightenings (`summaries.DIFF_SIDES_FROM`):
 - the same-claim check (`same_problem`) also fails "again" and "as before" in the bullet's own words (round 12, dev's 2556:

@@ -34,7 +34,7 @@ passages they cite.
   quotations side by side.
 - From v13 on (#445, round 12; Anand's decision of 13 Nov 2026, 13:40 IST; `DIFF_WHOLE_FROM`): also no claim in the bullet's
   own words that something stayed the same, and no quotation cut in the middle of a phrase.
-- From v14 on (#445, round 13; Anand's pick of 13 Nov 2026, about 17:15 IST; `DIFF_SIDES_FROM`): also no "again" or "as
+- From v14 on (#445, round 13; Anand's pick of 13 Nov 2026, before 17:12 IST; `DIFF_SIDES_FROM`): also no "again" or "as
   before" in the bullet's own words, and no claim about the previous document without a quote from it.
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
@@ -87,7 +87,7 @@ COPY_PLAIN_WORDS = 5                   # of which at least this many aren't name
 # as round 10's did at "…the policy stance" (2537). A quotation the bullet goes on from ("…would continue to increase"
 # them, 2544) passes, as the judge passed it.
 DIFF_WHOLE_FROM = 13
-# From v14 (#445, round 13; Anand's pick of 13 Nov 2026, about 17:15 IST, after the build session's own read of round 12;
+# From v14 (#445, round 13; Anand's pick of 13 Nov 2026, before 17:12 IST, after the build session's own read of round 12;
 # tightenings): the same-claim check also fails "again" and "as before" in the bullet's own words ("…again voted to keep the
 # policy rate unchanged", 2556), and a bullet whose own words describe the previous document ("moved from", "previously",
 # "was removed", "instead of" …) fails unless one of its quotes is from the previous document (`previous_problem`; "Loretta
