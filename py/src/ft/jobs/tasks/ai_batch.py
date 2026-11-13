@@ -100,7 +100,9 @@ Anand's decision of 13 Nov 2026, by 07:18 IST) the request takes the json route 
 `summaries.check_diff_json`: each bullet's quotes found in its document's changed sentences, which become its citations.
 From v12 on (`summaries.DIFF_STRICT_FROM`) a bullet also fails on an unquoted copy or two quotations side by side, and from v13
 on (`summaries.DIFF_WHOLE_FROM`; Anand's decision of 13 Nov 2026, 13:40 IST) on a claim in its own words that something stayed
-the same or a quotation cut in the middle of a phrase.
+the same or a quotation cut in the middle of a phrase, and from v14 on (`summaries.DIFF_SIDES_FROM`; Anand's pick of 13 Nov
+2026, about 17:15 IST) on "again" or "as before" in its own words, or on a claim about the previous document with no quote
+from it.
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -171,8 +173,9 @@ from ft.policy import rbi_resolution
 # v11 (Anand's decision of 13 Nov 2026, by 07:18 IST): the structured route (summaries.DIFF_JSON_FROM, check_diff_json).
 # v12: v11 plus a rule, with the unquoted-copy and side-by-side checks (summaries.DIFF_STRICT_FROM). v13 (Anand's decision of
 # 13 Nov 2026, 13:40 IST, after the judge failed round 11): v12 plus two rules, with the same-claim and cut-quotation checks
-# (summaries.DIFF_WHOLE_FROM).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v13", "stance_extraction": "v2",
+# (summaries.DIFF_WHOLE_FROM). v14 (Anand's pick of 13 Nov 2026, about 17:15 IST, after the build session's read of round 12):
+# v13 plus two rules, with the wider same-claim check and the previous-document check (summaries.DIFF_SIDES_FROM).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v14", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)

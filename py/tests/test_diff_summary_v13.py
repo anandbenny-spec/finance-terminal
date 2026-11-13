@@ -17,7 +17,6 @@ from ft.ai import summaries
 from ft.ai.client import SONNET, load_prompt, load_schema
 from ft.ai.summaries import check_diff_json, cut_quote_problem, retry_note, same_problem
 from ft.engines.document.diff import diff_texts
-from ft.jobs.tasks.ai_batch import PROMPT_VERSION
 from ft.quality import reasons
 
 D = diff_texts(FOMC_A, FOMC_B)
@@ -51,7 +50,7 @@ OLD_SRC, NEW_SRC = REQ.sources
 
 
 # ---------------------------------------------------------------------------------------------- the prompt
-def test_v13_is_v12_plus_two_rules_with_v12s_schema_on_sonnet_and_is_current():
+def test_v13_is_v12_plus_two_rules_with_v12s_schema_on_sonnet():
     twelve, thirteen = V12.text.splitlines(), V13.text.splitlines()
     assert [x for x in thirteen if x not in twelve] == [SAME_RULE, CUT_RULE]
     assert [x for x in thirteen if x not in (SAME_RULE, CUT_RULE)] == twelve
@@ -61,7 +60,7 @@ def test_v13_is_v12_plus_two_rules_with_v12s_schema_on_sonnet_and_is_current():
     assert "<!--" not in V13.text
     assert load_schema("statement_diff_summary", "v13") == load_schema("statement_diff_summary", "v12")
     assert (REQ.spec.route, REQ.model_id, REQ.spec.effort) == ("json", SONNET, "medium")
-    assert PROMPT_VERSION["statement_diff_summary"] == "v13" and summaries.DIFF_WHOLE_FROM == 13
+    assert summaries.DIFF_WHOLE_FROM == 13               # v14 is current (test_diff_summary_v14.py)
     assert summaries.DIFF_STRICT_FROM == 12 and summaries.diff_json("v13")
 
 
