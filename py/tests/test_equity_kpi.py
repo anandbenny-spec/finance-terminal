@@ -248,3 +248,92 @@ def test_kpi_request_sends_through_the_wrapper():
     rows = ex.parse_rows(reply.json(), page=2)
     assert rows[0].label == "Branches" and rows[0].value == Decimal(6500)
     assert reply.cost_usd > 0
+
+
+# ----------------------------------------------------------------------------------- the task: checks (pure) and the write path
+class _Co:
+    def __init__(self, entity_id, slug):
+        self.entity_id, self.slug = entity_id, slug
+
+
+def _read_plan(task_mod, entity_id, slug, label, values):
+    plan = task_mod.DocPlan(entity_id, slug, label, dc.period_end(label), "press_release", "read",
+                            source_url="https://x/pr.pdf", filing_key="seq1", exchange="NSE",
+                            filed_at=datetime(2026, 10, 9, 19, 0, tzinfo=IST), pages_used=[2, 3], page_count=8,
+                            image_page_count=0, sha256=bytes(32), bytes=1000)
+    plan.values = [task_mod.Value(i + 1, r, v, st, rsn) for i, (r, v, st, rsn) in enumerate(values)]
+    return plan
+
+
+def test_task_checks_count_documents_and_rows():
+    from ft.jobs.tasks import equity_kpi_tables as t
+    h = t.Harvest()
+    h.companies = [_Co(1, "tcs"), _Co(2, "infy")]
+    # pretend every quarter resolved for both (so `documents` passes), with one read doc carrying a kept and a filtered row
+    for co in h.companies:
+        for label in dc.quarters(co.slug):
+            h.plans.append(t.DocPlan(co.entity_id, co.slug, label, dc.period_end(label), "press_release", "held",
+                                     held_reason="placeholder"))
+    h.plans[0] = _read_plan(t, 1, "tcs", dc.quarters("tcs")[0], [
+        (fl.Row("Attrition", None, "percent", Decimal("12.5"), "%", 2), Decimal("12.5"), fl.KEPT, None),
+        (fl.Row("Total deposits growth", None, "percent_change", Decimal(9), "%", 3), Decimal(9), fl.FILTERED, fl.STATEMENT_TOTAL),
+    ])
+    h.cost = Decimal("0.1234")
+    checks = {c.name: c for c in t.EquityKpiTables().checks(None, h, 1)}
+    assert checks["documents"].passed                       # resolved == expected
+    import json as _j
+    extracted = _j.loads(checks["extracted"].detail)
+    assert extracted["rows_kept"] == 1 and extracted["rows_filtered"] == {"statement_total": 1}
+    assert extracted["ai_cost_usd"] == "0.1234"
+    assert checks["budget"].passed and not checks["held"].blocking
+
+
+def test_task_checks_ai_unavailable():
+    from ft.jobs.tasks import equity_kpi_tables as t
+    h = t.Harvest(unavailable="no_key")
+    checks = {c.name: c for c in t.EquityKpiTables().checks(None, h, 1)}
+    assert checks["ai_unavailable"].passed and checks["documents"].passed
+
+
+@pytest.mark.db
+def test_task_write_inserts_document_and_values_and_replaces():
+    import psycopg
+    from conftest import dsn
+
+    from ft.jobs.tasks import equity_kpi_tables as t
+    admin = dsn("postgres")
+    with psycopg.connect(admin, autocommit=True) as c:
+        c.execute("delete from equity.kpi_value where document_id in (select id from equity.kpi_document where entity_id in (select id from core.entity where slug like 'zk-%'))")
+        c.execute("delete from equity.kpi_document where entity_id in (select id from core.entity where slug like 'zk-%')")
+        c.execute("delete from core.entity where slug like 'zk-%'")
+        eid = c.execute("""insert into core.entity (kind, slug, name, market, currency, is_published)
+                           values ('company','zk-tcs','ZK TCS','IN','INR',true) returning id""").fetchone()[0]
+    task = t.EquityKpiTables()
+    read = _read_plan(t, eid, "zk-tcs", "Q2 FY27", [
+        (fl.Row("Attrition (LTM)", "IT services", "percent", Decimal("12.5"), "%", 2), Decimal("12.5"), fl.KEPT, None),
+        (fl.Row("Total deposits growth", None, "percent_change", Decimal(9), "%", 3), Decimal(9), fl.FILTERED, fl.STATEMENT_TOTAL),
+    ])
+    held = t.DocPlan(eid, "zk-tcs", "Q1 FY27", dc.period_end("Q1 FY27"), "press_release", "held",
+                     held_reason="no document found in the announcements feed")
+    with psycopg.connect(admin, autocommit=True) as c:
+        n1 = task._write(c, read)
+        n2 = task._write(c, held)
+        assert (n1, n2) == (3, 1)                            # 1 doc + 2 values; 1 doc + 0 values
+        rows = c.execute("""select status, pages_used, image_page_count, (select count(*) from equity.kpi_value v where v.document_id = d.id)
+                              from equity.kpi_document d join core.entity e on e.id = d.entity_id
+                             where e.slug = 'zk-tcs' order by period_end""").fetchall()
+        assert [r[0] for r in rows] == ["held", "read"]      # Q1 FY27 (held) then Q2 FY27 (read)
+        assert rows[1][1] == [2, 3] and rows[1][3] == 2      # pages and two value rows
+        kept = c.execute("""select filter_status, filter_reason from equity.kpi_value v join equity.kpi_document d on d.id = v.document_id
+                             join core.entity e on e.id = d.entity_id where e.slug = 'zk-tcs' order by row_no""").fetchall()
+        assert kept[0] == ("kept", None) and kept[1] == ("filtered", "statement_total")
+        # re-write the read quarter with one row: it replaces (delete + insert), not appends
+        read2 = _read_plan(t, eid, "zk-tcs", "Q2 FY27", [
+            (fl.Row("Branches", None, "count", Decimal(6500), None, 2), Decimal(6500), fl.KEPT, None)])
+        task._write(c, read2)
+        after = c.execute("""select count(*) from equity.kpi_value v join equity.kpi_document d on d.id = v.document_id
+                             join core.entity e on e.id = d.entity_id where e.slug = 'zk-tcs'""").fetchone()[0]
+        assert after == 1                                    # the two old rows gone, one new row
+        c.execute("delete from equity.kpi_value where document_id in (select id from equity.kpi_document where entity_id = %s)", (eid,))
+        c.execute("delete from equity.kpi_document where entity_id = %s", (eid,))
+        c.execute("delete from core.entity where id = %s", (eid,))
