@@ -33,7 +33,7 @@ describe("/methodology", () => {
   });
 
   it("shows no figures: no digit except the allowed constants", () => {
-    const stripped = text.replace(/400 characters|20 June 2025|August 2026|10-year|Fed vs RBI|Nifty 50/g, "");
+    const stripped = text.replace(/400 characters|20 June 2025|August 2026|10-year|Fed vs RBI|Nifty 50|against 30 passages/g, "");
     expect(stripped).not.toMatch(/\d/);
   });
 
@@ -53,7 +53,10 @@ describe("/methodology", () => {
     expect(text).toContain("leaves out dividends");
     expect(markup).toContain('href="/accuracy"');
     expect(text).toContain("labelled AI-extracted");
-    expect(text).toContain("no tone or sentiment is read");
+    expect(text).toContain("Management's tone on each call is scored by AI and labelled AI-scored");
+    expect(text).toContain("checked against 30 passages labelled by a separate AI model (Claude Fable)");
+    expect(text).toContain("is shown only once that check has passed");
+    expect(text).not.toContain("no tone or sentiment is read");
     expect(text).toContain("Transcript text stays private");
     expect(text).toContain("the source it comes from is removed promptly");
     expect(text).toContain("The daily and watch workflows can also be started with AI switched off");
