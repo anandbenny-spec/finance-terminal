@@ -29,11 +29,10 @@ export const metadata: Metadata = {
 
 async function Content({ slug, searchParams }: { slug: string; searchParams: Props["searchParams"] }) {
   const query = await searchParams;
-  let header: Awaited<ReturnType<typeof readHeader>>;
-  try {
-    header = await readHeader(slug);
-  } catch (error) {
-    console.error(`[value-chain] ${slug} header read failed: ${error instanceof Error ? error.message : String(error)}`);
+  // readHeader keeps a failure as a value instead of throwing it out of its cache scope (#516).
+  const header = await readHeader(slug);
+  if (!header.ok) {
+    console.error(`[value-chain] ${slug} header read failed: ${header.error}`);
     return <CompanyError />;
   }
   if (!header.company) return <CompanyError />;

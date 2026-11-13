@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeClient, type Row, type Store } from "@/tests/fake-postgrest";
 import { company } from "@/tests/company-rows";
+import { call, SHOWN } from "@/tests/call-rows";
 import type { TabId } from "@/lib/equity/company";
 
 const state = vi.hoisted(() => ({ profiles: [] as unknown[], store: {} as Record<string, unknown>, client: true }));
@@ -31,6 +32,11 @@ function views(given: Store = {}, missing: string[] = []): Store {
 }
 
 const COMPANY: Store = { companies: [company() as unknown as Row] };
+const OPEN_CALL_FIELDS = [
+  ...SHOWN,
+  { field_key: "equity.remarks_change", status: "labelled", label: "derived" },
+  { field_key: "ai.call_tone", status: "labelled", label: "AI-scored" },
+] as unknown as Row[];
 const US_COMPANY: Store = { companies: [company({ market: "US", currency: "USD" }) as unknown as Row] };
 
 /** Every cached read whose result can hold a failure, with the call that makes it. */
@@ -120,18 +126,32 @@ describe("the company page's tab (readTab through readCompanyPage)", () => {
     ["valuation", "series"],
     ["calls", "call_guidance"],
     ["calls", "remarks_changes"],
+    ["calls", "call_tone"],
   ] as [TabId, string][])("%s: a part that failed on its own (%s) keeps the tab on failedRead", async (tab, view) => {
-    state.store = views(COMPANY, [view]);
+    // The calls tab reads a panel's view only while its field is released (#516), so these open every field, with one published call.
+    state.store = views({ ...COMPANY, earnings_calls: [call() as unknown as Row], field_policy: OPEN_CALL_FIELDS }, [view]);
     const out = await co.readCompanyPage("tcs", tab);
     expect(out.ok && !out.tabFailed).toBe(true);
     expect(failedRead()).toBe(1);
   });
 
-  it("a tab whose own reads throw isn't stored at all, so it needs no profile (#328)", async () => {
-    state.store = views(COMPANY, ["company_prices"]);
-    const out = await co.readCompanyPage("tcs", "overview");
+  // Changed by #516 (13 Nov 2026): a tab whose own reads throw used to throw out of readTab's cache scope, which kept it out of the
+  // cache but made Next answer the page with HTTP 500 (the recorded digest error; see readHeader's comment in company.ts). Now the
+  // failure is kept as a value, so the page answers 200 with the tab's error state, and it is cached on failedRead like any failure.
+  it.each(["company_prices", "earnings_calls", "field_policy"])("a tab whose own read (%s) fails is kept as a value on failedRead, never thrown (#328, #516)", async (view) => {
+    state.store = views({ ...COMPANY, earnings_calls: [call() as unknown as Row] }, [view]);
+    const tab: TabId = view === "company_prices" ? "overview" : "calls";
+    const out = await co.readCompanyPage("tcs", tab);
     expect(out.ok && out.tabFailed).toBe(true);
-    expect(failedRead()).toBe(0);
+    expect(failedRead()).toBe(1);
+  });
+
+  it("a header whose read fails is kept as a value on failedRead, never thrown (#516)", async () => {
+    state.store = views({}, ["companies"]);
+    const out = await co.readHeader("tcs");
+    expect(out.ok).toBe(false);
+    expect(failedRead()).toBe(1);
+    expect((await co.readCompanyPage("tcs", "overview")).ok).toBe(false);
   });
 
   it.each([

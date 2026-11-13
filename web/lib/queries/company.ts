@@ -361,48 +361,64 @@ async function loadUsTab(db: CompanyDb, slug: string, tab: TabId, data: TabData)
   return data;
 }
 
-// The page is two cached reads and an uncached join (#328). A read that throws out of a `'use cache'` function is not stored
-// (Next 16), so a failure never outlives the database's recovery. The header stays all-or-nothing; a failed tab read
-// costs that tab, not the page. A tab returned with a part that failed on its own (tabReadFailed) is cached on the short
-// `failedRead` profile (#499); every other result keeps the no-expiry one (lib/queries/cache-profiles.test.ts).
-export async function readHeader(slug: string) {
+// The page is two cached reads and an uncached join (#328). Neither cached read throws (#516): an error thrown out of a `'use cache'`
+// function is recorded for the whole render even when readCompanyPage catches it, and Next 16 then answers the prerendered route
+// with HTTP 500 (next/dist/server/app-render/app-render.js, prerenderAppPage: `response.digestErrorsMap`, which holds every error a
+// cache scope reported). That is how Reliance's Calls tab answered 500 on 13 Nov 2026 (09:32 and 18:09 IST) while the page itself
+// said "Couldn't load this panel". So each read keeps its failure as a value on the short `failedRead` profile (#499), and the next
+// request reads again. The header stays all-or-nothing; a failed tab read costs that tab, not the page. A tab returned with a part
+// that failed on its own (tabReadFailed) is cached on `failedRead` too; every other result keeps the no-expiry one
+// (lib/queries/cache-profiles.test.ts).
+export async function readHeader(slug: string): Promise<Read<Awaited<ReturnType<typeof loadHeader>> & { readAt: string }>> {
   "use cache";
   cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);
   const readAt = new Date().toISOString(); // read inside the cache, as lib/queries/overview.ts does
   const db = publicClient();
-  if (!db) throw new Error("NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
-  return { readAt, ...(await loadHeader(db, slug)) };
+  if (!db) return { ok: false, error: "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set" };
+  try {
+    return { ok: true, readAt, ...(await loadHeader(db, slug)) };
+  } catch (error) {
+    cacheLife("failedRead");
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
-async function readTab(slug: string, tab: TabId, call: string | undefined, market: "IN" | "US"): Promise<TabData> {
+async function readTab(slug: string, tab: TabId, call: string | undefined, market: "IN" | "US"): Promise<Read<{ data: TabData }>> {
   "use cache";
   cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);
   const db = publicClient();
-  if (!db) throw new Error("NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
-  const data = await loadTab(db, slug, tab, call, market);
+  if (!db) return { ok: false, error: "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set" };
+  let data: TabData;
+  try {
+    data = await loadTab(db, slug, tab, call, market);
+  } catch (error) {
+    cacheLife("failedRead");
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
   if (tabReadFailed(data, market)) cacheLife("failedRead");
-  return data;
+  return { ok: true, data };
 }
+
+/** A cached read's result: its value, or why it failed (for the log; never shown to a visitor). */
+type Read<T> = ({ ok: true } & T) | { ok: false; error: string };
 
 /** The page's reads for one tab. The header (company row, actions, index names) is all-or-nothing: if it fails, or no company has the slug, the result is `{ ok: false }`. A failed tab read gives `ok: true` with that tab's data null and `tabFailed` set. */
 export async function readCompanyPage(slug: string, tab: TabId, call?: string): Promise<CompanyPageData> {
-  let header: Awaited<ReturnType<typeof readHeader>>;
-  try {
-    header = await readHeader(slug);
-  } catch (error) {
-    logFailure(slug, error);
+  const header = await readHeader(slug);
+  if (!header.ok) {
+    logFailure(slug, header.error);
     return { ok: false, readAt: new Date().toISOString() };
   }
   const { readAt, company, actions, indexNames } = header;
   if (!company) return { ok: false, readAt };
   let data: TabData = { overview: null, financials: null, valuation: null, rates: null, calls: null };
   let tabFailed = false;
-  try {
-    data = await readTab(slug, tab, call, company.market);
-  } catch (error) {
-    logFailure(`${slug} ${tab} tab`, error);
+  const read = await readTab(slug, tab, call, company.market);
+  if (read.ok) data = read.data;
+  else {
+    logFailure(`${slug} ${tab} tab`, read.error);
     tabFailed = true;
   }
   return { ok: true, readAt, today: dateInZone(readAt, "Asia/Kolkata"), company, actions, indexNames, tab, ...data, tabFailed };
