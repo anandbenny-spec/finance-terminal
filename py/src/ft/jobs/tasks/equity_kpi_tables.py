@@ -8,7 +8,12 @@ field policy `equity.kpi_changes` stays hidden until DD-07's judge).
 **Nothing is stored** (Plan 05 D7, #287): the file is fetched with `keep=lambda _: False`, so the fetcher returns the
 body without a raw file or an `ops.http_cache` row; the task keeps the URL, the pages, the SHA-256 and the size, never the
 file or its text. A document already read with the same SHA-256 and parser version is not extracted again (the dedup;
-"never resend an unchanged input"). Run logs print counts and ids only, never a page's text (CLAUDE.md §4).
+"never resend an unchanged input"); its stored rows are re-filtered with the current rules, with no AI call.
+
+**Which filing** (#512's fix round, 14 Nov 2026; `ft/equity/kpi/documents.py`): the quarter's results day first, then
+that day's candidates in the curated rule's order; the first with enough pages whose cut finds its heading is read.
+
+Run logs print counts and ids only, never a page's text (CLAUDE.md §4).
 
 **Hand-run only, no schedule before 18 Nov** (card): `due()` refuses the daily, weekly and watch workflows, so the
 Sunday weekly never runs it; a `backfill` with `--task equity.kpi_tables` on dev is how the dev run and, later, the
@@ -25,6 +30,7 @@ Checks, B blocking, W warning (counts and ids only):
 - (B) `documents`: every company-quarter resolved to a read or a held document (none left silently unresolved);
 - (W) `held`: the documents held, with the reason (not found, could not be cut, image bundle, unreadable), named;
 - (W) `extracted`: documents read, pages read (text and image), rows kept and filtered by reason, the AI cost;
+- (W) `empty`: read documents with no kept row, named (a quarter DD-05 must treat as missing, never as a drop);
 - (W) `budget`: whether the run stopped on the run cap or the monthly switch (passing when it didn't);
 - (W) `ai_unavailable` (always passes): set when no key or credits, so the run skipped.
 """
@@ -55,7 +61,8 @@ from ft.jobs.tasks import register
 TASK = "kpi_tables"
 KEY = "equity.kpi_tables"
 SHOWN = 12
-RUN_LIMIT_USD = Decimal("4.61")     # what is left of the pilot's $5 (pre-approval 2) after DA-10's $0.3864 (card, #514)
+RUN_LIMIT_USD = Decimal("3.99")     # what is left of the pilot's $5 (pre-approval 2) after DA-10's $0.3864 and dev run 2's
+                                     # $0.6196 (13 Nov 2026; #512): no single run can take the pilot past $5 (card's stop)
 READ_MAX_PAGES = 500                 # Infosys's results bundles run 186 to 380 pages (DA-10 K3); pdfs.read_pdf stops at 200
 IMAGE_MAX_PAGES = 40                  # an image document longer than this is held (would over-send images)
 NSE_HEADERS = {"Referer": dc.NSE_REFERER, "Accept": "application/json, text/plain, */*"}
@@ -95,7 +102,8 @@ class DocPlan:
     sha256: bytes | None = None
     bytes: int | None = None
     values: list[Value] = field(default_factory=list)
-    reused: bool = False               # unchanged since a previous run: values not re-extracted
+    reused: bool = False               # unchanged since a previous run: values not re-extracted, only re-filtered
+    refiltered: list[Value] = field(default_factory=list)   # a reused document's rows whose value or verdict changed
 
 
 @dataclass
@@ -190,15 +198,17 @@ class EquityKpiTables(Task):
         except FetchError:
             pass
 
-    def discover(self, ctx: Context, companies: list[dc.Company], start: date, end: date) -> dict[int, list[dc.Announcement]]:
-        """Every announcement of each company over [start, end], joined to the company. NSE first, BSE as the fallback
-        when NSE fails (the call-transcripts rule); nothing is stored."""
+    def discover(self, ctx: Context, companies: list[dc.Company], start: date, end: date) -> dict[int, list[kd.Filing]]:
+        """Every announcement of each company over [start, end], as `kd.Filing`s with NSE's category (`desc`, which
+        the shared discovery doesn't keep; the results-day rule reads it). NSE first, BSE as the fallback when NSE fails
+        (the call-transcripts rule); nothing is stored."""
         index = dc.CompanyIndex(companies)
         nse, bse = self._nse(ctx), self._bse(ctx)
         self._warm(ctx)
-        out: dict[int, list[dc.Announcement]] = {c.entity_id: [] for c in companies}
+        out: dict[int, list[kd.Filing]] = {c.entity_id: [] for c in companies}
         for co in companies:
             found: list[dc.Announcement] = []
+            category: dict[tuple[str, str], str | None] = {}
             ok = True
             for sym in [co.symbol, *sorted(co.symbols - {co.symbol})]:
                 rows, _logs, sym_ok, _refused = dc.nse_symbol(nse, sym, start, end)
@@ -207,13 +217,17 @@ class EquityKpiTables(Task):
                     a = dc.norm_nse(r)
                     if a is not None:
                         found.append(self._join(a, index, co))
+                        category[(a.exchange, a.filing_key)] = str(r.get("desc") or "").strip() or None
             if (not ok or not found) and co.bse_code:
                 brows, _bok, _problems = dc.bse_company(bse, co.bse_code, start, end)
                 for r in brows:
                     a = dc.norm_bse(r)
                     if a is not None:
                         found.append(self._join(a, index, co))
-            out[co.entity_id] = dc.dedupe(found)
+                        category[(a.exchange, a.filing_key)] = (str(r.get("SUBCATNAME") or r.get("CATEGORYNAME") or "")
+                                                                .strip() or None)
+            out[co.entity_id] = [kd.Filing(a.exchange, a.filing_key, a.disseminated, a.subject, a.file_name, a.url,
+                                           category.get((a.exchange, a.filing_key))) for a in dc.dedupe(found)]
         return out
 
     @staticmethod
@@ -269,34 +283,43 @@ class EquityKpiTables(Task):
         pe = kd.period_end(label)
         q = rule.for_quarter(label)
         plan = DocPlan(co.entity_id, co.slug, label, pe, q.document_class, "held")
-        ann = kd.select(anns, rule, label)
-        if ann is None or not ann.url:
-            plan.held_reason = "no document found in the announcements feed"
+        rd, cands = kd.candidates(anns, rule, label)
+        if rd is None:
+            plan.held_reason = "no results filing found in the announcements feed"
             return plan
+        cands = [a for a in cands if a.url]
+        if not cands:
+            plan.held_reason = f"no {q.document_class.replace('_', ' ')} filing on the results day ({rd:%d %b %Y})"
+            return plan
+        why: list[str] = []
+        chosen = None
+        for ann in cands:                                 # the rule's order: the first usable candidate is the document
+            body, info, reason = self._fetch_pdf(ctx, ann)
+            if reason is None:
+                nums, reason = kd.usable(rule, label, info.page_texts)
+            if reason is not None:
+                why.append(reason)
+                continue
+            chosen = (ann, body, info, nums)
+            break
+        first = cands[0]
+        if chosen is None:
+            plan.source_url, plan.filing_key, plan.exchange, plan.filed_at = (first.url, first.filing_key, first.exchange,
+                                                                              first.disseminated)
+            plan.held_reason = (f"results day {rd:%d %b %Y}: no usable filing ({len(cands)} tried: {'; '.join(why)})")
+            return plan
+        ann, body, info, nums = chosen
         plan.source_url, plan.filing_key = ann.url, ann.filing_key
         plan.exchange, plan.filed_at = ann.exchange, ann.disseminated
-        source = "bse" if ann.exchange == "BSE" else "nse"
-        try:
-            got = ctx.fetcher.get(ann.url, source=source, keep=lambda _: False, allow=(404,))
-        except FetchError as e:
-            plan.held_reason = f"fetch failed: HTTP {e.status}" if e.status else "fetch failed"
-            return plan
-        body = got.body
-        if not body or not pdfs.is_pdf_bytes(body):
-            plan.held_reason = "the filing is not a PDF"
-            return plan
-        plan.sha256, plan.bytes = hashlib.sha256(body).digest(), len(body)
-        info = self._read(body)
-        plan.page_count = info.pages
-        if info.unreadable or info.pages == 0:
-            plan.held_reason = "the PDF could not be read"
-            return plan
-        # dedup: a read document already stored with this SHA-256 and parser version is not extracted again
+        plan.sha256, plan.bytes, plan.page_count = hashlib.sha256(body).digest(), len(body), info.pages
+        # dedup: a read document already stored with this SHA-256 and parser version is not extracted again; its stored
+        # rows are re-filtered with the current rules (no AI call), so a filter fix reaches them
         if self._already_read(db, co.entity_id, pe, q.document_class, plan.sha256):
             plan.status, plan.reused = "read", True
             plan.pages_used, plan.image_page_count = self._stored_shape(db, co.entity_id, pe, q.document_class)
+            plan.values = self._refilter(db, plan, info)
             return plan
-        pages, held = self._pages(rule, label, info, body)
+        pages, held = self._pages(rule, label, info, body, nums)
         if held is not None:
             plan.held_reason = held
             return plan
@@ -308,27 +331,40 @@ class EquityKpiTables(Task):
             h.stopped = stopped
             plan.held_reason = f"stopped on the {stopped}"
             return plan
-        tile_pages = frozenset(p.page for p in pages if p.is_image)   # image pages are treated as summary tiles for the cross-check
-        extracted = ex.extract_document(pages, rows_by_page, tile_pages=tile_pages)
+        extracted = ex.extract_document(pages, rows_by_page, tile_pages=ex.tile_pages(pages))
         plan.status = "read"
         plan.values = [Value(i + 1, e.row, e.value, e.filter_status, e.filter_reason) for i, e in enumerate(extracted)]
         return plan
+
+    def _fetch_pdf(self, ctx, ann) -> tuple[bytes | None, pdfs.PdfInfo | None, str | None]:
+        """One candidate's file, read and not stored (`keep=lambda _: False`): (body, info, None), or a reason it can't
+        be the document."""
+        source = "bse" if ann.exchange == "BSE" else "nse"
+        try:
+            got = ctx.fetcher.get(ann.url, source=source, keep=lambda _: False, allow=(404,))
+        except FetchError as e:
+            return None, None, f"fetch failed: HTTP {e.status}" if e.status else "fetch failed"
+        body = got.body
+        if not body or not pdfs.is_pdf_bytes(body):
+            return None, None, "the filing is not a PDF"
+        info = self._read(body)
+        if info.unreadable or info.pages == 0:
+            return None, None, "the PDF could not be read"
+        return body, info, None
 
     @staticmethod
     def _read(body: bytes) -> pdfs.PdfInfo:
         return pdfs.read_pdf(body, max_pages=READ_MAX_PAGES)
 
-    def _pages(self, rule: kd.Rule, label: str, info: pdfs.PdfInfo, body: bytes) -> tuple[list[ex.Page], str | None]:
-        """The pages to read: image pages for an image quarter (rendered), else the text pages cut from the file."""
+    def _pages(self, rule: kd.Rule, label: str, info: pdfs.PdfInfo, body: bytes, nums: list[int]
+               ) -> tuple[list[ex.Page], str | None]:
+        """The pages to read: image pages for an image quarter (rendered), else the text pages `kd.usable` cut."""
         if rule.reads_as_image(label):
             if info.pages > IMAGE_MAX_PAGES:
                 return [], f"image document too long to render ({info.pages} pages)"
             pages = [ex.Page(n, image_base64=rn.render_page_base64(body, n - 1), image_media_type=rn.PNG_MEDIA_TYPE)
                      for n in range(1, info.pages + 1)]
             return pages, None
-        nums, reason = kd.cut_pages(rule, label, info.page_texts)
-        if reason is not None:
-            return [], reason
         return [ex.Page(n, text=info.page_texts[n - 1]) for n in nums], None
 
     def _extract(self, pages, co, label, prompt, schema, budget, spent_before, h: Harvest):
@@ -382,13 +418,38 @@ class EquityKpiTables(Task):
             (entity_id, pe, document_class)).fetchone()
         return (list(row[0] or []), row[1]) if row else ([], 0)
 
+    @staticmethod
+    def _stored_rows(db, entity_id: int, pe: date, document_class: str) -> list[tuple]:
+        return db.execute(
+            """select v.row_no, v.label, v.member, v.measure, v.value, v.unit, v.page, v.filter_status, v.filter_reason
+                 from equity.kpi_value v join equity.kpi_document d on d.id = v.document_id
+                where d.entity_id = %s and d.period_end = %s and d.document_class = %s order by v.row_no""",
+            (entity_id, pe, document_class)).fetchall()
+
+    def _refilter(self, db, plan: DocPlan, info: pdfs.PdfInfo) -> list[Value]:
+        """A reused document's stored rows with the current filters applied (no AI call): its page texts come from the
+        file just read; an image page has none, as when it was extracted. The rows keep their numbers; the ones whose
+        value or verdict changed go on `plan.refiltered` for the load to update."""
+        stored = self._stored_rows(db, plan.entity_id, plan.period_end, plan.document_class)
+        image = plan.image_page_count > 0 and plan.image_page_count == len(plan.pages_used)
+        pages = [ex.Page(n, image_base64="", image_media_type=rn.PNG_MEDIA_TYPE) if image
+                 else ex.Page(n, text=info.page_texts[n - 1] if 0 < n <= len(info.page_texts) else "")
+                 for n in plan.pages_used]
+        rows = [fl.Row(label, member, measure, value, unit, page)
+                for _n, label, member, measure, value, unit, page, _st, _rs in stored]
+        out: list[Value] = []
+        for (n, _lb, _mb, _ms, value, _un, _pg, status, reason), e in zip(stored, ex.filter_rows(rows, pages)):
+            v = Value(n, e.row, e.value, e.filter_status, e.filter_reason)
+            out.append(v)
+            if (e.value, e.filter_status, e.filter_reason) != (value, status, reason):
+                plan.refiltered.append(v)
+        return out
+
     # ------------------------------------------------------------------ load (one transaction)
     def load(self, tx, h: Harvest, task_run_id: int) -> int:
         n = 0
         for plan in h.plans:
-            if plan.reused:
-                continue                                  # unchanged: its rows stand
-            n += self._write(tx, plan)
+            n += self._rewrite_filters(tx, plan) if plan.reused else self._write(tx, plan)
         tx.execute("update ops.task_run set ai_cost_usd = %s where id = %s",
                    (h.cost.quantize(Decimal("0.0001")), task_run_id))
         return n
@@ -414,6 +475,22 @@ class EquityKpiTables(Task):
                   v.filter_status, v.filter_reason, kd.PARSER_VERSION) for v in plan.values])
         return 1 + len(plan.values)
 
+    @staticmethod
+    def _rewrite_filters(tx, plan: DocPlan) -> int:
+        """A reused document: only the rows whose value or verdict the current filters changed are updated (its
+        document row and every other row stand)."""
+        if not plan.refiltered:
+            return 0
+        with tx.cursor() as cur:
+            cur.executemany(
+                """update equity.kpi_value v set value = %s, filter_status = %s, filter_reason = %s
+                     from equity.kpi_document d
+                    where d.id = v.document_id and d.entity_id = %s and d.period_end = %s and d.document_class = %s
+                      and v.row_no = %s""",
+                [(v.value, v.filter_status, v.filter_reason, plan.entity_id, plan.period_end, plan.document_class,
+                  v.row_no) for v in plan.refiltered])
+        return len(plan.refiltered)
+
     # ------------------------------------------------------------------ checks
     def checks(self, tx, h: Harvest, task_run_id: int) -> list[Check]:
         if h.unavailable:
@@ -425,6 +502,7 @@ class EquityKpiTables(Task):
         held = [p for p in h.plans if p.status == "held"]
         kept = sum(1 for p in read for v in p.values if v.filter_status == fl.KEPT)
         filtered = Counter(v.filter_reason for p in read for v in p.values if v.filter_status == fl.FILTERED)
+        empty = [p for p in read if not any(v.filter_status == fl.KEPT for v in p.values)]
         checks = [
             Check("documents", resolved == expected,
                   json.dumps({"expected": expected, "resolved": resolved, "read": len(read), "held": len(held),
@@ -435,7 +513,11 @@ class EquityKpiTables(Task):
                 "text_pages": sum(len(p.pages_used) - p.image_page_count for p in read),
                 "image_pages": sum(p.image_page_count for p in read),
                 "rows_kept": kept, "rows_filtered": dict(sorted(filtered.items())),
+                "rows_refiltered": sum(len(p.refiltered) for p in read),
                 "ai_cost_usd": str(h.cost.quantize(Decimal("0.0001")))}), blocking=False),
+            Check("empty", True, f"{len(read) - len(empty)} of {len(read)} read documents have kept rows"
+                  + (f"; none kept: {_names([f'{p.slug} {p.fiscal_label}' for p in empty])}" if empty else ""),
+                  blocking=False),
             Check("budget", h.stopped is None,
                   "stopped on the " + h.stopped if h.stopped else f"within the ${RUN_LIMIT_USD} run cap", blocking=False),
         ]

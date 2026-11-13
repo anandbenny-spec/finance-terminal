@@ -102,12 +102,28 @@ class Extracted:
     filter_reason: str | None
 
 
+def tile_pages(pages: list[Page]) -> frozenset[int]:
+    """The pages whose figures must be confirmed by a table of the same document: the image pages, when the document also
+    has text pages. An image-only document (HDFC Bank's image quarters) has no text table to confirm against, so it gets
+    no tile check (#512's fix round: dev run 2 filtered every row of those three quarters as `tile_unconfirmed`)."""
+    image = frozenset(p.page for p in pages if p.is_image)
+    return image if len(image) < len(pages) else frozenset()
+
+
+def filter_rows(rows: list[fl.Row], pages: list[Page]) -> list[Extracted]:
+    """The post-filters, the sign convention and the tile check over one document's rows (in their stored order): what
+    `extract_document` applies to a fresh extraction, and the task re-applies to a reused document's stored rows."""
+    verdicts = {i: fl.classify(r, _page_text(pages, r.page)) for i, r in enumerate(rows)}
+    verdicts = fl.reconcile_tiles(rows, verdicts, tile_pages(pages))
+    return [Extracted(r, fl.signed_value(r), verdicts[i].status, verdicts[i].reason) for i, r in enumerate(rows)]
+
+
 def extract_document(pages: list[Page], rows_by_page: dict[int, list[fl.Row]], tile_pages: frozenset[int] = frozenset()
                      ) -> list[Extracted]:
     """Assemble one document's rows: classify each row, fix the sign of a change measure, then apply the tile check
     across the whole document. `rows_by_page` is `parse_rows` per page (the caller sends the requests and collects the
-    replies). `tile_pages` are the pages the task marked as infographic/summary pages. Rows come out in page then
-    extraction order, so `row_no` in equity.kpi_value is stable."""
+    replies). `tile_pages` are the pages the task marked as infographic/summary pages (`tile_pages(pages)`). Rows come
+    out in page then extraction order, so `row_no` in equity.kpi_value is stable."""
     ordered: list[fl.Row] = []
     for p in pages:
         ordered.extend(rows_by_page.get(p.page, []))

@@ -3,6 +3,11 @@ Data Audit 10 §1, §2). Pure: the curated rules (`config/equity/kpi_documents.y
 → period-end map, the announcement match and the page cut. The network (fetching the announcements and the file) and the
 PDF reading are the task's; this module decides which filing and which pages.
 
+**Which filing (#512's fix round, 14 Nov 2026).** The quarter's results day comes first (`results_day`: the earliest
+results filing within 75 days of the quarter end, call notices, clarifications, intimations and other listed companies'
+filings rejected); the candidates are that day's and the next day's filings matching the company's subject, in the
+curated `prefer` order (`candidates`); the task takes the first with enough pages whose cut finds its heading (`usable`).
+
 The 7 companies are Data Audit 10's eight IT and bank names less Wipro, which isn't in the company master. The window is
 Q3 FY25 to Q2 FY27, with TCS from Q2 FY25, so each flagged quarter (Q3 FY26 to Q2 FY27, and TCS's Q2 FY26) has its
 previous four documents.
@@ -11,21 +16,25 @@ from __future__ import annotations
 
 import calendar
 import re
-from dataclasses import dataclass, field
-from datetime import date, timedelta
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import yaml
 
 RULES_PATH = Path(__file__).resolve().parents[4] / "config" / "equity" / "kpi_documents.yaml"
 PARSER_VERSION = 1
+INDIA = ZoneInfo("Asia/Kolkata")
 
 # The 7 pilot companies (slugs), and the window. TCS alone starts a quarter earlier (DA-10's known case needs Q2 FY25).
 COMPANIES = ("tcs", "infy", "hcltech", "hdfcbank", "icicibank", "sbin", "axisbank")
 WINDOW_FIRST = "Q3 FY25"
 WINDOW_LAST = "Q2 FY27"
 TCS_FIRST = "Q2 FY25"
-RESULTS_WINDOW_DAYS = 120            # a results document is filed within this many days after the quarter end
+RESULTS_DAY_MAX_DAYS = 75            # the results day falls within this many days of the quarter end (SEBI: 45, Q4 60)
+CANDIDATE_DAYS = 1                   # the pilot document is filed on the results day or the day after
+MAX_CANDIDATES = 4                   # filings tried per quarter, in the rule's order of preference
 _LABEL = re.compile(r"Q([1-4])\s*FY\s*(\d{2})", re.IGNORECASE)
 
 
@@ -33,6 +42,28 @@ _LABEL = re.compile(r"Q([1-4])\s*FY\s*(\d{2})", re.IGNORECASE)
 class Cut:
     start: str | None
     end: str | None
+
+
+@dataclass(frozen=True)
+class Filing:
+    """One announcement as the selection reads it: the feed's fields plus NSE's category (`desc`, e.g. 'Outcome of Board
+    Meeting'; None for a BSE row). The task builds it from `ft.equity.calls.discovery.Announcement` and the raw row."""
+    exchange: str
+    filing_key: str
+    disseminated: datetime
+    subject: str
+    file_name: str
+    url: str | None
+    category: str | None = None
+
+
+@dataclass(frozen=True)
+class Shared:
+    """The rules every company shares (`results_day` and `reject` in the YAML): what marks the results filing that
+    fixes the results day, and the filings never taken (call notices, clarifications, intimations)."""
+    results_names: re.Pattern
+    results_kind: re.Pattern
+    reject: re.Pattern
 
 
 @dataclass(frozen=True)
@@ -44,6 +75,10 @@ class Rule:
     cut: Cut | None
     image_quarters: frozenset[str]
     overrides: dict[str, dict] = field(default_factory=dict)
+    prefer: tuple[re.Pattern, ...] = ()       # candidates matching an earlier pattern are tried first
+    reject: re.Pattern | None = None          # the company's own never-take list (another listed company's filings)
+    min_pages: int = 1                        # a candidate with fewer pages is not the pilot document
+    shared: Shared | None = None
 
     def for_quarter(self, fiscal_label: str) -> Rule:
         """This rule with any per-quarter override applied (HDFC Bank's separate Q3 FY25 'Press Release' filing)."""
@@ -53,8 +88,11 @@ class Rule:
         cut = self.cut
         if "cut" in ov:
             cut = Cut(ov["cut"].get("start"), ov["cut"].get("end")) if ov["cut"] else None
-        return Rule(self.slug, ov.get("document_class", self.document_class), ov.get("source", self.source),
-                    re.compile(ov["subject"]) if "subject" in ov else self.subject, cut, self.image_quarters, {})
+        return replace(self, document_class=ov.get("document_class", self.document_class),
+                       source=ov.get("source", self.source),
+                       subject=re.compile(ov["subject"]) if "subject" in ov else self.subject, cut=cut,
+                       prefer=tuple(re.compile(p) for p in ov["prefer"]) if "prefer" in ov else self.prefer,
+                       min_pages=int(ov.get("min_pages", self.min_pages)), overrides={})
 
     def reads_as_image(self, fiscal_label: str) -> bool:
         return fiscal_label in self.image_quarters
@@ -62,11 +100,15 @@ class Rule:
 
 def load_rules(path: Path = RULES_PATH) -> dict[str, Rule]:
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    rd = doc["results_day"]
+    shared = Shared(re.compile(rd["names"]), re.compile(rd["kind"]), re.compile(doc["reject"]))
     out: dict[str, Rule] = {}
     for slug, r in (doc.get("companies") or {}).items():
         cut = Cut(r["cut"].get("start"), r["cut"].get("end")) if r.get("cut") else None
         out[slug] = Rule(slug, r["document_class"], r["source"], re.compile(r["subject"]), cut,
-                         frozenset(r.get("image_quarters") or []), dict(r.get("overrides") or {}))
+                         frozenset(r.get("image_quarters") or []), dict(r.get("overrides") or {}),
+                         tuple(re.compile(p) for p in r.get("prefer") or []),
+                         re.compile(r["reject"]) if r.get("reject") else None, int(r.get("min_pages", 1)), shared)
     return out
 
 
@@ -116,23 +158,81 @@ def previous_four(slug: str, fiscal_label: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------------------------- choosing the document
-def select(anns, rule: Rule, fiscal_label: str):
-    """The announcement that is the pilot document for `fiscal_label`, or None. `anns` are announcement objects with
-    `subject`, `file_name`, `disseminated` (a datetime) and `entity_id` already joined; the match is the subject or file
-    name against the (quarter-overridden) rule, filed within RESULTS_WINDOW_DAYS after the quarter end. The earliest such
-    announcement wins (the results outcome and its press release are filed together; the earliest is the outcome/release,
-    not a later correction)."""
-    q = rule.for_quarter(fiscal_label)
+def _day(f) -> date:
+    d = f.disseminated
+    if isinstance(d, datetime):
+        return d.astimezone(INDIA).date() if d.tzinfo else d.date()
+    return d
+
+
+def rejected(f, rule: Rule) -> bool:
+    """A filing never taken: a call notice, clarification or intimation (the shared list, on the subject and NSE's
+    category), or another listed company's filing made through this one (the company's list, on the subject, category
+    and file name: HDFC Bank files HDFC Life's board outcome). File names are not read for the shared list: HDFC Bank
+    names its results outcome 'SEintimation…'."""
+    text = f"{f.subject or ''} {getattr(f, 'category', None) or ''}"
+    if rule.shared is not None and rule.shared.reject.search(text):
+        return True
+    return bool(rule.reject and rule.reject.search(f"{text} {f.file_name or ''}"))
+
+
+def is_results_filing(f, rule: Rule) -> bool:
+    """The filing that reports the quarter's results (the board-meeting outcome or the results submission): it names
+    results and is an outcome, a submission or an approval, and isn't rejected."""
+    if rule.shared is None or rejected(f, rule):
+        return False
+    text = f"{f.subject or ''} {getattr(f, 'category', None) or ''}"
+    return bool(rule.shared.results_names.search(text) and rule.shared.results_kind.search(text))
+
+
+def results_day(filings, rule: Rule, fiscal_label: str) -> date | None:
+    """The day the quarter's results were filed: the earliest results filing within RESULTS_DAY_MAX_DAYS of the quarter
+    end (#512's fix round: the nearest filing in a wide window took press releases, clarifications and call notices filed
+    before results day). None when the feed holds none: the quarter is then held, never guessed."""
     pe = period_end(fiscal_label)
-    lo, hi = pe + timedelta(days=1), pe + timedelta(days=RESULTS_WINDOW_DAYS)
-    hits = []
-    for a in anns:
-        when = a.disseminated.date() if hasattr(a.disseminated, "date") else a.disseminated
-        if not (lo <= when <= hi):
-            continue
-        if q.subject.search(a.subject or "") or q.subject.search(a.file_name or ""):
-            hits.append(a)
-    return min(hits, key=lambda a: a.disseminated) if hits else None
+    lo, hi = pe + timedelta(days=1), pe + timedelta(days=RESULTS_DAY_MAX_DAYS)
+    days = [_day(f) for f in filings if lo <= _day(f) <= hi and is_results_filing(f, rule)]
+    return min(days) if days else None
+
+
+def candidates(filings, rule: Rule, fiscal_label: str) -> tuple[date | None, list]:
+    """The results day and the filings that may be the pilot document, in the order to try them: filed on the results
+    day or the day after, matching the (quarter-overridden) rule's subject on the subject or file name, not rejected;
+    ordered by the first `prefer` pattern they match (unmatched last), then by time. At most MAX_CANDIDATES. The task
+    takes the first that passes `min_pages` and the cut."""
+    q = rule.for_quarter(fiscal_label)
+    rd = results_day(filings, q, fiscal_label)
+    if rd is None:
+        return None, []
+    last = rd + timedelta(days=CANDIDATE_DAYS)
+    pool = [f for f in filings
+            if rd <= _day(f) <= last and not rejected(f, q)
+            and (q.subject.search(f.subject or "") or q.subject.search(f.file_name or ""))]
+
+    def rank(f):
+        for i, p in enumerate(q.prefer):
+            if p.search(f.subject or "") or p.search(f.file_name or ""):
+                return i, f.disseminated
+        return len(q.prefer), f.disseminated
+    return rd, sorted(pool, key=rank)[:MAX_CANDIDATES]
+
+
+def select(filings, rule: Rule, fiscal_label: str):
+    """The first candidate (`candidates`), or None."""
+    _rd, found = candidates(filings, rule, fiscal_label)
+    return found[0] if found else None
+
+
+def usable(rule: Rule, fiscal_label: str, page_texts: list[str]) -> tuple[list[int], str | None]:
+    """Whether a fetched candidate is the pilot document: at least the rule's `min_pages`, and, for a text document, a
+    successful cut. Returns the pages to read (every page for an image document) and None, or [] and the reason."""
+    q = rule.for_quarter(fiscal_label)
+    n = len(page_texts)
+    if n < q.min_pages:
+        return [], f"{n} page{'s' if n != 1 else ''}, fewer than {q.min_pages}"
+    if rule.reads_as_image(fiscal_label):
+        return list(range(1, n + 1)), None
+    return cut_pages(rule, fiscal_label, page_texts)
 
 
 # ---------------------------------------------------------------------------------------------- cutting the pages
