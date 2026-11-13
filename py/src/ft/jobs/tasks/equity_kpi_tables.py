@@ -11,7 +11,9 @@ file or its text. A document already read with the same SHA-256 and parser versi
 "never resend an unchanged input"); its stored rows are re-filtered with the current rules, with no AI call.
 
 **Which filing** (#512's fix round, 14 Nov 2026; `ft/equity/kpi/documents.py`): the quarter's results day first, then
-that day's candidates in the curated rule's order; the first with enough pages whose cut finds its heading is read. Run logs print counts and ids only, never a page's text (CLAUDE.md §4).
+that day's candidates in the curated rule's order; the first with enough pages whose cut finds its heading is read.
+
+Run logs print counts and ids only, never a page's text (CLAUDE.md §4).
 
 **Hand-run only, no schedule before 18 Nov** (card): `due()` refuses the daily, weekly and watch workflows, so the
 Sunday weekly never runs it; a `backfill` with `--task equity.kpi_tables` on dev is how the dev run and, later, the
