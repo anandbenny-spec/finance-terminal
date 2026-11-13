@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from ft.ai.client import Prompt, Source, load_prompt, load_schema
+from ft.ai.client import Source, load_prompt, load_schema
 from ft.equity.kpi import documents as dc
 from ft.equity.kpi import extraction as ex
 from ft.equity.kpi import filters as fl
@@ -101,13 +101,13 @@ def test_cut_pages_start_not_found_is_held():
 
 
 # ----------------------------------------------------------------------------------- filters: the exclusions
-def row(label, measure="percent", value=Decimal("1"), member=None, unit="%", page=1):
+def row(label, measure="percent", value=Decimal(1), member=None, unit="%", page=1):
     return fl.Row(label, member, measure, value, unit, page)
 
 
 def test_about_page_sets_every_row_aside():
     page = "About Acme Ltd\nAcme operates in 55 countries with 100,000 people."
-    assert fl.classify(row("Workforce", "people", Decimal("100000"), unit="people"), page).reason == fl.ABOUT_PAGE
+    assert fl.classify(row("Workforce", "people", Decimal(100000), unit="people"), page).reason == fl.ABOUT_PAGE
 
 
 def test_quote_span_filtered():
@@ -124,28 +124,28 @@ def test_other_period_filtered():
 
 def test_statement_total_growth_filtered_but_average_kept():
     page = "A results page."
-    assert fl.classify(row("Total deposits growth", "percent_change", Decimal("9")), page).reason == fl.STATEMENT_TOTAL
-    assert fl.classify(row("Net profit growth", "percent_change", Decimal("12")), page).reason == fl.STATEMENT_TOTAL
+    assert fl.classify(row("Total deposits growth", "percent_change", Decimal(9)), page).reason == fl.STATEMENT_TOTAL
+    assert fl.classify(row("Net profit growth", "percent_change", Decimal(12)), page).reason == fl.STATEMENT_TOTAL
     # average-balance and split figures are KPI metrics (the banks' sentence), never statement totals
-    assert fl.classify(row("Average deposits growth", "percent_change", Decimal("8")), page).status == fl.KEPT
-    assert fl.classify(row("CASA deposits growth", "percent_change", Decimal("7")), page).status == fl.KEPT
+    assert fl.classify(row("Average deposits growth", "percent_change", Decimal(8)), page).status == fl.KEPT
+    assert fl.classify(row("CASA deposits growth", "percent_change", Decimal(7)), page).status == fl.KEPT
 
 
 def test_threshold_without_a_value_filtered_but_approximate_kept():
     page = "A results page."
     assert fl.classify(row("Crossed 100 million active users", "count", None, unit="users"), page).reason == fl.THRESHOLD
-    assert fl.classify(row("~38% revenue share", value=Decimal("38")), page).status == fl.KEPT   # a value: kept
+    assert fl.classify(row("~38% revenue share", value=Decimal(38)), page).status == fl.KEPT   # a value: kept
 
 
 # ----------------------------------------------------------------------------------- filters: sign and tiles
 def test_signed_value_follows_direction_for_change_measures():
-    assert fl.signed_value(row("PCR improved by 13 bps", "bps", Decimal("13"))) == Decimal("13")
-    assert fl.signed_value(row("Gross NPA down 20 bps", "bps", Decimal("20"))) == Decimal("-20")
+    assert fl.signed_value(row("PCR improved by 13 bps", "bps", Decimal(13))) == Decimal(13)
+    assert fl.signed_value(row("Gross NPA down 20 bps", "bps", Decimal(20))) == Decimal(-20)
     # a down arrow already made it negative; a fall word keeps it negative (no double flip)
-    assert fl.signed_value(row("Margin declined", "percent_change", Decimal("-50"))) == Decimal("-50")
+    assert fl.signed_value(row("Margin declined", "percent_change", Decimal(-50))) == Decimal(-50)
     # ambiguous (both or neither word): the model's value stands
     assert fl.signed_value(row("Attrition 12.5%", "percent", Decimal("12.5"))) == Decimal("12.5")
-    assert fl.signed_value(row("Up then down", "bps", Decimal("5"))) == Decimal("5")
+    assert fl.signed_value(row("Up then down", "bps", Decimal(5))) == Decimal(5)
 
 
 def test_reconcile_tiles():
@@ -174,7 +174,7 @@ def test_parse_rows_reads_values_and_skips_malformed():
     rows = ex.parse_rows(answer, page=3)
     assert [r.label for r in rows] == ["Attrition (LTM)", "Branches", "Phrase only"]
     assert rows[0].value == Decimal("12.5") and rows[0].member == "IT services" and rows[0].page == 3
-    assert rows[1].value == Decimal("6500") and rows[1].unit is None
+    assert rows[1].value == Decimal(6500) and rows[1].unit is None
     assert rows[2].value is None
 
 
@@ -182,14 +182,14 @@ def test_extract_document_classifies_signs_and_tiles():
     pages = [ex.Page(1, text="Highlights tile"), ex.Page(2, text="Key metrics table")]
     rows_by_page = {
         1: [fl.Row("BFSI share", None, "percent", Decimal("31.0"), "%", 1),
-            fl.Row("PCR improved by 13 bps", None, "bps", Decimal("13"), "bps", 1)],
+            fl.Row("PCR improved by 13 bps", None, "bps", Decimal(13), "bps", 1)],
         2: [fl.Row("BFSI share", None, "percent", Decimal("31.0"), "%", 2),
-            fl.Row("Total advances growth", None, "percent_change", Decimal("10"), "%", 2)],
+            fl.Row("Total advances growth", None, "percent_change", Decimal(10), "%", 2)],
     }
     out = ex.extract_document(pages, rows_by_page, tile_pages=frozenset({1}))
     by = {(e.row.label, e.row.page): e for e in out}
     assert by[("BFSI share", 1)].filter_status == fl.KEPT            # tile confirmed by page 2
-    assert by[("PCR improved by 13 bps", 1)].value == Decimal("13")  # sign kept positive
+    assert by[("PCR improved by 13 bps", 1)].value == Decimal(13)  # sign kept positive
     assert by[("Total advances growth", 2)].filter_reason == fl.STATEMENT_TOTAL
     assert len(out) == 4
 
@@ -246,5 +246,5 @@ def test_kpi_request_sends_through_the_wrapper():
     req = ex.page_request(1, "SBI", "Q2 FY27", page, None, _prompt(), schema)
     reply = client.send(req)
     rows = ex.parse_rows(reply.json(), page=2)
-    assert rows[0].label == "Branches" and rows[0].value == Decimal("6500")
+    assert rows[0].label == "Branches" and rows[0].value == Decimal(6500)
     assert reply.cost_usd > 0
