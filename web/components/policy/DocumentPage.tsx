@@ -15,6 +15,7 @@ import { Freshness } from "@/components/data/Freshness";
 import { Gated, fieldPolicy } from "@/components/data/Gated";
 import { PageHeader, type Crumb } from "@/components/data/PageHeader";
 import { Panel } from "@/components/data/Panel";
+import { MeetingRail } from "@/components/policy/MeetingView";
 import { SourceLine } from "@/components/data/SourceLine";
 import { StateNote } from "@/components/data/StateNote";
 import { companyHref } from "@/lib/equity/company";
@@ -199,6 +200,35 @@ export async function DocumentPage({ id, span }: { id: number; span: [number, nu
   crumbs.push(doc.doc_type_label);
   const description: ReactNode = [BANK_NAME[bank], doc.doc_type_label, date ? formatDate(date) : null].filter(Boolean).join(" · ");
 
+  const documentPanel = (
+    <Panel
+      title={doc.doc_type_label}
+      titleId="panel-document"
+      subtitle="What does the document say, word for word?"
+      market={bank === "Fed" ? "US" : "IN"}
+      actions={<OfficialLink doc={doc} bank={bank} />}
+      refresh={tasks}
+      variant="prose"
+      footer={
+        <>
+          <SourceLine lines={[documentSource(doc, bank)]} />
+          <Freshness freshness={freshness} />
+        </>
+      }
+    >
+      {!paras ? (
+        <StateNote kind="error">{ERROR}</StateNote>
+      ) : (
+        <div className="flex flex-col gap-5">
+          <Summary page={page} bank={bank} />
+          <div className="[&_mark]:scroll-mt-24">
+            <DocumentView paragraphs={paras} mark={mark} markNote={mark ? <CitedByNote entries={entries} /> : undefined} label={documentTitle(doc)} />
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+
   return (
     <>
       <PageHeader
@@ -213,34 +243,18 @@ export async function DocumentPage({ id, span }: { id: number; span: [number, nu
           </>
         }
       />
-      <div className="mt-5">
-        <Panel
-          title={doc.doc_type_label}
-          titleId="panel-document"
-          subtitle="What does the document say, word for word?"
-          market={bank === "Fed" ? "US" : "IN"}
-          actions={<OfficialLink doc={doc} bank={bank} />}
-          refresh={tasks}
-          variant="prose"
-          footer={
-            <>
-              <SourceLine lines={[documentSource(doc, bank)]} />
-              <Freshness freshness={freshness} />
-            </>
-          }
-        >
-          {!paras ? (
-            <StateNote kind="error">{ERROR}</StateNote>
-          ) : (
-            <div className="flex flex-col gap-5">
-              <Summary page={page} bank={bank} />
-              <div className="[&_mark]:scroll-mt-24">
-                <DocumentView paragraphs={paras} mark={mark} markNote={mark ? <CitedByNote entries={entries} /> : undefined} label={documentTitle(doc)} />
-              </div>
-            </div>
-          )}
-        </Panel>
-      </div>
+      {/* From xl a document that belongs to a meeting has the meeting's Key facts rail beside it (Design 01 §5.3; R05-11), as the
+          Statement tabs have it; the text keeps its reading width. A document with no meeting, and every width below xl, as before. */}
+      {meeting && doc.event_slug ? (
+        <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-12">
+          <div className="min-w-0 xl:col-span-8">{documentPanel}</div>
+          <div className="hidden min-w-0 xl:col-span-4 xl:block">
+            <MeetingRail bank={meeting.bank} slug={doc.event_slug} date={meeting.date} />
+          </div>
+        </div>
+      ) : (
+        <div className="mt-5">{documentPanel}</div>
+      )}
     </>
   );
 }
