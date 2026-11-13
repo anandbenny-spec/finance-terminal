@@ -87,7 +87,7 @@ export function countsToShares(c: { wordsAdded: number; wordsRemoved: number; wo
 }
 
 /** Each meeting's latest decision document by event slug (the highest version wins). */
-function latestBySlug(documents: readonly StripDocument[]): Map<string, StripDocument> {
+export function latestBySlug(documents: readonly StripDocument[]): Map<string, StripDocument> {
   const latest = new Map<string, StripDocument>();
   for (const d of documents) {
     if (d.event_slug === null) continue;

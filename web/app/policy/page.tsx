@@ -14,6 +14,7 @@ import { ErrorPanel, Foot, latestOf } from "@/components/policy/PanelFoot";
 import { PolicyCard } from "@/components/policy/PolicyCard";
 import { RateStats } from "@/components/policy/RateStats";
 import { ReactionsPanel } from "@/components/policy/ReactionsPanel";
+import { LanguageTimelinePanel } from "@/components/policy/LanguageTimeline";
 import { LongRatesPanel } from "@/components/policy/LongRatesPanel";
 import { RatesPanel } from "@/components/policy/RatesPanel";
 import { VotesOverTimePanel } from "@/components/policy/VotesOverTime";
@@ -24,10 +25,12 @@ import { historyRows } from "@/lib/policy/decisions";
 import { pressReleaseLabel } from "@/lib/policy/document";
 import { reactionRows, reactionSources } from "@/lib/policy/reactions";
 import { POLICY_SECTIONS } from "@/lib/policy/sections";
+import { languageTimelineShown } from "@/lib/policy/timeline";
 import { votesOverTime, votesOverTimeShown } from "@/lib/policy/votes-over-time";
 import { readPolicyOverview } from "@/lib/queries/overview";
 import { POLICY_START } from "@/lib/queries/policy";
 import { readFreshness, readNextMeetings } from "@/lib/queries/shell";
+import { readLanguageTimeline } from "@/lib/queries/timeline";
 import { panelFreshness } from "@/lib/shell/freshness";
 
 export const metadata: Metadata = {
@@ -57,6 +60,8 @@ export default async function PolicyPage() {
   const rbiDoc = rbi?.document;
   const history = o.history.ok ? o.history : null;
   const strips = o.changes.ok && o.history.ok ? buildChangeStrips(o.history.decisions, o.changes.documents, o.changes.diffs) : null;
+  // Hidden until Anand flips `site.language_timeline` (#509): with no row nothing is read for it.
+  const timeline = languageTimelineShown(policies) ? await readLanguageTimeline() : null;
 
   return (
     <>
@@ -181,6 +186,37 @@ export default async function PolicyPage() {
               })
             ) : (
               <ErrorPanel title="How members voted over time" id="panel-votes-over-time" refresh={FEEDS.policyHistory} />
+            )}
+          </PanelGrid>
+        </Section>
+      )}
+
+      {timeline && (
+        <Section id="language-timeline" title="How the wording moved">
+          <PanelGrid>
+            {(
+              [
+                { read: timeline.rbi, bank: "RBI", source: `${rbiSource} · MPC resolutions` },
+                { read: timeline.fed, bank: "Fed", source: `${fedSource} · FOMC statements` },
+              ] as const
+            ).map(({ read, bank, source }) =>
+              read.ok ? (
+                <LanguageTimelinePanel
+                  key={bank}
+                  data={read.timeline}
+                  refresh={FEEDS.policyChanges}
+                  footer={foot([source], FEEDS.policyChanges, read.timeline.latest)}
+                />
+              ) : (
+                <ErrorPanel
+                  key={bank}
+                  title={`${bank}: how the wording moved`}
+                  id={`panel-language-timeline-${bank === "RBI" ? "rbi" : "fed"}`}
+                  span={12}
+                  market={bank === "RBI" ? "IN" : "US"}
+                  refresh={FEEDS.policyChanges}
+                />
+              ),
             )}
           </PanelGrid>
         </Section>

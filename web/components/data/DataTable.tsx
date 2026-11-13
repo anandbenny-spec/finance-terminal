@@ -42,6 +42,8 @@ export type Column<Row> = {
   wrapHeader?: boolean;
   /** Let this column's cells wrap (long text such as a peer group's members; numbers never wrap). */
   wrapCell?: boolean;
+  /** Top-align this column's cells, so rows of sentences of different lengths start on one line (the language timeline, #509). */
+  alignTop?: boolean;
 };
 
 export function DataTable<Row>({
@@ -94,6 +96,7 @@ export function DataTable<Row>({
   const align = new Map(columns.map((c) => [c.id, c.align ?? "left"]));
   const wrapHeader = new Set(columns.filter((c) => c.wrapHeader).map((c) => c.id));
   const wrapCell = new Set(columns.filter((c) => c.wrapCell).map((c) => c.id));
+  const alignTop = new Set(columns.filter((c) => c.alignTop).map((c) => c.id));
 
   return (
     <div
@@ -156,6 +159,7 @@ export function DataTable<Row>({
                     wrapCell.has(cell.column.id) ? "whitespace-normal" : "whitespace-nowrap",
                     dense ? "h-7" : "h-8",
                     align.get(cell.column.id) === "right" ? "text-right" : "text-left",
+                    alignTop.has(cell.column.id) && "align-top",
                     i === 0 && "sticky left-0 bg-panel group-hover:bg-raised max-md:max-w-44 max-md:whitespace-normal",
                   )}
                 >
