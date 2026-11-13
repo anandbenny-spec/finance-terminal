@@ -86,6 +86,12 @@ describe("the list", () => {
     expect(out).toContain('aria-sort="descending"');
   });
 
+  it("puts the Status column second, so a phone shows it beside the company", () => {
+    const heads = [...out.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/g)].map((x) => text(x[1]).replace(/\s*[▲▼↑↓].*$/, ""));
+    expect(heads.slice(0, 4).map((h) => h.split(" ").slice(0, 2).join(" ").trim())).toEqual(["Company", "Status", "Quarter", "Call date"]);
+    expect(out).toContain('aria-sort="descending"');
+  });
+
   it("has the header, description, source lines and freshness", () => {
     expect(t).toContain("Earnings calls");
     expect(t).toContain(EARNINGS_DESCRIPTION);
