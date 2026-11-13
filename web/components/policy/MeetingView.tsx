@@ -660,6 +660,17 @@ export async function PolicyDayMeeting({ bank, slug, date }: { bank: Bank; slug:
   );
 }
 
+/**
+ * The meeting's Key facts rail for another page that sits beside one of its documents (`/documents/[id]`, from xl; R05-11).
+ * The same cached meeting read and freshness read as the meeting pages, then the existing `Rail` unchanged. Nothing when the
+ * meeting can't be built (a read failed, or no such meeting row): the document then stands alone.
+ */
+export async function MeetingRail({ bank, slug, date }: { bank: Bank; slug: string; date: string }) {
+  const [page, freshRead] = await Promise.all([readMeetingPage(bank, slug, date), readFreshness()]);
+  const ctx = buildCtx(bank, page, freshRead);
+  return ctx ? <Rail ctx={ctx} /> : null;
+}
+
 export async function MeetingView({ bank, slug, date, tab, doc }: { bank: Bank; slug: string; date: string; tab: TabId; doc: string | undefined }) {
   const [page, freshRead] = await Promise.all([readMeetingPage(bank, slug, date), readFreshness()]);
   if (!page.meeting.ok) {
