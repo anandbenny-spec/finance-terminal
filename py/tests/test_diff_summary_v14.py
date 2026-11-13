@@ -49,7 +49,7 @@ def test_v14_is_v13_plus_two_rules_after_the_same_claim_rule_with_v13s_schema_on
     assert "<!--" not in V14.text
     assert load_schema("statement_diff_summary", "v14") == load_schema("statement_diff_summary", "v13")
     assert (REQ.spec.route, REQ.model_id, REQ.spec.effort) == ("json", SONNET, "medium")
-    assert summaries.DIFF_SIDES_FROM == 14               # v15 is current (test_diff_summary_v15.py)
+    assert summaries.DIFF_SIDES_FROM == 14               # v16 is current (test_diff_summary_v16.py)
     assert summaries.DIFF_WHOLE_FROM == 13 and summaries.DIFF_STRICT_FROM == 12
 
 

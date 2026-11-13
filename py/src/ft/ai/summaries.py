@@ -38,6 +38,9 @@ passages they cite.
   before" in the bullet's own words, and no claim about the previous document without a quote from it.
 - From v15 on (#445, round 14; Anand's pick of 13 Nov 2026, before 17:36 IST; `DIFF_FP_FIX_FROM`): v14's text, with two false
   positives of the v13 and v14 checks fixed.
+- From v16 on (#445, round 15; Anand's decision of 14 Nov 2026, about 00:38 IST; `DIFF_FIT_FROM`): also no quotation set where
+  its grammar can't fit, no quotation the bullet's own words run on from with the statement's next words, and no claim
+  resting on a sentence next to a quoted one that the bullet doesn't quote.
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
 (`policy.ai_batch`). The database checks the published output's citations again at commit (Architecture 01 §1.4).
@@ -59,13 +62,15 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
 DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
-                 "v13": SONNET, "v14": SONNET, "v15": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
 # (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
 # two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12); v14: v13 plus two rules, with one
-# more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14).
+# more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14); v16: v15's
+# text, with three more checks (round 15).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
-DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium"}
+DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium",
+                  "v16": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -104,6 +109,20 @@ DIFF_SIDES_FROM = 14
 # And "before" ahead of a quotation is a conjunction ("…"1.6 per cent" in July 2025 before "rising to 2.1 per cent""),
 # not a clause-final "before" about the previous document (mpc-2025-10-01). Replies made with v13 or v14 keep their checks.
 DIFF_FP_FIX_FROM = 15
+# From v16 (#445, round 15; Anand's decision of 14 Nov 2026, about 00:38 IST, after the judge failed round 14 on three
+# patterns: "a check that rejects the reply and retries, not prompt wording alone"; tightenings): v15's text, and a bullet
+# also fails on each of the three, so the reply is retried with the reason, then rejected (the old output stays):
+# - a quotation set where its grammar can't fit (`fit_problem`): "…holding the target range at "maintain the target range
+#   …"", "…citing "in light of the shift in the balance of risks"" (fomc-2025-09-17, 2578);
+# - a quotation the bullet's own words run on from with the statement's next words (`runs_on_problem`): "…a new sentence
+#   says that "Holding the target range steady at this meeting" allows the Committee to assess additional information"
+#   (fomc-2023-06-14, 2579);
+# - a claim resting on a sentence next to a quoted one that the bullet doesn't quote (`neighbour_problem`): "…Prof.
+#   Jayanth R. Varma, who "expressed reservations on this part of the resolution", is the exception to the others", where
+#   "except" is in the sentence before (mpc-2021-08-06, 2577).
+# Measured on dev's stored v11 to v15 outputs (61 outputs, 247 bullets): the three catch those three bullets, and flag 2 of
+# the 85 bullets the round 11 and round 14 judges passed (both a quotation followed by five of the statement's next words).
+DIFF_FIT_FROM = 16
 
 
 def diff_json(version: str) -> bool:
@@ -206,6 +225,17 @@ def changed_spans(segments: dict) -> tuple[list[tuple[int, int]], list[tuple[int
         if p.get("kind") in ("changed", "added"):
             new += [tuple(x) for x in p.get("new", [])]
     return old, new
+
+
+def sentence_spans(segments: dict) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """(spans in the old text, spans in the new text) of every sentence the redline holds, changed or not, in text order
+    (the neighbour check from v16, `neighbour_problem`)."""
+    old: set[tuple[int, int]] = set()
+    new: set[tuple[int, int]] = set()
+    for p in segments.get("pairs", []):
+        old.update(tuple(x) for x in p.get("old", []))
+        new.update(tuple(x) for x in p.get("new", []))
+    return sorted(old), sorted(new)
 
 
 def redline_text(segments: dict, old_text: str, new_text: str) -> str:
@@ -356,13 +386,15 @@ def _overlaps(s: int, e: int, spans: list[tuple[int, int]]) -> bool:
 REASON_PHRASES: dict[str, tuple[str, ...]] = {
     "citation": (r"no verified citation", r"quoted words not in its cited passages",
                  r"isn't in the (?:previous|new) document's changed sentences", r"a claim that something stayed the same",
-                 r"a claim about the previous document with no quote from it"),
+                 r"a claim about the previous document with no quote from it",
+                 r"a claim resting on a sentence next to its quotes"),
     "numbers": (r"numbers not in its cited passages",),
     "format": (r"text outside the bullets", r"no bullets \(each bullet", r"\d+ bullets, not \d+ to \d+",
                r"an unclosed quotation mark", r"repeats its own words", r"doesn't end as a sentence ends",
                r"the reply isn't the schema's JSON", r"isn't the schema's object", r"\d+ quotes, not 1 to \d+",
                r"copies a statement's words without quotation marks", r"two quotations side by side",
-               r"a quotation cut in the middle of", r"a quotation that ends on "),
+               r"a quotation cut in the middle of", r"a quotation that ends on ",
+               r"a quotation that doesn't fit the grammar of its sentence", r"the statement's next words after a quotation"),
 }
 
 
@@ -803,7 +835,7 @@ def _find_in_changed(text: str, quote: str, spans: list[tuple[int, int]]) -> lis
 
 
 def check_diff_json(answer, sources: tuple[Source, ...], changed: dict[int, list[tuple[int, int]]], *,
-                    version: str | None = None) -> Checked:
+                    version: str | None = None, sentences: dict[int, list[tuple[int, int]]] | None = None) -> Checked:
     """Check a v11-on statement_diff_summary reply (`answer`: the reply's JSON) against our copies of the two documents
     (`sources`: document 1, document 2) and their changed sentences (`changed`, by document id). Each bullet's quotes are
     found in its document's changed sentences, which become its citations; then the bullet gets the citations route's
@@ -812,15 +844,18 @@ def check_diff_json(answer, sources: tuple[Source, ...], changed: dict[int, list
     prompt version that asked for it; from v12 (`DIFF_STRICT_FROM`) a bullet also gets the unquoted-copy and side-by-side
     checks, from v13 (`DIFF_WHOLE_FROM`) the same-claim and cut-quotation checks, from v14 (`DIFF_SIDES_FROM`) the wider
     same-claim check and the previous-document check, from v15 (`DIFF_FP_FIX_FROM`) those checks without two false
-    positives, and an earlier version, or none, is checked as it ran (none: as v11 was)."""
+    positives, from v16 (`DIFF_FIT_FROM`) the grammar-fit and run-on checks, and the neighbour check where `sentences` (each
+    document's sentences, from the redline: `sentence_spans`) is given; an earlier version, or none, is checked as it ran
+    (none: as v11 was)."""
     task, mapping = "statement_diff_summary", Counter()
     number = int(version.lstrip("v")) if version is not None else 0
     strict, whole, sides = number >= DIFF_STRICT_FROM, number >= DIFF_WHOLE_FROM, number >= DIFF_SIDES_FROM
-    fixed = number >= DIFF_FP_FIX_FROM
+    fixed, fit = number >= DIFF_FP_FIX_FROM, number >= DIFF_FIT_FROM
     rows = answer.get("bullets") if isinstance(answer, dict) else None
     if not isinstance(rows, list):
         return Checked(task, [], ["the reply isn't the schema's JSON ({bullets: [...]})"], mapping)
-    bullets = [_diff_json_bullet(raw, sources, changed, mapping, strict=strict, whole=whole, sides=sides, fixed=fixed)
+    bullets = [_diff_json_bullet(raw, sources, changed, mapping, strict=strict, whole=whole, sides=sides, fixed=fixed,
+                                 fit=fit, sentences=sentences)
                for raw in rows]
     problems = []
     lo, hi = BULLETS[task]
@@ -830,7 +865,8 @@ def check_diff_json(answer, sources: tuple[Source, ...], changed: dict[int, list
 
 
 def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[tuple[int, int]]], mapping: Counter, *,
-                      strict: bool = False, whole: bool = False, sides: bool = False, fixed: bool = False) -> Bullet:
+                      strict: bool = False, whole: bool = False, sides: bool = False, fixed: bool = False,
+                      fit: bool = False, sentences: dict[int, list[tuple[int, int]]] | None = None) -> Bullet:
     if not isinstance(raw, dict) or not isinstance(raw.get("text"), str) or not isinstance(raw.get("quotes"), list):
         b = Bullet("")
         b.problem = "isn't the schema's object"
@@ -869,6 +905,12 @@ def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[
         b.problem = same_problem(text, again=sides) or cut_quote_problem(text, passages, subject_ok=fixed)
     if b.problem is None and sides and not any(q["document"] == "previous" for q in quotes):
         b.problem = previous_problem(text, whole_text=fixed)
+    if b.problem is None and fit:
+        b.problem = fit_problem(text) or runs_on_problem(text, passages)
+        if b.problem is None and sentences is not None:
+            texts = {src.document_id: src.text for src in sources}
+            b.problem = neighbour_problem(text, [(c.document_id, c.start, c.end) for c in b.citations], texts, sentences,
+                                          changed)
     return b
 
 
@@ -1006,6 +1048,215 @@ def cut_quote_problem(text: str, passages: list[str], *, subject_ok: bool = Fals
             if last in _OPEN_END:
                 return f'a quotation that ends on "{last}", in the middle of a phrase: "{shown}"'
             return f'a quotation cut in the middle of a sentence it starts: "{shown}" stops before its end'
+    return None
+
+
+# ---------------------------------------------------------------------------------------------- v16's checks (`DIFF_FIT_FROM`)
+# `fit_problem`: the bullet's own word right before a quotation's opening mark (nothing but spaces between) and the quotation's
+# first words, as closed word classes, case aside, in `match_form`. A pairing that English can't hold fails:
+# - the same word on both sides of the mark ("stated at "at least $70 billion per month"");
+# - a preposition, then a verb in its base form ("…holding the target range at "maintain the target range …"", round 14's
+#   2578); a verb that is also a noun counts only when a determiner follows it ("at "lower the target range"");
+# - a preposition, then a finite auxiliary or another preposition ("of "will be"", "at "in light of …"");
+# - a verb that needs a noun as its object, then a preposition or an auxiliary ("citing "in light of the shift in the balance
+#   of risks"", 2578), and "cite" or "describe", then "that" or the like;
+# - an article or a possessive, then a determiner, a preposition, an auxiliary or a base-form verb ("the "in light of …"");
+# - "has", "have", "had", "having" or "as", then a past form that isn't a participle ("having "rose"");
+# - an auxiliary, then a finite auxiliary ("the Committee being "is continuing" that policy", round 13's 2561), or a modal,
+#   then a past form ("will "remained"").
+# And after the closing mark: the quotation's last word repeated as the bullet's next word.
+# "from", "to" and "between" aren't prepositions here: "changed from "continue with the neutral stance" to "change the stance
+# …"" names the words it quotes, and the judges passed it (2581, 2583). Neither is "than" before a verb ("rather than "raise
+# the target range"" is English).
+_FIT_PREP = frozenset({"about", "above", "across", "against", "along", "amid", "amidst", "among", "around", "at",
+                       "behind", "below", "beneath", "beside", "besides", "beyond", "by", "despite", "during", "for",
+                       "in", "inside", "into", "near", "of", "off", "on", "onto", "outside", "over", "past", "per",
+                       "through", "throughout", "toward", "towards", "under", "underneath", "upon", "versus", "via",
+                       "with", "within", "without"})
+_FIT_CLAUSE_PREP = frozenset({"as", "after", "before", "since", "until", "like", "unlike", "except"})   # may also open a clause
+_FIT_VERB = frozenset({"achieve", "adjust", "anticipate", "assess", "begin", "conclude", "consider", "continue",
+                       "decide", "ensure", "expect", "keep", "maintain", "mitigate", "raise", "reduce", "reinvest",
+                       "remain", "retain", "revive", "seek", "sustain", "undertake", "withdraw"})
+_FIT_VERB_DET = frozenset({"lower", "cut", "hold", "increase", "support", "return", "extend", "take", "slow", "end",
+                           "leave"})   # nouns too
+_FIT_FINITE = frozenset({"is", "are", "was", "were", "has", "have", "had", "will", "would", "shall", "should", "can",
+                         "could", "may", "might", "must", "do", "does", "did"})
+_FIT_MODAL = frozenset({"will", "would", "shall", "should", "can", "could", "may", "might", "must"})
+_FIT_AUX = _FIT_FINITE | {"be", "been", "being"}
+_FIT_DET = frozenset({"the", "a", "an", "its", "their", "our"})   # not "this", "her": pronouns too ("asked her "to …"")
+_FIT_QPREP = frozenset({"in", "of", "for", "on", "with", "by", "at", "from", "into", "onto", "upon", "to"})
+# Verbs that need a noun as their object ("cited" too: "…the risks cited "in the statement"" is unlikely in a bullet); not
+# "list", "reference" or "mention", which are nouns as often ("a reference "to the shift"").
+_FIT_OBJECT = frozenset({"cite", "cites", "cited", "citing", "describe", "describes", "describing", "invoke", "invokes",
+                         "invoked", "invoking", "attributing", "listing", "mentioning", "highlighting", "flagging",
+                         "referencing"})
+_FIT_OBJECT_THAT = frozenset({"cite", "cites", "cited", "citing", "describe", "describes", "describing"})   # not "that" either
+_FIT_PAST = frozenset({"rose", "fell", "grew", "began", "took", "went", "came", "gave", "saw", "became", "ran", "wrote",
+                       "chose", "drew", "shrank", "sank", "spoke", "froze", "broke"})
+_FIT_THAT = frozenset({"that", "which", "because", "although", "though", "whereas", "while", "if", "whether"})
+_LAST_OWN_WORD = re.compile(r"([^\W_][\w'’-]*)\s*$")
+_FIRST_OWN_WORD = re.compile(r"\s*([^\W_][\w'’-]*)")
+
+
+def _misfit(left: str, q1: str, q2: str) -> bool:
+    """Whether the bullet's word `left`, right before a quotation opening with `q1` `q2` (all case-folded), can't fit."""
+    prep = left in _FIT_PREP or left in _FIT_CLAUSE_PREP
+    return (left == q1
+            or (prep and (q1 in _FIT_VERB or (q1 in _FIT_VERB_DET and q2 in _FIT_DET)))
+            or (left in _FIT_PREP and (q1 in _FIT_FINITE or q1 in _FIT_QPREP))
+            or (left in _FIT_OBJECT and (q1 in _FIT_QPREP or q1 in _FIT_AUX))
+            or (left in _FIT_OBJECT_THAT and q1 in _FIT_THAT)
+            or (left in _FIT_DET and (q1 in _FIT_DET or q1 in _FIT_QPREP or q1 in _FIT_AUX or q1 in _FIT_VERB))
+            or (left in {"has", "have", "had", "having", "as"} and q1 in _FIT_PAST)
+            or (left in _FIT_AUX and q1 in _FIT_FINITE)
+            or (left in _FIT_MODAL and (q1 in _FIT_PAST or q1.endswith("ed"))))
+
+
+def fit_problem(text: str) -> str | None:
+    """Why a bullet sets a quotation where its grammar can't fit (see above), or None."""
+    t = match_form(text)
+    if t.count('"') % 2:
+        return None                                       # `quote_problem` has already failed it
+    for m in re.finditer(r'"([^"]*)"', t):
+        q = m.group(1).strip()
+        qw = [w.casefold() for w in _WORD.findall(q)]
+        if not qw:
+            continue
+        shown = q if len(q) <= 60 else q[:59] + "…"
+        if (left := _LAST_OWN_WORD.search(t[:m.start()])) and _misfit(left.group(1).casefold(), qw[0],
+                                                                      qw[1] if len(qw) > 1 else ""):
+            return (f'a quotation that doesn\'t fit the grammar of its sentence: {left.group(1)} "{shown}" (quote words that '
+                    "fit where they stand, or word the sentence differently)")
+        if (right := _FIRST_OWN_WORD.match(t[m.end():])) and right.group(1).casefold() == qw[-1]:
+            return (f'a quotation that doesn\'t fit the grammar of its sentence: "{shown}" {right.group(1)} (quote words that '
+                    "fit where they stand, or word the sentence differently)")
+    return None
+
+
+# `runs_on_problem`: a quotation found in a cited passage, after whose closing mark the bullet's own words (up to the next
+# full stop, semicolon, colon, question or exclamation mark, quotation or bracket) start with RUNS_ON_MIN_WORDS or more of
+# the words that follow it in that passage, at least RUNS_ON_PLAIN_WORDS of them not capitalised: the quotation closes
+# partway through a clause and the rest of the clause is copied without quotation marks. Three words ("…decided to "raise"
+# the target range"), which the judges passed (2546, 2579), don't count.
+RUNS_ON_MIN_WORDS = 4
+RUNS_ON_PLAIN_WORDS = 3
+_CLAUSE_STOP = re.compile(r'[.;:!?"(\[]')
+
+
+def runs_on_problem(text: str, passages: list[str]) -> str | None:
+    """Why a bullet's own words run on from a quotation with the statement's next words (see above), or None."""
+    t = match_form(text)
+    if t.count('"') % 2:
+        return None
+    hays = [match_form(p) for p in passages]
+    for m in re.finditer(r'"([^"]*)"', t):
+        q = m.group(1).strip().rstrip(_INNER_END).strip()
+        if not _WORD.search(q):
+            continue
+        after = t[m.end():]
+        stop = _CLAUSE_STOP.search(after)
+        own = _WORD.findall(after[:stop.start()] if stop else after)
+        if len(own) < RUNS_ON_MIN_WORDS:
+            continue
+        head = r"(?<!\w)" if re.match(r"\w", q) else ""
+        tail = r"(?!\w)" if re.search(r"\w$", q) else ""
+        pattern = re.compile(head + re.escape(q) + tail, re.IGNORECASE)
+        for h in hays:
+            for x in pattern.finditer(h):
+                nxt = _WORD.findall(h[x.end():])
+                k = 0
+                while k < min(len(nxt), len(own)) and nxt[k].casefold() == own[k].casefold():
+                    k += 1
+                run = own[:k]
+                if k >= RUNS_ON_MIN_WORDS and sum(not w[0].isupper() for w in run) >= RUNS_ON_PLAIN_WORDS:
+                    shown = q if len(q) <= 40 else "…" + q[-39:]
+                    return (f'the statement\'s next words after a quotation, outside quotation marks: "{shown}" is followed '
+                            f'by "{" ".join(run)}" in the statement (put them inside the quotation, or say it in your own '
+                            "words)")
+    return None
+
+
+# `neighbour_problem`: a word of the bullet's own (outside quotation marks) whose stem is in none of its cited passages but is
+# in a sentence next to one of them (the sentence before or after it in the same document, from the redline) that the bullet
+# doesn't cite, and in at most NEIGHBOUR_MAX_SENTENCES sentences of that document: the claim rests on that sentence. Stems:
+# the first six letters, or the whole of a shorter word, of words of four letters or more ("exception" and "except").
+# Words about the documents and their changes, and the topics the prompt names, aren't claims (`_NEIGHBOUR_OWN`), and a word
+# common in the document (in more sentences) isn't one sentence's. The reason says to quote the sentence when it changed (a
+# quote may come only from a changed sentence), or else to leave the claim out.
+NEIGHBOUR_MAX_SENTENCES = 2
+_NEIGHBOUR_OWN = frozenset({"the", "and", "but", "nor", "that", "this", "these", "those", "which", "who", "whom",
+                            "whose", "what", "when", "where", "while", "with", "from", "into", "onto", "than", "then",
+                            "there", "here", "also", "both", "each", "such", "some", "many", "much", "more", "most",
+                            "less", "least", "other", "over", "under", "about", "after", "before", "since", "until",
+                            "against", "between", "among", "within", "without", "upon", "have", "has", "had", "having",
+                            "will", "would", "shall", "should", "could", "might", "must", "been", "being", "were",
+                            "does", "did", "they", "them", "their", "its", "it's", "not", "only", "just", "very",
+                            "statement", "resolution", "sentence", "document", "wording", "words", "phrase", "passage",
+                            "version", "text", "says", "said", "saying", "adds", "added", "adding", "notes", "noted",
+                            "noting", "states", "stated", "reads", "change", "changed", "changing", "revised",
+                            "revision", "moved", "moves", "shifted", "dropped", "removed", "deleted", "replaced",
+                            "replacing", "inserted", "describes", "described", "describing", "description",
+                            "assessment", "view", "views", "language", "reference", "refers", "referring", "mention",
+                            "mentions", "mentioned", "previous", "previously", "earlier", "later", "new", "newly",
+                            "now", "policy", "policies", "decision", "decisions", "stance", "guidance", "projection",
+                            "projected", "outlook", "rationale", "hold", "holds", "holding", "held", "lowered", "lower",
+                            "raised", "raise", "increase", "increased", "decrease", "decreased", "reduced", "reduce",
+                            "eased", "tightened", "rate", "rates", "range", "ranges", "target", "members", "member",
+                            "committee", "economy", "economic", "inflation", "labour", "labor", "market", "future",
+                            "balance", "sheet", "asset", "assets", "purchase", "purchases", "vote", "votes", "voted",
+                            "voting", "drop", "drops"})
+
+
+def _stem_match(a: str, b: str) -> bool:
+    n = min(6, len(a), len(b))
+    return len(a) >= 4 and len(b) >= 4 and a[:n] == b[:n]
+
+
+def _own_word(w: str) -> bool:
+    return w in _NEIGHBOUR_OWN or any(_stem_match(w, s) for s in _NEIGHBOUR_OWN if len(s) >= 5)
+
+
+def neighbour_problem(text: str, cited: list[tuple[int, int, int]], texts: dict[int, str],
+                      sentences: dict[int, list[tuple[int, int]]],
+                      changed: dict[int, list[tuple[int, int]]]) -> str | None:
+    """Why a bullet's own words rest on a sentence next to its quotes that it doesn't quote (see above), or None. `cited`:
+    the bullet's citations as (document id, start, end); `texts`: each document's text; `sentences` and `changed`: each
+    document's sentences and changed sentences (spans into its text)."""
+    t = match_form(text)
+    if t.count('"') % 2:
+        return None
+    own = " ".join(_QUOTED.split(t)[::2])
+
+    def words_of(d: int, s: int, e: int) -> set[str]:
+        return {w.casefold() for w in _WORD.findall(match_form(texts[d][s:e]))}
+
+    quoted = {w for d, s, e in cited for w in words_of(d, s, e)}
+    spans_cited = set(cited)
+    beside: list[tuple[int, int, int]] = []
+    for d, s, e in cited:
+        spans = sentences.get(d, [])
+        if d not in texts or (s, e) not in spans:
+            continue
+        i = spans.index((s, e))
+        for j in (i - 1, i + 1):
+            if 0 <= j < len(spans) and (d, *spans[j]) not in spans_cited and (d, *spans[j]) not in beside:
+                beside.append((d, *spans[j]))
+    if not beside:
+        return None
+    for raw in _WORD.findall(own):
+        w = raw.casefold()
+        if len(w) < 4 or w.isdigit() or _own_word(w) or any(_stem_match(w, x) for x in quoted):
+            continue
+        for d, s, e in beside:
+            if not any(_stem_match(w, x) for x in words_of(d, s, e)):
+                continue
+            if sum(any(_stem_match(w, x) for x in words_of(d, a, b)) for a, b in sentences[d]) > NEIGHBOUR_MAX_SENTENCES:
+                continue
+            sentence = " ".join(texts[d][s:e].split())
+            shown = sentence if len(sentence) <= 80 else sentence[:79] + "…"
+            fix = ("quote that sentence too, or leave the claim out" if (s, e) in changed.get(d, [])
+                   else "that sentence didn't change, so it can't be quoted: leave the claim out")
+            return f'a claim resting on a sentence next to its quotes that it doesn\'t quote: "{raw}" is from "{shown}" ({fix})'
     return None
 
 
