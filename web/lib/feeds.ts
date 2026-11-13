@@ -25,6 +25,7 @@ export type TaskKey =
   | "equity.call_transcripts"
   | "equity.call_text"
   | "equity.calls_ai"
+  | "equity.results_reactions"
   | "equity.segment_changes"
   | "equity.brsr"
   | "equity.related_parties"

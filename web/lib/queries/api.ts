@@ -744,6 +744,27 @@ export type RateDecisionMoveRow = {
   attribution: string | null;
 };
 
+/** api.results_moves (0044): one row per company, results filing (from 1 Jan 2025) and window, with the company's move, the Nifty 50's and the excess; a left-out window has no figure and a reason. Percent, excluding dividends. No row while equity.results_move is hidden. */
+export type ResultsMoveRow = {
+  company_slug: string;
+  company_name: string;
+  currency: "INR" | "USD";
+  results_slug: string;
+  /** The earnings call linked to the results filing; null when no call is. */
+  call_slug: string | null;
+  fiscal_label: string | null;
+  /** The release (dissemination) time. */
+  occurs_at: string;
+  window_key: "d1" | "d5";
+  pre_date: string | null;
+  post_date: string | null;
+  own_change_pct: Num;
+  nifty_change_pct: Num;
+  excess_pct: Num;
+  left_out_reason: "waiting" | "held_factor" | "dividend" | "no_price" | "dates_differ" | "no_index" | null;
+  attribution: string | null;
+};
+
 /** api.rate_cycles (0026): each bank's rate cycles (two or more moves in one direction). */
 export type RateCycleRow = {
   bank: "fed" | "rbi";
@@ -1033,6 +1054,7 @@ export type ApiDatabase = {
       priced_in_lenders: View<PricedInRow>;
       rate_decision_stats: View<RateDecisionStatRow>;
       rate_decision_moves: View<RateDecisionMoveRow>;
+      results_moves: View<ResultsMoveRow>;
       rate_cycles: View<RateCycleRow>;
       company_rate_cycles: View<CompanyRateCycleRow>;
       earnings_calls: View<EarningsCallRow>;
