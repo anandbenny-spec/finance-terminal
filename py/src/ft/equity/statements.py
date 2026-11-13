@@ -27,6 +27,11 @@ that as the filing's parse note (the bad figures are never stored). The checks:
   30 Sep 2026, Axis Bank 15 Oct 2025) can't be told apart from a quarter misdated as the year to date: Axis's column
   holds the quarter's figures, as its Dec 2025 revision shows. So it isn't stored (Anand, 31 Oct 2026, #114), and the
   task doesn't count it as a failed latest quarter;
+- `ytd_repeats_quarter`: a half-year, nine-month or year file whose year-to-date column repeats the quarter's P&L
+  (revenue, PBT and PAT each filed in both columns and equal) is the filing's own error (Tech Mahindra's Q3 FY26
+  filings of 16 Jan 2026 file the quarter's figures as the nine months). The year-to-date row isn't stored, with its
+  cash flow (the whole column is suspect); the quarter and instant rows are, and the parse note says so. Not a failure
+  (hold the field, not the filing), and not a Q1 file, whose quarter is its year to date;
 - `figures`: the quarter's PBT, tax and PAT are in the file (a filing whose statements can't be read isn't stored empty);
 - `ambiguous`: no column's element has two different values in one period.
 """
@@ -264,6 +269,9 @@ def _rows(per: _Periods, sec: dict, filing: Filing, face_value: Decimal | None) 
         if fmt in ("ind_as", "nbfc"):
             _minority_layout(r, per, kind, sec)
         _read(r, per, kind, sec["duration"])
+        if kind == "ytd" and _repeats_quarter(r, out):
+            notes.append(f"year-to-date column repeats the quarter's figures: no {period_kind} row")
+            continue
         if fmt == "bank" and standalone:
             _read(r, per, kind, sec["ratios"], zero_is_missing=frozenset(sec["zero_is_not_filed"]))
         is_ytd = kind == "ytd" or ytd == q
@@ -314,6 +322,14 @@ def _rows(per: _Periods, sec: dict, filing: Filing, face_value: Decimal | None) 
 
 
 PL_LINES = ("revenue", "total_income", "pbt", "tax", "pat")
+REPEAT_LINES = ("revenue", "pbt", "pat")
+
+
+def _repeats_quarter(ytd: Row, rows: list[Row]) -> bool:
+    """The year-to-date P&L equals the quarter's in revenue, PBT and PAT, each filed in both columns."""
+    q = next((x for x in rows if x.period_kind == "quarter"), None)
+    return q is not None and all(c in ytd.values and c in q.values and ytd.values[c] == q.values[c]
+                                 for c in REPEAT_LINES)
 
 
 def _filed_as_zeros(r: Row) -> bool:
