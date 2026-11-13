@@ -212,6 +212,7 @@ export async function readCompanyExists(slug: string): Promise<boolean | null> {
   try {
     return (await readCompany(db, slug)) !== null;
   } catch (error) {
+    cacheLife("failedRead");
     logFailure(`${slug} existence`, error);
     return null;
   }
@@ -228,6 +229,7 @@ export async function readCompanyName(slug: string): Promise<string | null> {
   try {
     return (await readCompany(db, slug))?.name ?? null;
   } catch (error) {
+    cacheLife("failedRead");
     logFailure(`${slug} name`, error);
     return null;
   }
@@ -243,6 +245,7 @@ export async function readCompanyMarket(slug: string): Promise<"IN" | "US" | nul
   try {
     return (await readCompany(db, slug))?.market ?? null;
   } catch (error) {
+    cacheLife("failedRead");
     logFailure(`${slug} market`, error);
     return null;
   }
@@ -319,6 +322,22 @@ export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: st
   return data;
 }
 
+/**
+ * Whether a tab came back with a part that failed on its own (#499): one of the reads loadTab catches (a null part, or the calls
+ * tab's "error" states), each null only on a failure. readTab then caches the tab on the short `failedRead` profile, so the next
+ * request reads it again. A US company reads no promoter holding or IMF forecasts (null by design), so those count for India
+ * only; the Rate decisions tab's Nifty 50 source line is null both when absent and when its read failed, so it doesn't count.
+ */
+export function tabReadFailed(data: TabData, market: "IN" | "US"): boolean {
+  const { overview, financials, valuation, calls } = data;
+  const vc = overview?.valueChain;
+  if (vc && (vc.rows === null || vc.products === null || vc.policies === null)) return true;
+  if (financials && ((market === "IN" && financials.promoter === null) || financials.segmentChanges === null || financials.policies === null)) return true;
+  if (valuation && (valuation.series === null || (market === "IN" && valuation.imf === null))) return true;
+  if (calls && (calls.guidance === null || calls.remarks === null || calls.results.state === "error" || calls.tone.state === "error")) return true;
+  return false;
+}
+
 /** A US company's tab reads (Spec 02A.1 §7). Earnings calls and rate decisions read nothing: the page says they don't apply. */
 async function loadUsTab(db: CompanyDb, slug: string, tab: TabId, data: TabData): Promise<TabData> {
   if (tab === "overview") {
@@ -343,9 +362,9 @@ async function loadUsTab(db: CompanyDb, slug: string, tab: TabId, data: TabData)
 }
 
 // The page is two cached reads and an uncached join (#328). A read that throws out of a `'use cache'` function is not stored
-// (Next 16), so a failure never outlives the database's recovery, and neither cached read needs a shorter cache profile
-// (lib/queries/cache-profiles.test.ts allows only the no-expiry ones). The header stays all-or-nothing; a failed tab read
-// costs that tab, not the page.
+// (Next 16), so a failure never outlives the database's recovery. The header stays all-or-nothing; a failed tab read
+// costs that tab, not the page. A tab returned with a part that failed on its own (tabReadFailed) is cached on the short
+// `failedRead` profile (#499); every other result keeps the no-expiry one (lib/queries/cache-profiles.test.ts).
 export async function readHeader(slug: string) {
   "use cache";
   cacheLife("minutesNoExpire");
@@ -362,7 +381,9 @@ async function readTab(slug: string, tab: TabId, call: string | undefined, marke
   cacheTag("equity", `company-${slug}`);
   const db = publicClient();
   if (!db) throw new Error("NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
-  return loadTab(db, slug, tab, call, market);
+  const data = await loadTab(db, slug, tab, call, market);
+  if (tabReadFailed(data, market)) cacheLife("failedRead");
+  return data;
 }
 
 /** The page's reads for one tab. The header (company row, actions, index names) is all-or-nothing: if it fails, or no company has the slug, the result is `{ ok: false }`. A failed tab read gives `ok: true` with that tab's data null and `tabFailed` set. */
