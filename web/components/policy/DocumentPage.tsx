@@ -98,7 +98,7 @@ function PrivateTextPage({ doc, readAt, freshness }: { doc: DocumentRow; readAt:
   return (
     <>
       <PageHeader
-        crumbs={["Company research", { label: "Company", href: `/companies/${doc.entity_slug}` }, doc.doc_type_label]}
+        crumbs={["Company research", { label: "Company", href: `/companies/${doc.entity_slug}`, prefetch: false }, doc.doc_type_label]}
         title={documentTitle(doc)}
         description={[doc.doc_type_label, date ? formatDate(date) : null].filter(Boolean).join(" · ")}
         meta={
@@ -125,7 +125,7 @@ function PrivateTextPage({ doc, readAt, freshness }: { doc: DocumentRow; readAt:
           <div className="flex flex-col gap-3">
             <StateNote kind="unavailable">{PRIVATE_TEXT_NOTE}</StateNote>
             <p className="text-data">
-              <Link href={callHref} className="text-ink-1 underline">
+              <Link href={callHref} prefetch={false} className="text-ink-1 underline">
                 See this call&apos;s AI summary and figures
               </Link>
             </p>

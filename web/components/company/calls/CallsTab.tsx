@@ -7,7 +7,7 @@
 import type { ReactNode } from "react";
 import { AIBlock } from "@/components/ai/AIBlock";
 import { KeyChanges } from "@/components/ai/KeyChanges";
-import { CallsTable, FiguresTable, GuidanceTable, callHref } from "@/components/company/calls/CallTables";
+import { CallsTable, FiguresTable, GuidanceTable } from "@/components/company/calls/CallTables";
 import { RemarksStrip } from "@/components/company/calls/RemarksStrip";
 import { TabError } from "@/components/company/TabError";
 import { Gated, fieldPolicy } from "@/components/data/Gated";
@@ -32,6 +32,7 @@ import {
   partialLine,
   summaryLists,
 } from "@/lib/equity/calls";
+import { companyHref } from "@/lib/equity/company";
 import { REMARKS_FIELD, REMARKS_HELD, newSpeakerNote, remarksBars, remarksKeyChanges, remarksSource, similarityText, wordsChangedText } from "@/lib/equity/remarks";
 import { GUIDANCE_HELD, guidanceGroups, hitRate, unattributedLine } from "@/lib/equity/guidance";
 import { PREVIEW_FEEDS } from "@/lib/feeds";
@@ -149,7 +150,7 @@ function OpeningRemarks({
   const released = policy !== null && policy.status !== "hidden";
   const row: RemarksChangeRow | null = data.remarks?.find((r) => r.call_slug === call.call_slug) ?? null;
   const speakers = row ? newSpeakerNote(row) : null;
-  const strip = data.remarks ? remarksBars(data.remarks, (slug) => callHref(companySlug, slug)) : null;
+  const strip = data.remarks ? remarksBars(data.remarks, (slug) => companyHref(companySlug, "calls", slug)) : null;
   return (
     <Panel
       title="Opening remarks"
@@ -179,8 +180,8 @@ function OpeningRemarks({
               now: remarksSource(call, row.fiscal_label),
               before: remarksSource(data.calls.find((c) => c.call_slug === row.base_call_slug), row.base_fiscal_label),
             })}
-            before={{ href: callHref(companySlug, row.base_call_slug), date: row.base_fiscal_label }}
-            now={{ href: callHref(companySlug, row.call_slug), date: row.fiscal_label }}
+            before={{ href: companyHref(companySlug, "calls", row.base_call_slug), date: row.base_fiscal_label }}
+            now={{ href: companyHref(companySlug, "calls", row.call_slug), date: row.fiscal_label }}
             limit={5}
           />
         </div>

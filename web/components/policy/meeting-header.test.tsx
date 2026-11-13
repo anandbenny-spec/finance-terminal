@@ -16,8 +16,8 @@ describe("OtherMeetings", () => {
 
   it("keeps What changed: Previous and Next both open that tab", () => {
     expect(render(<OtherMeetings bank="Fed" tab="changes" previous={previous} next={next} />)).toEqual([
-      ["/policy/fed/2026-07-29?tab=changes", "← Previous: 29 Jul 2026"],
-      ["/policy/fed/2026-11-04?tab=changes", "Next: 4 Nov 2026 →"],
+      ["/policy/fed/2026-07-29/changes", "← Previous: 29 Jul 2026"],
+      ["/policy/fed/2026-11-04/changes", "Next: 4 Nov 2026 →"],
     ]);
   });
 
@@ -31,15 +31,15 @@ describe("OtherMeetings", () => {
   it("keeps every tab, and never carries another query parameter (doc=) across", () => {
     for (const t of TABS) {
       const hrefs = render(<OtherMeetings bank="RBI" tab={t.id} previous={previous} next={next} />).map(([href]) => href);
-      const want = t.id === "overview" ? "" : `?tab=${t.id}`;
+      const want = t.id === "overview" ? "" : `/${t.id}`;
       expect(hrefs).toEqual([`/policy/rbi/2026-07-29${want}`, `/policy/rbi/2026-11-04${want}`]);
       expect(hrefs.join()).not.toContain("doc=");
     }
   });
 
   it("shows only the side that exists", () => {
-    expect(render(<OtherMeetings bank="Fed" tab="changes" previous={null} next={next} />)).toEqual([["/policy/fed/2026-11-04?tab=changes", "Next: 4 Nov 2026 →"]]);
-    expect(render(<OtherMeetings bank="Fed" tab="changes" previous={previous} next={null} />)).toEqual([["/policy/fed/2026-07-29?tab=changes", "← Previous: 29 Jul 2026"]]);
+    expect(render(<OtherMeetings bank="Fed" tab="changes" previous={null} next={next} />)).toEqual([["/policy/fed/2026-11-04/changes", "Next: 4 Nov 2026 →"]]);
+    expect(render(<OtherMeetings bank="Fed" tab="changes" previous={previous} next={null} />)).toEqual([["/policy/fed/2026-07-29/changes", "← Previous: 29 Jul 2026"]]);
     expect(render(<OtherMeetings bank="Fed" tab="changes" previous={null} next={null} />)).toEqual([]);
   });
 });

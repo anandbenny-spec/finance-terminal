@@ -71,13 +71,24 @@ export const targetSelector = (stop: TourStop): string => `[data-tour="${stop.id
 
 export type TourState = { active: false } | { active: true; index: number; missing: boolean };
 
-export type TourAction = { type: "start" } | { type: "next" } | { type: "back" } | { type: "end" } | { type: "missing" };
+export type TourAction =
+  | { type: "start" }
+  | { type: "next" }
+  | { type: "back" }
+  | { type: "end" }
+  | { type: "missing" }
+  /** Picks up a stop the visitor was on before a full page load (see "the stored stop" below); never from a running tour. */
+  | { type: "resume"; index: number };
 
 export const TOUR_IDLE: TourState = { active: false };
 
-/** Opt-in: only `start` begins a tour. Next on the last stop ends it; Back on the first stays put. */
+/** Opt-in: only `start` begins a tour (and `resume` continues one the visitor began). Next on the last stop ends it; Back on the first stays put. */
 export function tourReducer(state: TourState, action: TourAction, count: number = TOUR_STOPS.length): TourState {
   if (action.type === "start") return { active: true, index: 0, missing: false };
+  if (action.type === "resume") {
+    const inRange = Number.isInteger(action.index) && action.index >= 0 && action.index < count;
+    return !state.active && inRange ? { active: true, index: action.index, missing: false } : state;
+  }
   if (!state.active) return state;
   switch (action.type) {
     case "next":
@@ -88,6 +99,96 @@ export function tourReducer(state: TourState, action: TourAction, count: number 
       return { ...state, missing: true };
     case "end":
       return TOUR_IDLE;
+  }
+}
+
+// ---- the stored stop (#466) ----
+//
+// A full page load remounts the shell, so the tour's state would start again at TOUR_IDLE and the tour would vanish (it
+// did on production on 12 Nov 2026, when a company page's render failed and Next fell back to a full load). The tour
+// therefore keeps its stop in sessionStorage, which belongs to one tab and one visit, and the provider resumes it once, on
+// mount. It resumes only a fresh stop on that stop's own page; anything else is dropped. Only the stop is stored, never
+// the "target missing" note: a reload during the note resumes the stop, which then waits for its target again.
+// Storage can be absent or throw (blocked storage, some private modes): every read and write is guarded, and a failure
+// leaves the tour working exactly as it did without storage.
+
+/** The one sessionStorage key. */
+export const TOUR_STORAGE_KEY = "ft.tour";
+
+/** A stored stop older than this isn't resumed, so a later visit to the site never continues an old tour. */
+export const TOUR_RESUME_MS = 10 * 60 * 1000;
+
+/** The part of `Storage` the tour uses: sessionStorage in the browser, a stand-in in tests. */
+export type TourStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+/** The tab's sessionStorage, or null where there is none or the browser refuses access to it. */
+export function tourStorage(): TourStore | null {
+  try {
+    return globalThis.sessionStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** What is stored: a version, the stop's index and the moment (epoch ms) the visitor reached it. */
+export function encodeTourStop(index: number, now: number): string {
+  return JSON.stringify({ v: 1, index, at: now });
+}
+
+/**
+ * The state to resume from a stored value, or TOUR_IDLE. All of these must hold: the tour is published (`shown`); the
+ * value parses, with `v` 1; `index` is a whole number inside TOUR_STOPS; `at` is a time no later than `now` and at most
+ * TOUR_RESUME_MS before it; and the page is at that stop's own route (`atRoute`).
+ */
+export function resumeTour(raw: string | null, now: number, pathname: string, search: string, shown: boolean): TourState {
+  if (!shown || raw === null) return TOUR_IDLE;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return TOUR_IDLE;
+  }
+  if (typeof value !== "object" || value === null) return TOUR_IDLE;
+  const { v, index, at } = value as Record<string, unknown>;
+  if (v !== 1 || typeof index !== "number" || !Number.isInteger(index) || index < 0 || index >= TOUR_STOPS.length) return TOUR_IDLE;
+  if (typeof at !== "number" || !Number.isFinite(at) || at > now || now - at > TOUR_RESUME_MS) return TOUR_IDLE;
+  return atRoute(TOUR_STOPS[index].route, pathname, search) ? { active: true, index, missing: false } : TOUR_IDLE;
+}
+
+/** Stores the stop the visitor has reached. A storage failure is ignored. */
+export function saveTourStop(store: TourStore | null, index: number, now: number): void {
+  try {
+    store?.setItem(TOUR_STORAGE_KEY, encodeTourStop(index, now));
+  } catch {
+    // blocked or full storage: the tour works without it
+  }
+}
+
+/** Forgets the stored stop. A storage failure is ignored. */
+export function clearTourStop(store: TourStore | null): void {
+  try {
+    store?.removeItem(TOUR_STORAGE_KEY);
+  } catch {
+    // blocked storage: nothing was stored
+  }
+}
+
+/** Keeps the stored stop in step with a move: a running tour saves its stop, an idle one clears the key. */
+export function persistTour(store: TourStore | null, state: TourState, now: number): void {
+  if (state.active) saveTourStop(store, state.index, now);
+  else clearTourStop(store);
+}
+
+/** Reads the stored stop once (on mount): the state to resume, else TOUR_IDLE with the key cleared. Never throws. */
+export function loadTourStop(store: TourStore | null, now: number, pathname: string, search: string, shown: boolean): TourState {
+  try {
+    const raw = store?.getItem(TOUR_STORAGE_KEY) ?? null;
+    if (raw === null) return TOUR_IDLE;
+    const state = resumeTour(raw, now, pathname, search, shown);
+    if (!state.active) clearTourStop(store);
+    return state;
+  } catch {
+    return TOUR_IDLE;
   }
 }
 

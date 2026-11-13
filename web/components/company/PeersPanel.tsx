@@ -59,7 +59,7 @@ export function PeersPanel({
             Median of the other members{r.peer_count !== null ? ` (${formatCount(r.peer_count)})` : ""}
           </span>
         ) : (
-          <Link href={`/companies/${r.peer_slug}`} className="text-ink-1 underline hover:text-ink-2">
+          <Link href={`/companies/${r.peer_slug}`} prefetch={false} className="text-ink-1 underline hover:text-ink-2">
             {r.peer_short_name ?? r.peer_name}
           </Link>
         ),

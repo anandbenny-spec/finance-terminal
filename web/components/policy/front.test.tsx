@@ -149,8 +149,8 @@ describe("the front page (/)", () => {
     expect(t).toContain("Fed monitoring sentence.");
     expect(t).not.toContain("A fifth changed sentence.");
     expect(t.match(/2 other sentences changed · See all changes →/g)).toHaveLength(2);
-    expect(out).toContain('href="/policy/fed/2026-09-17?tab=changes"');
-    expect(out).toContain('href="/policy/rbi/2026-10-07?tab=changes"');
+    expect(out).toContain('href="/policy/fed/2026-09-17/changes"');
+    expect(out).toContain('href="/policy/rbi/2026-10-07/changes"');
     expect(out).toContain("border-t-series-1");
     expect(out).toContain("border-t-series-2");
   });

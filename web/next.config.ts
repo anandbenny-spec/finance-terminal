@@ -27,6 +27,11 @@ const nextConfig: NextConfig = {
   // A `tab` that isn't one, or `overview`, needs no rule: /companies/:slug ignores its query and shows the Overview, and a
   // redirect to itself would loop. A named group in a `has` value is used in the destination (`:tab`, `:call`) and then
   // dropped from the query.
+  //
+  // A meeting's tab and the Governor's statement moved from `?tab=` and `?doc=governor` to the path the same day
+  // (lib/policy/decisions.ts `meetingTabHref`; R05-9a). The date is matched as a date so /policy/fed/latest?tab=changes still
+  // reaches its own route, which sends the reader on. The Governor's statement comes first (RBI only); `overview` and a `tab`
+  // that isn't one need no rule: the bare date ignores its query and shows the Overview, and a redirect to itself would loop.
   async redirects() {
     const policyDay = ["fed", "rbi"].map((bank) => ({
       source: "/workspace/policy-day",
@@ -40,8 +45,17 @@ const nextConfig: NextConfig = {
       destination,
       permanent: false,
     });
+    const meetingDate = ":date(\\d{4}-\\d{2}-\\d{2})";
+    const meeting = (source: string, has: { key: string; value: string }[], destination: string) => ({
+      source,
+      has: has.map((h) => ({ type: "query" as const, ...h })),
+      destination,
+      permanent: false,
+    });
     return [
       ...policyDay,
+      meeting(`/policy/rbi/${meetingDate}`, [{ key: "tab", value: "statement" }, { key: "doc", value: "governor" }], "/policy/rbi/:date/statement/governor"),
+      meeting(`/policy/:bank(fed|rbi)/${meetingDate}`, [{ key: "tab", value: "(?<tab>changes|statement|minutes|press|reaction)" }], "/policy/:bank/:date/:tab"),
       company([{ key: "tab", value: "financials" }, { key: "basis", value: "standalone" }], "/companies/:slug/financials/standalone"),
       company([{ key: "tab", value: "rate-decisions" }, { key: "window", value: "d5" }], "/companies/:slug/rate-decisions/d5"),
       company([{ key: "tab", value: "calls" }, { key: "call", value: "(?<call>[a-z0-9-]{1,40})" }], "/companies/:slug/calls/:call"),
