@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { AIBlock } from "@/components/ai/AIBlock";
 import { KeyChanges } from "@/components/ai/KeyChanges";
 import { CallsTable, FiguresTable, GuidanceTable } from "@/components/company/calls/CallTables";
+import { ResultsMoveTable } from "@/components/company/calls/ResultsMoveTable";
 import { RemarksStrip } from "@/components/company/calls/RemarksStrip";
 import { TonePanel } from "@/components/company/calls/TonePanel";
 import { TabError } from "@/components/company/TabError";
@@ -33,6 +34,17 @@ import {
   partialLine,
   summaryLists,
 } from "@/lib/equity/calls";
+import {
+  NO_RESULTS_LINK,
+  RESULTS_FIELD,
+  RESULTS_NOT_A_FORECAST,
+  RESULTS_TASKS,
+  leftOutLine,
+  moveLines,
+  releaseNote,
+  resultsSources,
+  rowsOfCall,
+} from "@/lib/equity/resultsMoves";
 import { companyHref } from "@/lib/equity/company";
 import { REMARKS_FIELD, REMARKS_HELD, newSpeakerNote, remarksBars, remarksKeyChanges, remarksSource, similarityText, wordsChangedText } from "@/lib/equity/remarks";
 import { GUIDANCE_HELD, guidanceGroups, hitRate, unattributedLine } from "@/lib/equity/guidance";
@@ -127,6 +139,44 @@ function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<O
           {groups.scored.length > 0 && <GuidanceTable rows={groups.scored} caption={`${companyName}: guidance targets scored as delivered or missed`} />}
           {groups.other.length > 0 && <GuidanceTable rows={groups.other} caption={`${companyName}: guidance targets pending or not scored`} />}
           {groups.scored.length === 0 && groups.other.length === 0 && <Note>No guidance targets are published for this company yet.</Note>}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * Company › Results and the first move (#471; Spec 02B §5.12): how the stock moved around this call's results, against the
+ * Nifty 50. Nothing at all while the field is hidden, so the tab is as it was; a failed read holds back only this panel.
+ */
+function ResultsMoves({ data, call, freshness, now }: { data: NonNullable<Ok["calls"]>; call: EarningsCallRow; freshness: TaskFreshnessRow[] | null; now: string }) {
+  const policy = fieldPolicy(data.policies, RESULTS_FIELD);
+  if (!policy || policy.status === "hidden") return null;
+  const rows = data.results.state === "ok" ? rowsOfCall(data.results.rows, call.call_slug) : [];
+  const lines = moveLines(rows);
+  const out = leftOutLine(lines);
+  const released = rows[0]?.occurs_at ?? null;
+  return (
+    <Panel
+      title="Results and the first move"
+      titleId="panel-call-results-move"
+      subtitle={`How did the stock move after the ${call.fiscal_label} results, against the Nifty 50?`}
+      qualifier={policy.status === "labelled" && policy.label ? <Qualifier>{policy.label}</Qualifier> : undefined}
+      variant="flush"
+      footer={<Foot sources={resultsSources(rows)} tasks={RESULTS_TASKS} dataTo={released ? dateInZone(released, "Asia/Kolkata") : null} freshness={freshness} now={now} />}
+    >
+      {data.results.state === "error" ? (
+        <Note kind="error">Couldn&apos;t load this panel. Try again.</Note>
+      ) : lines.length === 0 ? (
+        <Note>{NO_RESULTS_LINK}</Note>
+      ) : (
+        <>
+          <ResultsMoveTable lines={lines} caption={`${call.fiscal_label}: the stock's move after the results, against the Nifty 50`} />
+          <div className="flex flex-col gap-1 border-t border-line px-3 py-2 text-meta text-ink-2">
+            <p>{releaseNote(rows)}</p>
+            {out && <p>{out}</p>}
+            <p>{RESULTS_NOT_A_FORECAST}. Price moves exclude dividends; the excess is the company&apos;s move minus the Nifty 50&apos;s over the same closes.</p>
+          </div>
         </>
       )}
     </Panel>
@@ -325,6 +375,8 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
           )}
         </>
       )}
+
+      <ResultsMoves data={calls} call={call} freshness={freshness} now={now} />
 
       <GuidanceRecord data={calls} name={name} companyName={company.name} foot={foot(call)} />
     </div>
