@@ -91,7 +91,7 @@ export function ValueChainPanel({
               Official source ↗
             </a>
           )}
-          <Link href={valueChainHref(slug)} className="text-ink-1 underline hover:text-ink-2">
+          <Link href={valueChainHref(slug)} prefetch={false} className="text-ink-1 underline hover:text-ink-2">
             Years, group and peers ›
           </Link>
         </p>

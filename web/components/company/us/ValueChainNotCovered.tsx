@@ -23,14 +23,14 @@ export function ValueChainNotCovered({
   return (
     <>
       <PageHeader
-        crumbs={["Company research", { label: "Screener", href: "/screener?market=us" }, { label: name, href: `/companies/${company.slug}` }, "Value chain"]}
+        crumbs={["Company research", { label: "Screener", href: "/screener?market=us" }, { label: name, href: `/companies/${company.slug}`, prefetch: false }, "Value chain"]}
         title={`${company.name}: value chain`}
         description="Where do the company's inputs come from, how does it reach its customers, and how much of that runs through its own group?"
         meta={<SourceLine lines={[SEC_EDGAR, YAHOO]} />}
       />
       <CompanyHeader company={company} day={dayChange(company, actions)} indexNames={indexNames} />
       <p className="mt-4 text-data">
-        <Link href={`/companies/${company.slug}`} className="text-ink-1 underline hover:text-ink-2">
+        <Link href={`/companies/${company.slug}`} prefetch={false} className="text-ink-1 underline hover:text-ink-2">
           ‹ Back to {name}
         </Link>
       </p>

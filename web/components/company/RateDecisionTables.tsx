@@ -150,7 +150,7 @@ export function RateSectorTable({ rows, caption }: { rows: SectorRow[]; caption:
               {r.group.members.map((m, i) => (
                 <span key={m.slug}>
                   {i > 0 && ", "}
-                  <Link href={companyHref(m.slug, "rate-decisions")} className="underline hover:text-ink-1">
+                  <Link href={companyHref(m.slug, "rate-decisions")} prefetch={false} className="underline hover:text-ink-1">
                     {m.name}
                   </Link>
                 </span>

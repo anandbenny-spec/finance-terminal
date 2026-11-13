@@ -46,6 +46,7 @@ function WindowToggle({ slug, window }: { slug: string; window: WindowKey }) {
           <Link
             key={w.id}
             href={rateHref(slug, w.id)}
+            prefetch={false}
             aria-current={w.id === window ? "page" : undefined}
             title={w.note}
             className="border-r border-line px-2.5 py-1 text-meta text-ink-2 no-underline last:border-r-0 hover:text-ink-1 aria-[current=page]:bg-active aria-[current=page]:text-ink-1"
