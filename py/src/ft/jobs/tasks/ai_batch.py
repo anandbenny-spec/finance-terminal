@@ -166,7 +166,8 @@ from ft.policy import rbi_resolution
 # plus three rules (under 60 words; quotations fitted to the sentence; no bullet for a date, a title or attendance), on Sonnet.
 # v10: v9 plus a rule against words written only to hold a citation, on Sonnet at effort medium, with `ENDS_FROM`'s check.
 # v11 (Anand's decision of 13 Nov 2026, by 07:18 IST): the structured route (summaries.DIFF_JSON_FROM, check_diff_json).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v11", "stance_extraction": "v2",
+# v12: v11 plus a rule, with the unquoted-copy and side-by-side checks (summaries.DIFF_STRICT_FROM).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v12", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
@@ -253,7 +254,7 @@ class Work:
                     answer = reply.json()
                 except ValueError:
                     answer = None
-                return summaries.check_diff_json(answer, req.sources, changed)
+                return summaries.check_diff_json(answer, req.sources, changed, version=req.prompt.version)
             drop_copies = _vnum(req.prompt.version) >= COPIES_FROM      # a pinned v1-v3 reply is checked as before
             check_quotes = _vnum(req.prompt.version) >= QUOTES_FROM     # a pinned v1-v6 reply, likewise
             strict = _vnum(req.prompt.version) >= STRICT_COPIES_FROM    # a pinned v4-v7 reply keeps the looser rule

@@ -30,6 +30,8 @@ passages they cite.
 - From v11 on (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST): the structured route (`DIFF_JSON_FROM`). The reply
   is the schema's JSON, each bullet its text and its quotes by document; `check_diff_json` finds each quote in that
   document's changed sentences, cites them, and gives the bullet the checks above (figures, quotations, repeats, ends).
+- From v12 on (#445, round 11; `DIFF_STRICT_FROM`): also no run of a statement's words outside quotation marks, and no two
+  quotations side by side.
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
 (`policy.ai_batch`). The database checks the published output's citations again at commit (Architecture 01 §1.4).
@@ -40,6 +42,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
+from itertools import pairwise
 
 from ft.ai.citations import map_api_citation
 from ft.ai.client import SONNET, Prompt, Reply, Request, Source, TextPart, load_schema
@@ -49,17 +52,25 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # round 6; Anand's decision of 12 Nov 2026, 22:36 IST): the judge failed Haiku's round 5 (v6) on 7 of 10 targets, mostly on
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
-DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET}   # v8: v7's text, marking the
-# copies rule's revision (round 7); v9: v8 plus three rules (round 8); v10: v9 plus a rule on citation carriers (round 9);
-# v11: the json route (round 10).
+DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET}   # v8: v7's
+# text, marking the copies rule's revision (round 7); v9: v8 plus three rules (round 8); v10: v9 plus a rule on citation
+# carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with two more checks (round 11).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
-DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium"}
+DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
 DIFF_JSON_FROM = 11
 DIFF_MAX_QUOTES = 6                    # quotes a bullet may rest on
+# From v12 (#445, round 11; tightenings): a bullet fails when it copies UNQUOTED_MIN_WORDS or more of a statement's words in a
+# row outside quotation marks (at least COPY_PLAIN_WORDS of them ordinary words: members are named plainly), or sets two quotations side
+# by side with nothing of its own between them (`unquoted_copy_problem`, `side_by_side_problem`). Round 10 (v11 on dev):
+# "…were of the view that the stance be retained at neutral." (2530), "…will slow the pace of decline of its securities
+# holdings" (2533), "at least at the current pace" "over coming months" (2529).
+DIFF_STRICT_FROM = 12
+UNQUOTED_MIN_WORDS = 8
+COPY_PLAIN_WORDS = 5                   # of which at least this many aren't names, initials or capitalised words
 
 
 def diff_json(version: str) -> bool:
@@ -315,7 +326,8 @@ REASON_PHRASES: dict[str, tuple[str, ...]] = {
     "numbers": (r"numbers not in its cited passages",),
     "format": (r"text outside the bullets", r"no bullets \(each bullet", r"\d+ bullets, not \d+ to \d+",
                r"an unclosed quotation mark", r"repeats its own words", r"doesn't end as a sentence ends",
-               r"the reply isn't the schema's JSON", r"isn't the schema's object", r"\d+ quotes, not 1 to \d+"),
+               r"the reply isn't the schema's JSON", r"isn't the schema's object", r"\d+ quotes, not 1 to \d+",
+               r"copies a statement's words without quotation marks", r"two quotations side by side"),
 }
 
 
@@ -755,17 +767,21 @@ def _find_in_changed(text: str, quote: str, spans: list[tuple[int, int]]) -> lis
     return sorted(found)
 
 
-def check_diff_json(answer, sources: tuple[Source, ...], changed: dict[int, list[tuple[int, int]]]) -> Checked:
+def check_diff_json(answer, sources: tuple[Source, ...], changed: dict[int, list[tuple[int, int]]], *,
+                    version: str | None = None) -> Checked:
     """Check a v11-on statement_diff_summary reply (`answer`: the reply's JSON) against our copies of the two documents
     (`sources`: document 1, document 2) and their changed sentences (`changed`, by document id). Each bullet's quotes are
     found in its document's changed sentences, which become its citations; then the bullet gets the citations route's
     checks from v10: only figures and quotations from those sentences, no repeats, and it ends as a sentence ends. The
-    same `Checked` as `check`'s, so a published output and its citations read the same on either route."""
+    same `Checked` as `check`'s, so a published output and its citations read the same on either route. `version`: the
+    prompt version that asked for it; from v12 (`DIFF_STRICT_FROM`) a bullet also gets the unquoted-copy and side-by-side
+    checks, and an earlier version, or none, is checked as v11 was."""
     task, mapping = "statement_diff_summary", Counter()
+    strict = version is not None and int(version.lstrip("v")) >= DIFF_STRICT_FROM
     rows = answer.get("bullets") if isinstance(answer, dict) else None
     if not isinstance(rows, list):
         return Checked(task, [], ["the reply isn't the schema's JSON ({bullets: [...]})"], mapping)
-    bullets = [_diff_json_bullet(raw, sources, changed, mapping) for raw in rows]
+    bullets = [_diff_json_bullet(raw, sources, changed, mapping, strict=strict) for raw in rows]
     problems = []
     lo, hi = BULLETS[task]
     if not lo <= len(bullets) <= hi:
@@ -773,7 +789,8 @@ def check_diff_json(answer, sources: tuple[Source, ...], changed: dict[int, list
     return Checked(task, bullets, problems, mapping)
 
 
-def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[tuple[int, int]]], mapping: Counter) -> Bullet:
+def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[tuple[int, int]]], mapping: Counter, *,
+                      strict: bool = False) -> Bullet:
     if not isinstance(raw, dict) or not isinstance(raw.get("text"), str) or not isinstance(raw.get("quotes"), list):
         b = Bullet("")
         b.problem = "isn't the schema's object"
@@ -806,7 +823,45 @@ def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[
         b.problem = "numbers not in its cited passages: " + ", ".join(extra)
     else:
         b.problem = quote_problem(text, passages) or repeat_problem(text) or end_problem(text)
+    if b.problem is None and strict:
+        b.problem = side_by_side_problem(text) or unquoted_copy_problem(text, [src.text for src in sources])
     return b
+
+
+_NAME_WORDS = {"and", "dr", "prof", "shri", "smt", "mr", "ms"}     # with capitalised words and initials: a run of names
+
+
+def unquoted_copy_problem(text: str, documents: list[str], min_words: int = UNQUOTED_MIN_WORDS) -> str | None:
+    """Why a bullet copies a statement's words outside quotation marks (see `DIFF_STRICT_FROM`), or None. Words as `_WORD`
+    reads them in `match_form`, case aside; a quotation splits the text, so no run crosses one."""
+    t = match_form(text)
+    if t.count('"') % 2:
+        return None                                       # `quote_problem` has already failed it
+    grams: set[tuple[str, ...]] = set()
+    for d in documents:
+        words = _WORD.findall(match_form(d).casefold())
+        grams.update(tuple(words[i:i + min_words]) for i in range(len(words) - min_words + 1))
+    for piece in _QUOTED.split(t)[::2]:                    # the text outside quotation marks
+        raw = _WORD.findall(piece)
+        low = [w.casefold() for w in raw]
+        for i in range(len(low) - min_words + 1):
+            run = range(i, i + min_words)
+            plain = sum(not (raw[j][0].isupper() or low[j] in _NAME_WORDS) for j in run)
+            if tuple(low[i:i + min_words]) in grams and plain >= COPY_PLAIN_WORDS:
+                return f"copies a statement's words without quotation marks: \"{' '.join(raw[i:i + min_words])}\""
+    return None
+
+
+def side_by_side_problem(text: str) -> str | None:
+    """Why a bullet sets two quotations side by side (nothing of its own but spaces or punctuation between them), or None."""
+    t = match_form(text)
+    if t.count('"') % 2:
+        return None
+    marks = [m.span() for m in re.finditer(r'"[^"]*"', t)]
+    for (s1, e1), (s2, e2) in pairwise(marks):
+        if not _WORD.search(t[e1:s2]):
+            return f"two quotations side by side: {t[s1:e1][:60]} {t[s2:e2][:60]}"
+    return None
 
 
 def retry_note(c: Checked) -> str:

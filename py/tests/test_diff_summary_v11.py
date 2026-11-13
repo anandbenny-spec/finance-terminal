@@ -12,7 +12,7 @@ from test_ai_summaries import NEW, OLD, reply
 
 from ft.ai import summaries
 from ft.ai.client import SONNET, load_prompt, load_schema
-from ft.ai.summaries import check_diff_json
+from ft.ai.summaries import check_diff_json, side_by_side_problem, unquoted_copy_problem
 from ft.engines.document.diff import diff_texts
 from ft.jobs.tasks.ai_batch import PROMPT_VERSION, Work
 from ft.quality import reasons
@@ -42,8 +42,8 @@ def spans(b):
 
 
 # ---------------------------------------------------------------------------------------------- the request
-def test_v11_takes_the_json_route_on_sonnet_at_effort_medium_and_is_current():
-    assert PROMPT_VERSION["statement_diff_summary"] == "v11" and summaries.DIFF_JSON_FROM == 11
+def test_v11_takes_the_json_route_on_sonnet_at_effort_medium():
+    assert summaries.DIFF_JSON_FROM == 11
     assert (REQ.spec.route, REQ.model_id, REQ.spec.effort) == ("json", SONNET, "medium")
     assert REQ.schema == load_schema("statement_diff_summary", "v11")
     params = REQ.params(batch=True)
@@ -175,3 +175,72 @@ def test_the_fakes_default_diff_answer_passes():
     docs = [(s.title, s.text) for s in REQ.sources]
     assert check_diff_json(good_diff_json(docs), REQ.sources, CHANGED).ok
     assert not check_diff_json(good_diff_json(docs, "uncited"), REQ.sources, CHANGED).ok
+
+
+# ---------------------------------------------------------------------------------------------- v12 (round 11)
+V12 = load_prompt("statement_diff_summary", "v12")
+EVIDENCE_RULE = ("- Give a quote for everything the text says, even a change it mentions in passing: the quotes are the "
+                 "bullet's evidence, and the text says nothing they don't.")
+
+
+def check12(*rows):
+    return check_diff_json({"bullets": list(rows)}, REQ.sources, CHANGED, version="v12")
+
+
+def test_v12_is_v11_plus_the_evidence_rule_with_v11s_schema_and_is_current():
+    """Round 10 (v11 on dev): a dissent stated with no quote behind it (dev's 2535)."""
+    eleven, twelve = V11.text.splitlines(), V12.text.splitlines()
+    assert [x for x in twelve if x not in eleven] == [EVIDENCE_RULE]
+    assert [x for x in twelve if x != EVIDENCE_RULE] == eleven
+    assert twelve[twelve.index("- Give each bullet at least one quote, and at most six.") + 1] == EVIDENCE_RULE
+    assert load_schema("statement_diff_summary", "v12") == load_schema("statement_diff_summary", "v11")
+    req = summaries.diff_summary_request(NEW, OLD, D.segments, V12)
+    assert (req.spec.route, req.model_id, req.spec.effort) == ("json", SONNET, "medium")
+    assert PROMPT_VERSION["statement_diff_summary"] == "v12" and summaries.DIFF_STRICT_FROM == 12
+
+
+DOC = ("Two members - Dr. Nagesh Kumar and Prof. Ram Singh - were of the view that the stance be retained at neutral. "
+       "Beginning in April, the Committee will slow the pace of decline of its securities holdings by reducing the cap.")
+
+
+@pytest.mark.parametrize("text, run", [
+    ("Two members, Dr. Nagesh Kumar and Prof. Ram Singh, were of the view that the stance be retained at neutral.",
+     "Prof Ram Singh were of the view that"),                                   # round 10's 2530
+    ("The Committee will slow the pace of decline of its securities holdings, reducing the cap.",
+     "The Committee will slow the pace of decline"),                            # round 10's 2533
+])
+def test_unquoted_copy_problem_finds_eight_of_a_statements_words_in_a_row(text, run):
+    assert unquoted_copy_problem(text, [DOC]) == f'copies a statement\'s words without quotation marks: "{run}"'
+
+
+@pytest.mark.parametrize("text", [
+    "Two members, Dr. Nagesh Kumar and Prof. Ram Singh, dissented.",            # names are written plainly
+    'Two members wanted the stance "retained at neutral" rather than changed.',
+    'The Committee "will slow the pace of decline of its securities holdings" from April.',   # quoted, so not a copy
+    "The Committee will slow the pace of its reductions.",                       # seven words in a row at most
+])
+def test_unquoted_copy_problem_lets_names_quotations_and_short_runs_pass(text):
+    assert unquoted_copy_problem(text, [DOC]) is None
+
+
+@pytest.mark.parametrize("text, bad", [
+    ('It will "increase its holdings" "at least at the current pace" "over coming months".', True),   # round 10's 2529
+    ('It listed "a", "b" and "c".', True),
+    ('Growth changed from "moderate" to "solid".', False),
+    ('It will "increase its holdings" of them "at least at the current pace".', False),
+])
+def test_side_by_side_problem(text, bad):
+    assert (side_by_side_problem(text) is not None) is bad
+
+
+def test_from_v12_the_two_checks_drop_a_bullet_and_v11_is_checked_as_it_was():
+    lifted = {"text": "The new statement says recent indicators suggest that growth of economic activity has moderated further.",
+              "quotes": [{"document": "new", "text": "has moderated further"}]}
+    assert check(lifted, DECISION).ok                                             # v11: as it ran
+    c = check12(lifted, DECISION)
+    assert c.bullets[0].problem.startswith("copies a statement's words without quotation marks: ")
+    assert reasons.categorise("rejected", "; ".join(c.reasons())) == ("format", True)
+    side = {"text": 'Growth "has moderated" "further".', "quotes": [{"document": "new", "text": "has moderated further"}]}
+    assert check(side, DECISION).ok
+    assert check12(side, DECISION).bullets[0].problem.startswith("two quotations side by side: ")
+    assert check12(GROWTH, DECISION).ok                                           # round 10's clean shape passes
