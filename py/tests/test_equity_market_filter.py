@@ -38,7 +38,7 @@ MARKERS = (US_SLUG, US_TICKER, US_NAME, str(US_ID), US_GROUP, US_GROUP_LABEL)
 # Every India equity task (Plan 05 §0.5 N2's list, with 0038's segment changes), and valuation_inputs, which checks India's
 # peer groups' Damodaran industries against betaIndia (a US group's industry is a US one).
 INDIA_TASKS = ["equity.universe", "equity.valuation_inputs", "equity.prices", "equity.filings", "equity.corporate_actions", "equity.statements",
-               "equity.shareholding", "equity.brsr", "equity.related_parties", "equity.segment_changes",
+               "equity.shareholding", "equity.brsr", "equity.related_parties", "equity.segment_changes", "equity.kpi_tables",
                "equity.metrics", "equity.beta", "equity.valuation", "equity.snapshot", "equity.rate_reactions",
                "equity.results_reactions", "equity.call_transcripts", "equity.call_text", "equity.calls_ai",
                "equity.guidance_scores", "equity.call_scores"]

@@ -7,6 +7,7 @@ import { cacheLife, cacheTag } from "next/cache";
 import { selectCall } from "@/lib/equity/calls";
 import { RESULTS_FIELD } from "@/lib/equity/resultsMoves";
 import { guidanceFiguresOpen, unattributedAll } from "@/lib/equity/guidance";
+import { REMARKS_FIELD } from "@/lib/equity/remarks";
 import { toneOpen } from "@/lib/equity/tone";
 import type { AiCitationRow, ResultsMoveRow, AiOutputRow, ApiDatabase, CallFigureRow, CallToneRow, CallGuidanceRow, RemarksChangeRow, CitationPageRow, GuidanceHitRateRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
 import { readFieldPolicy } from "@/lib/queries/policy";
@@ -151,21 +152,6 @@ export async function readCallTone(db: Db, slug: string): Promise<CallToneRow[]>
   );
 }
 
-/** Reads the tone only when the field is shown or labelled; a failed read is logged and holds back only the panel. No prefetch: the evidence is for the selected call's output only. */
-async function readTone(db: Db, slug: string, call: string, policies: readonly FieldPolicyRow[]): Promise<ToneRead> {
-  if (!toneOpen(policies)) return { state: "hidden" };
-  try {
-    const rows = await readCallTone(db, slug);
-    const id = rows.find((r) => r.call_slug === call)?.ai_output_id ?? null;
-    if (id === null) return { state: "ok", rows, output: null, citations: [], pages: [] };
-    const [output, citations, pages] = await Promise.all([readOutput(db, id), readOutputCitations(db, [id]), readOutputPages(db, [id])]);
-    return { state: "ok", rows, output, citations, pages };
-  } catch (error) {
-    console.error(`[company] ${slug} tone read failed: ${error instanceof Error ? error.message : String(error)}`);
-    return { state: "error" };
-  }
-}
-
 export async function readCallFigures(db: Db, slug: string, call: string): Promise<CallFigureRow[]> {
   return readAll<CallFigureRow>("api.call_figures", (from, to) =>
     db
@@ -179,13 +165,6 @@ export async function readCallFigures(db: Db, slug: string, call: string): Promi
       .order("citation_no")
       .range(from, to),
   );
-}
-
-async function readOutput(db: Db, id: number): Promise<AiOutputRow | null> {
-  const rows = await readAll<AiOutputRow>(`api.ai_outputs ${id}`, (from, to) =>
-    db.from("ai_outputs").select(OUTPUT_COLUMNS, { count: "exact" }).eq("id", id).order("id").range(from, to),
-  );
-  return rows[0] ?? null;
 }
 
 async function readOutputCitations(db: Db, ids: readonly number[]): Promise<AiCitationRow[]> {
@@ -214,12 +193,27 @@ async function readOutputPages(db: Db, ids: readonly number[]): Promise<Citation
   );
 }
 
+/** A field the panels show (CallsTab's rule): it has a row and its status isn't hidden. No row means hidden (fails closed). */
+function open(policies: readonly FieldPolicyRow[], key: string): boolean {
+  const p = policies.find((x) => x.field_key === key);
+  return p !== undefined && p.status !== "hidden";
+}
+
+/** The Guidance record panel shows rows only when the figures and their outcomes are both released (CallsTab's GuidanceRecord); otherwise it says "held back" and reads nothing (#516). */
+export const GUIDANCE_OUTCOME_FIELD = "equity.guidance_outcome";
+export function guidanceRecordOpen(policies: readonly FieldPolicyRow[]): boolean {
+  return guidanceFiguresOpen(policies) && open(policies, GUIDANCE_OUTCOME_FIELD);
+}
+
+/** The record while it is held back: nothing read, nothing to show (the panel's held note doesn't use it). */
+const HELD_RECORD: GuidanceRecordReads = { rows: [], rate: null, citations: [], pages: [] };
+
 /**
- * The company's guidance rows and hit rate with their quotes' citations and pages (#267). Every list is read whole against the exact
- * count. The count left out is not read here: api.earnings_latest builds every call of every company to give it (#329), so
- * readCallsTab derives it from the calls it already holds (#342).
+ * The company's guidance rows and hit rate (#267). Every list is read whole against the exact count. Their quotes' citations and pages
+ * are read by readCallsTab with the selected call's (#516). The count left out is not read here: api.earnings_latest builds every call
+ * of every company to give it (#329), so readCallsTab derives it from the calls it already holds (#342).
  */
-export async function readGuidanceRecord(db: Db, slug: string): Promise<GuidanceRecordReads> {
+export async function readGuidanceRecord(db: Db, slug: string): Promise<Pick<GuidanceRecordReads, "rows" | "rate">> {
   const [rows, rates] = await Promise.all([
     readAll<CallGuidanceRow>("api.call_guidance", (from, to) =>
       db
@@ -242,29 +236,40 @@ export async function readGuidanceRecord(db: Db, slug: string): Promise<Guidance
         .range(from, to),
     ),
   ]);
-  const ids = [...new Set(rows.map((r) => r.ai_output_id))].sort((a, b) => a - b);
-  const [citations, pages] = await Promise.all([readOutputCitations(db, ids), readOutputPages(db, ids)]);
-  return { rows, rate: rates[0] ?? null, citations, pages };
+  return { rows, rate: rates[0] ?? null };
 }
 
-/** The tab's reads: the company's calls, the selected one's summary, figures, citations and pages (§13.7). */
+/** Logs a panel's failed read and gives the value that holds back only that panel (#328). */
+function failed<T>(slug: string, what: string, value: T): (error: unknown) => T {
+  return (error: unknown) => {
+    console.error(`[company] ${slug} ${what} read failed: ${error instanceof Error ? error.message : String(error)}`);
+    return value;
+  };
+}
+
+const ids = (xs: ReadonlyArray<number | null | undefined>): number[] => [...new Set(xs.filter((n): n is number => n != null))].sort((a, b) => a - b);
+
+async function readOutputs(db: Db, idList: readonly number[]): Promise<AiOutputRow[]> {
+  if (idList.length === 0) return [];
+  return readAll<AiOutputRow>(`api.ai_outputs ${idList.join(",")}`, (from, to) =>
+    db.from("ai_outputs").select(OUTPUT_COLUMNS, { count: "exact" }).in("id", [...idList]).order("id").range(from, to),
+  );
+}
+
+/**
+ * The tab's reads (§13.7), in three waves so a cold render never fires more than a few reads at once (#516; #465's cold-render
+ * burst, which timed reads out together on 13 Nov 2026):
+ *   1. the company's calls and the field policies, which every other read depends on;
+ *   2. the selected call's figures, the opening-remarks rows, the guidance record, the results-day moves and the tone rows, each only
+ *      while its field is released (a held field's panel says "held back" without data, so its view isn't read at all);
+ *   3. one read each of the AI outputs (the summary's and the tone's), their citations and their pages, for every output the page
+ *      quotes (the summary, the figures, the guidance record's rows, the tone).
+ * With no published call for the company, only wave 1 and the discovery window are read. A failed calls list or policy read, or a
+ * failed read of the selected call's own summary, figures or their quotes, throws (the tab's error state); every other panel fails
+ * on its own (#328).
+ */
 export async function readCallsTab(db: Db, slug: string, call: string | undefined): Promise<CallsTabData> {
-  const [calls, policies, record, remarks] = await Promise.all([
-    readCompanyCalls(db, slug),
-    readFieldPolicy(db),
-    // The guidance record fails on its own (#328): its views have timed out when the calls list had loaded fine.
-    readGuidanceRecord(db, slug).catch((error: unknown) => {
-      console.error(`[company] ${slug} guidance record read failed: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    }),
-    // The opening-remarks read fails on its own too (#388): the rest of the tab renders.
-    readRemarksChanges(db, slug).catch((error: unknown) => {
-      console.error(`[company] ${slug} remarks changes read failed: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    }),
-  ]);
-  // The count left out comes from the calls just read, not from api.earnings_latest, which builds every call of every company (#342, #329).
-  const guidance: GuidanceRecordData | null = record ? { ...record, unattributed: unattributedAll(calls, guidanceFiguresOpen(policies)) } : null;
+  const [calls, policies] = await Promise.all([readCompanyCalls(db, slug), readFieldPolicy(db)]);
   const selected = selectCall(calls, call);
   if (!selected) {
     const latest = await readAll<EarningsLatestRow>("api.earnings_latest", (from, to) =>
@@ -275,18 +280,71 @@ export async function readCallsTab(db: Db, slug: string, call: string | undefine
         .order("company_slug")
         .range(from, to),
     );
-    return { calls, selected, policies, summary: null, figures: [], citations: [], pages: [], guidance, results: { state: "hidden" }, tone: { state: "hidden" }, remarks, latest: latest[0] ?? null };
+    // No call, so none of the call's panels renders: nothing else is read (#516), and nothing here failed.
+    const guidance = { ...HELD_RECORD, unattributed: unattributedAll(calls, guidanceFiguresOpen(policies)) };
+    return { calls, selected, policies, summary: null, figures: [], citations: [], pages: [], guidance, results: { state: "hidden" }, tone: { state: "hidden" }, remarks: [], latest: latest[0] ?? null };
   }
-  const outputIds = [selected.summary_output_id, selected.figures_output_id].filter((n): n is number => n !== null);
-  const [summary, figures, citations, pages, results, tone] = await Promise.all([
-    selected.summary_output_id !== null ? readOutput(db, selected.summary_output_id) : Promise.resolve(null),
+
+  // Wave 2. The guidance record and the remarks fail on their own (#328): their views have timed out when the calls list had loaded fine.
+  const [figures, remarks, record, results, toneRows] = await Promise.all([
     selected.figures_output_id !== null ? readCallFigures(db, slug, selected.call_slug) : Promise.resolve([]),
-    readOutputCitations(db, outputIds),
-    readOutputPages(db, outputIds),
+    open(policies, REMARKS_FIELD) ? readRemarksChanges(db, slug).catch(failed(slug, "remarks changes", null)) : Promise.resolve([]),
+    guidanceRecordOpen(policies) ? readGuidanceRecord(db, slug).catch(failed(slug, "guidance record", null)) : Promise.resolve(HELD_RECORD),
     readResults(db, slug, policies),
-    readTone(db, slug, selected.call_slug, policies),
+    toneOpen(policies) ? readCallTone(db, slug).catch(failed(slug, "tone", null)) : Promise.resolve(null),
   ]);
-  return { calls, selected, policies, summary, figures, citations, pages, guidance, results, tone, remarks, latest: null };
+  const toneId = toneRows?.find((r) => r.call_slug === selected.call_slug)?.ai_output_id ?? null;
+
+  // Wave 3: one read of each kind for every output the page quotes. The call's own outputs come first: if any of these reads fails
+  // while the call has a summary or figures, the tab fails (as before #516); with neither, only the record's and tone's panels do.
+  const callIds = ids([selected.summary_output_id, selected.figures_output_id]);
+  const recordIds = record ? ids(record.rows.map((r) => r.ai_output_id)) : [];
+  const quoted = ids([...callIds, ...recordIds, toneId]);
+  const outputIds = ids([selected.summary_output_id, toneId]);
+  let quotes: { outputs: AiOutputRow[]; citations: AiCitationRow[]; pages: CitationPageRow[] } | null;
+  try {
+    const [outputs, citations, pages] = await Promise.all([readOutputs(db, outputIds), readOutputCitations(db, quoted), readOutputPages(db, quoted)]);
+    quotes = { outputs, citations, pages };
+  } catch (error) {
+    if (callIds.length > 0) throw error;
+    quotes = failed(slug, "quotes of the guidance record and tone", null)(error);
+  }
+  const of = <T extends { ai_output_id: number }>(rows: readonly T[], want: readonly number[]): T[] => rows.filter((r) => want.includes(r.ai_output_id));
+
+  const guidance: GuidanceRecordData | null =
+    record && quotes
+      ? { ...record, citations: of(quotes.citations, recordIds), pages: of(quotes.pages, recordIds), unattributed: unattributedAll(calls, guidanceFiguresOpen(policies)) }
+      : record === HELD_RECORD
+        ? { ...HELD_RECORD, unattributed: unattributedAll(calls, guidanceFiguresOpen(policies)) }
+        : null;
+  const tone: ToneRead = !toneOpen(policies)
+    ? { state: "hidden" }
+    : toneRows === null || (toneId !== null && quotes === null)
+      ? { state: "error" }
+      : toneId === null
+        ? { state: "ok", rows: toneRows, output: null, citations: [], pages: [] }
+        : {
+            state: "ok",
+            rows: toneRows,
+            output: quotes!.outputs.find((o) => o.id === toneId) ?? null,
+            citations: of(quotes!.citations, [toneId]),
+            pages: of(quotes!.pages, [toneId]),
+          };
+  const summary = selected.summary_output_id !== null ? (quotes!.outputs.find((o) => o.id === selected.summary_output_id) ?? null) : null;
+  return {
+    calls,
+    selected,
+    policies,
+    summary,
+    figures,
+    citations: quotes ? of(quotes.citations, callIds) : [],
+    pages: quotes ? of(quotes.pages, callIds) : [],
+    guidance,
+    results,
+    tone,
+    remarks,
+    latest: null,
+  };
 }
 
 const LIST_COLUMNS =

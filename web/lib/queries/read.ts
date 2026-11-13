@@ -28,8 +28,20 @@ export class IncompleteReadError extends Error {
   }
 }
 
-/** How long to wait before the one retry of a page that hit a statement timeout. */
+/** The shortest wait before the one retry of a page that hit a statement timeout. */
 export const RETRY_DELAY_MS = 300;
+/** The most the wait adds at random (#516), so reads that timed out together don't retry together. */
+export const RETRY_JITTER_MS = 900;
+
+/**
+ * The wait before a retry: RETRY_DELAY_MS plus a random share of RETRY_JITTER_MS. A cold render's parallel reads time out within
+ * milliseconds of each other (#465; Reliance's Calls tab on 13 Nov 2026: three reads within 25 ms), and a fixed wait sent their
+ * retries back to the cold database together, where the calls list's retry failed again.
+ */
+export function retryDelayMs(random: () => number = Math.random): number {
+  const r = Math.min(Math.max(random(), 0), 1);
+  return RETRY_DELAY_MS + Math.round(r * RETRY_JITTER_MS);
+}
 
 /** Postgres code 57014 (query_canceled), or the message its statement timeout carries. */
 function isStatementTimeout(error: { message: string; code?: string }): boolean {
@@ -50,7 +62,7 @@ export async function readAll<T>(what: string, query: PageQuery<T>, pageSize: nu
     if (page.error && isStatementTimeout(page.error)) {
       // A cold read on a quiet project can hit the role's 3 s limit (#303): ask for the same page once more.
       console.warn(`readAll: ${what}: statement timeout after ${Date.now() - started} ms, retrying the page once`);
-      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs()));
       const retryStarted = Date.now();
       page = await query(from, from + pageSize - 1);
       console.warn(`readAll: ${what}: retry ${page.error ? "failed" : "succeeded"} after ${Date.now() - retryStarted} ms`);

@@ -82,6 +82,7 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 MAX_REQUEST_TOKENS = 100_000          # CLAUDE.md §6; Architecture 03 §1.1
 CHARS_PER_TOKEN = 3.0                 # a deliberate over-estimate (English runs about 4 characters a token)
 REQUEST_OVERHEAD_TOKENS = 1_500       # citations' own system additions, document framing
+IMAGE_TOKENS = 2_000                  # a deliberate over-estimate for one full-page render (KPI/2B image pages)
 RETRY_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504, 529})
 CREATE_RETRY_STATUS = frozenset({429, 503, 529})   # a batch create the API refused: safe to send again
 CREATE_REFUSED = frozenset({400, 401, 403, 404, 413, 422, 429, 503, 529})   # a create these answer didn't happen
@@ -115,6 +116,9 @@ TASKS: dict[str, TaskSpec] = {
     # The tone of a call's management passages (Spec 02B §5.7; 2B-12): the json route, effort medium (a judgement, like
     # hawk/dove). One score per passage, up to about 60 passages, and up to three quotes: 8,000 with room for thinking.
     "call_tone": TaskSpec("json", "medium", 8_000),
+    # The KPI metrics one page of a results press release, fact sheet or data sheet states (the KPI-table pilot, DD-04,
+    # #512; Plan 05 §1.3; Data Audit 10 §6): the json route, effort low, 6,000 for thinking plus up to about 40 items.
+    "kpi_extraction": TaskSpec("json", "low", 6_000),
 }
 
 
@@ -266,16 +270,30 @@ def load_schema(task: str, version: str | None = None, *, root: Path = PROMPTS) 
 
 @dataclass(frozen=True)
 class Source:
-    """A document (or a segment of one) sent with a request. Citations map back to the document through seg_start."""
+    """A document (or a segment of one) sent with a request. Citations map back to the document through seg_start.
+    A page with no text layer is sent as an image instead (2B/KPI's image pages, HDFC Bank): set `image_base64` and
+    `image_media_type` (e.g. 'image/png') and leave `text` empty; an image source never carries citations (the json
+    route only), so it is used only where citations aren't needed."""
     document_id: int
     text: str                         # what is sent: the canonical text, or the segment [seg_start, seg_start+len)
     title: str                        # shown to the model; never cited
     seg_start: int = 0
     context: str | None = None        # shown to the model; never cited
+    image_base64: str | None = None   # a page image, base64, instead of text (no text layer)
+    image_media_type: str | None = None   # e.g. 'image/png'
+
+    def __post_init__(self):
+        if (self.image_base64 is None) != (self.image_media_type is None):
+            raise ValueError("an image source needs both image_base64 and image_media_type")
+
+    @property
+    def is_image(self) -> bool:
+        return self.image_base64 is not None
 
     @property
     def text_sha256(self) -> str:
-        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
+        data = self.image_base64 if self.is_image else self.text
+        return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -322,7 +340,8 @@ class Request:
                 "max_tokens": self.spec.max_tokens, "instruction": self.instruction, "note": self.note,
                 "schema": self.schema,
                 "sources": [{"document_id": s.document_id, "seg_start": s.seg_start, "title": s.title,
-                             "context": s.context, "text_sha256": s.text_sha256} for s in self.sources]}
+                             "context": s.context, "text_sha256": s.text_sha256,
+                             "image_media_type": s.image_media_type} for s in self.sources]}
 
     @property
     def input_sha256(self) -> bytes:
@@ -334,7 +353,10 @@ class Request:
             len(s.text) + len(s.title) + len(s.context or "") for s in self.sources)
         if self.schema is not None:
             chars += len(json.dumps(self.schema))
-        return math.ceil(chars / CHARS_PER_TOKEN) + REQUEST_OVERHEAD_TOKENS
+        n = math.ceil(chars / CHARS_PER_TOKEN) + REQUEST_OVERHEAD_TOKENS
+        # A page image costs roughly IMAGE_TOKENS tokens (a full-page render at the API's tile rate); a deliberate
+        # over-estimate so the guard's worst case never undercounts an image page.
+        return n + IMAGE_TOKENS * sum(1 for s in self.sources if s.is_image)
 
     def params(self, *, batch: bool = False) -> dict:
         """The Messages API parameters: real time, or a batch request's `params`, which are the same but uncached
@@ -342,6 +364,14 @@ class Request:
         cite = self.spec.route == "citations"
         content: list[dict] = []
         for s in self.sources:
+            if s.is_image:
+                if cite:
+                    raise ValueError("an image source can't be cited: use the json route")
+                if s.context:
+                    content.append({"type": "text", "text": f"{s.title} — {s.context}"})
+                content.append({"type": "image",
+                                "source": {"type": "base64", "media_type": s.image_media_type, "data": s.image_base64}})
+                continue
             block = {"type": "document", "source": {"type": "text", "media_type": "text/plain", "data": s.text},
                      "title": s.title}
             if s.context:
