@@ -185,7 +185,8 @@ def test_the_role_held_share_in_the_pool_query_is_the_one_the_views_use():
 
 # ---------------------------------------------------------------------------------------------- the SQL
 
-READ_ONLY_SQL = (s.POOL_TARGETS, s.POOL_STATED, s.POOL_LINKS, s.PAGE_MAP_SQL, s.POOL_SUMMARIES, s.POOL_RECALL, s.POOL_SCORING)
+READ_ONLY_SQL = (s.POOL_TARGETS, s.POOL_STATED, s.POOL_LINKS, s.PAGE_MAP_SQL, s.POOL_SUMMARIES, s.POOL_RECALL, s.POOL_SCORING,
+                 s.POOL_TARGETS_ROUND, s.POOL_STATED_ROUND, s.POOL_RECALL_ROUND, s.POOL_SCORING_ROUND)
 WRITES = re.compile(r"\b(insert|update|delete|truncate|drop|alter|create|grant|revoke|copy)\b", re.IGNORECASE)
 
 
@@ -266,7 +267,7 @@ def test_the_workflow_reads_dev_only(inputs, dev_secrets):
     assert job_env["FT_TARGET"] == "dev"
     assert step["JOB_DATABASE_URL"] == ("DEV:JOB_DATABASE_URL" if dev_secrets else "")
     assert not [v for e in [job_env, *steps] for v in e.values() if "PROD:" in v]
-    assert set(step) == {"GATE", "SEED", "JOB_DATABASE_URL"}
+    assert set(step) == {"GATE", "SEED", "ROUND", "JOB_DATABASE_URL"}
 
 
 def test_the_workflow_passes_its_inputs_through_the_environment():
@@ -274,7 +275,9 @@ def test_the_workflow_passes_its_inputs_through_the_environment():
     wf = load("gate-samples")
     run = next(st["run"] for st in wf["jobs"]["run"]["steps"] if st.get("name") == "Draw")
     assert "${{" not in run and '"$GATE"' in run and '"$SEED"' in run
-    assert wf["on"]["workflow_dispatch"]["inputs"]["gate"]["options"] == ["all", "sitting2", *s.ALL_GATES]
+    assert wf["on"]["workflow_dispatch"]["inputs"]["gate"]["options"] == ["all", "sitting2", "round", *s.ALL_GATES]
+    assert '"$ROUND"' in run and wf["on"]["workflow_dispatch"]["inputs"]["round"]["options"] == ["none", s.ROUND]
+    assert wf["on"]["workflow_dispatch"]["inputs"]["round"]["default"] == "none"
 
 
 def test_the_page_map_check_uses_no_reserved_word_as_a_column_name():
@@ -591,3 +594,79 @@ def test_one_gate_with_a_new_seed_and_the_refusals(monkeypatch, capsys):
         s.main(["--gate", "sitting2", "--seed", "5"], env={"JOB_DATABASE_URL": "x"})
     with pytest.raises(SystemExit):
         s.main(["--gate", "scoring"], env={})
+
+
+# ---------------------------------------------------------------------------------------------- #511's round (rule version 4)
+
+def test_the_round_has_its_own_seeds_and_leaves_out_sets_a_and_b():
+    assert s.ROUND_SEEDS == {"recall": 2026111301, "targets": 2026111302, "scoring": 2026111303, "stated": 2026111304}
+    assert not set(s.ROUND_SEEDS.values()) & set(s.SEEDS.values()) and s.ROUND_RULE_VERSION == 4 > s.RULE_VERSION
+    assert set(s.ROUND_EXCLUDED_EVENTS) == {3743, 3780, 4002, 3855, 3863, 3689, 3850, 4003, 4011, 3714}
+    from ft.jobs.tasks import equity_calls_ai as eca
+    assert s.ROUND_VERSION == eca.GUIDANCE_RERUN_VERSION
+
+
+@pytest.mark.parametrize("sql", [s.POOL_TARGETS_ROUND, s.POOL_STATED_ROUND, s.POOL_RECALL_ROUND, s.POOL_SCORING_ROUND])
+def test_each_round_pool_reads_the_round_version_and_leaves_out_the_excluded_companies(sql):
+    assert sql.count("%s") == (3 if sql is s.POOL_TARGETS_ROUND else 2)
+    assert "prompt_version = %s" in sql and "not in (select ecx.entity_id from equity.earnings_call ecx where ecx.event_id = any(%s))" in sql
+
+
+def test_the_round_recall_pool_counts_a_call_the_round_reran_whatever_its_output_became():
+    sql = s.POOL_RECALL_ROUND
+    assert "ec.unknown_role_share <= 0.10" in sql and "r.prompt_version = %s" in sql
+    tail = sql[sql.index("r.task = 'guidance_extraction'"):]
+    assert "status" not in tail.split("order by")[0]                     # published, a no_targets draft or rejected: all count
+
+
+def test_the_round_comparison_reads_the_round_versions_published_rows_only():
+    sql = s.recall_extraction_sql([1, 2], prompt_version="v5")
+    assert "o.status = 'published'" in sql and "o.prompt_version = 'v5'" in sql and "o.id = x.ai_output_id" in sql
+    assert "prompt_version" not in s.recall_extraction_sql([1, 2])           # the sittings' comparison is unchanged
+    with pytest.raises(ValueError):
+        s.recall_extraction_sql([1], prompt_version="v5'; drop table x; --")
+
+
+def round_pools():
+    rnd = random.Random(5)
+    recall = [(2000 + i, i, p, i) for i in range(1, 80) for p in [rnd.choice(sum(s.RECALL_BUCKETS.values(), ()))]]
+    targets = [(5000 + i, 1 + i % 30, k, m, i % 5 == 0, i % 4 == 0, False, i)
+               for i, (k, m) in enumerate([(k, m) for k in ("range", "point", "floor", "ceiling", "direction")
+                                           for m in ("revenue", "ebitda_margin", "capex", "advances_growth", "other")] * 8, start=1)]
+    stated = [(7000 + i, 1 + i % 25, m, i) for i, m in enumerate(["revenue", "ebitda_margin", "net_debt", "gnpa", "pat"] * 10, 1)]
+    scoring = [(3000 + i, 1 + i % 21, k, "advances_growth" if i < 4 else "revenue", i, i % 2 == 0)
+               for i, k in enumerate(["range"] * 20 + ["point"] * 20 + ["floor"] * 10 + ["direction"] * 10, start=1)]
+    return {s.POOL_RECALL_ROUND: recall, s.POOL_TARGETS_ROUND: targets, s.POOL_STATED_ROUND: stated, s.POOL_SCORING_ROUND: scoring}
+
+
+def test_the_round_draws_its_four_samples_from_the_round_pools_with_its_seeds(monkeypatch):
+    import contextlib
+    import json as _json
+
+    from ft.jobs import runner
+    conn = FakeConn(round_pools())
+
+    @contextlib.contextmanager
+    def connect(dsn, autocommit=True, role=""):
+        yield conn
+    monkeypatch.setattr(runner, "connect", connect)
+    lines = []
+    assert s.main(["--gate", "round", "--round", s.ROUND], env={"JOB_DATABASE_URL": "postgresql://dev"}, out=lines.append) == 0
+    bodies = [_json.loads(x.split("::", 2)[2]) for x in lines]
+    assert [b["gate"] for b in bodies] == list(s.ROUND_GATES) == ["recall", "targets", "scoring", "stated"]
+    assert [b["seed"] for b in bodies] == [s.ROUND_SEEDS[g] for g in s.ROUND_GATES]
+    assert all(b["rule_version"] == 4 and b["round"] == s.ROUND and b["prompt_version"] == "v5"
+               and b["excluded_events"] == list(s.ROUND_EXCLUDED_EVENTS) for b in bodies)
+    recall, targets, scoring, stated = bodies
+    assert recall["n"] == 5 and len(recall["extra_ids"]) == 3 and targets["n"] == 40 and scoring["n"] == 20 and stated["n"] == 20
+    ex = list(s.ROUND_EXCLUDED_EVENTS)
+    assert (s.POOL_TARGETS_ROUND, ("management", "v5", ex)) in conn.seen and (s.POOL_STATED_ROUND, ("v5", ex)) in conn.seen
+    assert (s.POOL_RECALL_ROUND, ("v5", ex)) in conn.seen and (s.POOL_SCORING_ROUND, ("v5", ex)) in conn.seen
+    assert not any(sql in (s.POOL_TARGETS, s.POOL_RECALL, s.POOL_SCORING, s.POOL_STATED) for sql, _ in conn.seen)
+
+
+def test_the_round_refuses_gates_it_does_not_draw_and_a_round_gate_without_the_round():
+    for argv in (["--gate", "round"], ["--gate", "summaries", "--round", s.ROUND], ["--gate", "links", "--round", s.ROUND],
+                 ["--gate", "round", "--round", s.ROUND, "--seed", "5"]):
+        with pytest.raises(SystemExit):
+            s.main(argv, env={"JOB_DATABASE_URL": "postgresql://dev"})

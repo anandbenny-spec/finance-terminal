@@ -69,6 +69,20 @@ variable `CALLS_AI_TASK` (the backfill workflow's `calls_ai_task` input) is `bot
 extraction-only run skips); the open batches of an earlier run are still read for both tasks. `--task` was taken by the runner's
 task key, so the option has its own name.
 
+**The extraction's re-run (#511, 2B-15d; the #445 pattern, decided by Claude under the standing delegation of 24 Oct 2026).**
+`PROMPT_VERSION` keeps `guidance_extraction` at v1 for every scheduled run, so production's weekly asks for nothing new. A
+backfill limited to the extraction (`CALLS_AI_TASK=guidance_extraction`) with `CALLS_AI_GUIDANCE_RERUN` (the backfill workflow's
+`guidance_rerun` input) set to `all` sends `GUIDANCE_RERUN_VERSION` for each call whose published extraction was made with
+another version, and for nothing else: no call without a published extraction, no summary, no tone. `price` does the same
+choice and builds the same requests, then sends nothing and needs no key: the `guidance_rerun` check reports the requests,
+their estimated input tokens and the worst case (the run estimate's rule: one retry each at the batch price). A re-run reply
+supersedes the published output only when it passes every check in code and holds at least one item, as any extraction does
+(`_store_guidance`); a reply that finds nothing stays a `no_targets` draft and a rejected one stays rejected, and in both cases
+the old output stays published. The old output and its rows stay, superseded (`CLAUDE.md` §3). Only the projects in
+`GUIDANCE_RERUN_TARGETS` take it: dev, until #511 part 3 adds production with Anand's dated OK. A published or `no_targets`
+output of `GUIDANCE_RERUN_VERSION` counts as done for a later run of either version, so neither re-asks it. A batch still open
+when the poll ends is collected by a run with the same input (another run would store it as stale).
+
 **Limits (§5.5).** A transcript whose request is estimated above 60,000 tokens is skipped with a warning naming it
 (`calls_too_long`); the wrapper itself refuses anything over 100,000.
 
@@ -96,6 +110,7 @@ Checks, B blocking, W warning:
 - (W) `calls_too_long`: transcripts skipped for their length, named;
 - (W) `ai_spend`, `ai_available`, `batches`: as `policy.ai_batch`'s;
 - (W) `call_summaries`, `call_guidance`: what the run found and did (counts; always pass).
+- (W) `guidance_rerun`: on a re-run of the extraction (#511), the outputs it chose by id, and its price or its outcomes.
 """
 from __future__ import annotations
 
@@ -142,6 +157,9 @@ from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TA
 PROMPT_VERSION = {cs.TASK: "v11", ge.TASK: "v1", ct.TASK: "v3"}
 IST = "Asia/Kolkata"
 SHOWN = 12
+GUIDANCE_RERUN_VERSION = "v5"       # #511 (2B-15d): the prompt round's version, sent only by the re-run (module docstring)
+GUIDANCE_RERUN_ENV = "CALLS_AI_GUIDANCE_RERUN"   # empty or 'none' (the default) | 'price' | 'all'
+GUIDANCE_RERUN_TARGETS = ("dev",)   # #511 part 3 adds 'production', with Anand's dated OK on its price
 ONLY_ENV = "CALLS_AI_TASK"            # both (the default) | call_summary | guidance_extraction | call_tone: limits what a run asks for (#302)
 TONE_SET_ENV = "CALLS_AI_TONE_SET"    # empty (the default) | earnings_tone: a tone-only run limited to that evaluation set's calls (#175)
 _SETS_DIR = Path(__file__).resolve().parents[4] / "config" / "eval" / "sets"
@@ -167,6 +185,25 @@ def only_task(env=None) -> str | None:
     if v not in ("both", cs.TASK, ge.TASK, ct.TASK):
         raise ValueError(f"{ONLY_ENV} must be both, {cs.TASK} or {ge.TASK} (or {ct.TASK}), not {v!r}")
     return None if v == "both" else v
+
+
+def guidance_rerun(workflow: str, target: str, only: str | None, env=None) -> str | None:
+    """The extraction's re-run a run asks for (`CALLS_AI_GUIDANCE_RERUN`, #511): None for none (empty or 'none', what every
+    scheduled run has), 'price' (choose and price, send nothing) or 'all'. Given to any workflow but a backfill, to a run not
+    limited to the extraction, or on a project outside `GUIDANCE_RERUN_TARGETS`, it stops the run before anything is sent."""
+    v = ((os.environ if env is None else env).get(GUIDANCE_RERUN_ENV) or "").strip()
+    if v in ("", "none"):
+        return None
+    if v not in ("price", "all"):
+        raise ValueError(f"{GUIDANCE_RERUN_ENV} must be none, price or all, not {v!r}")
+    if workflow != "backfill":
+        raise ValueError(f"{GUIDANCE_RERUN_ENV}: the re-run of {ge.TASK} runs only in a backfill, not {workflow!r}")
+    if only != ge.TASK:
+        raise ValueError(f"{GUIDANCE_RERUN_ENV} needs {ONLY_ENV}={ge.TASK}")
+    if target not in GUIDANCE_RERUN_TARGETS:
+        raise ValueError(f"{GUIDANCE_RERUN_ENV}: the re-run to {GUIDANCE_RERUN_VERSION} runs on "
+                         f"{', '.join(GUIDANCE_RERUN_TARGETS)} only, not {target!r} (#511 part 3)")
+    return v
 
 
 def tone_set_documents(only: str | None, target: str, env=None) -> list[int] | None:
@@ -241,6 +278,8 @@ class Fetched(RunState):
     until: date | None = None
     only: str | None = None                                  # the one task this run asks for (None: both), #302
     summaries: str = ALL                                     # which calls it asks a summary for: NEWEST or ALL (#370)
+    rerun: str | None = None                                 # the extraction's re-run (#511): None, 'price' or 'all'
+    rerun_record: dict | None = None                         # what the re-run chose and priced (ids and counts only)
 
 
 @dataclass
@@ -280,6 +319,10 @@ class EquityCallsAi(BatchSteps, Task):
     def __init__(self):
         self._last: Fetched | None = None
         self._echo = EchoRun()
+        self._ge_version: str | None = None    # the extraction's version this run asks for: the re-run's, or PROMPT_VERSION's
+
+    def ge_version(self) -> str:
+        return self._ge_version or PROMPT_VERSION.get(ge.TASK, "")
 
     def due(self, db, workflow: str, now=None) -> Due:
         return equity_due(db, self.key, workflow, super().due(db, workflow, now), requires=self.requires)
@@ -309,7 +352,10 @@ class EquityCallsAi(BatchSteps, Task):
         guidance = ge.TASK in PROMPT_VERSION            # a task with no prompt version listed isn't asked for
         tone = tone and ct.TASK in PROMPT_VERSION
         newest_only = newest_only and lacking
-        args: list = [PROMPT_VERSION[cs.TASK], PROMPT_VERSION.get(ge.TASK, ""), PROMPT_VERSION.get(ct.TASK, "")]   # the lateral's placeholders come first
+        # The extraction is done for a call with a published (or `no_targets`) output of the version this run asks for, or of the
+        # re-run's version (#511: a call re-run to it is never asked again by a run of the older version).
+        ge_done = sorted({self.ge_version(), GUIDANCE_RERUN_VERSION}) if guidance else [""]
+        args: list = [PROMPT_VERSION[cs.TASK], ge_done, PROMPT_VERSION.get(ct.TASK, "")]   # the lateral's placeholders come first
         if lacking:
             summarised = "(f.has_summary or not f.is_newest)" if newest_only else "f.has_summary"   # nothing to ask on an older call
             done = f"{summarised} and f.has_extraction" if guidance else summarised
@@ -338,7 +384,7 @@ class EquityCallsAi(BatchSteps, Task):
                     select exists (select 1 from core.ai_output o where o.task = 'call_summary' and o.document_id = d.id
                                       and o.status = 'published' and o.prompt_version = %s) as has_summary,
                            exists (select 1 from core.ai_output o where o.task = 'guidance_extraction' and o.document_id = d.id
-                                      and o.prompt_version = %s
+                                      and o.prompt_version = any(%s)
                                       and (o.status = 'published' or (o.status = 'draft' and o.status_reason = 'no_targets')))
                              as has_extraction,
                            exists (select 1 from core.ai_output o where o.task = 'call_tone' and o.document_id = d.id
@@ -372,7 +418,7 @@ class EquityCallsAi(BatchSteps, Task):
                 chunks.setdefault(did, []).append(ct.Chunk(no, a, b))
         tone_schema = load_schema(ct.TASK, PROMPT_VERSION[ct.TASK]) if tone else None
         metrics = self.metrics or ge.load_metrics()
-        schema = load_schema(ge.TASK, PROMPT_VERSION[ge.TASK]) if guidance else None
+        schema = load_schema(ge.TASK, self.ge_version()) if guidance else None
         summary_schema = (load_schema(cs.TASK, PROMPT_VERSION[cs.TASK])
                           if cs.route_of(PROMPT_VERSION[cs.TASK]) == "json" else None)     # v1-v5 have none
         out = []
@@ -403,8 +449,14 @@ class EquityCallsAi(BatchSteps, Task):
         db = ctx.fetcher.db
         f = Fetched("batch", budget=batch.monthly_budget(db), month_spend=batch.month_spend(db), since=ctx.since,
                     until=ctx.until, only=only_task(), summaries=summary_scope(ctx.since, ctx.until))
+        f.rerun = guidance_rerun(ctx.workflow, ctx.target, f.only)     # None unless a dev backfill asks for #511's re-run
+        self._ge_version = GUIDANCE_RERUN_VERSION if f.rerun else None
         prompts = {t: load_prompt(t, v) for t, v in PROMPT_VERSION.items()}
+        if ge.TASK in prompts:                                          # a task with no prompt version listed isn't asked for
+            prompts[ge.TASK] = load_prompt(ge.TASK, self.ge_version())
         doc_ids = tone_set_documents(f.only, ctx.target)    # None unless a tone-only run on dev names an evaluation set (#175)
+        if f.rerun:
+            doc_ids, f.rerun_record = self._rerun_documents(db, ctx.since, ctx.until)
         works = [w for w in self._calls(db, doc_ids=doc_ids, since=ctx.since, until=ctx.until, skipped=f.no_guidance,
                                         tone=f.only == ct.TASK, newest_only=f.summaries == NEWEST)
                  if (f.only is None and w.task != ct.TASK) or f.only == w.task]       # tone only when the run is limited to it
@@ -416,10 +468,48 @@ class EquityCallsAi(BatchSteps, Task):
                 f.too_big.append((w, est))                      # §5.5: skipped with a warning naming it
             else:
                 f.targets.append(w)
+        if f.rerun == "price":                              # #511: the price of the re-run; nothing is sent, no key is read
+            f.rerun_record.update(self._rerun_price(f, prompts))
+            return f
         # Weekly, refresh and backfill all use the Batch API: submitted, polled for up to 15 minutes, otherwise
         # collected by the next run. The open batches of an earlier run are read first, even with nothing new to ask.
         self._batch_path(ctx, f, prompts, poll=BATCH_POLL_SECONDS)
         return f
+
+    def _rerun_documents(self, db, since: date | None, until: date | None) -> tuple[list[int], dict]:
+        """The re-run's calls (#511): those whose published extraction was made with a version other than
+        `GUIDANCE_RERUN_VERSION` (within a backfill's window, and the tests' scope), and the record of the choice: ids and
+        counts only."""
+        where = ["o.task = %s", "o.status = 'published'", "o.scope = ''"]
+        args: list = [ge.TASK]
+        if self.scope is not None:
+            where.append("ev.slug = any(%s)"); args.append(sorted(self.scope))
+        if since is not None:
+            where.append(f"(ec.filed_at at time zone '{IST}')::date >= %s"); args.append(since)
+        if until is not None:
+            where.append(f"(ec.filed_at at time zone '{IST}')::date <= %s"); args.append(until)
+        rows = db.execute(f"""select o.document_id, o.id, o.prompt_version
+                                from core.ai_output o
+                                join equity.earnings_call ec on ec.transcript_document_id = o.document_id
+                                join core.event ev on ev.id = ec.event_id
+                               where {' and '.join(where)}
+                               order by o.document_id""", args).fetchall()
+        older = [(doc_id, out_id, v) for doc_id, out_id, v in rows if v != GUIDANCE_RERUN_VERSION]
+        record = {"task": ge.TASK, "version": GUIDANCE_RERUN_VERSION, "published": len(rows), "older": len(older),
+                  "older_by_version": dict(sorted(Counter(v for *_, v in older).items())),
+                  "outputs": [out_id for _, out_id, _ in older]}
+        return [doc_id for doc_id, *_ in older], record
+
+    def _rerun_price(self, f: Fetched, prompts) -> dict:
+        """What the re-run would send, priced by the run estimate's rule (each request's worst case at the batch price, plus a
+        retry each at worst), without sending anything."""
+        reqs = [w.request(prompts[w.task]) for w in f.targets if w.task == ge.TASK]
+        worst = sum((self._worst_case(r, batch=True) for r in reqs), Decimal(0))
+        return {"mode": "price", "requests": len(reqs), "too_long": len(f.too_big),
+                "estimated_input_tokens": sum(r.estimated_tokens() for r in reqs),
+                "worst_case_usd": str(worst.quantize(Decimal("0.0001"))),
+                "run_estimate_usd": str((2 * worst).quantize(Decimal("0.0001"))),
+                "run_limit_usd": str(self.run_limit()), "sent": 0}
 
     # ------------------------------------------------------------------ storing a billed reply (one transaction)
     def _store(self, tx, w: Work, call: Call, task_run_id: int, retry_note: str | None) -> None:
@@ -988,6 +1078,10 @@ class EquityCallsAi(BatchSteps, Task):
                          f"{f.wanted_guidance} calls lacked their extraction at the start; this run: "
                          + (", ".join(f"{n} {s}" for s, n in sorted(counts.items())) or "nothing to do") + skipped,
                          blocking=False))
+        if f.rerun is not None:                            # #511: what the re-run chose, priced or did (ids and counts only)
+            done = {**(f.rerun_record or {}), "mode": f.rerun,
+                    "outcomes": dict(sorted(counts.items())) if f.rerun == "all" else {}}
+            out.append(Check("guidance_rerun", True, json.dumps(done, separators=(",", ":")), blocking=False))
         return out
 
     # ------------------------------------------------------------------ alerts (after the load)
