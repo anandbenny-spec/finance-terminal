@@ -25,6 +25,7 @@ const co = await import("@/lib/queries/company");
 const equity = await import("@/lib/queries/equity");
 const overview = await import("@/lib/queries/overview");
 const vc = await import("@/lib/queries/valuechain");
+const timeline = await import("@/lib/queries/timeline");
 
 /** A Data API where every view answers, empty unless given; the views named in `missing` answer 404. */
 function views(given: Store = {}, missing: string[] = []): Store {
@@ -64,6 +65,7 @@ const READS: [string, () => Promise<unknown>][] = [
   ["readPricedInPage", () => equity.readPricedInPage()],
   ["readScreenerPage", () => equity.readScreenerPage()],
   ["readPolicyOverview", () => overview.readPolicyOverview()],
+  ["readLanguageTimeline", () => timeline.readLanguageTimeline()],
 ];
 
 const failedRead = () => state.profiles.filter((p) => p === "failedRead").length;

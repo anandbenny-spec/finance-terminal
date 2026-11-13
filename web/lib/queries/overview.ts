@@ -45,12 +45,12 @@ import {
 import type { Read } from "@/lib/queries/shell";
 import { publicClient } from "@/lib/supabase/public";
 
-function failed(what: string, error: unknown): { ok: false } {
+export function failed(what: string, error: unknown): { ok: false } {
   console.error(`[policy] ${what} read failed: ${error instanceof Error ? error.message : String(error)}`);
   return { ok: false };
 }
 
-async function attempt<T extends object>(what: string, read: () => Promise<T>): Promise<Read<T>> {
+export async function attempt<T extends object>(what: string, read: () => Promise<T>): Promise<Read<T>> {
   try {
     return { ok: true, ...(await read()) };
   } catch (error) {
