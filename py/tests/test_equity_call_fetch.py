@@ -4,6 +4,7 @@ tests skip without it). The pure decisions are in test_equity_call_text.py."""
 import gzip
 import itertools
 import json
+import re
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -452,3 +453,108 @@ def test_a_company_host_that_refuses_scripts_is_retried_once_with_chromes_finger
     assert a[1] == "stored" and a[6] == "company_link"
     assert len(web.chrome_seen) == 1 and web.chrome_seen[0].url.host == "www.apollohospitals.com"
     assert checks(tr)["company_hosts"]["passed"]                                   # the retry worked: nothing to log
+
+
+# ---------------------------------------------------------------------------------------------- the storage stop (F3-02, #387)
+STOP_ALERT = f"storage_stop:{KEY}"
+
+
+def open_alerts(dedupe_key):
+    return q("select severity, message from ops.alert where dedupe_key = %s and resolved_at is null", dedupe_key)
+
+
+def record_puts(monkeypatch) -> list[str]:
+    """The media type of every `Storage.put` (the fetcher's store of each body), in order."""
+    from ft.storage import Storage
+    puts: list[str] = []
+    real = Storage.put
+
+    def put(self, data, *, source, media_type, ext):
+        puts.append(media_type)
+        return real(self, data, source=source, media_type=media_type, ext=ext)
+    monkeypatch.setattr(Storage, "put", put)
+    return puts
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_over_the_storage_stop_discovery_is_recorded_but_no_pdf_is_fetched_or_stored_and_an_error_alert_opens(s3, monkeypatch):
+    from ft.storage import MB, Storage
+    make_company("HINDUNILVR", "Hindustan Unilever Limited")
+    make_company("APOLLOHOSP", "Apollo Hospitals Enterprise Limited")
+    puts = record_puts(monkeypatch)
+    monkeypatch.setattr(Storage, "stored_bytes", lambda self: (1, 950 * MB))
+    web = Web()
+    code, tr = go(web)
+    assert code == 0 and tr[0] == "success", tr                                   # held, not failed: discovery is kept
+    hosts = {r.url.host for r in web.seen}
+    assert "nsearchives.nseindia.com" not in hosts and "www.apollohospitals.com" not in hosts          # no PDF fetched
+    assert any(r.url.path == dc.NSE_ANN_PATH for r in web.seen)                                       # discovery ran
+    assert "application/json" in puts and "application/pdf" not in puts         # its replies recorded; no PDF stored
+    assert calls("zf-hindunilvr") == [] and calls("zf-apollohosp") == []         # no call row: a later run builds it
+    c = checks(tr)
+    stop = c["storage_stop"]
+    assert not stop["passed"] and not stop["blocking"]
+    assert stop["detail"].startswith("storage stop reached: the raw bucket holds 950.0 MB of stored objects, at or over the "
+                                     "900 MB stop for new files; held: ")
+    n_held, n_checked = map(int, re.search(r"held: (\d+) of (\d+) companies", stop["detail"]).groups())
+    assert n_held == n_checked >= 2                                               # over at the start: every company is held
+    assert "zf-" not in stop["detail"]                                            # counts and sizes only
+    held = c["storage_held"]
+    assert held["passed"] and not held["blocking"]
+    assert re.search(r"zf-hindunilvr Q1 FY27: \d+ transcript filings?, held: storage stop", held["detail"]), held["detail"]
+    assert re.search(r"zf-apollohosp Q1 FY27: \d+ transcript filings?, held: storage stop", held["detail"]), held["detail"]
+    raw = c["raw_storage"]                                                        # the 850 MB warning is unchanged
+    assert not raw["passed"] and not raw["blocking"] and raw["detail"].endswith("950.0 MB of stored objects, OVER the 850 MB stop")
+    [(severity, message)] = open_alerts(STOP_ALERT)
+    assert severity == "error" and message.startswith(f"{KEY}: storage stop reached: ") and "zf-" not in message
+    assert open_alerts(f"check:{KEY}:storage_stop")                               # the failed check's own warning too
+
+    monkeypatch.undo()                                                            # space freed: the next run builds the calls
+    code, tr = go(Web())
+    assert code == 0 and tr[0] == "success" and tr[1] > 0, tr
+    assert calls("zf-hindunilvr")[0][1] == "stored" and calls("zf-apollohosp")[0][1] == "stored"
+    c = checks(tr)
+    assert c["storage_stop"]["passed"] and c["storage_stop"]["detail"].startswith("not reached: the raw bucket holds ")
+    assert "storage_held" not in c
+    assert open_alerts(STOP_ALERT) == [] and open_alerts(f"check:{KEY}:storage_stop") == []             # both resolved
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_the_stop_is_kept_current_with_each_file_stored_so_a_company_after_it_is_held(s3, monkeypatch):
+    from ft.storage import MB, Storage
+    make_company("APOLLOHOSP", "Apollo Hospitals Enterprise Limited")              # zf-apollohosp comes first (by slug)
+    make_company("HINDUNILVR", "Hindustan Unilever Limited")
+    monkeypatch.setattr(Storage, "stored_bytes", lambda self: (1, 900 * MB - 1))  # one byte under: the first company may store
+    web = Web()
+    code, tr = go(web)
+    assert code == 0 and tr[0] == "success", tr
+    assert calls("zf-apollohosp")[0][1] == "stored"                               # its letter and PDF took the bucket over
+    assert calls("zf-hindunilvr") == []
+    assert not any(r.url.path.endswith(HUL_FILE) for r in web.seen)
+    stop = checks(tr)["storage_stop"]
+    assert not stop["passed"] and "at or over the 900 MB stop for new files; held: " in stop["detail"]
+    n_held, n_checked = map(int, re.search(r"held: (\d+) of (\d+) companies", stop["detail"]).groups())
+    assert 1 <= n_held < n_checked                                                # the companies before the stop weren't held
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_bucket_that_cant_be_listed_holds_new_files_with_its_own_message(s3, monkeypatch):
+    from ft.storage import Storage
+    make_company("HINDUNILVR", "Hindustan Unilever Limited")
+
+    def refuse(self):
+        raise RuntimeError("listing refused")
+    monkeypatch.setattr(Storage, "stored_bytes", refuse)
+    web = Web()
+    code, tr = go(web)
+    assert code == 0 and tr[0] == "success", tr
+    assert "nsearchives.nseindia.com" not in {r.url.host for r in web.seen} and calls("zf-hindunilvr") == []
+    stop = checks(tr)["storage_stop"]
+    assert not stop["passed"] and stop["detail"].startswith(
+        "storage stop reached: the raw bucket's size couldn't be read, so new files are held (the stop fails closed; ")
+    assert "listing refused" not in stop["detail"]
+    [(severity, message)] = open_alerts(STOP_ALERT)
+    assert severity == "error" and "couldn't be read" in message and "listing refused" not in message

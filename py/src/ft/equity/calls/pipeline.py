@@ -154,6 +154,7 @@ class Report:
     not_kept: int = 0                                                          # files read and not stored (#287)
     not_kept_bytes: int = 0
     already_declined: int = 0                                                  # URLs recorded on an earlier run: not fetched
+    storage_held: list[str] = field(default_factory=list)                     # company-seasons held by the storage stop (#387)
 
 
 # ---------------------------------------------------------------------------------------------- curated links
@@ -492,6 +493,23 @@ def process_company(run: Run, co: CompanyRef, announcements: list[Announcement],
                                          f"in the {p.season} season)")
     run.settle()
     return plans
+
+
+def held_by_storage(co: CompanyRef, announcements: list[Announcement], *, weekly: bool, newest_call: str | None,
+                    history: bool = False) -> list[str]:
+    """F3-02 (#387): the company-seasons `process_company` would have worked on, named when the storage stop holds the company
+    instead ("slug season: n transcript filings, held: storage stop"). Nothing is fetched to decide it, so only filings found by
+    subject or file name count (a first-page candidate needs its PDF opened). A weekly or refresh run names at most the
+    `MAX_SEASONS` newest seasons it could have built; a backfill names every season."""
+    by_season: dict[str, list[Announcement]] = {}
+    for a in announcements:
+        if a.entity_id == co.entity_id and a.is_transcript:
+            by_season.setdefault(a.season, []).append(a)
+    seasons = rows.seasons_to_process(by_season, newest_call, weekly)
+    if not history:
+        seasons = seasons[:MAX_SEASONS]
+    return [f"{co.slug} {s}: {len(by_season[s])} transcript filing{'' if len(by_season[s]) == 1 else 's'}, held: storage stop"
+            for s in sorted(seasons, key=rows.season_order)]
 
 
 # ---------------------------------------------------------------------------------------------- history reporting
