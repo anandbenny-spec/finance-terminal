@@ -1,0 +1,72 @@
+# Curated per-company rules for the KPI-table pilot (DD-04, #512; Plan 05 §1.3, D7; Data Audit 10 §1, §2). One entry per
+# company (the slug in py/config/equity/companies.yaml). The pilot's document class is the results press release, fact
+# sheet or data sheet the company files with the exchange — never the investor presentation (DA-10 decision 2). Found
+# through the announcements feed the discovery already reads (EC3); investor-relations pages are never crawled. A document
+# that can't be found or cut by these rules is held and named, never guessed (card step 2).
+#
+# Per company:
+#   document_class  press_release | fact_sheet | data_sheet  (stored on equity.kpi_document)
+#   source          own_filing  (its own announcement) | bundle  (cut from the results-outcome filing)
+#   subject         a regex the announcement subject or attachment name must match (case-insensitive)
+#   cut             null, or {start, end}: the release/fact-sheet pages are from the first page matching `start` to the
+#                   page before the first page matching `end` (end omitted = to the last page). Matched on a page's text.
+#   image_quarters  fiscal labels (e.g. 'Q3 FY25') read as page images, not text (no usable text layer; DA-10 K2)
+#   overrides       per-fiscal-label overrides of any field above (HDFC Bank's separate Q3 FY25 "Press Release" filing)
+#
+# The window and the companies are fixed in code (ft/equity/kpi/documents.py): the 7 companies are DA-10's eight IT and
+# bank names less Wipro (not in the company master); the quarters run Q3 FY25 to Q2 FY27 (TCS from Q2 FY25), so each
+# flagged quarter has its previous four documents.
+
+companies:
+  tcs:
+    document_class: press_release
+    source: own_filing
+    subject: '(?i)press\s*release'
+    cut: null
+    image_quarters: []
+
+  infy:
+    document_class: fact_sheet
+    source: bundle
+    subject: '(?i)financial\s*results|outcome|fact\s*sheet'
+    cut: {start: '(?i)fact\s*sheet', end: '(?i)safe\s*harbor|about\s+infosys|forward[-\s]*looking'}
+    image_quarters: []
+
+  hcltech:
+    document_class: press_release
+    source: own_filing
+    subject: '(?i)press\s*release|investor\s*release'
+    cut: null
+    image_quarters: []
+
+  hdfcbank:
+    document_class: press_release
+    source: bundle
+    subject: '(?i)outcome|financial\s*results|press\s*release'
+    cut: {start: '(?i)press\s*release|financial\s*results\s+for', end: '(?i)safe\s*harbor'}
+    image_quarters: ['Q3 FY25', 'Q2 FY26', 'Q4 FY26', 'Q1 FY27']
+    overrides:
+      'Q3 FY25':
+        source: own_filing
+        subject: '(?i)press\s*release'
+
+  icicibank:
+    document_class: press_release
+    source: bundle
+    subject: '(?i)outcome|financial\s*results|news\s*release'
+    cut: {start: '(?i)news\s*release', end: '(?i)except\s+for\s+the\s+historical|safe\s*harbor'}
+    image_quarters: []
+
+  sbin:
+    document_class: press_release
+    source: own_filing
+    subject: '(?i)press\s*release'
+    cut: {start: '(?i)key\s*summary|press\s*release', end: null}
+    image_quarters: []
+
+  axisbank:
+    document_class: press_release
+    source: own_filing
+    subject: '(?i)press\s*release|financial\s*results|outcome'
+    cut: {start: '(?i)press\s*release|^\s*axis\s+bank', end: '(?i)safe\s*harbor'}
+    image_quarters: []
