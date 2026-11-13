@@ -521,6 +521,7 @@ def test_a_stop_resolves_every_later_quarter_as_held(monkeypatch):
     monkeypatch.setattr(task, "companies", lambda db, start: [_Co(1, "tcs"), _Co(2, "infy")])
     monkeypatch.setattr(task, "_claude", lambda: object())
     monkeypatch.setattr(task, "discover", lambda ctx, cos, start, end: {})
+    monkeypatch.setattr(task, "_preflight", lambda h, anns, rules: None)
 
     def one(ctx, db, co, rule, label, anns, prompt, schema, budget, spent, h):
         h.stopped = "run_cap"                              # the first document hits the cap
@@ -687,3 +688,41 @@ def test_the_saved_feed_picks_the_results_outcome():
             _rd, cands = dc.candidates(filings, rules[slug], label)
             assert cands and cands[0].disseminated.strftime("%d %b %H:%M") == first, (slug, label)
             assert not any("call" in (c.subject or "").lower() for c in cands)
+
+
+def test_a_feed_without_nse_reads_and_writes_nothing(monkeypatch):
+    """Dev run 3 (14 Nov 2026): NSE answered no window, BSE's call-only fallback carried no results filing, every quarter
+    came out held and the load replaced run 2's rows. Now the feed check fails before any file or AI call, the load
+    writes nothing and the blocking check rolls the run back."""
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    monkeypatch.setattr(t.batch, "monthly_budget", lambda db: Decimal(25))
+    monkeypatch.setattr(t.batch, "month_spend", lambda db: Decimal(0))
+    monkeypatch.setattr(task, "companies", lambda db, start: [_Co(1, "tcs"), _Co(2, "infy")])
+    monkeypatch.setattr(task, "_claude", lambda: object())
+    day = datetime(2026, 10, 9, 15, 30, tzinfo=IST)
+
+    def discover(ctx, cos, start, end):
+        task.feed = {1: "nse", 2: "bse"}                                   # Infosys's NSE windows failed
+        return {1: [results(day), Ann("Press Release", "pr.pdf", day.replace(minute=58))], 2: []}
+    monkeypatch.setattr(task, "discover", discover)
+    monkeypatch.setattr(task, "_one", lambda *a, **k: pytest.fail("nothing is read when the feed check fails"))
+    ctx = SimpleNamespace(fetcher=SimpleNamespace(db=None), now=datetime(2026, 11, 14, 1, 0, tzinfo=IST), until=None)
+    h = task.fetch(ctx)
+    assert h.preflight == "NSE didn't answer every window for infy; no results day found for infy"
+    assert len(h.plans) == len(dc.quarters("tcs")) + len(dc.quarters("infy")) and h.cost == 0
+    assert task.load(None, h, 1) == 0                                       # no write at all (tx unused)
+    checks = {c.name: c for c in task.checks(None, h, 1)}
+    assert not checks["feed"].passed and checks["feed"].blocking and "nothing read or written" in checks["feed"].detail
+    assert h.results_days == {1: 1, 2: 0}
+
+
+def test_the_feed_check_passes_on_a_full_nse_feed():
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    task.feed = {1: "nse"}
+    h = t.Harvest(companies=[_Co(1, "tcs")])
+    day = datetime(2026, 10, 9, 15, 30, tzinfo=IST)
+    assert task._preflight(h, {1: [results(day)]}, dc.load_rules()) is None
+    checks = {c.name: c for c in task.checks(None, h, 1)}
+    assert checks["feed"].passed and '"results_days": {"tcs": 1}' in checks["feed"].detail
