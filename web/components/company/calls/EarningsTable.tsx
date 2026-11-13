@@ -6,11 +6,12 @@
 import Link from "next/link";
 import { DataTable, type Column } from "@/components/data/DataTable";
 import { StateNote } from "@/components/data/StateNote";
+import { companyHref } from "@/lib/equity/company";
 import { listDateKey, listDateText, listStatusText, noTranscriptNote } from "@/lib/equity/calls";
 import type { EarningsListRow } from "@/lib/queries/api";
 
 export function callsTabHref(companySlug: string): string {
-  return "/companies/" + companySlug + "?tab=calls";
+  return companyHref(companySlug, "calls");
 }
 
 export function EarningsTable({ rows }: { rows: EarningsListRow[] }) {
@@ -19,7 +20,7 @@ export function EarningsTable({ rows }: { rows: EarningsListRow[] }) {
       id: "company",
       header: "Company",
       cell: (r) => (
-        <Link href={callsTabHref(r.company_slug)} className="text-ink-1 underline">
+        <Link href={callsTabHref(r.company_slug)} prefetch={false} className="text-ink-1 underline">
           {r.short_name ?? r.company_name}
         </Link>
       ),

@@ -7,7 +7,8 @@ import { cacheLife, cacheTag } from "next/cache";
 import { selectCall } from "@/lib/equity/calls";
 import { RESULTS_FIELD } from "@/lib/equity/resultsMoves";
 import { guidanceFiguresOpen, unattributedAll } from "@/lib/equity/guidance";
-import type { AiCitationRow, ResultsMoveRow, AiOutputRow, ApiDatabase, CallFigureRow, CallGuidanceRow, CitationPageRow, GuidanceHitRateRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
+import { toneOpen } from "@/lib/equity/tone";
+import type { AiCitationRow, ResultsMoveRow, AiOutputRow, ApiDatabase, CallFigureRow, CallToneRow, CallGuidanceRow, RemarksChangeRow, CitationPageRow, GuidanceHitRateRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
 import { readFieldPolicy } from "@/lib/queries/policy";
 import { readAll } from "@/lib/queries/read";
 import { publicClient } from "@/lib/supabase/public";
@@ -45,6 +46,16 @@ export type GuidanceRecordData = GuidanceRecordReads & {
  */
 export type ResultsMovesRead = { state: "hidden" } | { state: "error" } | { state: "ok"; rows: ResultsMoveRow[] };
 
+/**
+ * The Tone panel's reads (#482): not made while ai.call_tone is hidden (today's reads stay as they are, so the merge is safe before migration
+ * 0045 reaches production); the company's api.call_tone rows once it is shown or labelled, with the selected call's output, citations and
+ * pages for its evidence; "error" when those reads failed, which holds back only this panel (#328).
+ */
+export type ToneRead =
+  | { state: "hidden" }
+  | { state: "error" }
+  | { state: "ok"; rows: CallToneRow[]; output: AiOutputRow | null; citations: AiCitationRow[]; pages: CitationPageRow[] };
+
 export type CallsTabData = {
   calls: EarningsCallRow[];
   selected: EarningsCallRow | null;
@@ -59,6 +70,10 @@ export type CallsTabData = {
   guidance: GuidanceRecordData | null;
   /** The results-day moves panel's rows (company-wide; the panel picks the selected call's). */
   results: ResultsMovesRead;
+  /** The Tone panel's reads (company-wide rows, the selected call's evidence); "hidden" without a read while the field is hidden. */
+  tone: ToneRead;
+  /** api.remarks_changes for this company, every call (#388); null when its own read failed, and the panel then says so. Empty while the field is hidden. */
+  remarks: RemarksChangeRow[] | null;
   /** With no call: the company's earnings_latest row, whose window says what the transcript discovery covered. */
   latest: EarningsLatestRow | null;
 };
@@ -92,6 +107,22 @@ export async function readResultsMoves(db: Db, slug: string): Promise<ResultsMov
   );
 }
 
+const REMARKS_COLUMNS =
+  "company_slug, call_slug, fiscal_label, period_end, filed_at, exchange, base_call_slug, base_fiscal_label, base_period_end, words_base, words_new, words_added, words_removed, similarity, new_speakers, label, pairs, policy_label";
+
+/** The company's opening-remarks comparisons (#388): one row per call with a previous call, read whole against the exact count. */
+export async function readRemarksChanges(db: Db, slug: string): Promise<RemarksChangeRow[]> {
+  return readAll<RemarksChangeRow>("api.remarks_changes", (from, to) =>
+    db
+      .from("remarks_changes")
+      .select(REMARKS_COLUMNS, { count: "exact" })
+      .eq("company_slug", slug)
+      .order("period_end", { ascending: false })
+      .order("call_slug")
+      .range(from, to),
+  );
+}
+
 /** Reads the moves only when the field is shown or labelled; a failed read is logged and holds back only the panel. */
 async function readResults(db: Db, slug: string, policies: readonly FieldPolicyRow[]): Promise<ResultsMovesRead> {
   const policy = policies.find((p) => p.field_key === RESULTS_FIELD);
@@ -100,6 +131,37 @@ async function readResults(db: Db, slug: string, policies: readonly FieldPolicyR
     return { state: "ok", rows: await readResultsMoves(db, slug) };
   } catch (error) {
     console.error(`[company] ${slug} results moves read failed: ${error instanceof Error ? error.message : String(error)}`);
+    return { state: "error" };
+  }
+}
+
+const TONE_COLUMNS =
+  "company_slug, call_slug, fiscal_label, period_end, call_date, filed_at, exchange, ai_output_id, n, mean, sd, opening_n, opening_mean, answers_n, answers_mean, prev_call_slug, prev_fiscal_label, delta, se_delta, change, held_reason, rule_version, policy_label";
+
+/** The company's rows of api.call_tone, read whole against the exact count, filtered to the company (the view answers well inside anon's 3 s that way). */
+export async function readCallTone(db: Db, slug: string): Promise<CallToneRow[]> {
+  return readAll<CallToneRow>("api.call_tone", (from, to) =>
+    db
+      .from("call_tone")
+      .select(TONE_COLUMNS, { count: "exact" })
+      .eq("company_slug", slug)
+      .order("period_end", { ascending: false })
+      .order("call_slug")
+      .range(from, to),
+  );
+}
+
+/** Reads the tone only when the field is shown or labelled; a failed read is logged and holds back only the panel. No prefetch: the evidence is for the selected call's output only. */
+async function readTone(db: Db, slug: string, call: string, policies: readonly FieldPolicyRow[]): Promise<ToneRead> {
+  if (!toneOpen(policies)) return { state: "hidden" };
+  try {
+    const rows = await readCallTone(db, slug);
+    const id = rows.find((r) => r.call_slug === call)?.ai_output_id ?? null;
+    if (id === null) return { state: "ok", rows, output: null, citations: [], pages: [] };
+    const [output, citations, pages] = await Promise.all([readOutput(db, id), readOutputCitations(db, [id]), readOutputPages(db, [id])]);
+    return { state: "ok", rows, output, citations, pages };
+  } catch (error) {
+    console.error(`[company] ${slug} tone read failed: ${error instanceof Error ? error.message : String(error)}`);
     return { state: "error" };
   }
 }
@@ -187,12 +249,17 @@ export async function readGuidanceRecord(db: Db, slug: string): Promise<Guidance
 
 /** The tab's reads: the company's calls, the selected one's summary, figures, citations and pages (§13.7). */
 export async function readCallsTab(db: Db, slug: string, call: string | undefined): Promise<CallsTabData> {
-  const [calls, policies, record] = await Promise.all([
+  const [calls, policies, record, remarks] = await Promise.all([
     readCompanyCalls(db, slug),
     readFieldPolicy(db),
     // The guidance record fails on its own (#328): its views have timed out when the calls list had loaded fine.
     readGuidanceRecord(db, slug).catch((error: unknown) => {
       console.error(`[company] ${slug} guidance record read failed: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }),
+    // The opening-remarks read fails on its own too (#388): the rest of the tab renders.
+    readRemarksChanges(db, slug).catch((error: unknown) => {
+      console.error(`[company] ${slug} remarks changes read failed: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }),
   ]);
@@ -208,17 +275,18 @@ export async function readCallsTab(db: Db, slug: string, call: string | undefine
         .order("company_slug")
         .range(from, to),
     );
-    return { calls, selected, policies, summary: null, figures: [], citations: [], pages: [], guidance, results: { state: "hidden" }, latest: latest[0] ?? null };
+    return { calls, selected, policies, summary: null, figures: [], citations: [], pages: [], guidance, results: { state: "hidden" }, tone: { state: "hidden" }, remarks, latest: latest[0] ?? null };
   }
   const outputIds = [selected.summary_output_id, selected.figures_output_id].filter((n): n is number => n !== null);
-  const [summary, figures, citations, pages, results] = await Promise.all([
+  const [summary, figures, citations, pages, results, tone] = await Promise.all([
     selected.summary_output_id !== null ? readOutput(db, selected.summary_output_id) : Promise.resolve(null),
     selected.figures_output_id !== null ? readCallFigures(db, slug, selected.call_slug) : Promise.resolve([]),
     readOutputCitations(db, outputIds),
     readOutputPages(db, outputIds),
     readResults(db, slug, policies),
+    readTone(db, slug, selected.call_slug, policies),
   ]);
-  return { calls, selected, policies, summary, figures, citations, pages, guidance, results, latest: null };
+  return { calls, selected, policies, summary, figures, citations, pages, guidance, results, tone, remarks, latest: null };
 }
 
 const LIST_COLUMNS =

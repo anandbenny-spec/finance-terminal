@@ -47,10 +47,12 @@ our copy of the transcript. The stored output, its citations and its checks are 
 is v6 plus a rule that a guidance verb ("reiterated", "raised", "cut" and the like) is in a bullet only if its quote says so; v8 (the v8 round,
 8 Nov 2026) adds four rules (a speaker's hedge stays a hedge, a recalled target is not a fresh expectation, no weight word the
 speaker did not use, a cause applies only to the part it was attached to) and a check in code (`ft/ai/call_summary.py`,
-`firm_verb_problem`); **v9, the current one (#178, the v9 round, 8 Nov 2026), adds three rules (a change announced for a later date
+`firm_verb_problem`); v9 (#178, the v9 round, 8 Nov 2026) adds three rules (a change announced for a later date
 stays in the future, an exclusion stays with its figure, an extent word the speaker used stays) and a second check in code
-(`extent_word_problem`).** A call whose summary is a published v5, v6, v7 or v8 is asked for again under v9 and keeps that summary
-unless the v9 reply is published.
+(`extent_word_problem`); **v11, the current one on this branch (#178, the Opus round, 10 Nov 2026), is v9's text plus the Fable review's
+picks, written by Opus 5.5 at effort high** (one passage per claim, five word checks, prompt rules, a closing self-check, the required
+lists stated plainly: `ft/ai/call_summary.py`, `MODEL_OF`, `STRICT_FROM`). A call whose summary is a published v5 to v9 (or a v10 of
+the Sonnet round, on dev) is asked for again under v11 and keeps that summary unless the v11 reply is published.
 
 **Copied text (2B-11c, #301).** A summary bullet may not carry the transcript's own words: `ft/ai/call_summary.py`'s rule cuts a
 copied end off a new reply's bullet before anything is stored, and fails a bullet that copies anywhere else (the usual retry
@@ -130,10 +132,14 @@ from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TARGETS
 
+# call_summary v11 runs on Opus 5.5 at effort high (ft/ai/call_summary.py, MODEL_OF), about 40 times Haiku's price
+# (config/ai_prices.yaml). Anand decided on 10 Nov 2026, 19:09 IST that the summaries ship as labelled paraphrases with their
+# quotes in view (#178), so v11 is merged to main (#370 part 2a, with his OK in the session, 11 Nov 2026). A run with no date
+# window asks for each company's newest call only (#370, `summary_scope`), and §7's $5 run estimate still holds about 10 calls a run.
 # call_tone v3 on Haiku 5.5 passed the tone gate's second round (#175; 10 Nov 2026: 25 of 30 on earnings_tone_2, no reversals), so
 # it is the tone prompt. v1 (Haiku) and v2 (v1's text on Sonnet) failed the first set; v4 and v5 (v3's text on Sonnet and Opus) were
 # never needed. A tone run is still opt-in (CALLS_AI_TASK=call_tone): no scheduled run asks for tone.
-PROMPT_VERSION = {cs.TASK: "v9", ge.TASK: "v1", ct.TASK: "v3"}
+PROMPT_VERSION = {cs.TASK: "v11", ge.TASK: "v1", ct.TASK: "v3"}
 IST = "Asia/Kolkata"
 SHOWN = 12
 ONLY_ENV = "CALLS_AI_TASK"            # both (the default) | call_summary | guidance_extraction | call_tone: limits what a run asks for (#302)
@@ -220,7 +226,7 @@ class Work:
         if self.task == ct.TASK:
             return ct.check(ct.answer_of(reply), self.passages)
         if req.spec.route == "json":                      # the summary's structured route (prompts from v6)
-            return cs.check_json(cs.answer_of(reply), self.call)
+            return cs.check_json(cs.answer_of(reply), self.call, version=req.prompt.version)
         return cs.check(reply, req.sources, self.call.turns, role_held=self.call.role_held)
 
 
@@ -299,7 +305,7 @@ class EquityCallsAi(BatchSteps, Task):
         extraction and tone targets are unchanged. Without `lacking` it changes nothing, so a late result for an older call
         (a backfill's batch collected by the next `weekly`) still finds its target."""
         where = ["ev.status = 'stored'", "ev.is_published", "ec.status_reason is null", "d.is_published",
-                 "d.chunked_at is not null", "(es.id is null or not es.is_suppressed)", "not ds.is_suppressed"]
+                 "d.chunked_at is not null", "(es.id is null or not es.is_suppressed)", "not ds.is_suppressed", "n.market = 'IN'"]
         guidance = ge.TASK in PROMPT_VERSION            # a task with no prompt version listed isn't asked for
         tone = tone and ct.TASK in PROMPT_VERSION
         newest_only = newest_only and lacking

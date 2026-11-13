@@ -32,8 +32,11 @@ export async function readIndexMembers(db: EquityDb): Promise<IndexMemberRow[]> 
   );
 }
 
+/** An index the screener's chips offer; `market` is its members' market (US-06, #405), absent where a caller doesn't need it. */
+export type ScreenerIndex = { slug: string; name: string; market?: "IN" | "US" };
+
 export type ScreenerPageData =
-  | { ok: true; readAt: string; rows: ScreenerRow[]; indexes: { slug: string; name: string }[]; policies: FieldPolicyRow[] }
+  | { ok: true; readAt: string; rows: ScreenerRow[]; indexes: ScreenerIndex[]; policies: FieldPolicyRow[] }
   | { ok: false; readAt: string };
 
 /** The distinct indexes of a member list, by slug. */
@@ -41,6 +44,13 @@ export function indexesOf(members: readonly IndexMemberRow[]): { slug: string; n
   const seen = new Map<string, string>();
   for (const m of members) if (!seen.has(m.index_slug)) seen.set(m.index_slug, m.index_name);
   return [...seen].map(([slug, name]) => ({ slug, name })).sort((a, b) => a.slug.localeCompare(b.slug, "en", { numeric: true }));
+}
+
+/** The distinct indexes of a member list with their members' market (an index's members share one), by slug (US-06, #405). */
+export function indexesWithMarket(members: readonly IndexMemberRow[]): Required<ScreenerIndex>[] {
+  const market = new Map<string, "IN" | "US">();
+  for (const m of members) if (!market.has(m.index_slug)) market.set(m.index_slug, m.market);
+  return indexesOf(members).map((i) => ({ ...i, market: market.get(i.slug) ?? "IN" }));
 }
 
 export type PricedInPageData = { ok: true; readAt: string; operating: PricedInRow[]; lenders: PricedInRow[] } | { ok: false; readAt: string };
@@ -90,7 +100,7 @@ export async function readScreenerPage(): Promise<ScreenerPageData> {
   }
   try {
     const [rows, members, policies] = await Promise.all([readScreener(db), readIndexMembers(db), readFieldPolicy(db as PolicyDb)]);
-    return { ok: true, readAt, rows, indexes: indexesOf(members), policies };
+    return { ok: true, readAt, rows, indexes: indexesWithMarket(members), policies };
   } catch (error) {
     console.error(`[equity] screener read failed: ${error instanceof Error ? error.message : String(error)}`);
     return { ok: false, readAt };

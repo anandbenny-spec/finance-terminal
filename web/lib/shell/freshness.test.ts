@@ -1,5 +1,7 @@
 // The status bar's freshness summary (C2; Design 01 §1.8, §4.1; Review 01, F17): only the tasks behind live
 // parts of the site count, "stale" shows (D4's check), and nothing is called current without a success.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { TaskFreshnessRow } from "@/lib/queries/api";
 import { DAILY_TASKS, FEEDS, liveTasks } from "@/lib/feeds";
@@ -110,11 +112,14 @@ describe("feeds", () => {
     // policy.reactions, live once enabled in tasks.yaml.
     expect(FEEDS.policyReactions).toEqual(["policy.reactions"]);
     // Module 2's four surfaces joined FEEDS at 2A-26 (#132): their tasks count, each once, with policy.rate_cycles.
+    // The value chain's two tasks joined on 12 Nov 2026 (VC-06, #191), once production's runs had left their freshness rows.
     expect(liveTasks()).toEqual([
       "equity.beta",
+      "equity.brsr",
       "equity.metrics",
       "equity.prices",
       "equity.rate_reactions",
+      "equity.related_parties",
       "equity.snapshot",
       "equity.statements",
       "equity.universe",
@@ -155,5 +160,52 @@ describe("panelFreshness (C3: each panel's footer)", () => {
   it("claims only the data's date when freshness couldn't be read", () => {
     expect(panelFreshness(null, tasks, "2026-09-17", NOW)).toEqual({ text: "Data to 17 Sep 2026", delayed: false });
     expect(panelFreshness(null, tasks, null, NOW)).toEqual({ text: "", delayed: false });
+  });
+});
+
+describe("panelFreshness with checkedTasks (#440: /policy's header and \"Where rates stand\")", () => {
+  // Test rows: the calendar last succeeded long ago (it runs every 25 days), the daily tasks last night.
+  const tasks = ["policy.calendar", "policy.fed_documents", "policy.ai_batch"];
+  const daily = ["policy.fed_documents", "policy.ai_batch"];
+  const CAL = "2026-10-01T10:00Z";
+  const DAY = "2026-10-23T22:40Z";
+  const rows = [row("policy.calendar", "ok", CAL), row("policy.fed_documents", "ok", DAY), row("policy.ai_batch", "ok", DAY)];
+
+  it("takes 'checked' from the daily tasks, not the calendar", () => {
+    expect(panelFreshness(rows, tasks, "2026-09-17", NOW, daily)).toEqual({
+      text: "Data to 17 Sep 2026 · checked 24 Oct, 04:10 IST",
+      delayed: false,
+    });
+  });
+
+  it("is unchanged without the argument (the calendar's old success is the oldest)", () => {
+    expect(panelFreshness(rows, tasks, null, NOW).text).toBe("checked 1 Oct, 15:30 IST");
+  });
+
+  it("is still delayed when the calendar failed or went stale", () => {
+    const failed = [row("policy.calendar", "failed", CAL), ...rows.slice(1)];
+    expect(panelFreshness(failed, tasks, null, NOW, daily).delayed).toBe(true);
+    const stale = [row("policy.calendar", "stale", CAL), ...rows.slice(1)];
+    expect(panelFreshness(stale, tasks, null, NOW, daily).delayed).toBe(true);
+  });
+
+  it("counts every task when none of them is in the checked set", () => {
+    expect(panelFreshness(rows, tasks, null, NOW, ["policy.market_series"]).text).toBe("checked 1 Oct, 15:30 IST");
+  });
+
+  it("shows no 'checked' part when a task has no success ever, as today", () => {
+    const none = [row("policy.calendar", "ok", null), ...rows.slice(1)];
+    const f = panelFreshness(none, tasks, "2026-09-17", NOW, daily);
+    expect(f.text).toBe("Data to 17 Sep 2026");
+    expect(f.delayed).toBe(true);
+  });
+});
+
+describe("/policy passes the daily tasks as the checked set (#440)", () => {
+  // The page is an async server component with live reads, so this reads its source, as meeting-view-layout.test.ts does.
+  const src = readFileSync(join(__dirname, "../../app/policy/page.tsx"), "utf8");
+  it("gives the header and the Where rates stand footer DAILY_TASKS", () => {
+    expect(src).toContain("panelFreshness(freshness, allTasks, null, now, DAILY_TASKS)");
+    expect(src).toMatch(/FEEDS\.policyRatesStand,[^\n]*, DAILY_TASKS\)/);
   });
 });

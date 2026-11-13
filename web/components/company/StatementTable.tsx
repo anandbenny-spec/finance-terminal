@@ -11,7 +11,7 @@ import { Qualifier } from "@/components/data/Qualifier";
 import { StateNote } from "@/components/data/StateNote";
 import { EmptyFigure, lineValue } from "@/components/company/cells";
 import { KIND_WORDS, metricByPeriod, type LineSpec } from "@/lib/equity/company";
-import { formatDate, formatFraction, formatTableDate, type Currency } from "@/lib/format";
+import { filingDay, formatDate, formatFraction, formatTableDate, type Currency } from "@/lib/format";
 import type { CompanyFinancialRow, CompanyMetricRow } from "@/lib/queries/api";
 
 type Line = { id: string; label: ReactNode; cells: Map<string, ReactNode> };
@@ -19,8 +19,9 @@ type Line = { id: string; label: ReactNode; cells: Map<string, ReactNode> };
 const colId = (r: CompanyFinancialRow) => `${r.period_kind}-${r.period_end}`;
 
 function FilingLink({ row }: { row: CompanyFinancialRow }) {
-  const text = row.filed_at ? `Filed ${formatDate(row.filed_at.slice(0, 10))}` : "Filing";
-  if (!row.source_url) return <span>{text}</span>;
+  const text = row.filed_at ? `Filed ${formatDate(filingDay(row.filed_at, row.market))}` : "Filing";
+  // A stored URL that isn't https:// renders as text, not a link (the check the other filing links make; #367).
+  if (!row.source_url?.startsWith("https://")) return <span>{text}</span>;
   return (
     <a
       href={row.source_url}

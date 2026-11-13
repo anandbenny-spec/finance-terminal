@@ -8,19 +8,19 @@ export function Footer({ sources }: { sources?: string[] }) {
     <footer className="mt-6 flex flex-wrap gap-x-4 gap-y-1 border-t border-line pt-3 text-meta text-ink-3">
       <span>Informational only, not investment advice.</span>
       {sources && sources.length > 0 && <span>Sources: {sources.join(" · ")}</span>}
-      <Link href="/about" className="py-1 underline">
+      <Link href="/about" className="inline-flex min-h-6 min-w-6 items-center underline">
         About and privacy
       </Link>
-      <Link href="/accuracy" className="py-1 underline">
+      <Link href="/accuracy" className="inline-flex min-h-6 min-w-6 items-center underline">
         Accuracy
       </Link>
-      <Link href="/methodology" className="py-1 underline">
+      <Link href="/methodology" className="inline-flex min-h-6 min-w-6 items-center underline">
         Methodology and limitations
       </Link>
-      <a href="/feed.xml" className="py-1 underline">
+      <a href="/feed.xml" className="inline-flex min-h-6 min-w-6 items-center underline">
         RSS
       </a>
-      <a href="https://www.tradingview.com/" className="py-1 underline">
+      <a href="https://www.tradingview.com/" className="inline-flex min-h-6 min-w-6 items-center underline">
         Charts: TradingView Lightweight Charts
       </a>
     </footer>

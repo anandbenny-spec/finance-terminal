@@ -20,14 +20,18 @@ const row = (key: string, change: number, unit: "bps" | "pct"): MarketReactionRo
   is_surprise_measure: key === "fred.DGS2", attribution: null,
 });
 
-function render(reactions: MarketReactionRow[], today = "2024-09-20") {
+function render(reactions: MarketReactionRow[], today = "2024-09-20", own = false, attributions: SeriesRow[] = series) {
   const model = meetingReaction({
-    bank: "Fed", decisionDate: "2024-09-18", today, reactions, series,
+    bank: "Fed", decisionDate: "2024-09-18", today, reactions, series: attributions,
     observations: Object.fromEntries(ALL.map((k) => [k, obs(k)])),
   });
   return renderToStaticMarkup(
     <TooltipProvider>
-      <MeetingReactionView model={model} footer={<p>Footer</p>} />
+      <MeetingReactionView
+        model={model}
+        footer={<p>Footer all: {model.sources.filter(Boolean).join(" | ")}</p>}
+        chartFooters={own ? Object.fromEntries(model.entries.filter((e) => e.source !== null).map((e) => [e.source as string, <p key={e.key}>Footer own: {e.source}</p>])) : undefined}
+      />
     </TooltipProvider>,
   );
 }
@@ -59,5 +63,42 @@ describe("MeetingReactionView", () => {
   it("carries the footer on the table panel and every chart panel", () => {
     const html = render([row("fred.DGS2", -9, "bps")]);
     expect(html.match(/Footer/g)).toHaveLength(2);
+  });
+
+  it("gives each chart its own series' source, and the table panel every shown series' (R05-8)", () => {
+    const html = render([row("fred.DGS2", -9, "bps"), row("yf.^GSPC", 0.5, "pct")], "2024-09-20", true);
+    const own = html.match(/Footer own: [^<]*/g) ?? [];
+    expect(own.map((x) => x.replace(/<!-- -->/g, ""))).toEqual(expect.arrayContaining(["Footer own: Source: fred.DGS2", "Footer own: Source: yf.^GSPC"]));
+    expect(own).toHaveLength(2);
+    expect(html).not.toMatch(/Footer own: [^<]*yf\.\^NSEI/);
+    expect(html).toContain("Footer all:");
+    expect(text(html)).toContain("Footer all: Source: fred.DGS2 | Source: fred.DGS10 | Source: yf.^GSPC | Source: fred.DEXINUS | Source: yf.^NSEI | Source: yf.^NSEBANK");
+  });
+
+  it("shows an index series' copyright line under its own chart (R05-8)", () => {
+    const attributed = series.map((s) => (s.key === "yf.^GSPC" ? { ...s, attribution: "Source: Yahoo Finance · S&P Dow Jones Indices LLC" } : s));
+    const html = render([row("fred.DGS2", -9, "bps"), row("yf.^GSPC", 0.5, "pct")], "2024-09-20", true, attributed);
+    expect(html).toContain("Footer own: Source: Yahoo Finance · S&amp;P Dow Jones Indices LLC");
+    expect(html.match(/Footer own: [^<]*DGS2[^<]*/)?.[0]).not.toContain("S&amp;P");
+  });
+
+  it("keeps the full footer on a chart whose series carries no attribution (R05-8)", () => {
+    const bare = series.map((s) => (s.key === "fred.DGS2" ? { ...s, attribution: null } : s));
+    const html = render([row("fred.DGS2", -9, "bps")], "2024-09-20", true, bare);
+    expect(html).not.toContain("Footer own:");
+    expect(html).toContain("Footer all:");
+  });
+  it("takes the charts' footers as nodes, never a function: a client component can't be handed one by the server page (12 Nov 2026's failed builds)", () => {
+    const model = meetingReaction({ bank: "Fed", decisionDate: "2024-09-18", today: "2024-09-20", reactions: [row("fred.DGS2", -9, "bps")], series, observations: Object.fromEntries(ALL.map((k) => [k, obs(k)])) });
+    // @ts-expect-error a function is not a map of nodes
+    const bad = <MeetingReactionView model={model} footer={null} chartFooters={(source: string) => source} />;
+    expect(bad).toBeTruthy();
+    const html = renderToStaticMarkup(
+      <TooltipProvider>
+        <MeetingReactionView model={model} footer={<p>Footer all</p>} chartFooters={{ "Source: fred.DGS2": <p>Footer own: DGS2</p>, constructor: <p>never</p> }} />
+      </TooltipProvider>,
+    );
+    expect(html).toContain("Footer own: DGS2");
+    expect(html).not.toContain("never");
   });
 });

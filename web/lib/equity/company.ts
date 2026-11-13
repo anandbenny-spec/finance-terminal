@@ -1,6 +1,9 @@
 // web/lib/equity/company.ts: the company page's selection rules (2A-19; Spec 02A §8). Pure. Nothing here computes a
 // figure for display beyond what the spec asks (the day's change from the two closes `api.companies` returns): it
 // picks which stored rows and periods a panel shows, and what words a state is told in.
+import { callOf } from "@/lib/equity/calls";
+import type { WindowKey } from "@/lib/equity/rate";
+import type { Market } from "@/lib/format";
 import type {
   CompanyFinancialRow,
   CompanyMetricRow,
@@ -21,17 +24,82 @@ export const TABS: readonly { id: TabId; label: string }[] = [
   { id: "calls", label: "Earnings calls" },
 ];
 
-/** The tab in the URL (?tab=…); anything else is the Overview. */
+/** The tab in a path segment (/companies/tcs/valuation); anything else is the Overview, so a caller that wants a 404 uses `tabParam`. */
 export function tabOf(value: string | string[] | undefined): TabId {
   return value === "financials" || value === "valuation" || value === "rate-decisions" || value === "calls" ? value : "overview";
 }
 
-/** The basis in the URL (?basis=…); consolidated unless standalone is asked for. */
+/** The basis in a path segment (/companies/tcs/financials/standalone); consolidated unless standalone is asked for. */
 export function basisOf(value: string | string[] | undefined): Basis {
   return value === "standalone" ? "standalone" : "consolidated";
 }
 
-export const SOURCE_LINE: Record<string, string> = { nse: "Source: NSE", bse: "Source: BSE" };
+// ---- the company page's addresses (R05-9b, 12 Nov 2026) ----
+// The tab and its view are path segments, never query strings, so each page is built ahead and cached like Policy Day:
+//   /companies/tcs                           the Overview (no segment)
+//   /companies/tcs/valuation                 a tab
+//   /companies/tcs/financials/standalone     a tab's view: the basis,
+//   /companies/tcs/rate-decisions/d5         the rate-decision window,
+//   /companies/tcs/calls/q2-fy27             or a call. The default view has no segment.
+// /companies/tcs/value-chain is its own static route and is not a tab.
+
+/** A tab with its own segment: every tab but the Overview. */
+export type PathTab = Exclude<TabId, "overview">;
+
+/** The tab a path segment names, or null (the route answers 404): `overview` and `value-chain` are not tab segments. */
+export function tabParam(segment: string | undefined): PathTab | null {
+  return segment === "financials" || segment === "valuation" || segment === "rate-decisions" || segment === "calls" ? segment : null;
+}
+
+/** What a tab's view segment selects: the basis, the rate-decision window or a call's slug. */
+export type CompanyViewSelection = { basis: Basis; window: WindowKey; call: string | undefined };
+
+/** A tab's default view: consolidated, one day, the default call. */
+export const DEFAULT_VIEW: CompanyViewSelection = { basis: "consolidated", window: "d1", call: undefined };
+
+/**
+ * The view a tab's second segment names; null when the tab doesn't take that value (the route answers 404). No segment is the
+ * tab's default view (consolidated, one day, the default call). A call slug is any slug-shaped string (`callOf`); one the
+ * company doesn't have shows the default call, as the old query link did.
+ */
+export function viewParam(tab: PathTab, segment: string | undefined): CompanyViewSelection | null {
+  const base = DEFAULT_VIEW;
+  if (segment === undefined) return base;
+  if (tab === "financials") return segment === "standalone" ? { ...base, basis: "standalone" } : null;
+  if (tab === "rate-decisions") return segment === "d5" ? { ...base, window: "d5" } : null;
+  if (tab === "calls") {
+    const call = callOf(segment);
+    return call ? { ...base, call } : null;
+  }
+  return null;
+}
+
+/** The tab and view a catch-all path (`["financials", "standalone"]`) names, or null when it names none (the route answers 404). */
+export function pathParam(path: string[] | undefined): { tab: PathTab; view: CompanyViewSelection } | null {
+  if (!path || path.length < 1 || path.length > 2) return null;
+  const tab = tabParam(path[0]);
+  const view = tab ? viewParam(tab, path[1]) : null;
+  return tab && view ? { tab, view } : null;
+}
+
+/**
+ * The path of a company's tab and, for a tab that has views, its view (`standalone`, `d5` or a call's slug). The one builder
+ * of company links: a view the tab doesn't take is left out, so a link never points at a 404. The Overview is the bare slug.
+ */
+export function companyHref(slug: string, tab: TabId, view?: string): string {
+  const base = `/companies/${slug}`;
+  if (tab === "overview") return base;
+  const selection = viewParam(tab, view);
+  return `${base}/${tab}${view !== undefined && selection ? `/${view}` : ""}`;
+}
+
+export const SOURCE_LINE: Record<string, string> = {
+  nse: "Source: NSE",
+  bse: "Source: BSE",
+  // The US slice (US-06, #405; Spec 02A.1 §7): prices and corporate actions from Yahoo Finance, statements from SEC EDGAR.
+  yfinance: "Source: Yahoo Finance",
+  sec: "Source: SEC EDGAR",
+};
 
 /** The source line for a stored `source_key` (NSE when it names none we know: the posture's default). */
 export function sourceLineFor(key: string | null | undefined): string {
@@ -39,6 +107,33 @@ export function sourceLineFor(key: string | null | undefined): string {
 }
 
 export const DAMODARAN = "Source: Aswath Damodaran, NYU Stern";
+export const SEC_EDGAR = SOURCE_LINE.sec;
+export const YAHOO = SOURCE_LINE.yfinance;
+
+// ---------------------------------------------------------------------------------------------------------------
+// The US slice (US-06, #405; Spec 02A.1 §1, §7): a US company's page in dollars, with the tabs that apply to it
+
+/** The index a market's companies are screened in, as the page names it. */
+export const UNIVERSE: Record<Market, string> = { IN: "Nifty 50", US: "Dow 30" };
+
+/** The tabs a US company's page shows: no earnings calls (no free transcript source) and no rate decisions (rate sensitivity
+ * for US stocks comes after 18 Nov). Their reasons, for a deep link to one (Spec 02A.1 §7). */
+export const US_TABS: readonly TabId[] = ["overview", "financials", "valuation"];
+export const NOT_COVERED_US: Partial<Record<TabId, string>> = {
+  calls: "US earnings calls aren't covered: no free transcript source.",
+  "rate-decisions": "Rate decisions aren't covered for US companies yet: the decision-day moves are measured for the Nifty 50 only.",
+};
+export const VALUE_CHAIN_NOT_COVERED_US = "The value chain isn't covered for US companies: it is read from Indian filings (BRSR and related-party disclosures).";
+
+/** The tabs a company's page shows, in order: every tab for India, the three that apply for the US. */
+export function tabsFor(market: Market): readonly { id: TabId; label: string }[] {
+  return market === "US" ? TABS.filter((t) => US_TABS.includes(t.id)) : TABS;
+}
+
+/** The symbol shown beside a company's name: the ticker for a US company, the NSE symbol for an Indian one. */
+export function symbolOf(row: { market: Market; nse_symbol: string | null; ticker?: string | null }): string | null {
+  return row.market === "US" ? (row.ticker ?? null) : row.nse_symbol;
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Overview: the price series
@@ -214,6 +309,40 @@ export const BALANCE_LINES: Record<FamilyKind, LineSpec[]> = {
   ],
 };
 
+/** A US company's statements (Spec 02A.1 §5.2): the lines US-02's adapter fills from SEC EDGAR, one set for every family
+ * (10-K and 10-Q filings carry no bank or insurer schedule the adapter reads). EBIT is operating income as filed. */
+export const US_PNL_LINES: LineSpec[] = [
+  { id: "revenue", label: "Revenue", kind: "money" },
+  { id: "ebit_derived", label: "EBIT", kind: "money" },
+  { id: "finance_cost", label: "Interest expense", kind: "money" },
+  { id: "pbt", label: "Income before income taxes", kind: "money" },
+  { id: "tax", label: "Income tax", kind: "money" },
+  { id: "pat_owners", label: "Net income attributable to the company", kind: "money" },
+  { id: "eps_basic", label: "Earnings per share, basic", kind: "price" },
+  { id: "eps_diluted", label: "Earnings per share, diluted", kind: "price" },
+];
+
+export const US_BALANCE_LINES: LineSpec[] = [
+  { id: "total_assets", label: "Total assets", kind: "money" },
+  { id: "cash", label: "Cash and cash equivalents", kind: "money" },
+  { id: "total_equity", label: "Total equity", kind: "money" },
+  { id: "equity_owners", label: "Stockholders' equity", kind: "money" },
+  { id: "borrowings_current", label: "Current debt", kind: "money" },
+  { id: "borrowings_noncurrent", label: "Long-term debt", kind: "money" },
+];
+
+export const US_CASH_FLOW_LINES: LineSpec[] = [
+  { id: "cfo", label: "Cash from operations", kind: "money" },
+  { id: "cfi", label: "Cash from investing", kind: "money" },
+  { id: "cff", label: "Cash from financing", kind: "money" },
+  { id: "capex", label: "Capital expenditure", kind: "money" },
+];
+
+/** What a US quarter's figures are (Spec 02A.1 §5.2): a 10-K reports the year, so the fourth quarter is derived. */
+export const US_QUARTER_NOTE = "A fourth quarter is the fiscal year less the first nine months: a 10-K reports only the full year.";
+/** What the US debt lines are (us_inputs.py's label, Spec 02A.1 §5.4). */
+export const US_DEBT_NOTE = "Debt is as filed; lease liabilities aren't counted.";
+
 export const CASH_FLOW_LINES: LineSpec[] = [
   { id: "cfo", label: "Cash from operations", kind: "money" },
   { id: "cfi", label: "Cash from investing", kind: "money" },
@@ -232,6 +361,15 @@ export const PERIODS = {
   annual: { kinds: ["year"], count: 5 },
   balance: { kinds: ["instant"], count: 6 },
   cashFlow: { kinds: ["half_year", "year"], count: 6 },
+} as const satisfies Record<string, PeriodSpec>;
+
+/** A US company's periods (Spec 02A.1 §7: fiscal years and quarters): balance sheets at each quarter end, and cash flow by
+ * fiscal year only, as filed (a quarter's cash flow would be a difference of two year-to-date figures). */
+export const US_PERIODS = {
+  quarterly: { kinds: ["quarter"], count: 8 },
+  annual: { kinds: ["year"], count: 5 },
+  balance: { kinds: ["instant"], count: 8 },
+  cashFlow: { kinds: ["year"], count: 5 },
 } as const satisfies Record<string, PeriodSpec>;
 
 export const KIND_WORDS: Record<string, string> = {

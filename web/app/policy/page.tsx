@@ -16,7 +16,7 @@ import { RateStats } from "@/components/policy/RateStats";
 import { ReactionsPanel } from "@/components/policy/ReactionsPanel";
 import { LongRatesPanel } from "@/components/policy/LongRatesPanel";
 import { RatesPanel } from "@/components/policy/RatesPanel";
-import { FEEDS, type TaskKey } from "@/lib/feeds";
+import { DAILY_TASKS, FEEDS, type TaskKey } from "@/lib/feeds";
 import { formatDate } from "@/lib/format";
 import { buildChangeStrips, stripScale } from "@/lib/policy/changestrip";
 import { historyRows } from "@/lib/policy/decisions";
@@ -44,13 +44,13 @@ export default async function PolicyPage() {
   const decisions = o.history.ok ? o.history.decisions : null;
   const fed = o.fed.ok ? o.fed : null;
   const rbi = o.rbi.ok ? o.rbi : null;
-  const foot = (sources: (string | null | undefined)[], tasks: readonly TaskKey[], dataTo: string | null) => (
-    <Foot sources={sources} tasks={tasks} dataTo={dataTo} freshness={freshness} now={now} />
+  const foot = (sources: (string | null | undefined)[], tasks: readonly TaskKey[], dataTo: string | null, checkedTasks?: readonly string[]) => (
+    <Foot sources={sources} tasks={tasks} dataTo={dataTo} freshness={freshness} now={now} checkedTasks={checkedTasks} />
   );
   const fedSource = fed?.meeting?.attribution ?? "Source: Federal Reserve Board";
   const rbiSource = rbi?.meeting?.attribution ?? RBI_SOURCE;
   const allTasks = [...new Set(Object.entries(FEEDS).filter(([k]) => k.startsWith("policy")).flatMap(([, t]) => t))];
-  const pageFresh = panelFreshness(freshness, allTasks, null, now);
+  const pageFresh = panelFreshness(freshness, allTasks, null, now, DAILY_TASKS);
   const stanceLabel = policies?.find((p) => p.field_key === "ai.stance_extraction" && p.status === "labelled")?.label ?? null;
   const rbiDoc = rbi?.document;
   const strips = o.changes.ok && o.history.ok ? buildChangeStrips(o.history.decisions, o.changes.documents, o.changes.diffs) : null;
@@ -74,7 +74,7 @@ export default async function PolicyPage() {
           <Panel
             label="Where the two policy rates stand now, and the next meetings"
             variant="flush"
-            footer={foot([fedSource, rbiSource], FEEDS.policyRatesStand, latestOf(fed?.meeting?.decision_date, rbi?.meeting?.decision_date))}
+            footer={foot([fedSource, rbiSource], FEEDS.policyRatesStand, latestOf(fed?.meeting?.decision_date, rbi?.meeting?.decision_date), DAILY_TASKS)}
           >
             <RateStats fed={fed} rbi={rbi} decisions={decisions} policies={policies} meetings={next.ok ? next.meetings : null} />
           </Panel>

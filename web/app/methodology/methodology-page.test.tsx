@@ -33,7 +33,7 @@ describe("/methodology", () => {
   });
 
   it("shows no figures: no digit except the allowed constants", () => {
-    const stripped = text.replace(/400 characters|20 June 2025|August 2026|10-year|Fed vs RBI|Nifty 50/g, "");
+    const stripped = text.replace(/400 characters|20 June 2025|August 2026|10-year|Fed vs RBI|Nifty 50|against 30 passages/g, "");
     expect(stripped).not.toMatch(/\d/);
   });
 
@@ -53,7 +53,10 @@ describe("/methodology", () => {
     expect(text).toContain("leaves out dividends");
     expect(markup).toContain('href="/accuracy"');
     expect(text).toContain("labelled AI-extracted");
-    expect(text).toContain("no tone or sentiment is read");
+    expect(text).toContain("Management's tone on each call is scored by AI and labelled AI-scored");
+    expect(text).toContain("checked against 30 passages labelled by a separate AI model (Claude Fable)");
+    expect(text).toContain("is shown only once that check has passed");
+    expect(text).not.toContain("no tone or sentiment is read");
     expect(text).toContain("Transcript text stays private");
     expect(text).toContain("the source it comes from is removed promptly");
     expect(text).toContain("The daily and watch workflows can also be started with AI switched off");
@@ -63,5 +66,19 @@ describe("/methodology", () => {
     expect(text).toContain("at least five scored targets");
     expect(text).not.toContain("not scored against what a company later delivered");
     expect(text).not.toMatch(/\b(hit rate|delivered on guidance|beat guidance|missed guidance)\b/i);
+  });
+});
+
+describe("/methodology panel titles (R05-10)", () => {
+  // each section's heading (the h2) and its panel's title (the h3 "<id>-title") say different words
+  const headings = [...markup.matchAll(/<h2 id="([^"]+)"[^>]*>([\s\S]*?)<\/h2>/g)];
+  it("no panel title repeats its section's heading, and the section ids are unchanged", () => {
+    expect(headings.map((m) => m[1])).toEqual(["alignment", "what", "data", "ai", "oversight", "switches", "trace", "testing", "limits", "contact"]);
+    for (const [, id, inner] of headings) {
+      const heading = inner.replace(/<[^>]+>/g, "").trim();
+      const panel = markup.match(new RegExp(`<h3 id="${id}-title"[^>]*>([\\s\\S]*?)</h3>`))?.[1].replace(/<[^>]+>/g, "").trim();
+      expect(panel, id).toBeTruthy();
+      expect(panel, id).not.toBe(heading);
+    }
   });
 });

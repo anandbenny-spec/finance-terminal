@@ -47,8 +47,8 @@ describe("ChangeStrip", () => {
   });
 
   it("links each row to its newest meeting's What changed tab", () => {
-    expect(markup).toContain('href="/policy/fed/2026-03-18?tab=changes"');
-    expect(markup).toContain('href="/policy/rbi/2026-02-06?tab=changes"');
+    expect(markup).toContain('href="/policy/fed/2026-03-18/changes"');
+    expect(markup).toContain('href="/policy/rbi/2026-02-06/changes"');
   });
 
   it("labels the shares as derived and gives each row a keyboard way in", () => {

@@ -124,6 +124,13 @@ describe("the front page (/)", () => {
     expect(t).toContain("Every decision since 2019");
   });
 
+  it("carries the guided tour's three targets on its sections (#91)", () => {
+    for (const id of ["front-what-changed", "front-votes", "front-change-strip"]) expect(out).toMatch(new RegExp(`<section data-tour="${id}"`));
+    // The sections draw whatever the reads returned, so the targets exist even when a panel failed.
+    const failed = html(<FrontView front={front({ fed: { kind: "error" } }, { fed: no, history: no, changes: no, fieldPolicy: no })} />);
+    for (const id of ["front-what-changed", "front-votes", "front-change-strip"]) expect(failed).toContain(`data-tour="${id}"`);
+  });
+
   it("has its four sections in this order", () => {
     const heads = [...out.matchAll(/<h2[^>]*>(.*?)<\/h2>/g)].map((m) => text(m[1]).replace(/ the bank's own words.*| one dot per member.*/, ""));
     expect(heads).toEqual(["What changed in the latest statements", "How the members voted", "How much each statement changed", "Where rates stand"]);
@@ -142,8 +149,8 @@ describe("the front page (/)", () => {
     expect(t).toContain("Fed monitoring sentence.");
     expect(t).not.toContain("A fifth changed sentence.");
     expect(t.match(/2 other sentences changed · See all changes →/g)).toHaveLength(2);
-    expect(out).toContain('href="/policy/fed/2026-09-17?tab=changes"');
-    expect(out).toContain('href="/policy/rbi/2026-10-07?tab=changes"');
+    expect(out).toContain('href="/policy/fed/2026-09-17/changes"');
+    expect(out).toContain('href="/policy/rbi/2026-10-07/changes"');
     expect(out).toContain("border-t-series-1");
     expect(out).toContain("border-t-series-2");
   });
@@ -237,5 +244,52 @@ describe("the front page when a read fails", () => {
     const t = text(html(<FrontView front={front({}, { fieldPolicy: { ok: true, rows: [] } })} />));
     expect(t).not.toContain("The Committee moved from hold to cut.");
     expect(t).toContain("Fed monitoring sentence.");
+  });
+});
+
+describe("the front page's What changed panels keep their own height (R05-4, #434)", () => {
+  // The panels share a grid row; without self-start the shorter one stretches to the taller one's height.
+  const own = (markup: string, id: string) => {
+    const tag = markup.match(new RegExp(`<section[^>]*aria-labelledby="${id}"[^>]*>`));
+    return tag ? tag[0] : "";
+  };
+  const both = (markup: string) => {
+    for (const id of ["panel-front-changes-fed", "panel-front-changes-rbi"]) {
+      expect(own(markup, id)).toContain("self-start");
+    }
+  };
+  it("is self-start on both panels when the summaries are published", () => both(html(<FrontView front={front()} />)));
+  it("is self-start when a bank's part failed", () => both(html(<FrontView front={front({ fed: { kind: "error" } })} />)));
+  it("is self-start when there is no earlier document, or no document yet", () => {
+    both(html(<FrontView front={front({ rbi: { kind: "no-earlier" } })} />));
+    both(html(<FrontView front={front({ fed: { kind: "no-document" } })} />));
+  });
+  it("is self-start when no decision is published", () => {
+    both(html(<FrontView front={front({ fed: { kind: "no-decision" } }, { fed: no, history: no, changes: no, fieldPolicy: no })} />));
+  });
+});
+
+describe("the front page's Where rates stand footer checks on the daily tasks (#440)", () => {
+  const row = (task_key: string, last_success_at: string, status: "ok" | "failed" = "ok") => ({ task_key, status, last_success_at, last_checked_at: last_success_at });
+  const rowsWith = (calendarStatus: "ok" | "failed") => [
+    row("policy.calendar", "2026-10-01T10:00:00Z", calendarStatus),
+    row("policy.fed_documents", "2026-10-23T22:40:00Z"),
+    row("policy.rbi_documents", "2026-10-23T22:40:00Z"),
+    row("policy.ai_batch", "2026-10-23T22:40:00Z"),
+  ];
+  const section = (calendarStatus: "ok" | "failed") => {
+    const f = front({ freshness: { ok: true, tasks: rowsWith(calendarStatus), readAt: NOW } });
+    const markup = html(<FrontView front={f} />);
+    return text(markup.slice(markup.indexOf('id="front-where-rates-stand"')));
+  };
+
+  it("reads the daily tasks' time, not the calendar's October date", () => {
+    const t = section("ok");
+    expect(t).toContain("checked 24 Oct, 04:10 IST");
+    expect(t).not.toContain("checked 1 Oct");
+  });
+
+  it("still reads Update delayed when the calendar failed", () => {
+    expect(section("failed")).toContain("Update delayed");
   });
 });

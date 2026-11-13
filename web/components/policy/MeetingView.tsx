@@ -1,7 +1,7 @@
 // The meeting page (C4; Spec 01 §4.3, §4.5; Design 01 §5.3), for /policy/fed/[date] and /policy/rbi/[date].
 // Header: breadcrumb, "FOMC meeting · {date}" or "MPC meeting no. {n} · {date}", DecisionLine · tally · release time
 // (the Fed's adds IST) · the official document (the Fed's only: the RBI's are named, never linked: Anand, 24 Oct
-// 2026) · previous and next meeting. Tabs in the URL (?tab=…): Overview, What changed, Statement, Minutes, Press
+// 2026) · previous and next meeting. Tabs in the URL (a path segment: /changes, /statement, …): Overview, What changed, Statement, Minutes, Press
 // conference Market reaction (Pass 1b, #75). Every figure is a row an `api` view returned; every empty case
 // is §4.5's copy; no hawk/dove UI (D9). The 2018 baselines get pages too.
 import Link from "next/link";
@@ -337,11 +337,15 @@ function Rail({ ctx }: { ctx: Ctx }) {
 
 // ------------------------------------------------------------------ What changed
 
+// The panel uses its whole width (12 Nov 2026; Anand: half of it was black). It used to cap everything at the reading
+// width, the two tables included, so on a wide screen the Before / Now columns were about 200 px each beside an empty
+// half. Now only the prose keeps the reading measure (Design 01 §5.2): from xl the AI summary and Numbers that changed
+// sit side by side, and Key changes' table runs the panel's width. Below xl they stack as before.
 async function Changes({ ctx, flat = false }: { ctx: Ctx; flat?: boolean }) {
   const decisionDoc = ctx.docs.get(DOC_TYPES[ctx.bank].decision) ?? null;
   const title = ctx.bank === "Fed" ? "What changed in the statement" : "What changed in the resolution";
   const panel = (body: ReactNode, sources: string[] = [docSource(ctx, decisionDoc)]) => (
-    <Panel title={title} titleId="panel-changes" subtitle="What did this decision change in the wording, against the one before?" variant="prose" footer={<Foot ctx={ctx} sources={sources} dataTo={docDate(ctx, decisionDoc)} />}>
+    <Panel title={title} titleId="panel-changes" subtitle="What did this decision change in the wording, against the one before?" footer={<Foot ctx={ctx} sources={sources} dataTo={docDate(ctx, decisionDoc)} />}>
       {body}
     </Panel>
   );
@@ -359,24 +363,32 @@ async function Changes({ ctx, flat = false }: { ctx: Ctx; flat?: boolean }) {
   return (
     <div className={flat ? undefined : "mt-5"}>
       {panel(
-        <div className={flat ? "flex max-h-96 flex-col gap-5 overflow-auto" : "flex flex-col gap-5"}>
+        <div className="flex flex-col gap-5">
           <p className="text-data text-ink-2">Compared with the {model.baseLabel}.</p>
-          {model.summary && ctx.policies ? (
-            <Gated policies={ctx.policies} field="ai.statement_diff_summary" showLabel={false}>
-              <AIBlock block={{ ...model.summary, label: "What changed" }} now={ctx.page.readAt} dense={false} />
-            </Gated>
-          ) : (
-            <StateNote kind="unavailable">No AI summary of the changes yet.</StateNote>
-          )}
-          <NumbersPart ctx={ctx} base={read.base} />
+          <div data-changes-top className="grid grid-cols-1 items-start gap-x-8 gap-y-5 xl:grid-cols-2">
+            <div className="max-w-(--reading-width)">
+              {model.summary && ctx.policies ? (
+                <Gated policies={ctx.policies} field="ai.statement_diff_summary" showLabel={false}>
+                  <AIBlock block={{ ...model.summary, label: "What changed" }} now={ctx.page.readAt} dense={false} />
+                </Gated>
+              ) : (
+                <StateNote kind="unavailable">No AI summary of the changes yet.</StateNote>
+              )}
+            </div>
+            <NumbersPart ctx={ctx} base={read.base} />
+          </div>
           {model.keys && model.redline ? (
-            <KeyChanges
-              model={model.keys}
-              before={model.before}
-              now={model.now}
-              unchangedParagraphs={model.redline.unchangedParagraphs}
-              redline={<Redline model={model.redline} added={model.wordsAdded} removed={model.wordsRemoved} />}
-            />
+            flat ? (
+              <KeyChanges model={model.keys} before={model.before} now={model.now} limit={3} seeAllHref={meetingTabHref(ctx.bank, ctx.m.decision_date, "changes")} />
+            ) : (
+              <KeyChanges
+                model={model.keys}
+                before={model.before}
+                now={model.now}
+                unchangedParagraphs={model.redline.unchangedParagraphs}
+                redline={<Redline model={model.redline} added={model.wordsAdded} removed={model.wordsRemoved} />}
+              />
+            )
           ) : (
             <StateNote kind="unavailable">The redline isn&apos;t available for this document.</StateNote>
           )}
@@ -449,7 +461,19 @@ async function MarketReaction({ ctx, flat = false }: { ctx: Ctx; flat?: boolean 
       <Freshness freshness={ctx.freshOf(FEEDS.policyReactions, model.dataTo)} />
     </>
   );
-  return <MeetingReactionView model={model} footer={footer} refresh={FEEDS.policyReactions} flat={flat} />;
+  const fresh = ctx.freshOf(FEEDS.policyReactions, model.dataTo);
+  // One footer per attribution line, rendered here: MeetingReactionView is a client component, so it takes nodes, never a function.
+  const chartFooters: Record<string, ReactNode> = {};
+  for (const e of model.entries) {
+    if (e.source === null || Object.hasOwn(chartFooters, e.source)) continue;
+    chartFooters[e.source] = (
+      <>
+        <SourceLine lines={[e.source]} />
+        <Freshness freshness={fresh} />
+      </>
+    );
+  }
+  return <MeetingReactionView model={model} footer={footer} chartFooters={chartFooters} refresh={FEEDS.policyReactions} flat={flat} />;
 }
 
 // ------------------------------------------------------------------ Statement, Minutes, Press conference
@@ -473,45 +497,52 @@ async function DocumentTab({
 }) {
   const body = doc ? await documentText(doc.id) : null;
   const anchors = body && speakers ? speakerAnchors(body.chunks, body.paras) : [];
+  // The document in the main column with the Key facts rail beside it from xl (Design 01 §5.3's meeting layout, as the
+  // Overview tab has it; 12 Nov 2026). The panel used to span the page with its text held to the reading width, so half
+  // of it was empty. The text keeps its measure (DocumentView's own); below xl there is no rail and nothing changes.
   return (
-    <div className="mt-5 flex flex-col gap-4">
-      {switcher}
-      <Panel
-        title={doc ? documentTitle(doc) : title}
-        titleId="panel-document"
-        actions={officialLink(ctx, doc)}
-        variant="prose"
-        footer={<Foot ctx={ctx} sources={[docSource(ctx, doc)]} dataTo={doc ? docDate(ctx, doc) : null} />}
-      >
-        {!ctx.page.documents.ok ? (
-          <StateNote kind="error">{ERROR}</StateNote>
-        ) : !doc ? (
-          <StateNote kind="unavailable">{missing}</StateNote>
-        ) : !body ? (
-          <StateNote kind="error">{ERROR}</StateNote>
-        ) : (
-          <div className="flex flex-col gap-5">
-            {withSummary && <Summary ctx={ctx} doc={doc} />}
-            {anchors.length > 0 && (
-              <nav aria-label="Members' statements" className="text-data">
-                <h4 className="mb-1.5 font-semibold text-ink-1">Members&apos; statements</h4>
-                <ul className="flex flex-wrap gap-x-4 gap-y-1">
-                  {anchors.map((a, i) => (
-                    <li key={a.speaker}>
-                      <a href={`#member-${i + 1}`} className="text-ink-1 underline">{a.speaker}</a>
-                    </li>
-                  ))}
-                </ul>
-              </nav>
-            )}
-            <DocumentView
-              paragraphs={body.paras}
-              anchors={Object.fromEntries(anchors.map((a, i) => [a.para, `member-${i + 1}`]))}
-              label={documentTitle(doc)}
-            />
-          </div>
-        )}
-      </Panel>
+    <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-12">
+      <div className="flex min-w-0 flex-col gap-4 xl:col-span-8">
+        {switcher}
+        <Panel
+          title={doc ? documentTitle(doc) : title}
+          titleId="panel-document"
+          actions={officialLink(ctx, doc)}
+          footer={<Foot ctx={ctx} sources={[docSource(ctx, doc)]} dataTo={doc ? docDate(ctx, doc) : null} />}
+        >
+          {!ctx.page.documents.ok ? (
+            <StateNote kind="error">{ERROR}</StateNote>
+          ) : !doc ? (
+            <StateNote kind="unavailable">{missing}</StateNote>
+          ) : !body ? (
+            <StateNote kind="error">{ERROR}</StateNote>
+          ) : (
+            <div className="flex flex-col gap-5">
+              {withSummary && <Summary ctx={ctx} doc={doc} />}
+              {anchors.length > 0 && (
+                <nav aria-label="Members' statements" className="text-data">
+                  <h4 className="mb-1.5 font-semibold text-ink-1">Members&apos; statements</h4>
+                  <ul className="flex flex-wrap gap-x-4 gap-y-1">
+                    {anchors.map((a, i) => (
+                      <li key={a.speaker}>
+                        <a href={`#member-${i + 1}`} className="text-ink-1 underline">{a.speaker}</a>
+                      </li>
+                    ))}
+                  </ul>
+                </nav>
+              )}
+              <DocumentView
+                paragraphs={body.paras}
+                anchors={Object.fromEntries(anchors.map((a, i) => [a.para, `member-${i + 1}`]))}
+                label={documentTitle(doc)}
+              />
+            </div>
+          )}
+        </Panel>
+      </div>
+      <div className="hidden min-w-0 xl:col-span-4 xl:block">
+        <Rail ctx={ctx} />
+      </div>
     </div>
   );
 }
@@ -526,7 +557,7 @@ function StatementSwitch({ ctx, which }: { ctx: Ctx; which: "resolution" | "gove
       {items.map((x) => (
         <Link
           key={x.id}
-          href={meetingTabHref(ctx.bank, ctx.m.decision_date, "statement", x.id === "governor" ? "doc=governor" : "")}
+          href={meetingTabHref(ctx.bank, ctx.m.decision_date, "statement", x.id === "governor" ? { doc: "governor" } : {})}
           aria-current={which === x.id ? "page" : undefined}
           className="border-r border-line px-2.5 py-1 text-meta text-ink-2 no-underline last:border-r-0 hover:text-ink-1 aria-[current=page]:bg-active aria-[current=page]:text-ink-1"
         >
@@ -627,6 +658,17 @@ export async function PolicyDayMeeting({ bank, slug, date }: { bank: Bank; slug:
       <MarketReaction ctx={ctx} flat />
     </div>
   );
+}
+
+/**
+ * The meeting's Key facts rail for another page that sits beside one of its documents (`/documents/[id]`, from xl; R05-11).
+ * The same cached meeting read and freshness read as the meeting pages, then the existing `Rail` unchanged. Nothing when the
+ * meeting can't be built (a read failed, or no such meeting row): the document then stands alone.
+ */
+export async function MeetingRail({ bank, slug, date }: { bank: Bank; slug: string; date: string }) {
+  const [page, freshRead] = await Promise.all([readMeetingPage(bank, slug, date), readFreshness()]);
+  const ctx = buildCtx(bank, page, freshRead);
+  return ctx ? <Rail ctx={ctx} /> : null;
 }
 
 export async function MeetingView({ bank, slug, date, tab, doc }: { bank: Bank; slug: string; date: string; tab: TabId; doc: string | undefined }) {

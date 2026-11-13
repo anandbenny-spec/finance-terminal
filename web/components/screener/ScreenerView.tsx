@@ -4,6 +4,8 @@
 // is client-side over the rows the page read (at most 200). Every figure is a stored value formatted by lib/format.ts;
 // a cell with no value reads "Held" (the stored reason in its tooltip), "N/A" or a dash, never a blank; the model-implied
 // columns appear only where api.field_policy shows them (fail closed: a missing row hides them) and say so when they don't.
+// One market at a time (US-06, #405; Spec 02A.1 §7): the page passes one market's rows, so no column ever sorts rupees
+// against dollars; the US view names the Dow 30, shows dollars in millions with US grouping and has no promoter holding.
 import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 import { DataTable, type Column } from "@/components/data/DataTable";
@@ -19,20 +21,20 @@ import {
   isActive,
   NO_FILTERS,
   peerGroups,
-  RANGE_FILTERS,
+  rangeFiltersFor,
   type FilterKey,
   type Filters,
 } from "@/lib/equity/screener";
+import { symbolOf, UNIVERSE } from "@/lib/equity/company";
 import {
+  formatAmount,
   formatAxisNumber,
   formatDate,
   formatFraction,
   formatFractionChange,
   formatFractionPoints,
-  formatMoney,
   formatMultiple,
   formatPrice,
-  formatRupeesAsCrore,
   formatShare,
   NOT_APPLICABLE,
   NOT_AVAILABLE,
@@ -69,7 +71,7 @@ function Empty({ row, column }: { row: ScreenerRow; column: string }) {
 }
 
 function money(row: ScreenerRow, value: number | null): string {
-  return row.currency === "INR" ? formatRupeesAsCrore(value) : formatMoney(value, row.currency);
+  return formatAmount(value, row.currency);
 }
 
 type Num = (r: ScreenerRow) => number | null;
@@ -79,15 +81,20 @@ export function ScreenerView({
   indexes,
   policies,
   footer,
+  market = "IN",
 }: {
+  /** One market's rows (the page filters by its market control). */
   rows: ScreenerRow[];
   indexes: { slug: string; name: string }[];
   policies: FieldPolicies;
   footer: ReactNode;
+  market?: "IN" | "US";
 }) {
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const boxes = rangeFiltersFor(market);
+  const universe = UNIVERSE[market];
   const groups = useMemo(() => peerGroups(rows), [rows]);
-  const shown = useMemo(() => applyFilters(rows, filters), [rows, filters]);
+  const shown = useMemo(() => applyFilters(rows, filters, boxes), [rows, filters, boxes]);
   const snapshot = rows.map((r) => r.snapshot_date).sort().at(-1) ?? null;
 
   const setBound = (key: FilterKey, which: "min" | "max", text: string) =>
@@ -130,9 +137,9 @@ export function ScreenerView({
       header: "Company",
       sortValue: (r) => (r.short_name ?? r.name).toLowerCase(),
       cell: (r) => (
-        <Link href={`/companies/${r.slug}`} className="text-ink-1 hover:text-highlight">
+        <Link href={`/companies/${r.slug}`} prefetch={false} className="text-ink-1 underline hover:text-ink-2">
           {r.short_name ?? r.name}
-          <span className="ml-1.5 text-meta text-ink-3">{r.nse_symbol}</span>
+          <span className="ml-1.5 text-meta text-ink-3">{symbolOf(r)}</span>
         </Link>
       ),
     },
@@ -158,7 +165,7 @@ export function ScreenerView({
     numberColumn("revenue_cagr_3y", labelled("Revenue CAGR, 3 years", "revenue_cagr_3y"), (r) => r.revenue_cagr_3y, (v) => formatFraction(v)),
     numberColumn("revenue_cagr_5y", labelled("Revenue CAGR, 5 years", "revenue_cagr_5y"), (r) => r.revenue_cagr_5y, (v) => formatFraction(v)),
     numberColumn("debt_to_equity", labelled("Debt/equity", "debt_to_equity"), (r) => r.debt_to_equity, (v, r) => formatMultiple(v, r.market, 2)),
-    numberColumn("promoter_pct", "Promoter holding", (r) => r.promoter_pct, (v) => formatShare(v)),
+    ...(market === "IN" ? [numberColumn("promoter_pct", "Promoter holding", (r) => r.promoter_pct, (v) => formatShare(v))] : []),
     numberColumn("beta", labelled("Beta", "beta", rows[0]?.beta_label), (r) => r.beta, (v) => formatAxisNumber(v, 2)),
     numberColumn("return_1y", "1-year return (price only)", (r) => r.return_1y, (v) => <Delta change={changeOf(formatFractionChange(v))} />),
     ...(growthShown
@@ -177,7 +184,7 @@ export function ScreenerView({
       : []),
   ];
 
-  const active = isActive(filters);
+  const active = isActive(filters, boxes);
   return (
     <div className="flex flex-col gap-4">
       <Panel title="Filters" titleId="screener-filters" subtitle="Narrow the list; a company with no figure for a filtered column is left out.">
@@ -204,7 +211,7 @@ export function ScreenerView({
               <select
                 value={filters.peerGroup ?? ""}
                 onChange={(e) => setFilters((f) => ({ ...f, peerGroup: e.target.value || null }))}
-                className="h-8 rounded-sm border border-line-input bg-raised px-2 text-read md:text-data text-ink-1 focus-visible:outline-2 focus-visible:outline-highlight"
+                className="h-8 max-w-full rounded-sm border border-line-input bg-raised px-2 text-read md:text-data text-ink-1 focus-visible:outline-2 focus-visible:outline-highlight"
               >
                 <option value="">All peer groups</option>
                 {groups.map((g) => (
@@ -216,7 +223,7 @@ export function ScreenerView({
             </label>
           )}
           <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
-            {RANGE_FILTERS.map((f) => (
+            {boxes.map((f) => (
               <fieldset key={f.key} className="flex flex-wrap items-center gap-2">
                 <legend className="mb-1 text-meta text-ink-2">
                   {f.label} ({f.unit})
@@ -258,12 +265,13 @@ export function ScreenerView({
         </div>
       </Panel>
       <Panel
-        title="Nifty 50 screener"
+        title={`${universe} screener`}
         titleId="screener-table"
+        tour="screener-table"
         variant="flush"
         subtitle={
           <>
-            Which Nifty 50 companies fit my filters, and what does today&apos;s price imply?{" "}
+            Which {universe} companies fit my filters, and what does today&apos;s price imply?{" "}
             {snapshot && <>Weekly snapshot of {formatDate(snapshot)}; </>}
             <span role="status">
               {shown.length} of {rows.length} companies
@@ -285,7 +293,7 @@ export function ScreenerView({
           columns={columns}
           rows={shown}
           rowKey={(r) => r.slug}
-          caption="Nifty 50 screener: one row per company, from the latest weekly snapshot"
+          caption={`${universe} screener: one row per company, from the latest weekly snapshot`}
           initialSort={{ id: "market_cap", desc: true }}
           scroll
           empty={<StateNote kind="empty">No company matches these filters.</StateNote>}

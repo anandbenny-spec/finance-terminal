@@ -261,7 +261,7 @@ class EquityValuationInputs(Task):
                          f"{len(industries)} industries in the {f.beta_edition:%d %b %Y} edition (more than {MIN_INDUSTRIES} "
                          "expected)"))
         names = {x.industry for x in f.beta_rows}
-        groups = tx.execute("select key, damodaran_industry from equity.peer_group").fetchall()
+        groups = tx.execute("select key, damodaran_industry from equity.peer_group where market = 'IN'").fetchall()
         missing = [f"{k}: {ind!r}" for k, ind in groups if ind is not None and ind not in names]
         out.append(Check("beta_peer_groups", not missing, (
             "peer groups whose Damodaran industry isn't in betaIndia: " + "; ".join(missing)) if missing else (

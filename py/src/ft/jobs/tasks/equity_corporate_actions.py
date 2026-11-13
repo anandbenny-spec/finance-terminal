@@ -196,7 +196,7 @@ class EquityCorporateActions(Task):
             """select c.entity_id, e.slug, c.nse_symbol, c.bse_code, c.price_exchange,
                       exists (select 1 from equity.corporate_action ca join core.event ev on ev.id = ca.event_id
                                where ev.entity_id = c.entity_id and ca.exchange = 'NSE'), c.isin
-                 from equity.company c join core.entity e on e.id = c.entity_id order by e.slug""").fetchall()}
+                 from equity.company c join core.entity e on e.id = c.entity_id where e.market = 'IN' order by e.slug""").fetchall()}
         out = Fetched((start, end), today, companies, [], {}, [], [], reviews)
         if start > end:
             out.note = f"an empty window ({start} to {end})"

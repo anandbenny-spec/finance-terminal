@@ -1,10 +1,13 @@
 // The company-figure formats (module 2; Spec 02A §8): fractions as per cent, multiples, prices and crore, by the figure's market.
 import { describe, expect, it } from "vitest";
 import {
+  formatAmount,
   formatCount,
+  formatDollarsAsMillion,
   formatFraction,
   formatFractionChange,
   formatFractionPoints,
+  formatMoney,
   formatMultiple,
   formatPercentLevel,
   formatPrice,
@@ -39,6 +42,21 @@ describe("company figures", () => {
   it("shows full rupees as crore with Indian grouping", () => {
     expect(formatRupeesAsCrore(1_234_500_000_000)).toBe("₹1,23,450 cr");
     expect(formatRupeesAsCrore(null)).toBe(NOT_AVAILABLE);
+  });
+  // US-06 (#405): the US twin of crore, so a Dow 30 figure reads like a 10-K's ($ millions), grouped the US way.
+  it("shows full dollars as millions with US grouping, a true minus, and no sign on a rounded zero", () => {
+    expect(formatDollarsAsMillion(394_328_000_000)).toBe("$394,328 mn");
+    expect(formatDollarsAsMillion(3_912_400_000_000)).toBe("$3,912,400 mn");
+    expect(formatDollarsAsMillion(-1_234_600_000)).toBe("−$1,235 mn");
+    expect(formatDollarsAsMillion(-400_000)).toBe("$0 mn");
+    expect(formatDollarsAsMillion(null)).toBe(NOT_AVAILABLE);
+  });
+  it("puts each amount in its own currency's unit, never the other's", () => {
+    expect(formatAmount(1_234_500_000_000, "INR")).toBe("₹1,23,450 cr");
+    expect(formatAmount(1_234_500_000_000, "USD")).toBe("$1,234,500 mn");
+    expect(formatAmount(null, "USD")).toBe(NOT_AVAILABLE);
+    expect(() => formatMoney(100, "INR", { unit: "million" })).toThrow(RangeError);
+    expect(() => formatMoney(100, "USD", { unit: "crore" })).toThrow(RangeError);
   });
   it("groups a company's own count by its market", () => {
     expect(formatCount(3_600_000_000, "IN")).toBe("3,60,00,00,000");

@@ -10,6 +10,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "cn";
 import { useAdmin } from "@/components/shell/admin";
+import { TakeTourButton } from "@/components/shell/GuidedTour";
 import { activeHref, visibleGroups, type NavIcon } from "@/lib/shell/nav";
 
 const ICONS: Record<NavIcon, LucideIcon> = { home: House, policy: Landmark, screener: Table2, about: Info, admin: LayoutDashboard, health: HeartPulse, labelling: Tags, accuracy: BadgeCheck, earnings: Mic };
@@ -62,6 +63,11 @@ export function NavList({ active, onNavigate }: { active: string | null; onNavig
                 </li>
               );
             })}
+            {group.heading === "About" && (
+              <li>
+                <TakeTourButton variant="nav" onNavigate={onNavigate} />
+              </li>
+            )}
           </ul>
         </div>
       ))}

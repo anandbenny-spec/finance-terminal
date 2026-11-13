@@ -241,12 +241,13 @@ export type EvalSummaryRow = {
 /** One column's note on a snapshot row (api.screener `notes`): its label and the reason it is held back, either may be null. */
 export type ScreenerNote = { label: string | null; reason: string | null };
 
-/** api.screener (0024): one row per company from its latest weekly snapshot. Ratios are fractions; money in full units of `currency`. */
+/** api.screener (0024; the ticker from 0041): one row per company from its latest weekly snapshot. Ratios are fractions; money in full units of `currency`. */
 export type ScreenerRow = {
   slug: string;
   name: string;
   short_name: string | null;
-  nse_symbol: string;
+  /** India's identifier; null for a US company (0041). */
+  nse_symbol: string | null;
   market: "IN" | "US";
   currency: "INR" | "USD";
   peer_group_key: string | null;
@@ -285,9 +286,11 @@ export type ScreenerRow = {
   implied_roe_label: string | null;
   index_slugs: string[] | null;
   source_key: string;
+  /** A US company's ticker (0041); null for India. Optional: older test rows and reads that don't select it leave it out. */
+  ticker?: string | null;
 };
 
-/** api.index_members (0024): each index's latest member set. */
+/** api.index_members (0024; the ticker from 0041): each index's latest member set. */
 export type IndexMemberRow = {
   index_slug: string;
   index_name: string;
@@ -295,14 +298,14 @@ export type IndexMemberRow = {
   slug: string;
   name: string;
   short_name: string | null;
-  nse_symbol: string;
+  nse_symbol: string | null;
   market: "IN" | "US";
   currency: "INR" | "USD";
 };
 
 type Num = number | null;
 
-/** api.companies (0024): one row per company: its identifiers, peer group, index memberships and the last two closes. */
+/** api.companies (0024; the ticker and CIK from 0041): one row per company: its identifiers, peer group, index memberships and the last two closes. */
 export type CompanyRow = {
   slug: string;
   name: string;
@@ -310,7 +313,8 @@ export type CompanyRow = {
   market: "IN" | "US";
   currency: "INR" | "USD";
   isin: string | null;
-  nse_symbol: string;
+  /** India's identifier; null for a US company (0041). */
+  nse_symbol: string | null;
   bse_code: string | null;
   nse_industry: string | null;
   peer_group_key: string | null;
@@ -328,6 +332,9 @@ export type CompanyRow = {
   previous_close: Num;
   previous_close_date: string | null;
   price_source_key: string | null;
+  /** A US company's ticker and SEC CIK (0041); null for India. Optional: older test rows leave them out. */
+  ticker?: string | null;
+  cik?: string | null;
 };
 
 /** api.company_prices (0024): one row per session; `adj_close` is null while a held corporate action lies after it. */
@@ -388,6 +395,8 @@ export type PeerCompRow = {
   median_n: Record<string, number> | null;
   median_note: string | null;
   source_key: string;
+  /** A US peer's ticker (0041); null for India. */
+  peer_ticker?: string | null;
 };
 
 /** The statement lines api.company_financials carries (full units of the reporting currency; ratios as fractions). */
@@ -464,6 +473,175 @@ export type PromoterHoldingRow = {
   nse_pct: Num;
 };
 
+/**
+ * api.segment_changes (0038, #409): a company's reportable segments in its latest compared quarter (consolidated, as filed)
+ * against the four quarters before it. One row per flag (state `changed`) or one row with the state. No row at all while field
+ * policy `equity.segment_changes` is hidden. `segments_before` and `segments_after` are the affected segments as filed: before
+ * from the previous quarter, after from the latest. Read through components/company/SegmentChangesPanel.tsx.
+ */
+export type SegmentChangeRow = {
+  company_slug: string;
+  company_name: string;
+  /** The latest quarter compared. */
+  period_end: string;
+  state: "changed" | "single_segment" | "none_flagged" | "not_compared" | null;
+  /** not_compared only: "N of the 4 earlier quarters have a line-up". */
+  state_reason: string | null;
+  quarters_compared: number;
+  change_no: number | null;
+  kind: "dropped" | "merged" | "renamed" | "multi_to_single" | "single_to_multi" | "other" | null;
+  segments_before: string[] | null;
+  segments_after: string[] | null;
+  /** merged only: the new segment's revenue over the absent ones' summed revenue in the previous quarter. */
+  revenue_ratio: Num;
+  previous_period_end: string | null;
+  latest_filing_url: string | null;
+  latest_filed_at: string | null;
+  previous_filing_url: string | null;
+  previous_filed_at: string | null;
+  rule_version: number | null;
+  /** The latest filing's exchange: nse or bse. */
+  source_key: string | null;
+};
+
+/** A BRSR field's state in api.value_chain: `ok`, `held` (with its reason), `absent` (not in the filing), `zero` (filed as 0), `not_shown` (a top-10 share whose parent share is 0, held or absent). Null while the field is hidden. */
+export type ValueChainState = "ok" | "held" | "absent" | "zero" | "not_shown";
+
+/**
+ * api.value_chain (0034, VC-02): one row per company × fiscal year × card field, from the year's own BRSR filing. `value` is in
+ * percent for kind `share` and a whole number for `count`; every gated column is null while `equity.brsr_values` is hidden. `change`
+ * is the difference from the previous own year (percentage points for a share, a count difference for a count), null across a
+ * boundary change, a year of other than 12 months or a missing value; `change_reason` says which. `restated` and `next_comparative`
+ * carry the next year's filing's comparative where it differs. Read through components/company/value-chain/.
+ */
+export type ValueChainRow = {
+  company_slug: string;
+  company_name: string;
+  short_name: string | null;
+  market: "IN" | "US";
+  currency: "INR" | "USD";
+  valuation_family: string | null;
+  fy_label: string;
+  fy_start: string;
+  fy_end: string;
+  field_key: string;
+  field_no: number;
+  label: string;
+  item_ref: string;
+  kind: "share" | "count";
+  value: Num;
+  state: ValueChainState | null;
+  state_reason: string | null;
+  restated: boolean | null;
+  next_comparative: Num;
+  assured: boolean | null;
+  assurance: "reasonable" | "limited" | null;
+  change: Num;
+  change_reason: "no_previous_year" | "boundary_change" | "not_12_months" | "previous_value_unavailable" | null;
+  boundary: "standalone" | "consolidated";
+  format_version: string;
+  months: number;
+  exchange: "NSE" | "BSE";
+  source_key: string;
+  filed_at: string | null;
+  list_url: string | null;
+  values_label: string | null;
+};
+
+/** api.value_chain_products (0034): the company's products and their share of turnover (percent) per shown filing; null columns while `equity.brsr_values` is hidden. */
+export type ValueChainProductRow = {
+  company_slug: string;
+  fy_label: string;
+  fy_start: string;
+  fy_end: string;
+  boundary: "standalone" | "consolidated";
+  exchange: "NSE" | "BSE";
+  source_key: string;
+  filed_at: string | null;
+  list_url: string | null;
+  line_no: number;
+  description: string | null;
+  nic_code: string | null;
+  share_of_turnover_pct: Num;
+};
+
+/** api.value_chain_group (0034): the group companies and the share held (percent) per shown filing; null columns while either policy is hidden. */
+export type ValueChainGroupRow = {
+  company_slug: string;
+  fy_label: string;
+  fy_start: string;
+  fy_end: string;
+  boundary: "standalone" | "consolidated";
+  exchange: "NSE" | "BSE";
+  source_key: string;
+  filed_at: string | null;
+  list_url: string | null;
+  line_no: number;
+  name: string | null;
+  relation: string | null;
+  share_held_pct: Num;
+};
+
+/**
+ * api.related_party_top (0034, 0040): the company's own five largest related-party counterparties for sales and for purchases of goods
+ * or services per fiscal year, a counterparty's spellings counted as one. `value` is in rupees; `period_from` and `period_to` are the
+ * filings' span, which can be less than the fiscal year. Null columns while `equity.rpt_counterparties` is hidden.
+ */
+export type RelatedPartyTopRow = {
+  company_slug: string;
+  company_name: string;
+  currency: "INR" | "USD";
+  fy_label: string;
+  fy_end_year: number;
+  basis: "standalone" | "consolidated";
+  txn_type: "Sale of goods or services" | "Purchase of goods or services";
+  rank: number;
+  counterparty: string | null;
+  relationship: string | null;
+  value: Num;
+  period_from: string;
+  period_to: string;
+  source_keys: string[];
+};
+
+/** api.value_chain_peers (0034): the latest shown year's card fields for the company's peer group, one row per peer × field (the company's own row included, `is_self`); the median only from three peers on its boundary. */
+export type ValueChainPeerRow = {
+  company_slug: string;
+  peer_slug: string;
+  peer_name: string;
+  peer_short_name: string | null;
+  is_self: boolean;
+  fy_label: string;
+  boundary: "standalone" | "consolidated";
+  same_basis: boolean;
+  field_key: string;
+  field_no: number;
+  label: string;
+  item_ref: string;
+  kind: "share" | "count";
+  value: Num;
+  state: ValueChainState | null;
+  median_n: number | null;
+  median: Num;
+};
+
+/** api.segments (0034): the latest fiscal year's consolidated revenue by reportable segment (rupees) and each segment's share (percent); one `single_segment` row for a single-segment filer. Null columns while `equity.segments` is hidden. */
+export type SegmentRow = {
+  company_slug: string;
+  company_name: string;
+  currency: "INR" | "USD";
+  fy_label: string;
+  period_start: string;
+  period_end: string;
+  line_no: number;
+  reporting: "single" | "multi";
+  state: "ok" | "single_segment" | null;
+  description: string | null;
+  revenue: Num;
+  share_of_total_pct: Num;
+  source_key: string;
+};
+
 /** api.company_valuation (0024): a company's latest run of each kind. `status` is null while the model fields are hidden; `inputs` is the run's stored inputs. */
 export type CompanyValuationRow = {
   slug: string;
@@ -507,6 +685,8 @@ export type PricedInRow = {
   label: string | null;
   gap_rank: Num;
   source_key: string;
+  /** A US company's ticker (0041); null for India. */
+  ticker?: string | null;
 };
 
 /** api.valuation_scenarios (0024): one stored cell of the latest default run's grid (growth × EBIT margin × WACC, fractions). */
@@ -647,6 +827,64 @@ export type EarningsCallRow = {
   is_newest: boolean;
   is_latest_stored: boolean;
   is_default: boolean;
+};
+
+/**
+ * api.remarks_changes (0036, #388): one row per earnings call with a previous call; how much of the opening remarks' wording changed.
+ * No row while field policy `equity.remarks_change` is hidden. `pairs` is the stored jsonb: at most 5 pairs, each side at most 400
+ * characters; read it only through lib/equity/remarks.ts.
+ */
+export type RemarksChangeRow = {
+  company_slug: string;
+  call_slug: string;
+  fiscal_label: string;
+  period_end: string | null;
+  filed_at: string | null;
+  exchange: string | null;
+  base_call_slug: string;
+  base_fiscal_label: string;
+  base_period_end: string | null;
+  words_base: number;
+  words_new: number;
+  words_added: number;
+  words_removed: number;
+  /** A fraction, 0 to 1: the share of the wording unchanged (numbers masked). */
+  similarity: number;
+  new_speakers: string[];
+  label: "largely_rewritten" | "new_speaker" | null;
+  pairs: unknown;
+  policy_label: string | null;
+};
+
+/**
+ * api.call_tone (0045): one row per published call that has a tone score (Spec 02B §5.7). Empty while ai.call_tone is hidden. The mean is
+ * on a -2 to +2 scale; the change fields are null where either call is held or the previous call is not published. No transcript text:
+ * the evidence quotes come through api.ai_outputs (content.evidence) and api.ai_citations.
+ */
+export type CallToneRow = {
+  company_slug: string;
+  call_slug: string;
+  fiscal_label: string;
+  period_end: string | null;
+  call_date: string | null;
+  filed_at: string | null;
+  exchange: string | null;
+  ai_output_id: number | null;
+  n: number | null;
+  mean: number | null;
+  sd: number | null;
+  opening_n: number | null;
+  opening_mean: number | null;
+  answers_n: number | null;
+  answers_mean: number | null;
+  prev_call_slug: string | null;
+  prev_fiscal_label: string | null;
+  delta: number | null;
+  se_delta: number | null;
+  change: "more_positive" | "more_negative" | "little_changed" | null;
+  held_reason: string | null;
+  rule_version: string;
+  policy_label: string | null;
 };
 
 /** api.call_figures (0029): a target (kind 'target') or a figure management stated (kind 'stated') on a call, with its quote's page. */
@@ -803,6 +1041,13 @@ export type ApiDatabase = {
       company_financials: View<CompanyFinancialRow>;
       company_corporate_actions: View<CorporateActionRow>;
       company_promoter_holding: View<PromoterHoldingRow>;
+      segment_changes: View<SegmentChangeRow>;
+      value_chain: View<ValueChainRow>;
+      value_chain_products: View<ValueChainProductRow>;
+      value_chain_group: View<ValueChainGroupRow>;
+      related_party_top: View<RelatedPartyTopRow>;
+      value_chain_peers: View<ValueChainPeerRow>;
+      segments: View<SegmentRow>;
       company_valuation: View<CompanyValuationRow>;
       valuation_scenarios: View<ValuationScenarioRow>;
       priced_in_operating: View<PricedInRow>;
@@ -814,6 +1059,8 @@ export type ApiDatabase = {
       company_rate_cycles: View<CompanyRateCycleRow>;
       earnings_calls: View<EarningsCallRow>;
       call_figures: View<CallFigureRow>;
+      remarks_changes: View<RemarksChangeRow>;
+      call_tone: View<CallToneRow>;
       earnings_latest: View<EarningsListRow & UnattributedRow>;
       citation_pages: View<CitationPageRow>;
       call_guidance: View<CallGuidanceRow>;

@@ -4,8 +4,10 @@
 // price history, about 1,950 rows, is two pages joined). Cached for minutes like the screener. A failed header read leaves the
 // page in its error state (StateNote); a failed tab read holds back that tab only (#328); the reason goes to the server log only (Arch 02). Nothing here computes a figure.
 //
-// The promoter-holding read (view 0025, pushed by Anand) is the one read allowed to fail on its own: until the view
-// exists, the Financials tab says that holding isn't published yet and the rest of the page is unaffected.
+// The promoter-holding read (view 0025, pushed by Anand) is allowed to fail on its own: until the view
+// exists, the Financials tab says that holding isn't published yet and the rest of the page is unaffected. The segment-changes
+// reads (DD-02, #410: view 0038 and the field policy) fail on their own the same way: before 0038 is pushed, or when either read
+// fails, the panel holds back (no policy read is a hidden field) or says it couldn't load, and the rest of the tab is unaffected.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cacheLife, cacheTag } from "next/cache";
 import { dateInZone } from "@/lib/format";
@@ -21,6 +23,7 @@ import type {
   ForecastRow,
   PeerCompRow,
   PromoterHoldingRow,
+  SegmentChangeRow,
   SeriesRow,
   ValuationScenarioRow,
 } from "@/lib/queries/api";
@@ -29,10 +32,11 @@ import { readFieldPolicy, readSeriesInfo, type PolicyDb } from "@/lib/queries/po
 import { readCallsTab, type CallsTabData } from "@/lib/queries/calls";
 import { readRateTab, type RateTabData } from "@/lib/queries/rate";
 import { readAll } from "@/lib/queries/read";
+import { readValueChainOverview, type ValueChainOverviewData } from "@/lib/queries/valuechain";
 import { publicClient } from "@/lib/supabase/public";
 import type { TabId } from "@/lib/equity/company";
 import { IMF_CPI, IMF_GDP } from "@/lib/equity/valuation";
-import { IN_10Y } from "@/lib/policy/longrates";
+import { IN_10Y, US_10Y } from "@/lib/policy/longrates";
 
 export type CompanyDb = SupabaseClient<ApiDatabase, "api">;
 
@@ -102,6 +106,13 @@ export async function readPromoterHolding(db: CompanyDb, slug: string): Promise<
   );
 }
 
+/** The company's segment line-up changes (0038, #409): one row per flag, or one row with the state; none while the field is hidden. */
+export async function readSegmentChanges(db: CompanyDb, slug: string): Promise<SegmentChangeRow[]> {
+  return readAll<SegmentChangeRow>("api.segment_changes", (from, to) =>
+    db.from("segment_changes").select("*", { count: "exact" }).eq("company_slug", slug).order("change_no").range(from, to),
+  );
+}
+
 export async function readValuationRuns(db: CompanyDb, slug: string): Promise<CompanyValuationRow[]> {
   return readAll<CompanyValuationRow>("api.company_valuation", (from, to) =>
     db.from("company_valuation").select("*", { count: "exact" }).eq("slug", slug).order("kind").range(from, to),
@@ -136,12 +147,22 @@ export async function readImfForecasts(db: CompanyDb): Promise<ForecastRow[]> {
   );
 }
 
-export type OverviewData = { prices: CompanyPriceRow[]; metrics: CompanyMetricRow[]; peers: PeerCompRow[] };
+export type OverviewData = {
+  prices: CompanyPriceRow[];
+  metrics: CompanyMetricRow[];
+  peers: PeerCompRow[];
+  /** The value chain panel's reads (VC-06, #191); each part null when its read failed (view 0034 not pushed yet). Absent: not read. */
+  valueChain?: ValueChainOverviewData;
+};
 export type FinancialsData = {
   financials: CompanyFinancialRow[];
   metrics: CompanyMetricRow[];
   /** Null when the promoter-holding view can't be read (not pushed yet). */
   promoter: PromoterHoldingRow[] | null;
+  /** api.segment_changes for this company (DD-02, #410); null when its read failed (view 0038 not pushed yet). Absent: not read. */
+  segmentChanges?: SegmentChangeRow[] | null;
+  /** The field policies, for the segment-changes panel's gate; null or absent when not read, which holds the panel back. */
+  policies?: FieldPolicyRow[] | null;
 };
 
 export type ValuationData = {
@@ -196,6 +217,37 @@ export async function readCompanyExists(slug: string): Promise<boolean | null> {
   }
 }
 
+/** The company's name, for the browser tab's title (12 Nov 2026): null when no company has the slug or the read
+ * fails, and the page then keeps its plain title. */
+export async function readCompanyName(slug: string): Promise<string | null> {
+  "use cache";
+  cacheLife("minutesNoExpire");
+  cacheTag("equity", `company-${slug}`);
+  const db = publicClient();
+  if (!db) return null;
+  try {
+    return (await readCompany(db, slug))?.name ?? null;
+  } catch (error) {
+    logFailure(`${slug} name`, error);
+    return null;
+  }
+}
+
+/** The company's market, for the page's description (US-06, #405): null when no company has the slug or the read fails. */
+export async function readCompanyMarket(slug: string): Promise<"IN" | "US" | null> {
+  "use cache";
+  cacheLife("minutesNoExpire");
+  cacheTag("equity", `company-${slug}`);
+  const db = publicClient();
+  if (!db) return null;
+  try {
+    return (await readCompany(db, slug))?.market ?? null;
+  } catch (error) {
+    logFailure(`${slug} market`, error);
+    return null;
+  }
+}
+
 /** What one tab reads; exactly one field is set, the rest null. */
 export type TabData = {
   overview: OverviewData | null;
@@ -212,9 +264,12 @@ export async function loadHeader(db: CompanyDb, slug: string) {
   return { company, actions, indexNames };
 }
 
-/** The reads of one tab, each whole or not at all. Throws on a failed read, except the few that may fail on their own (promoter holding, IMF). */
-export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: string): Promise<TabData> {
+/** The reads of one tab, each whole or not at all. Throws on a failed read, except the few that may fail on their own (promoter holding, IMF).
+ * A US company (US-06, #405; Spec 02A.1 §7) reads only what its page shows: no calls or rate-decision reads (those tabs don't apply),
+ * no value chain, promoter, segment-change or IMF India reads (Indian disclosures), and the 10-year Treasury's source line. */
+export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: string, market: "IN" | "US" = "IN"): Promise<TabData> {
   const data: TabData = { overview: null, financials: null, valuation: null, rates: null, calls: null };
+  if (market === "US") return loadUsTab(db, slug, tab, data);
   if (tab === "calls") {
     data.calls = await readCallsTab(db, slug, call);
   } else if (tab === "rate-decisions") {
@@ -235,18 +290,54 @@ export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: st
     ]);
     data.valuation = { runs, scenarios, policies, imf, series };
   } else if (tab === "overview") {
-    const [prices, metrics, peers] = await Promise.all([readCompanyPrices(db, slug), readCompanyMetrics(db, slug), readPeers(db, slug)]);
-    data.overview = { prices, metrics, peers };
+    const [prices, metrics, peers, valueChain] = await Promise.all([
+      readCompanyPrices(db, slug),
+      readCompanyMetrics(db, slug),
+      readPeers(db, slug),
+      readValueChainOverview(db, slug),
+    ]);
+    data.overview = { prices, metrics, peers, valueChain };
   } else {
-    const [rows, metrics, promoter] = await Promise.all([
+    const [rows, metrics, promoter, segmentChanges, policies] = await Promise.all([
       readFinancials(db, slug),
       readCompanyMetrics(db, slug),
       readPromoterHolding(db, slug).catch((error: unknown) => {
         logFailure(`${slug} promoter holding`, error);
         return null;
       }),
+      readSegmentChanges(db, slug).catch((error: unknown) => {
+        logFailure(`${slug} segment changes`, error);
+        return null;
+      }),
+      readFieldPolicy(db as PolicyDb).catch((error: unknown) => {
+        logFailure(`${slug} field policy`, error);
+        return null;
+      }),
     ]);
-    data.financials = { financials: rows, metrics, promoter };
+    data.financials = { financials: rows, metrics, promoter, segmentChanges, policies };
+  }
+  return data;
+}
+
+/** A US company's tab reads (Spec 02A.1 §7). Earnings calls and rate decisions read nothing: the page says they don't apply. */
+async function loadUsTab(db: CompanyDb, slug: string, tab: TabId, data: TabData): Promise<TabData> {
+  if (tab === "overview") {
+    const [prices, metrics, peers] = await Promise.all([readCompanyPrices(db, slug), readCompanyMetrics(db, slug), readPeers(db, slug)]);
+    data.overview = { prices, metrics, peers };
+  } else if (tab === "financials") {
+    const [rows, metrics] = await Promise.all([readFinancials(db, slug), readCompanyMetrics(db, slug)]);
+    data.financials = { financials: rows, metrics, promoter: null };
+  } else if (tab === "valuation") {
+    const [runs, scenarios, policies, series] = await Promise.all([
+      readValuationRuns(db, slug),
+      readScenarios(db, slug),
+      readFieldPolicy(db as PolicyDb),
+      readSeriesInfo(db as PolicyDb, [US_10Y]).catch((error: unknown) => {
+        logFailure(`${slug} valuation series`, error);
+        return null;
+      }),
+    ]);
+    data.valuation = { runs, scenarios, policies, imf: null, series };
   }
   return data;
 }
@@ -255,7 +346,7 @@ export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: st
 // (Next 16), so a failure never outlives the database's recovery, and neither cached read needs a shorter cache profile
 // (lib/queries/cache-profiles.test.ts allows only the no-expiry ones). The header stays all-or-nothing; a failed tab read
 // costs that tab, not the page.
-async function readHeader(slug: string) {
+export async function readHeader(slug: string) {
   "use cache";
   cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);
@@ -265,13 +356,13 @@ async function readHeader(slug: string) {
   return { readAt, ...(await loadHeader(db, slug)) };
 }
 
-async function readTab(slug: string, tab: TabId, call?: string): Promise<TabData> {
+async function readTab(slug: string, tab: TabId, call: string | undefined, market: "IN" | "US"): Promise<TabData> {
   "use cache";
   cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);
   const db = publicClient();
   if (!db) throw new Error("NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
-  return loadTab(db, slug, tab, call);
+  return loadTab(db, slug, tab, call, market);
 }
 
 /** The page's reads for one tab. The header (company row, actions, index names) is all-or-nothing: if it fails, or no company has the slug, the result is `{ ok: false }`. A failed tab read gives `ok: true` with that tab's data null and `tabFailed` set. */
@@ -288,7 +379,7 @@ export async function readCompanyPage(slug: string, tab: TabId, call?: string): 
   let data: TabData = { overview: null, financials: null, valuation: null, rates: null, calls: null };
   let tabFailed = false;
   try {
-    data = await readTab(slug, tab, call);
+    data = await readTab(slug, tab, call, company.market);
   } catch (error) {
     logFailure(`${slug} ${tab} tab`, error);
     tabFailed = true;

@@ -42,10 +42,32 @@ describe("module 2's surfaces (2A-26, #132)", () => {
     expect(FEEDS.rateSensitivity).toEqual(["equity.rate_reactions", "policy.rate_cycles"]);
   });
 
-  // 2B-19 (#182) adds the card's one preview surface, `calls`, until 2B-22 moves it into FEEDS; nothing else may sit there.
-  it("holds only the Earnings calls preview in PREVIEW_FEEDS, out of the status bar's count", () => {
-    expect(Object.keys(PREVIEW_FEEDS)).toEqual(["calls"]);
-    for (const task of PREVIEW_FEEDS.calls) expect(liveTasks()).not.toContain(task);
+  // 2B-19 (#182) adds the card's one preview surface, `calls`, until 2B-22 moves it into FEEDS; DD-02 (#410) adds `segmentChanges`
+  // until its task has a freshness row on production. Nothing else may sit there, and no preview task counts in the status bar.
+  // US-06 (#405) adds the US slice's four page surfaces: unpublished until Anand's flip, and out of the status bar's count until
+  // production's runs (US-07) have left a freshness row for each us.* task.
+  it("holds only the Earnings calls, segment-changes and US slice previews in PREVIEW_FEEDS, out of the status bar's count", () => {
+    expect(Object.keys(PREVIEW_FEEDS)).toEqual(["calls", "segmentChanges", "usScreener", "usScreenerImplied", "usCompany", "usValuation"]);
+    for (const task of Object.values(PREVIEW_FEEDS).flat()) expect(liveTasks()).not.toContain(task);
+    expect(PREVIEW_FEEDS.segmentChanges).toEqual(["equity.segment_changes"]);
+  });
+
+  it("feeds the US pages from the US tasks only, each a task in tasks.yaml, never one of India's", () => {
+    const workflows = taskWorkflows();
+    for (const surface of ["usScreener", "usScreenerImplied", "usCompany", "usValuation"] as const) {
+      for (const task of PREVIEW_FEEDS[surface]) {
+        expect(task.startsWith("us."), task).toBe(true);
+        expect(workflows.get(task), task).toBeDefined();
+      }
+    }
+    expect(PREVIEW_FEEDS.usScreenerImplied).toEqual([...PREVIEW_FEEDS.usScreener, "us.valuation", "us.snapshot"]);
+  });
+
+  // VC-06 (#191): moved in on 12 Nov 2026, once production's runs of both tasks had left a freshness row.
+  it("counts the value chain's two tasks in the status bar, and it is no longer a preview", () => {
+    expect(FEEDS.valueChain).toEqual(["equity.brsr", "equity.related_parties"]);
+    for (const task of FEEDS.valueChain) expect(liveTasks()).toContain(task);
+    expect(Object.keys(PREVIEW_FEEDS)).not.toContain("valueChain");
   });
 
   it("counts only tasks that exist: module 1's, the accuracy projection and module 2's data tasks", () => {

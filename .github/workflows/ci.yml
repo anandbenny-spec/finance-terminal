@@ -80,7 +80,10 @@ jobs:
         run: ./gitleaks git --config .gitleaks.toml --redact --no-banner --verbose .
   test:
     runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026; the audit's G1/S1 ran on 24.04
-    timeout-minutes: 15
+    # was 15: on 11 Nov 2026 a pull request's run took 14.5 minutes (#424: pytest alone 11.8, against 6.8 on main's
+    # push run of the same tests), so the next tests added would cancel every pull request's run. A hang guard only;
+    # no check changes (#401).
+    timeout-minutes: 25
     permissions:
       contents: read        # checkout; the baseline commit (parent or merge base)
       checks: read          # main's counts, from its test job's annotations

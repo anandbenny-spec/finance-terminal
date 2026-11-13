@@ -4,6 +4,11 @@
 // that market's series colour (cyan US/Fed, violet India/RBI). A panel never shows a blank body: callers put a
 // StateNote there when they have nothing else. `refresh` names the panel's feeding tasks (lib/feeds.ts): the admin
 // gets a RefreshButton for them in the header (C6; Design 01 §4.7); visitors get nothing.
+//
+// Two variants hold prose to the reading width (Design 01 §5.2). `prose` caps the body at it, for a long document
+// read top to bottom. `columns` is for short copy in a full-width panel (About, Methodology, an explainer): from xl
+// the text runs in two columns, each about the reading width, so the panel isn't half empty (12 Nov 2026; Anand);
+// below xl it is `prose`.
 import { cn } from "cn";
 import { RefreshButton } from "@/components/admin/RefreshButton";
 import type { ReactNode } from "react";
@@ -32,6 +37,7 @@ export function Panel({
   span = 12,
   variant = "default",
   label,
+  tour,
   className,
   children,
 }: {
@@ -45,14 +51,17 @@ export function Panel({
   footer?: ReactNode;
   market?: "US" | "IN";
   span?: PanelSpan;
-  variant?: "default" | "flush" | "prose";
+  variant?: "default" | "flush" | "prose" | "columns";
   /** An accessible name for a panel without a title bar (the StatRow). */
   label?: string;
+  /** The guided tour's fixed target id (`data-tour`, lib/tour.ts; #91). */
+  tour?: string;
   className?: string;
   children: ReactNode;
 }) {
   return (
     <section
+      data-tour={tour}
       aria-labelledby={title ? titleId : undefined}
       aria-label={title ? undefined : label}
       className={cn(
@@ -77,7 +86,14 @@ export function Panel({
         </div>
       )}
       {subtitle && <p className={cn("px-3 pt-2 text-meta text-ink-2", variant === "flush" && "pb-2")}>{subtitle}</p>}
-      <div className={cn("min-w-0 flex-1", variant === "flush" ? "p-0" : "p-3", variant === "prose" && "max-w-(--reading-width)")}>
+      <div
+        className={cn(
+          "min-w-0 flex-1",
+          variant === "flush" ? "p-0" : "p-3",
+          variant === "prose" && "max-w-(--reading-width)",
+          variant === "columns" && "max-xl:max-w-(--reading-width) xl:columns-2 xl:gap-8",
+        )}
+      >
         {children}
       </div>
       {footer && (

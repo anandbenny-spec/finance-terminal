@@ -35,6 +35,11 @@ on:
         type: choice
         options: [none, earnings_tone, earnings_tone_2]
         default: none
+      diff_rerun:
+        description: 'policy.ai_batch only: re-run the What changed summaries made with an older prompt version (#445): none (the default), all, or meeting slugs separated by commas'
+        required: false
+        type: string
+        default: none
 concurrency:
   group: jobs-backfill
   cancel-in-progress: false
@@ -68,6 +73,7 @@ jobs:
           INPUT_UNTIL: ${{ inputs.until }}
           CALLS_AI_TASK: ${{ inputs.calls_ai_task }}
           CALLS_AI_TONE_SET: ${{ inputs.tone_set != 'none' && inputs.tone_set || '' }}
+          POLICY_AI_RERUN: ${{ inputs.diff_rerun }}
           JOB_DATABASE_URL: ${{ env.FT_TARGET == 'production' && secrets.JOB_DATABASE_URL || env.FT_TARGET == 'dev' && secrets.DEV_JOB_DATABASE_URL || '' }}
           STORAGE_ENDPOINT: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_ENDPOINT || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_ENDPOINT || '' }}
           STORAGE_ACCESS_KEY_ID: ${{ env.FT_TARGET == 'production' && secrets.STORAGE_ACCESS_KEY_ID || env.FT_TARGET == 'dev' && secrets.DEV_STORAGE_ACCESS_KEY_ID || '' }}

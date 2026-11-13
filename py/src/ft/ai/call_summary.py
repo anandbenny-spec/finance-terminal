@@ -45,6 +45,23 @@ in part and their kin) and its text holds none (`EXTENT_TEXT`: those words, or "
 so a bullet that says the same thing another way passes). Run over the 420 bullets of dev's 56 published v8 summaries it fires on 8
 (none of an analysts list); the tense and exclusion fails of the same draw are prompt v9's rules alone, since no word marks them.
 
+**v11: the Opus round** (#178, 10 Nov 2026; Anand's decision of 10 Nov, 10:35 IST: picks 1 to 6 of the Fable review of 10 Nov). **Which model
+writes it** (`MODEL_OF`, `EFFORT_OF`, `MAX_TOKENS_OF`): a prompt version names the prompt and, where it differs from the task's, the model, the
+effort and the `max_tokens`. Every version up to v9 runs on the task's own (Haiku 5.5, effort low, 8,000). **v11 is v9's text plus the picks,
+on Opus 5.5 at effort high with 16,000 tokens**, for the one last round of the summary gate; a call whose published summary is an earlier
+version is asked for again under v11 and keeps that summary unless the v11 reply is published. Opus's batch price is twice Sonnet's and 40
+times Haiku's (`config/ai_prices.yaml`), so a run under v11 is priced first. The judge of a v11 draw is a fresh Fable session, never Opus.
+From v11 (`STRICT_FROM`, `strict_of`) a reply is also checked as follows, and an earlier version exactly as before:
+- **One passage per claim** (pick 1): a management or unknown bullet has exactly one quote (G, `len(quotes) != 1`) and its quotes lie in
+  one turn (F, `one_turn_problem`). An analysts bullet keeps its rules (the question, and the answer that follows it, up to `MAX_QUOTES`).
+- **Five word checks** (pick 2), each on a bullet's text against its quotes: A `scope_word_problem` (the text says consolidated or standalone,
+  no quote does), B `timing_problem` (a quote names a future period, the text has no future or period word), C `cause_problem` (the text gives
+  a cause, no quote does), D `short_turn_extent_problem` (the cited turn is at most `SHORT_TURN` characters and holds an extent word the
+  text lacks), E `one_line_answer_problem` (a management bullet rests only on turns under `ONE_LINE` characters). The patterns are the review's.
+  Fitted to the ten judged fails, so none is proof of a pass; B has the highest false-alarm rate and is the first to drop.
+- **The required lists are stated plainly** (pick 6): the request's instruction line says that a call whose roles are read must have at least
+  three management and two analysts bullets, and that an analysts bullet's quote is the question; `ranges` is unchanged.
+
 **Copied text** (2B-11c, #301; `apply_echo`). Visitors see only the quotes of verified citations, never a transcript's text
 (`CLAUDE.md` §1), and the Earnings calls tab shows a bullet in full, so a bullet may not carry the transcript's own words
 (on dev, 65% of v5's bullets were a short paraphrase followed by the cited passage verbatim). A run of more than
@@ -66,7 +83,7 @@ from datetime import date
 
 from ft.ai import summaries
 from ft.ai.citations import locate_quote
-from ft.ai.client import Prompt, Reply, Request, Source
+from ft.ai.client import OPUS, Prompt, Reply, Request, Source
 from ft.ai.summaries import Bullet, Checked, Cited
 from ft.engines.document.text import normalize_inline
 
@@ -84,6 +101,17 @@ ECHO_RULE = "echo-1"                                  # the rule's name: stamped
 JSON_FROM = 6                                         # prompt versions from v6 take the structured (json) route, v1-v5 the citations route
 MAX_QUOTE = 400                                       # code points: a quote's span (CLAUDE.md §1: visitors see at most 400 of a quote)
 MAX_QUOTES = 3                                        # quotes a bullet may rest on
+# What a prompt version names beyond the prompt (#178, the Opus round, 10 Nov 2026; Anand's decision of 10 Nov, picks 4 and 6). Every
+# version up to v9 runs on the task's own settings (Haiku 5.5, effort low, 8,000 tokens): a version listed here names its own, and
+# every other version is exactly as it ran. **v11 is v9's text plus the Fable review's picks, on Opus 5.5 at effort high with 16,000
+# tokens** (adaptive thinking counts towards them), the last round of the summary gate.
+MODEL_OF = {"v11": OPUS}                              # the model of a prompt version that doesn't run on the task's (Haiku 5.5)
+EFFORT_OF = {"v11": "high"}                           # its `output_config.effort` where it isn't the task's (low); Opus 5.5's default is medium
+MAX_TOKENS_OF = {"v11": 16_000}                       # its `max_tokens` where it isn't the task's (8,000)
+STRICT_FROM = 11                                      # prompt versions from v11 get checks A to G below and state the required lists plainly
+ONE_PASSAGE_LISTS = ("management", "unknown")         # checks F and G: the lists whose bullets state what a speaker claims (an analysts bullet keeps the question and its answer)
+SHORT_TURN = 1_000                                    # check D: a cited turn of at most this many characters is searched whole for an extent word
+ONE_LINE = 150                                        # check E: a management bullet whose longest cited turn is under this many characters rests on a one-line answer
 # A firm guidance verb in a bullet's text needs a quote in which a speaker is that firm (#178, the v8 round, 8 Nov 2026; Anand's ruling
 # of 8 Nov: "a bullet with a firm guidance verb, such as expects, will, targets or guided, whose cited passages contain no firm verb is
 # rejected"). The text's verbs are the ones the v7 re-draw's two fails turned on; the quote's side is wide on purpose, so the check
@@ -101,6 +129,24 @@ EXTENT_QUOTE = re.compile(r"\b(largely|mostly|mainly|primarily|chiefly|principal
 EXTENT_TEXT = re.compile(r"\b(largely|mostly|mainly|primarily|chiefly|principally|predominantly|majorly|partly|partially|in part"
                          r"|main|chief|principal|predominant|majority|bulk|most of|much of|part of|some of|portion"
                          r"|to some extent|to an extent|to a degree)\b", re.IGNORECASE)
+# Checks A to E (#178, the Opus round, 10 Nov 2026; the Fable review of 10 Nov, §3 Q2 and its appendix; pick 2). Each is a word check on a bullet's
+# text against its quotes (D: against the turn they sit in), written to catch a kind of slip no earlier check sees, and each is fitted to the
+# judged fails of v7 to v10, so none is proof of a pass. They run from v11 on (`STRICT_FROM`), on every list unless it says otherwise.
+SCOPE_WORD = re.compile(r"\b(consolidated|stand-?alone)\b", re.IGNORECASE)                                        # A: the text's side, and the quote's
+_MONTH = (r"(?:january|february|march|april|may|june|july|august|september|october|november|december"
+          r"|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\b")
+TIMING_QUOTE = re.compile(                                                                                         # B: the quote's side
+    r"\b(?:(?:next|coming)\s+(?:(?:couple\s+of|few|two|three)\s+)?(?:quarters?|years?|months?)\b"
+    r"|going\s+forward\b|second\s+half\b|H2\b"
+    r"|from\s+(?:next\b|the\s+coming\b|(?:the\s+)?\d{1,2}(?:st|nd|rd|th)\b|\d{1,2}\s+(?:of\s+)?" + _MONTH + r"|" + _MONTH + r"))",
+    re.IGNORECASE)
+TIMING_TEXT = re.compile(r"\b(next|coming|forward|second half|later|ahead|upcoming|subsequent|following|rest of|remaining"       # B: the text's side:
+                         r"|quarters|months|years|from)\b", re.IGNORECASE)                                            # any one clears it
+CAUSE_TEXT = re.compile(r"\b(?:due to|because|driven by|linked|attribut\w*|owing to|on account of|led by|thanks to|as a result of"
+                        r"|result of|reflecting|reflects|reflected|caused|stemm\w*)\b", re.IGNORECASE)               # C: the text's side
+CAUSE_QUOTE = re.compile(r"\b(?:because|due to|on account of|driven by|led by|owing to|thanks to|result of|reasons?|caused"      # C: the quote's side:
+                         r"|attribut\w*|contribut\w*|impact\w*|helped|aided|supported by|primarily|mainly|largely|mostly"  # any one clears it
+                         r"|partly|since|as a result|thereby|hence|which is why|that is why)\b", re.IGNORECASE)
 _TRAIL = " :;,-\u2014\u2013\"'\u201c\u201d\u2018\u2019\u2026"        # stripped from the end of a lead-in
 _CLAUSE_END = ".!?:;,\u2014\u2013"                          # a lead-in that ends on one of these ends at a clause or sentence
 
@@ -159,6 +205,21 @@ def route_of(version: str) -> str:
     return "json" if m and int(m.group(1)) >= JSON_FROM else "citations"
 
 
+def model_of(version: str) -> str | None:
+    """The model a prompt version names (`MODEL_OF`), or None for the task's own (Haiku 5.5)."""
+    return MODEL_OF.get(version)
+
+
+def effort_of(version: str) -> str | None:
+    """The effort a prompt version names (`EFFORT_OF`), or None for the task's own (low)."""
+    return EFFORT_OF.get(version)
+
+
+def max_tokens_of(version: str) -> int | None:
+    """The `max_tokens` a prompt version names (`MAX_TOKENS_OF`), or None for the task's own (8,000)."""
+    return MAX_TOKENS_OF.get(version)
+
+
 def _roster_lines(call: CallDoc) -> list[str]:
     lines = ["The speakers, as the transcript labels them, by the role our rules read for each:"]
     return lines + [f"- {label}: {'; '.join(names)}" for label, names in roster(call.turns)]
@@ -211,18 +272,26 @@ def structured_request(call: CallDoc, prompt: Prompt, schema: dict | None, *, no
     src = Source(call.document_id, marked_text(call), call.title,
                  context=f"{call.company} · Earnings call{quarter} · {_when(call.day)}")
     lines = _roster_lines(call)
-    lists = [f'"{LISTS[i]}" ({lo} to {hi} bullets)' if lo else f'"{LISTS[i]}" (up to {hi} bullets)'
-             for i, (lo, hi) in enumerate(rng) if hi > 0]
+    strict = strict_of(prompt.version)
+    lists = [f'"{LISTS[i]}" ({lo} to {hi} bullets{", required" if strict and not call.role_held else ""})' if lo
+             else f'"{LISTS[i]}" (up to {hi} bullets)' for i, (lo, hi) in enumerate(rng) if hi > 0]
     lines.append(f"Summarise the earnings call above ({call.title}) as the schema's JSON, following the rules. The lists that "
                  "apply: " + ", ".join(lists) + ".")
     if call.role_held:
         lines.append(f"This call's roles are only partly read. Write each list you can support from turns of the right "
                      f"role, and leave out entirely a list those turns can't support, with at least {MIN_ROLE_HELD} bullets "
                      f"in all.")
-    elif has_unknown:
+    elif strict:                                      # v11 (#178, pick 6): the required lists, stated plainly
+        lines.append(f'This call\'s roles are read, so the reply must hold at least {rng[0][0]} "management" bullets and at least '
+                     f'{rng[1][0]} "analysts" bullets, or it can\'t be published.')
+    if strict:
+        lines.append("An \"analysts\" bullet's quote is the analyst's question itself. A \"management\" or \"unknown\" bullet has "
+                     "exactly one quote, from one turn.")
+    if has_unknown and not call.role_held:
         lines.append('Write the "unknown" list only if those participants said something worth a bullet; otherwise leave it '
                      "out entirely.")
-    return Request(TASK, prompt, (src,), "\n".join(lines), schema=schema, note=_json_note(note), route="json")
+    return Request(TASK, prompt, (src,), "\n".join(lines), model=model_of(prompt.version), schema=schema, note=_json_note(note),
+                   route="json", effort=effort_of(prompt.version), max_tokens=max_tokens_of(prompt.version))
 
 
 def answer_turns(turns: Sequence[Turn]) -> set[int]:
@@ -286,6 +355,81 @@ def extent_word_problem(text: str, passages: Sequence[str]) -> str | None:
         m = EXTENT_QUOTE.search(p)
         if m is not None:
             return None if EXTENT_TEXT.search(text) else f'an extent word ("{m.group(1).lower()}") in a quote that its text leaves out'
+    return None
+
+
+def strict_of(version: str) -> bool:
+    """Whether a prompt version gets checks A to G and the plain statement of the required lists (v11 on, `STRICT_FROM`)."""
+    m = re.fullmatch(r"v(\d+)", version)
+    return bool(m) and int(m.group(1)) >= STRICT_FROM
+
+
+def scope_word_problem(text: str, passages: Sequence[str]) -> str | None:
+    """Check A (#178, the Opus round): why a bullet adds a scope word, or None. The text says "consolidated" or "standalone" and none of
+    its quotes says either: a basis the speaker did not name (the v10 draw's 1865/3). A word-level check: a quote that says the other
+    word of the pair passes, and a bullet about a speaker who did mention it passes."""
+    m = SCOPE_WORD.search(text)
+    if m is None or any(SCOPE_WORD.search(p) for p in passages):
+        return None
+    return f'a scope word ("{m.group(1).lower()}") that none of its quotes says'
+
+
+def timing_problem(text: str, passages: Sequence[str]) -> str | None:
+    """Check B (#178, the Opus round): why a bullet drops a future period its quote names, or None. A quote holds a future-period
+    phrase (`TIMING_QUOTE`: "next quarter", "going forward", "second half", "from next month") and the text holds no future or period word
+    (`TIMING_TEXT`, wider on purpose): a change announced for later written as plain or done (the v8 and v10 draws' tense fails, 1567/3 and
+    1878/0). The costliest of the new checks, with a false-alarm rate nobody measured: the first to drop if the yield falls too far."""
+    for p in passages:
+        m = TIMING_QUOTE.search(p)
+        if m is not None:
+            return None if TIMING_TEXT.search(text) else f'a future period ("{" ".join(m.group(0).lower().split())}") in a quote that its text leaves out'
+    return None
+
+
+def cause_problem(text: str, passages: Sequence[str]) -> str | None:
+    """Check C (#178, the Opus round): why a bullet gives a cause no quote gives, or None. The text holds a causal word (`CAUSE_TEXT`: "due
+    to", "because", "driven by", "reflecting" and the like) and no quote holds one (`CAUSE_QUOTE`, wider on purpose): a cause the
+    model inferred, or one of several given as the whole (the partial-cause fails, 1675/1 and 1839/9)."""
+    m = CAUSE_TEXT.search(text)
+    if m is None or any(CAUSE_QUOTE.search(p) for p in passages):
+        return None
+    return f'a cause ("{m.group(0).lower()}") that none of its quotes gives'
+
+
+def short_turn_extent_problem(text: str, turns: Sequence[str]) -> str | None:
+    """Check D (#178, the Opus round): why a bullet drops an extent word of the short turn it rests on, or None. `turns`: the texts of the
+    turns the bullet's quotes sit in. A turn of at most `SHORT_TURN` characters that holds an extent word anywhere (not only in the quote,
+    which `extent_word_problem` reads) while the text holds none (`EXTENT_TEXT`): the quote was cut short of the speaker's qualifier
+    (1839/9: a 34-character sentence quoted, the summing-up with the word 500 characters later). Only short turns: in a long turn an
+    extent word nearly always sits somewhere, and the check would reject three summaries in four."""
+    for t in turns:
+        if len(t) <= SHORT_TURN and (m := EXTENT_QUOTE.search(t)) is not None:
+            return None if EXTENT_TEXT.search(text) else f'an extent word ("{m.group(1).lower()}") in the short turn it rests on that its text leaves out'
+    return None
+
+
+def one_line_answer_problem(kind: str, turns: Sequence[Turn]) -> str | None:
+    """Check E (#178, the Opus round): why a management bullet rests on a one-line answer, or None. `turns`: the turns its quotes sit in.
+    Every one of them is under `ONE_LINE` characters: a reply that only makes sense with the question before it, which a management
+    bullet may not quote (1582/3: the exclusion was in the analyst's question; 1865/3)."""
+    if kind != "management" or not turns:
+        return None
+    longest = max(t.char_end - t.char_start for t in turns)
+    return f"a management bullet that rests only on turns under {ONE_LINE} characters (a one-line answer needs its question)" if longest < ONE_LINE else None
+
+
+def turns_hit(cited: Sequence[Cited], turns: Sequence[Turn]) -> list[Turn]:
+    """The turns a bullet's citations touch, in turn order, each once."""
+    hit = {t.turn_no: t for c in cited for t in turns if t.char_start < c.end and c.start < t.char_end}
+    return [hit[n] for n in sorted(hit)]
+
+
+def one_turn_problem(kind: str, hit: Sequence[Turn]) -> str | None:
+    """Check F (#178, the Opus round; the review's §4 pick 1): why a management or unknown bullet rests on more than one turn, or None.
+    A bullet of those lists states what one speaker said in one turn; joining passages of two turns is where six of the ten judged
+    fails sat (the quotes of 12 bullets lay in two turns, and three of them failed)."""
+    if kind in ONE_PASSAGE_LISTS and len(hit) > 1:
+        return f"its quotes lie in {len(hit)} turns, and a {kind} bullet rests on one turn"
     return None
 
 
@@ -455,9 +599,10 @@ def _short(s: str, n: int = 100) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
-def _json_bullet(raw, call: CallDoc, transcript: str, answers: set[int], mapping: Counter) -> Bullet:
+def _json_bullet(raw, call: CallDoc, transcript: str, answers: set[int], mapping: Counter, *, strict: bool = False) -> Bullet:
     """One bullet of a structured reply: its quotes found in our copy of the transcript (each exactly once, in one place), then
-    the rules every bullet gets: only figures its quoted passages hold, the role rules, and the copied-text rule on its text."""
+    the rules every bullet gets: only figures its quoted passages hold, the role rules, and the copied-text rule on its text.
+    `strict` (prompts from v11, `STRICT_FROM`): also one quote (G) from one turn (F) for a management or unknown bullet, and checks A to E."""
     if not isinstance(raw, dict):
         b = Bullet("")
         b.problem = "isn't the schema's object"
@@ -471,6 +616,9 @@ def _json_bullet(raw, call: CallDoc, transcript: str, answers: set[int], mapping
     b.section = kind
     if not text or not isinstance(quotes, list) or not all(isinstance(q, str) for q in quotes):
         b.problem = "isn't the schema's object"
+        return b
+    if strict and kind in ONE_PASSAGE_LISTS and len(quotes) != 1:                                # check G (#178, the Opus round)
+        b.problem = f"{len(quotes)} quotes, and a {kind} bullet rests on exactly one"
         return b
     if len(quotes) > MAX_QUOTES:
         b.problem = f"{len(quotes)} quotes, not 1 to {MAX_QUOTES}"
@@ -498,26 +646,36 @@ def _json_bullet(raw, call: CallDoc, transcript: str, answers: set[int], mapping
         b.problem = "numbers not in its cited passages: " + ", ".join(extra)
         return b
     b.problem = role_problem(kind, b.citations, call.turns, answers)
+    hit = turns_hit(b.citations, call.turns) if strict else []
+    if b.problem is None and strict:
+        b.problem = one_turn_problem(kind, hit)
     if b.problem is None:
         b.problem = firm_verb_problem(kind, text, passages)
     if b.problem is None:
         b.problem = extent_word_problem(text, passages)
+    if b.problem is None and strict:
+        b.problem = (scope_word_problem(text, passages) or timing_problem(text, passages) or cause_problem(text, passages)
+                     or short_turn_extent_problem(text, [call.text[t.char_start:t.char_end] for t in hit])
+                     or one_line_answer_problem(kind, hit))
     if b.problem is None:
         e = apply_echo(text, passages, transcript)
         b.problem, b.text = e.problem, (text if e.problem else e.text)
     return b
 
 
-def check_json(answer, call: CallDoc) -> Checked:
+def check_json(answer, call: CallDoc, *, version: str | None = None) -> Checked:
     """Check a structured reply (`answer`: the reply's JSON) against our copy of the transcript and its stored turns. The same
-    `Checked` as `check`'s, so a published output, its citations and its checks read the same on either route."""
+    `Checked` as `check`'s, so a published output, its citations and its checks read the same on either route. `version`: the prompt
+    version that asked for it; from v11 (`STRICT_FROM`) a bullet also gets checks A to G, and an earlier version, or none, is checked
+    exactly as it was."""
     mapping: Counter = Counter()
+    strict = version is not None and strict_of(version)
     rows = answer.get("bullets") if isinstance(answer, dict) else None
     if not isinstance(rows, list):
         return Checked(TASK, [], ["the reply isn't the schema's JSON ({bullets: [...]})"], mapping)
     transcript = summaries.match_form(call.text)
     answers = answer_turns(call.turns)
-    bullets = [_json_bullet(raw, call, transcript, answers, mapping) for raw in rows]
+    bullets = [_json_bullet(raw, call, transcript, answers, mapping, strict=strict) for raw in rows]
     bullets.sort(key=lambda b: LISTS.index(b.section) if b.section in LISTS else len(LISTS))   # the lists in order; stable
     problems = []
     if not bullets:
@@ -540,9 +698,16 @@ REASON_PHRASES: dict[str, tuple[str, ...]] = {
     "citation": (r"cites a turn whose role is", r"cites text outside any speaker turn",
                  r"isn't in the transcript exactly once", r"a quote is over \d+ characters",
                  r"a firm verb \(.+\) that none of its quotes says",
-                 r"an extent word \(.+\) in a quote that its text leaves out"),
+                 r"an extent word \(.+\) in a quote that its text leaves out",
+                 r"a scope word \(.+\) that none of its quotes says",
+                 r"a future period \(.+\) in a quote that its text leaves out",
+                 r"a cause \(.+\) that none of its quotes gives",
+                 r"an extent word \(.+\) in the short turn it rests on",
+                 r"rests only on turns under \d+ characters",
+                 r"its quotes lie in \d+ turns"),
     "format": (r"the lists aren't as asked", r"outside the lists", r"\d+ bullets under", r"has no bullets",
                r"isn't for this call", r"bullets in all, not at least", r"copies transcript text",
                r"the reply isn't the schema's JSON", r"isn't the schema's object", r"no bullets \(the reply lists none\)",
-               r"\d+ bullets in the list", r"\d+ quotes, not 1 to"),
+               r"\d+ bullets in the list", r"\d+ quotes, not 1 to",
+               r"\d+ quotes, and a (?:management|unknown) bullet rests on exactly one"),
 }

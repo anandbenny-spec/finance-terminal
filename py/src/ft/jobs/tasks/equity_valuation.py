@@ -179,7 +179,8 @@ class EquityValuation(Task):
                     where e.slug like %s""", (self.slug_prefix + "%",)).fetchall()]
         newest = db.execute("""select max(period_end) from equity.metric_value
                                 where metric_key = 'market_cap' and period_kind = 'market'
-                                  and (%s::int[] is null or entity_id = any(%s))""", (ids, ids)).fetchone()[0]
+                                  and (%s::int[] is null and entity_id in (select id from core.entity where market = 'IN')
+                                       or entity_id = any(%s))""", (ids, ids)).fetchone()[0]
         if newest is None:
             return out                                           # no price stored yet: nothing to value
         out.as_of = newest

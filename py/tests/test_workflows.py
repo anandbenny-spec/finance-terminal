@@ -260,6 +260,23 @@ def test_the_backfill_can_limit_a_tone_run_to_an_evaluation_set_and_no_other_wor
         assert eca.TONE_SET_ENV not in json.dumps(load(name))
 
 
+def test_the_backfill_can_rerun_the_diff_summaries_through_env_and_no_other_workflow_sets_it():
+    # #445: the re-run of statement_diff_summary's older outputs is a backfill's input only; none is the default.
+    from ft.jobs.tasks import ai_batch
+    wf = load("backfill")
+    option = wf["on"]["workflow_dispatch"]["inputs"]["diff_rerun"]
+    assert option["default"] == "none" and option["type"] == "string"
+    run = next(s for s in wf["jobs"]["run"]["steps"] if s.get("name") == "Run")
+    expr = run["env"][ai_batch.RERUN_ENV]
+    base = {"secrets": {}, "env": {}, "github": {"event_name": "workflow_dispatch"}}
+    assert interpolate(expr, {**base, "inputs": {"diff_rerun": "none"}}) == "none"
+    assert interpolate(expr, {**base, "inputs": {"diff_rerun": "all"}}) == "all"
+    assert ai_batch.rerun_of("backfill", {ai_batch.RERUN_ENV: interpolate(expr, {**base, "inputs": manual_inputs("backfill")})}) \
+        is None                                                     # a dispatch left at its defaults re-runs nothing
+    for name in ("daily", "watch", "weekly", "refresh"):
+        assert ai_batch.RERUN_ENV not in json.dumps(load(name))
+
+
 def test_the_evaluator_follows_githubs_rules():
     ctx = {"secrets": {"A": "a"}, "inputs": {}, "env": {}, "github": {"event_name": "push"}}
     assert evaluate("secrets.MISSING", ctx) == "" and evaluate("inputs.target", ctx) is None

@@ -77,6 +77,28 @@ plus the request's own worst case must stay under `ai_monthly_budget_usd`
 (alert `ai_budget:<month>`). A run whose estimate (each request and its retry at their worst, at the batch price in a
 batch) passes $5 sends nothing more (CLAUDE.md §7; alert `ai_run_estimate`).
 
+**Prompt versions and the re-run** (#445, R05-2; decided by Claude under the standing delegation of 24 Oct 2026). A request's
+input hash holds its prompt's version and text, so a new version would make every target a new input, and the next scheduled
+run would send them all again. For `statement_diff_summary` (`PINNED_TASKS`) a target instead keeps the version it was
+answered with: the highest version among its requests that were answered, or are waiting for an answer (`pending`,
+`succeeded`, or `rejected` other than stale). A target never answered (a new decision, on decision day) gets the current
+version. Older outputs move to a new version only through the re-run: a backfill with `POLICY_AI_RERUN` (the backfill
+workflow's `diff_rerun` input) set to `all`, or to meeting slugs separated by commas, sends the current version for each
+target whose published output was made with an earlier version, and nothing else (no other target, no embeddings, no
+retired projections). Each target is sent once (the input hash). A published reply supersedes the old output; a rejected one
+leaves it published. No scheduled run sets the variable. The other tasks re-send their targets when their version
+changes, as before. (The alternative, a re-run that bumps the version for every target at once, would have re-sent all of
+production's summaries on its next `daily`, before the judge's verdict.) From v4 on (`COPIES_FROM`), a reply is checked
+with `summaries.check(..., drop_copies=True)`: its copies of its cited text come out of the bullets; a pinned v1-v3
+target's reply is checked as before. From v7 on (`QUOTES_FROM`; Anand's decision of 12 Nov 2026, 22:36 IST) the request runs
+on Sonnet 5.5 (`summaries.DIFF_MODEL_OF`) and the reply is also checked with `check_quotes=True`: every quotation in a bullet is
+in that bullet's cited passages. Sonnet's batch price is 20 times Haiku's, so the $5 run estimate above counts each v7 request
+at Sonnet's price (the request's own model), and a re-run of all of production's targets may need to be split by meetings.
+From v8 on (`STRICT_COPIES_FROM`, `REPEATS_FROM`), only a copy that stands as a whole sentence comes out (the rest go in
+quotation marks), and a bullet that repeats 12 or more of its own words fails. From v11 on (`summaries.DIFF_JSON_FROM`;
+Anand's decision of 13 Nov 2026, by 07:18 IST) the request takes the json route and the reply is checked with
+`summaries.check_diff_json`: each bullet's quotes found in its document's changed sentences, which become its citations.
+
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
 key or a Voyage error leaves the chunks for the next run (`embeddings`, W); it never fails the summaries.
@@ -86,6 +108,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -130,8 +153,31 @@ from ft.policy import rbi_resolution
 
 # stance_extraction v2 (Anand, 27 Oct 2026, issue #16): the quote is the stance sentence with the sentence before it,
 # since resolutions repeat the stance sentence word for word and a quote must be found exactly once (Arch 03 §1.2).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v1", "stance_extraction": "v2",
+# statement_diff_summary v2 (#445, R05-2): words taken from a statement go in quotation marks; v3 (the same job, after v2's
+# dev sample): quote only the changed words and don't repeat the cited sentence after them. v4 (Anand's option 1, 12 Nov
+# 2026): v3's instructions word for word, with our assembly taking the reply's copies of its cited text out of the bullets
+# (`summaries.mark_copies`; from `COPIES_FROM` on). v5: the same instructions again, marking the outputs made with the
+# copies rule's revision after v4's dev sample (parentheses, joined copies, copies after a clause); v6 likewise, after v5's
+# ("; " joins, copies in their own quotation marks). v7 (Anand's decision of 12 Nov 2026, 22:36 IST, after the judge failed
+# v6's round 5): v6's text plus a paragraph on what to cover and four rules, on Sonnet 5.5 (`summaries.DIFF_MODEL_OF`), with
+# its replies' quotations checked against each bullet's cited passages (`QUOTES_FROM`). Its older targets keep the version
+# they were answered with until the re-run (`PINNED_TASKS`, `RERUN_ENV`). v8: v7's text, on Sonnet 5.5, marking the copies
+# rule's strict form and the repeats check (round 7, after v7's dev sample: `STRICT_COPIES_FROM`, `REPEATS_FROM`). v9: v8
+# plus three rules (under 60 words; quotations fitted to the sentence; no bullet for a date, a title or attendance), on Sonnet.
+# v10: v9 plus a rule against words written only to hold a citation, on Sonnet at effort medium, with `ENDS_FROM`'s check.
+# v11 (Anand's decision of 13 Nov 2026, by 07:18 IST): the structured route (summaries.DIFF_JSON_FROM, check_diff_json).
+# v12: v11 plus a rule, with the unquoted-copy and side-by-side checks (summaries.DIFF_STRICT_FROM).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v12", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
+COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
+QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
+STRICT_COPIES_FROM = 8                       # ... and from v8 on with strict_copies (only whole-sentence copies come out)
+REPEATS_FROM = 8                             # ... and with check_repeats (summaries.repeat_problem)
+ENDS_FROM = 10                               # ... and from v10 on with check_ends (summaries.end_problem)
+PINNED_TASKS = ("statement_diff_summary",)   # a target keeps the version it was answered with (module docstring)
+RERUN_TASK = "statement_diff_summary"        # the one task the re-run sends (#445)
+RERUN_ENV = "POLICY_AI_RERUN"                # empty or 'none' (the default) | 'all' | meeting slugs, comma-separated
+_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 REALTIME_DOC_TYPES = ("fomc_statement", "mpc_resolution", "rbi_governor_statement")
 EXTRACTION_DOC_TYPE = "mpc_resolution"   # the stance and projection fallback run on MPC resolutions only (Spec 01 D2)
 EMBED_MODEL_KEY = "voyage-4@512"
@@ -163,6 +209,7 @@ class Work:
     sentences: tuple[tuple[int, int], ...] = ()
     parse: Callable[[], extraction.Parsed] | None = field(default=None, repr=False)
     _parsed: extraction.Parsed | None = field(default=None, repr=False)
+    prompt: object | None = field(default=None, repr=False)   # its own prompt, where its version isn't the current one
 
     @property
     def target(self) -> str:
@@ -173,6 +220,7 @@ class Work:
         return self.doc.document_id
 
     def request(self, prompt, note: str | None = None) -> Request:
+        prompt = self.prompt or prompt          # a target pinned to an earlier version (`PINNED_TASKS`) keeps it
         if self.task == "doc_summary":
             return summaries.doc_summary_request(self.doc, prompt, note=note)
         if self.task == "statement_diff_summary":
@@ -197,12 +245,58 @@ class Work:
     def check(self, req: Request, reply: Reply) -> Checked | extraction.Checked:
         if self.task in EXTRACTION_TASKS:
             return self.recheck(extraction.answer_of(reply))
-        changed = None
+        changed, drop_copies, check_quotes = None, False, False
         if self.task == "statement_diff_summary":
             old, new = summaries.changed_spans(self.segments)
             changed = {self.base.document_id: old, self.doc.document_id: new}
-        return summaries.check(self.task, reply, req.sources, changed=changed)
+            if summaries.diff_json(req.prompt.version):                 # v11 on: the structured route
+                try:
+                    answer = reply.json()
+                except ValueError:
+                    answer = None
+                return summaries.check_diff_json(answer, req.sources, changed, version=req.prompt.version)
+            drop_copies = _vnum(req.prompt.version) >= COPIES_FROM      # a pinned v1-v3 reply is checked as before
+            check_quotes = _vnum(req.prompt.version) >= QUOTES_FROM     # a pinned v1-v6 reply, likewise
+            strict = _vnum(req.prompt.version) >= STRICT_COPIES_FROM    # a pinned v4-v7 reply keeps the looser rule
+            repeats = _vnum(req.prompt.version) >= REPEATS_FROM
+            ends = _vnum(req.prompt.version) >= ENDS_FROM
+            return summaries.check(self.task, reply, req.sources, changed=changed, drop_copies=drop_copies,
+                                   check_quotes=check_quotes, strict_copies=strict, check_repeats=repeats,
+                                   check_ends=ends)
+        return summaries.check(self.task, reply, req.sources, changed=changed, drop_copies=drop_copies,
+                               check_quotes=check_quotes)
 
+
+
+@dataclass(frozen=True)
+class Rerun:
+    """A re-run of `RERUN_TASK` (#445): its targets whose published output was made with an earlier prompt version, all of
+    them (`meetings` None) or those of the named meetings."""
+    meetings: tuple[str, ...] | None = None
+
+
+def _vnum(version: str | None) -> int:
+    """'v12' → 12; anything else sorts first."""
+    m = re.fullmatch(r"v(\d+)", version or "")
+    return int(m.group(1)) if m else -1
+
+
+def rerun_of(workflow: str, env=None) -> Rerun | None:
+    """The re-run a run asks for (`POLICY_AI_RERUN`): None for none (empty or 'none', what every scheduled run has),
+    `Rerun()` for 'all', `Rerun(slugs)` for meeting slugs separated by commas. A value given to any workflow but a
+    backfill, or a malformed slug, stops the run before anything is sent."""
+    v = ((os.environ if env is None else env).get(RERUN_ENV) or "").strip()
+    if v in ("", "none"):
+        return None
+    if workflow != "backfill":
+        raise ValueError(f"{RERUN_ENV} asks for a re-run of {RERUN_TASK}, which only a backfill runs, not {workflow!r}")
+    if v == "all":
+        return Rerun()
+    slugs = tuple(sorted({s.strip() for s in v.split(",") if s.strip()}))
+    bad = [s for s in slugs if not _SLUG.fullmatch(s)]
+    if not slugs or bad:
+        raise ValueError(f"{RERUN_ENV} must be none, all or meeting slugs separated by commas; not {', '.join(bad) or v!r}")
+    return Rerun(slugs)
 
 
 # The stable phrases this task writes into a status_reason itself, by the accuracy page's category (ft/quality/reasons.py
@@ -224,6 +318,7 @@ class Fetched(RunState):
     embed_host: str | None = None
     embed_error: str | None = None
     embed_unavailable: str | None = None   # the same for Voyage
+    rerun: dict | None = None         # a re-run (#445): what it asked for and the targets it chose (ids only)
 
 
 AI_REASONS = {"no_key": "no API key", "auth": "the API key was refused", "billing": "no API credits left"}
@@ -260,6 +355,8 @@ class AiBatch(BatchSteps, Task):
         self._last: Fetched | None = None
         self._fetcher = None                  # the run's fetcher: the stance cross-check reads raw files through it
         self._parsed_stances: dict[int, extraction.Parsed] = {}
+        self._rerun_docs: set[int] = set()    # the documents whose `RERUN_TASK` target this run re-runs (#445)
+        self._pinned_prompts: dict[tuple[str, str], object] = {}
 
     # ------------------------------------------------------------------ reading what's there
     @staticmethod
@@ -373,7 +470,63 @@ class AiBatch(BatchSteps, Task):
             if not any(p.get("kind") in ("changed", "added", "removed") for p in segments.get("pairs", [])):
                 continue                                       # nothing changed: the redline says so
             work.append(Work("statement_diff_summary", by_id[did], bases[base_id], segments))
+        self._pin(db, work)
         return work
+
+    def _pin(self, db, work: list[Work]) -> None:
+        """Each target of a `PINNED_TASKS` task keeps the prompt version it was answered with (module docstring): the
+        highest version among its requests answered or waiting for an answer; the current version if it has none, or if
+        this run re-runs it."""
+        for task in PINNED_TASKS:
+            ws = [w for w in work if w.task == task]
+            if not ws:
+                continue
+            answered: dict[int, str] = {}
+            for doc_id, version in db.execute(
+                    """select document_id, prompt_version from ops.ai_request
+                        where ai_task = %s and document_id = any(%s)
+                          and (status in ('pending', 'succeeded')
+                               or (status = 'rejected' and coalesce(reject_reason, '') not like 'stale:%%'))""",
+                    (task, [w.document_id for w in ws])).fetchall():
+                if _vnum(version) > _vnum(answered.get(doc_id)):
+                    answered[doc_id] = version
+            current = PROMPT_VERSION[task]
+            for w in ws:
+                version = current if task == RERUN_TASK and w.document_id in self._rerun_docs \
+                    else answered.get(w.document_id, current)
+                w.prompt = None if version == current else self._pinned_prompt(task, version)
+
+    def _pinned_prompt(self, task: str, version: str):
+        if (task, version) not in self._pinned_prompts:
+            self._pinned_prompts[(task, version)] = load_prompt(task, version)
+        return self._pinned_prompts[(task, version)]
+
+    def _rerun_targets(self, db, rerun: Rerun) -> tuple[set[int], dict]:
+        """The documents whose `RERUN_TASK` output, published, was made with an earlier prompt version than the current
+        one (only the named meetings' if the re-run names them), and the record of the choice (ids and counts only). A
+        meeting slug that isn't a policy meeting stops the run before anything is sent."""
+        current = PROMPT_VERSION[RERUN_TASK]
+        where, args = ["o.task = %s", "o.status = 'published'", "o.scope = ''", "n.slug = any(%s)"], \
+            [RERUN_TASK, self._policy_banks()]
+        if self.scope is not None:                     # tests: only their meetings
+            where.append("e.slug = any(%s)"); args.append(sorted(self.scope))
+        if rerun.meetings is not None:
+            known = {r[0] for r in db.execute("""select slug from core.event where event_type = 'policy_meeting'
+                                                  and slug = any(%s)""", (list(rerun.meetings),)).fetchall()}
+            if unknown := [s for s in rerun.meetings if s not in known]:
+                raise ValueError(f"{RERUN_ENV}: no policy meeting {', '.join(unknown)}")
+            where.append("e.slug = any(%s)"); args.append(list(rerun.meetings))
+        rows = db.execute(f"""select o.document_id, o.id, o.prompt_version
+                                from core.ai_output o
+                                join core.document d on d.id = o.document_id
+                                join core.entity n on n.id = d.entity_id
+                                left join core.event e on e.id = d.event_id
+                               where {' and '.join(where)}
+                               order by o.document_id""", args).fetchall()
+        older = [(doc_id, out_id) for doc_id, out_id, v in rows if _vnum(v) < _vnum(current)]
+        record = {"task": RERUN_TASK, "version": current, "meetings": list(rerun.meetings) if rerun.meetings else "all",
+                  "published": len(rows), "older": len(older), "outputs": [out_id for _, out_id in older]}
+        return {doc_id for doc_id, _ in older}, record
 
     @staticmethod
     def _settings(db) -> tuple[bool, Decimal]:
@@ -397,7 +550,11 @@ class AiBatch(BatchSteps, Task):
         mode = "realtime" if meeting is not None and realtime_on else "batch"
         f = Fetched(mode, budget=budget, month_spend=self._month_spend(db))
         prompts = {t: load_prompt(t, v) for t, v in PROMPT_VERSION.items()}
-        self._fetcher, self._parsed_stances = ctx.fetcher, {}
+        self._fetcher, self._parsed_stances, self._pinned_prompts = ctx.fetcher, {}, {}
+        rerun = rerun_of(ctx.workflow)      # a backfill's re-run of statement_diff_summary (#445), or None
+        self._rerun_docs = set()
+        if rerun is not None:
+            self._rerun_docs, f.rerun = self._rerun_targets(db, rerun)
 
         if meeting is not None:
             docs = self._docs(db, event_id=meeting.event_id, doc_types=REALTIME_DOC_TYPES)
@@ -408,7 +565,11 @@ class AiBatch(BatchSteps, Task):
                 f.batch.held_for_watch = sorted(held & {d.document_id for d in docs})
                 docs = [d for d in docs if d.document_id not in held]
         f.targets = self._work(db, docs)
-        self._retire_projections(db, f, docs)
+        if rerun is not None:               # the re-run's targets and nothing else: no other request, no retirement
+            f.targets = [w for w in f.targets if w.task == RERUN_TASK and w.document_id in self._rerun_docs]
+            f.rerun["targets"] = len(f.targets)
+        else:
+            self._retire_projections(db, f, docs)
         if mode == "batch":
             self._batch_path(ctx, f, prompts, poll=0 if ctx.workflow == "watch" else BATCH_POLL_SECONDS)
         else:
@@ -430,7 +591,8 @@ class AiBatch(BatchSteps, Task):
             if unfinished:
                 # Fail the poll, so the next one tries again while the window is open. What finished is stored.
                 raise CallError("Unfinished", None, "; ".join(f"{o.work.target}: {o.reason}" for o in unfinished))
-        self._embed(db, f, docs if meeting is not None else None)
+        if rerun is None:                   # a re-run sends its targets and nothing else: no embeddings either
+            self._embed(db, f, docs if meeting is not None else None)
         return f
 
 
@@ -867,6 +1029,15 @@ class AiBatch(BatchSteps, Task):
             "budget_stopped": f.stopped == "budget"}), blocking=False))
         if f.mode == "batch":
             out.append(batches_check(f))
+        if f.rerun is not None:
+            # (W) A re-run (#445): what it chose and how each target ended (ids and counts only). A rejected target keeps its
+            # old output published, named here by document id.
+            mine = [o for o in f.outcomes if o.work.task == RERUN_TASK and o.work.document_id in self._rerun_docs]
+            ends = Counter(o.status for o in mine)           # (an earlier run's batch collected here isn't the re-run's)
+            out.append(Check("rerun", not ends["rejected"], json.dumps({
+                **f.rerun, "outcomes": dict(sorted(ends.items())),
+                "rejected_documents": sorted(o.work.document_id for o in mine if o.status == "rejected")}),
+                blocking=False))
         out.append(Check("embeddings", f.embed_pending == 0 and f.embed_error is None, json.dumps({
             "embedded": len(f.embeds), "pending": f.embed_pending, "tokens": f.embed_tokens,
             "requests": f.embed_requests, "host": f.embed_host, "error": f.embed_error}), blocking=False))

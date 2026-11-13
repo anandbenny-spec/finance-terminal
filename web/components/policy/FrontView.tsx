@@ -20,9 +20,10 @@ import { ErrorPanel, Foot, latestOf } from "@/components/policy/PanelFoot";
 import { PendingVote } from "@/components/policy/PendingVote";
 import { Row } from "@/components/policy/PolicyCard";
 import { RateStats } from "@/components/policy/RateStats";
+import { TakeTourButton } from "@/components/shell/GuidedTour";
 import { VotesPanel } from "@/components/policy/VotesPanel";
 import { Button } from "@/components/ui/button";
-import { FEEDS, type TaskKey } from "@/lib/feeds";
+import { DAILY_TASKS, FEEDS, type TaskKey } from "@/lib/feeds";
 import { formatDate, formatReleaseTime } from "@/lib/format";
 import { buildChangeStrips, stripScale } from "@/lib/policy/changestrip";
 import { decisionLine, meetingTabHref, tally } from "@/lib/policy/decisions";
@@ -66,6 +67,7 @@ function Hero({ year }: { year: string }) {
         <Button asChild size="lg" variant="outline">
           <Link href="/methodology">How it works</Link>
         </Button>
+        <TakeTourButton variant="page" />
       </div>
     </header>
   );
@@ -93,6 +95,7 @@ function ChangesPanel({ bank, latest, changes, policies, now, footer }: { bank: 
       subtitle={fed ? "What did the Fed's latest statement change, against the one before?" : "What did the RBI's latest resolution change, against the one before?"}
       market={fed ? "US" : "IN"}
       span={6}
+      className="self-start"
       footer={footer}
       refresh={FEEDS.policyChanges}
     >
@@ -166,8 +169,8 @@ export function FrontView({ front }: { front: Front }) {
   const decisions = o.history.ok ? o.history.decisions : null;
   const fed = o.fed.ok ? o.fed : null;
   const rbi = o.rbi.ok ? o.rbi : null;
-  const foot = (sources: (string | null | undefined)[], tasks: readonly TaskKey[], dataTo: string | null) => (
-    <Foot sources={sources} tasks={tasks} dataTo={dataTo} freshness={freshness} now={now} />
+  const foot = (sources: (string | null | undefined)[], tasks: readonly TaskKey[], dataTo: string | null, checkedTasks?: readonly string[]) => (
+    <Foot sources={sources} tasks={tasks} dataTo={dataTo} freshness={freshness} now={now} checkedTasks={checkedTasks} />
   );
   const fedSource = sourceOf("Fed", o.fed);
   const rbiSource = sourceOf("RBI", o.rbi);
@@ -211,21 +214,21 @@ export function FrontView({ front }: { front: Front }) {
     <>
       <Hero year={POLICY_START.slice(0, 4)} />
 
-      <Section id="front-what-changed" title="What changed in the latest statements" note="the bank's own words, compared sentence by sentence">
+      <Section id="front-what-changed" tour="front-what-changed" title="What changed in the latest statements" note="the bank's own words, compared sentence by sentence">
         <PanelGrid>
           <ChangesPanel bank="Fed" latest={o.fed} changes={fedChanges} policies={policies} now={now} footer={changesFoot("Fed")} />
           <ChangesPanel bank="RBI" latest={o.rbi} changes={rbiChanges} policies={policies} now={now} footer={changesFoot("RBI")} />
         </PanelGrid>
       </Section>
 
-      <Section id="front-votes" title="How the members voted" note="one dot per member, at the change they voted for">
+      <Section id="front-votes" tour="front-votes" title="How the members voted" note="one dot per member, at the change they voted for">
         <PanelGrid>
           {votes("Fed")}
           {votes("RBI")}
         </PanelGrid>
       </Section>
 
-      <Section id="front-change-strip" title="How much each statement changed">
+      <Section id="front-change-strip" tour="front-change-strip" title="How much each statement changed">
         <PanelGrid>
           {strips ? (
             <ChangeStrip
@@ -247,7 +250,7 @@ export function FrontView({ front }: { front: Front }) {
             variant="flush"
             footer={
               <>
-                {foot([fedSource, rbiSource], FEEDS.policyRatesStand, latestOf(fed?.meeting?.decision_date, rbi?.meeting?.decision_date))}
+                {foot([fedSource, rbiSource], FEEDS.policyRatesStand, latestOf(fed?.meeting?.decision_date, rbi?.meeting?.decision_date), DAILY_TASKS)}
                 <Link href="/policy" className="text-ink-1 underline">
                   Open the Fed vs RBI tracker →
                 </Link>

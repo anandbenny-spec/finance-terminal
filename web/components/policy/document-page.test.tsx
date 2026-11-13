@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiCitationRow, AiOutputRow, DocumentChunkRow, DocumentRow, FieldPolicyRow } from "@/lib/queries/api";
 import type { DocumentPage as PageData } from "@/lib/queries/document";
+import type { MeetingPage } from "@/lib/queries/meeting";
 import { fakeClient, type Row } from "@/tests/fake-postgrest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -14,6 +15,8 @@ const reads = vi.hoisted(() => ({
   page: null as unknown as PageData,
   span: null as null | { ok: true; citations: AiCitationRow[]; outputs: AiOutputRow[] } | { ok: false },
   spanCalls: [] as [number, number, number][],
+  meeting: null as null | MeetingPage,
+  meetingCalls: [] as [string, string, string][],
 }));
 
 vi.mock("next/navigation", () => ({
@@ -29,6 +32,23 @@ vi.mock("@/lib/queries/document", async (importOriginal) => ({
     reads.spanCalls.push([id, start, end]);
     return reads.span;
   },
+}));
+
+vi.mock("@/lib/queries/meeting", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/queries/meeting")>()),
+  readMeetingPage: async (bank: string, slug: string, date: string) => {
+    reads.meetingCalls.push([bank, slug, date]);
+    return reads.meeting;
+  },
+}));
+
+// An async server component can't be rendered to a string inside the page: the page tests see where it is put and what
+// it is given; MeetingRail itself is rendered on its own below.
+vi.mock("@/components/policy/MeetingView", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/policy/MeetingView")>()),
+  MeetingRail: (props: { bank: string; slug: string; date: string }) => (
+    <aside data-rail={`${props.bank} ${props.slug} ${props.date}`} id="rail-stub">Key facts</aside>
+  ),
 }));
 
 vi.mock("@/lib/queries/shell", () => ({
@@ -119,6 +139,23 @@ function page(over: Partial<PageData> = {}, doc: DocumentRow = FED_DOC): PageDat
   };
 }
 
+function meetingPage(over: Partial<MeetingPage> = {}): MeetingPage {
+  const ok = { ok: true } as const;
+  return {
+    readAt: "2026-10-20T03:00:00Z",
+    today: "2026-10-20",
+    meeting: { ...ok, row: { slug: "fomc-2026-09-16", bank: "Fed", status: "held", decision_date: "2026-09-16", decision_at: "2026-09-16T18:00:00Z", kind: "scheduled", is_rate_decision: true, meeting_no: 5, minutes_due_on: "2026-10-07", policy_rate_pct: null, policy_rate_change_bps: null, stance: null, stance_display_label: null, dissent_count: 0, attribution: "Source: Federal Reserve Board", fed_target_lower_pct: null, fed_target_upper_pct: null } },
+    adjacent: { ...ok, previous: null, next: null },
+    fieldPolicy: { ...ok, rows: [] },
+    votes: { ...ok, rows: [] },
+    settings: { ...ok, rows: [] },
+    documents: { ...ok, rows: [FED_DOC] },
+    projections: { ...ok, rows: [] },
+    ai: { ...ok, stance: null, summaries: {} },
+    ...over,
+  } as MeetingPage;
+}
+
 const render = async (id: number, span: [number, number] | null) =>
   renderToStaticMarkup(<TooltipProvider>{await DocumentPage({ id, span })}</TooltipProvider>);
 const words = (markup: string) => markup.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
@@ -127,6 +164,8 @@ beforeEach(() => {
   reads.page = page();
   reads.span = null;
   reads.spanCalls = [];
+  reads.meeting = meetingPage();
+  reads.meetingCalls = [];
 });
 
 describe("the document page", () => {
@@ -219,6 +258,62 @@ describe("the document page", () => {
     await expect(render(12, null)).rejects.toThrow("NEXT_NOT_FOUND");
     reads.page = page({}, { ...FED_DOC, entity_slug: "nifty-50" });
     await expect(render(12, null)).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+});
+
+describe("the meeting's Key facts rail beside the document (R05-11)", () => {
+  it("puts the rail in the 4-column xl side of a 12-column grid and the document in the other 8", async () => {
+    const out = await render(12, null);
+    expect(out).toContain("xl:grid-cols-12");
+    expect(out).toContain("xl:col-span-8");
+    expect(out).toContain('class="hidden min-w-0 xl:col-span-4 xl:block"');
+    expect(out).toContain('data-rail="Fed fomc-2026-09-16 2026-09-16"');
+    // The rail follows the document in the page, and the document keeps its reading-width panel.
+    expect(out.indexOf('id="rail-stub"')).toBeGreaterThan(out.indexOf('id="panel-document"'));
+    expect(out).toContain('id="p-1"');
+  });
+
+  it("gives an RBI document its own meeting's rail, and still never links to RBI's pages", async () => {
+    reads.page = page({ summary: { ok: true, cited: null } }, RBI_DOC);
+    const out = await render(40, null);
+    expect(out).toContain('data-rail="RBI mpc-2026-10-07 2026-10-07"');
+    expect(out).not.toContain("rbi.org.in");
+  });
+
+  it("keeps today's layout for a document with no meeting: no grid, no rail", async () => {
+    reads.page = page({}, { ...FED_DOC, event_slug: null });
+    const out = await render(12, null);
+    expect(out).not.toContain("xl:grid-cols-12");
+    expect(out).not.toContain("rail-stub");
+    expect(words(out)).toContain("Inflation has moved up");
+  });
+});
+
+describe("MeetingRail (R05-11)", () => {
+  const actual = () => vi.importActual<typeof import("@/components/policy/MeetingView")>("@/components/policy/MeetingView");
+  const rail = async (bank: "Fed" | "RBI", slug: string, date: string) => {
+    const { MeetingRail } = await actual();
+    const node = await MeetingRail({ bank, slug, date });
+    return node ? renderToStaticMarkup(<TooltipProvider>{node}</TooltipProvider>) : null;
+  };
+
+  it("is the meeting's own Key facts, Documents and Next meeting, from the meeting's cached read", async () => {
+    const out = await rail("Fed", "fomc-2026-09-16", "2026-09-16");
+    expect(reads.meetingCalls).toEqual([["Fed", "fomc-2026-09-16", "2026-09-16"]]);
+    const text = words(out ?? "");
+    expect(text).toContain("Key facts");
+    expect(text).toContain("Decision 16 Sep 2026");
+    expect(text).toContain("Documents");
+    expect(text).toContain("FOMC statement");
+    expect(text).toContain("Next meeting");
+    expect(text).toContain("Source: Federal Reserve Board");
+  });
+
+  it("renders nothing when there is no such meeting, or its read failed", async () => {
+    reads.meeting = meetingPage({ meeting: { ok: true, row: null } });
+    expect(await rail("Fed", "fomc-2026-09-16", "2026-09-16")).toBeNull();
+    reads.meeting = meetingPage({ meeting: { ok: false } });
+    expect(await rail("Fed", "fomc-2026-09-16", "2026-09-16")).toBeNull();
   });
 });
 

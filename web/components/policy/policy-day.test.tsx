@@ -31,8 +31,18 @@ describe("PolicyDay", () => {
     expect(html).toContain("Latest Fed decision");
     expect(html).toContain("meeting panels Fed fomc-2026-10-28 2026-10-28");
     expect(html).toContain('aria-current="page"');
-    expect(html).toContain("/workspace/policy-day?bank=rbi");
+    expect(html).toContain('href="/workspace/policy-day/rbi"');
+    expect(html).not.toContain("?bank=");
     expect(html).toContain("Next FOMC meeting");
+  });
+
+  it("gives the card 8 of 12 columns and lets the countdown keep its own height (12 Nov 2026)", async () => {
+    const html = renderToStaticMarkup(await PolicyDay({ bank: "Fed", overview }));
+    const section = (title: string) => html.slice(html.lastIndexOf("<section", html.indexOf(title)), html.indexOf(title));
+    expect(section("Latest Fed decision")).toContain("xl:col-span-8");
+    const countdown = section("Next FOMC meeting");
+    expect(countdown).toContain("xl:col-span-4");
+    expect(countdown).toContain("self-start");
   });
 
   it("shows the RBI's when asked, never the Fed's", async () => {

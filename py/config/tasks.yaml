@@ -89,6 +89,24 @@ equity.shareholding:
   run_after: [equity.universe]
   overdue_after: 100 days
   uses_nse: true
+equity.brsr:
+  description: Each universe company's BRSR filings (FY 2023-24 on) from the exchanges' XBRL, with the value chain card's values, products and group companies, each year from its own filing and restatements flagged
+  workflows: {weekly: every 6 days}
+  run_after: [equity.universe]
+  overdue_after: 10 days
+  uses_nse: true
+equity.related_parties:
+  description: Each universe company's related-party transactions and segment revenue for its latest fiscal year, read from the stored results filings, for the value chain card
+  workflows: {weekly: every 6 days}
+  run_after: [equity.filings]
+  overdue_after: 10 days
+  uses_nse: false
+equity.segment_changes:
+  description: Each India company's reportable segments over its latest six quarters, read from the stored consolidated results filings, and the flags where a segment of the previous four quarters is missing from the latest (dropped, merged, renamed)
+  workflows: {weekly: every 6 days}
+  run_after: [equity.statements]
+  overdue_after: 10 days
+  uses_nse: false
 equity.metrics:
   description: Derived metrics of the universe companies (TTM figures, margins, returns, growth, banks' ratios and market multiples) from the stored statements, prices and corporate actions, each with its inputs or the reason it is held back
   workflows: {weekly: every 6 days}
@@ -153,5 +171,57 @@ equity.call_scores:
   description: What changed in each earnings call's opening remarks since the previous quarter's call (similarity with numbers masked, the five most-changed sentence pairs, rewritten openings and new speakers), with no AI; the tone scores join this task later
   workflows: {weekly: every 6 days}
   run_after: [equity.calls_ai]
+  overdue_after: 10 days
+  uses_nse: false
+us.universe:
+  description: The Dow 30's company master (curated, unpublished until the US slice goes live), Dow membership and US peer groups, checked against SEC's submissions
+  workflows: {weekly: every 6 days}
+  overdue_after: 10 days
+  uses_nse: false
+us.prices:
+  description: Daily prices of the Dow 30 from Yahoo Finance since 2019, each day's price as traded (unpublished until the US slice goes live)
+  workflows: {weekly: every 6 days}
+  run_after: [us.universe]
+  overdue_after: 10 days
+  uses_nse: false
+us.corporate_actions:
+  description: Splits and dividends of the Dow 30 from Yahoo Finance, with each split's price adjustment factor checked against the stored prices before it is applied
+  workflows: {weekly: every 6 days}
+  run_after: [us.prices]
+  overdue_after: 10 days
+  uses_nse: false
+us.filings:
+  description: The Dow 30's statements from SEC EDGAR's company facts (each 10-K and 10-Q registered with its quarter, year to date and balance sheet, checked before its figures are stored), unpublished until the US slice goes live
+  workflows: {weekly: every 6 days}
+  run_after: [us.universe]
+  overdue_after: 10 days
+  uses_nse: false
+us.valuation_inputs:
+  description: Damodaran's US industry betas and the IMF's US growth and inflation, the US slice's valuation inputs that India's inputs task doesn't store (the 10-year Treasury and the implied ERP are read where they are stored)
+  workflows: {weekly: every 6 days}
+  overdue_after: 40 days
+  uses_nse: false
+us.metrics:
+  description: Derived metrics of the Dow 30 (TTM figures, margins, returns, growth and market multiples) from the stored SEC statements, prices and corporate actions, with operating income as filed for EBIT, each with its inputs or the reason it is held back
+  workflows: {weekly: every 6 days}
+  run_after: [us.filings, us.corporate_actions]
+  overdue_after: 10 days
+  uses_nse: false
+us.beta:
+  description: Regression beta (104 weekly returns against the S&P 500) and Damodaran's US bottom-up beta relevered at market debt to equity, for the Dow 30
+  workflows: {weekly: every 6 days}
+  run_after: [us.metrics, us.valuation_inputs, policy.market_series]
+  overdue_after: 10 days
+  uses_nse: false
+us.valuation:
+  description: Each Dow 30 company's valuation runs in dollars (reverse DCF and default DCF for operating companies, implied return on equity for lenders, a not-applicable lead run for insurers and mixed companies) and the stored scenario grid
+  workflows: {weekly: every 6 days}
+  run_after: [us.beta]
+  overdue_after: 10 days
+  uses_nse: false
+us.snapshot:
+  description: The weekly screener snapshot of the Dow 30, one row per company with its figures, held-back reasons and labels, kept so multiples' history builds up (unpublished until the US slice goes live)
+  workflows: {weekly: every 6 days}
+  run_after: [us.valuation]
   overdue_after: 10 days
   uses_nse: false

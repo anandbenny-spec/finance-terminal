@@ -1,4 +1,4 @@
-// /policy/fed/latest and /policy/rbi/latest (#147): a 307 to the newest held meeting, keeping a valid ?tab=, read on
+// /policy/fed/latest and /policy/rbi/latest (#147): a 307 to the newest held meeting, keeping a valid ?tab= (as a path segment since R05-9a), read on
 // every request, and never a raw error. The routes are the real route modules; only the database read is a stand-in.
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,7 +29,7 @@ describe.each([
   it("answers 307 to the newest held meeting, with the What changed tab kept", async () => {
     const res = await ask(route, "?tab=changes");
     expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toBe(`${base}?tab=changes`);
+    expect(res.headers.get("location")).toBe(`${base}/changes`);
     expect(readLatest).toHaveBeenCalledTimes(1);
     expect(readLatest.mock.calls[0][1]).toBe(bank);
   });
@@ -37,7 +37,7 @@ describe.each([
   it("lands on the Overview with no tab, and drops a bad tab or anything else in the query", async () => {
     expect((await ask(route)).headers.get("location")).toBe(base);
     expect((await ask(route, "?tab=nonsense")).headers.get("location")).toBe(base);
-    expect((await ask(route, "?tab=changes&doc=governor&next=https://evil.test")).headers.get("location")).toBe(`${base}?tab=changes`);
+    expect((await ask(route, "?tab=changes&doc=governor&next=https://evil.test")).headers.get("location")).toBe(`${base}/changes`);
   });
 
   it("is never cached: it reads on every request, so a new decision is reached at once", async () => {
@@ -45,8 +45,8 @@ describe.each([
     readLatest.mockResolvedValue({ decision_date: "2026-12-09" });
     const second = await ask(route, "?tab=changes");
     expect(readLatest).toHaveBeenCalledTimes(2);
-    expect(first.headers.get("location")).toBe(`${base}?tab=changes`);
-    expect(second.headers.get("location")).toBe(`${base.replace(newest, "2026-12-09")}?tab=changes`);
+    expect(first.headers.get("location")).toBe(`${base}/changes`);
+    expect(second.headers.get("location")).toBe(`${base.replace(newest, "2026-12-09")}/changes`);
     expect(second.headers.get("cache-control")).toBe("no-store");
   });
 

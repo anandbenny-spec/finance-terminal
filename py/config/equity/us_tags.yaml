@@ -1,0 +1,170 @@
+# The US statements' column map: SEC EDGAR company facts (us-gaap) -> equity.financials (Spec 02A.1 §5.2; job US-02,
+# issue #401). Read by ft/equity/edgar.py for the task us.filings (py/src/ft/jobs/tasks/equity_us_filings.py).
+#
+# The rules are Data Audit 02 rows D1-D3, red flag 10 and 02a finding 14 (ported from the engine test's helper,
+# py/tests/equity_edgar.py, whose own field chains stay in that file for its tests):
+# - each column's `chain` is tried in order for each filing's period, the primary first: the first tag of the chain
+#   that is still current (one whose latest period is within 400 days of the newest such tag's, with at least four
+#   periods) moves to the front, the rest fill only the periods it lacks (red flag 10's revenue tag changes);
+# - `{tag, nci: plus|minus}`: an equity fill adjusted by MinorityInterest at the same date in the same filing; a period
+#   without that figure is skipped when the company files MinorityInterest at all (finding 14: GEV 2022);
+# - money in USD only, per-share figures in USD/shares; a fact in another unit is never read (the currency guard);
+# - a column whose meaning isn't filed is null, never computed from other lines (Spec 02A.1 §5.2), except a 10-K's
+#   quarter (the year less the nine months, unless the quarter is filed) and quarterly cash flow (each year to date
+#   less the one before it), both labelled "derived" in the row's tags.
+#
+# Where a chain is tighter than the helper's (decided by Claude, standing delegation, 24 Oct 2026; recorded on #401):
+# - pat_owners leaves out the helper's ProfitLoss (which includes non-controlling interests: that is pat). Its fallback
+#   NetIncomeLossAvailableToCommonStockholdersBasic (after preferred dividends; the same figure for a company with no
+#   preferred stock) stays, used only where NetIncomeLoss isn't filed and named in `tags` (Caterpillar on dev run 1);
+# - finance_cost leaves out InterestPaidNet (cash paid, a cash-flow line; the helper's own test assumption);
+# - cfo leaves out the continuing-operations-only tag; capex is the property, plant and equipment tag, then the
+#   productive-assets one (E1's NVDA and GEV);
+# - borrowings_current: SEC's filers split current debt into captions (term debt due within a year, commercial paper,
+#   short-term borrowings). A filed total (DebtCurrent) is used; else a single non-zero caption is the whole of it;
+#   where two or more are filed and no total, they are added (#401's question 1, option A: Anand, 12 Nov 2026; #455):
+#   the current part of long-term debt, plus short-term borrowings, or commercial paper where no short-term borrowings
+#   line is filed, never both (short-term borrowings include commercial paper and other short-term borrowings). `tags`
+#   names every part added and says the figure is the sum of the filed captions. Held, with the parts named, where a
+#   company's parts can't be added without counting one twice (`not_summed`) or a filed caption is outside the sum.
+#
+# #455's questions 1 to 3 (Anand, 12 Nov 2026, about 22:27 IST: "just apply your recommendations"; job US-02c, #470):
+# - borrowings_current's `filed_total`: a company whose one filed caption is its whole current debt (IBM);
+# - borrowings_current's `added_to`: other short-term borrowings filed beside commercial paper, with no short-term
+#   borrowings line, are added to it (Coca-Cola's 2023-25 year ends);
+# - pbt's `all_parts`: where no tag of the chain is filed for a period (same end and duration) and every part is, their
+#   sum (McDonald's from 2022). One part alone leaves the field empty.
+# - `tie`, and pbt's chain against its `all_parts`: the task's parts_tie warning compares a filed total with its parts
+#   wherever all are filed for one period (more than $1 million apart: named, tickers and dates only), and a company
+#   named there has that column's parts rule (`added_to`, `all_parts`) switched off, held, until Anand rules.
+from: 2019-01-01
+
+columns:
+  # ------------------------------------------------------------------ profit and loss (durations)
+  revenue:
+    kind: flow
+    chain: [Revenues, RevenueFromContractWithCustomerExcludingAssessedTax, RevenueFromContractWithCustomerIncludingAssessedTax,
+            SalesRevenueNet, RevenuesNetOfInterestExpense, SalesRevenueGoodsNet, OperatingLeasesIncomeStatementLeaseRevenue,
+            RealEstateRevenueNet, InterestAndDividendIncomeOperating]
+  operating_income: {kind: flow, chain: [OperatingIncomeLoss]}
+  finance_cost: {kind: flow, chain: [InterestExpense, InterestExpenseNonoperating, InterestExpenseDebt]}
+  pbt:
+    kind: flow
+    chain: [IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest,
+            IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments]
+    # #455's question 3 (#470): McDonald's files no total from 2022, only its income tax note's two parts
+    all_parts: [IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic,
+                IncomeLossFromContinuingOperationsBeforeIncomeTaxesForeign]
+    all_parts_label: the sum of the filed domestic and foreign parts
+  tax: {kind: flow, chain: [IncomeTaxExpenseBenefit]}
+  pat: {kind: flow, chain: [ProfitLoss]}
+  pat_owners: {kind: flow, chain: [NetIncomeLoss, NetIncomeLossAvailableToCommonStockholdersBasic]}
+  pat_nci: {kind: flow, chain: [NetIncomeLossAttributableToNoncontrollingInterest]}
+  eps_basic: {kind: per_share, chain: [EarningsPerShareBasic]}
+  eps_diluted: {kind: per_share, chain: [EarningsPerShareDiluted]}
+  # ------------------------------------------------------------------ cash flow (filed as the year to date)
+  cfo: {kind: cash_flow, chain: [NetCashProvidedByUsedInOperatingActivities]}
+  cfi: {kind: cash_flow, chain: [NetCashProvidedByUsedInInvestingActivities]}
+  cff: {kind: cash_flow, chain: [NetCashProvidedByUsedInFinancingActivities]}
+  capex: {kind: cash_flow, chain: [PaymentsToAcquirePropertyPlantAndEquipment, PaymentsToAcquireProductiveAssets]}
+  # ------------------------------------------------------------------ balance sheet (the period end)
+  total_assets: {kind: instant, chain: [Assets]}
+  cash:
+    kind: instant
+    # the second is cash including restricted cash (its tag says so in the row): the helper's chain, E1's GEV
+    chain: [CashAndCashEquivalentsAtCarryingValue, CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents, Cash]
+  total_equity:
+    kind: instant
+    chain: [StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest, {tag: StockholdersEquity, nci: plus}]
+  equity_owners:
+    kind: instant
+    chain: [StockholdersEquity, {tag: StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest, nci: minus}]
+  nci: {kind: instant, chain: [MinorityInterest]}
+  borrowings_current:
+    kind: instant
+    chain: [DebtCurrent]
+    parts: [LongTermDebtCurrent, ShortTermBorrowings, CommercialPaper, LongTermDebtAndCapitalLeaseObligationsCurrent,
+            OtherShortTermBorrowings]
+    # one from each group, the first non-zero (the current part of long-term debt: the line without finance leases
+    # first, as borrowings_noncurrent's chain), added; never two of one group
+    sum:
+      - [LongTermDebtCurrent, LongTermDebtAndCapitalLeaseObligationsCurrent]
+      - [ShortTermBorrowings, CommercialPaper]
+    included: {ShortTermBorrowings: [OtherShortTermBorrowings]}
+    # #455's question 2 (#470): with no short-term borrowings line, other short-term borrowings filed beside commercial
+    # paper are added to it, since a short-term borrowings line holds both (Coca-Cola 2020-22: 2,373 = 2,146 + 227,
+    # $ millions). Other short-term borrowings with neither line still hold the field.
+    added_to: {CommercialPaper: [OtherShortTermBorrowings]}
+    # parts_tie: where all three are filed for one date, short-term borrowings against the two it holds
+    tie: {ShortTermBorrowings: [CommercialPaper, OtherShortTermBorrowings]}
+    # held, never added (standing delegation, 24 Oct 2026; #455): none since IBM moved to filed_total (#470)
+    not_summed: {}
+    # #455's question 1 (#470): a company whose one filed caption is its whole current debt. Nothing is added to it; a
+    # date where it is below the current part of long-term debt it includes (`never_below`, the first non-zero filed)
+    # is held and named in the debt_held warning.
+    filed_total:
+      IBM:
+        tag: ShortTermBorrowings
+        label: short-term debt as filed, including current maturities of long-term debt
+        source: >-
+          IBM's 10-K: the balance sheet's "Short-term debt" line, and the borrowings note's short-term debt table,
+          which counts the current maturities of long-term debt within it (30 Jun 2019: 8,530 against commercial paper
+          2,988 + current maturities 5,147; 30 Sep 2021: 7,575 against 900 + 6,632; 30 Sep 2026: 7,013 against
+          current maturities 7,009, $ millions; #455)
+        never_below: [LongTermDebtCurrent, LongTermDebtAndCapitalLeaseObligationsCurrent]
+  # LongTermDebt is left out: it includes the part due within a year
+  borrowings_noncurrent: {kind: instant, chain: [LongTermDebtNoncurrent, LongTermDebtAndCapitalLeaseObligations]}
+
+# The year-end check (B): total assets = total liabilities + temporary equity + total equity, within the tolerance. A
+# filer with no total-liabilities line (Walmart) is checked against its filed balance sheet total instead, and the
+# check says so. Temporary equity: the total if filed, else the sum of the parts filed.
+balance_check:
+  liabilities: Liabilities
+  total: LiabilitiesAndStockholdersEquity
+  temporary_equity_total: TemporaryEquityCarryingAmountIncludingPortionAttributableToNoncontrollingInterests
+  temporary_equity: [TemporaryEquityCarryingAmountAttributableToParent, RedeemableNoncontrollingInterestEquityCarryingAmount]
+  tolerance: 0.005
+
+# Multi-class issuers (us_companies.yaml's multi_class): shares are read from the latest filing's cover page per class
+# and summed in the reference class, each class times its ratio. A class with no ratio here holds the field, naming
+# the class (the task warns), so a ratio is added here from the issuer's 10-K with its source, never guessed.
+share_classes:
+  GOOGL:
+    note: "Class A, Class B and Class C share alike in dividends and liquidation, differing only in votes (Alphabet's 10-K, net income per share note), so each counts as one share (E1's cover-page total, 12.23 bn)"
+    ratios: {CommonClassAMember: 1, CommonClassBMember: 1, CapitalClassCMember: 1}
+  NKE:
+    note: "Class A converts into Class B one for one and both share alike in earnings (NIKE's 10-K, earnings per share note), so each counts as one share"
+    ratios: {CommonClassAMember: 1, CommonClassBMember: 1}
+  # Anand, 12 Nov 2026 (#401's question 2; #455's amendment): the rates from Visa's FY2026 10-K, and its preferred
+  # stock counted as converted. Only the latest cover page is read with them; earlier filings keep the field held.
+  # The B rates fall with every litigation-escrow deposit (Visa files an 8-K each time): the task warns (share_rates)
+  # once the newest cover page is dated more than review_days after their effective date.
+  V:
+    note: "class A shares per share as Visa's 10-K for the year ended 30 Sep 2026 states them (accession 0001403161-26-000134, Note 15, Stockholders' Equity, the as-converted table at 30 Sep 2026), with its series A, B and C preferred stock counted as converted"
+    review_days: 120
+    ratios:
+      CommonClassAMember: 1
+      CommonClassB1Member:
+        ratio: "1.5400"
+        effective: 2026-09-18
+        source: "Visa's 10-K for FY2026 (0001403161-26-000134), Note 15; in effect since 18 Sep 2026 (Visa's 8-K of 23 Sep 2026, 0001403161-26-000121)"
+      CommonClassB2Member:
+        ratio: "1.4924"
+        effective: 2026-09-18
+        source: "Visa's 10-K for FY2026 (0001403161-26-000134), Note 15; in effect since 18 Sep 2026 (Visa's 8-K of 23 Sep 2026, 0001403161-26-000121)"
+      CommonClassB3Member:
+        ratio: "1.4773"
+        effective: 2026-09-18
+        source: "Visa's 10-K for FY2026 (0001403161-26-000134), Note 15; in effect since 18 Sep 2026 (Visa's 8-K of 23 Sep 2026, 0001403161-26-000121)"
+      CommonClassCMember:
+        ratio: "4.0000"
+        as_of: 2026-09-30
+        source: "Visa's 10-K for FY2026 (0001403161-26-000134), Note 15; 4 since Visa's four-for-one split of 2015"
+    # company facts holds no as-converted count for the preferred series (each series is a dimension of the
+    # filing, and company facts leaves dimensions out), so the note's figures, rounded to millions, are used
+    extra:
+      - shares: 9000000
+        note: "series A, B and C preferred stock as converted into class A at 30 Sep 2026: 6, 1 and 2 million, rounded to millions as Note 15 states them"
+
+# A company that can't have 3 fiscal years and 8 quarters of revenue and net income, with the reason (none so far).
+coverage_exceptions: {}

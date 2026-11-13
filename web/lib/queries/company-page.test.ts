@@ -37,7 +37,8 @@ describe("the company page's reads", () => {
     store = { ...HEADER, company_prices: [], company_metrics: [], peer_comps: [] };
     const out = await readCompanyPage("tcs", "overview");
     expect(out.ok && out.tabFailed).toBe(false);
-    expect(out.ok && out.overview).toEqual({ prices: [], metrics: [], peers: [] });
+    // The value chain panel's reads fail on their own (view 0034 not in this store): each part null, the tab unaffected (VC-06, #191).
+    expect(out.ok && out.overview).toEqual({ prices: [], metrics: [], peers: [], valueChain: { rows: null, products: null, policies: null } });
   });
 
   it.each(["companies", "company_corporate_actions", "index_members"])("is { ok: false } when the header's %s read throws", async (view) => {
@@ -94,5 +95,109 @@ describe("the Earnings calls tab's guidance record", () => {
   it("still throws when the calls list itself can't be read", async () => {
     const { db } = fakeClient({ field_policy: SHOWN as unknown as Row[], call_guidance: [], guidance_hit_rates: [], earnings_latest: [] });
     await expect(readCallsTab(db, "tcs", undefined)).rejects.toThrow();
+  });
+});
+
+describe("the Earnings calls tab's opening-remarks read (#388)", () => {
+  const CALLS: Store = {
+    earnings_calls: [call() as unknown as Row],
+    field_policy: SHOWN as unknown as Row[],
+    ai_outputs: [],
+    call_figures: [],
+    ai_citations: [],
+    citation_pages: [],
+    call_guidance: [],
+    guidance_hit_rates: [],
+  };
+  it("reads the company's rows against the exact count", async () => {
+    const rows = [
+      {
+        company_slug: "tcs", call_slug: "q2-fy27", fiscal_label: "Q2 FY27", period_end: "2026-09-30", filed_at: null, exchange: "NSE",
+        base_call_slug: "q1-fy27", base_fiscal_label: "Q1 FY27", base_period_end: "2026-06-30", words_base: 200, words_new: 210,
+        words_added: 40, words_removed: 30, similarity: 0.8, new_speakers: [], label: null, pairs: [], policy_label: null,
+      },
+    ];
+    const { db, seen } = fakeClient({ ...CALLS, remarks_changes: rows as unknown as Row[] });
+    const out = await readCallsTab(db, "tcs", undefined);
+    expect(out.remarks).toHaveLength(1);
+    const read = seen.filter((s) => s.view === "remarks_changes");
+    expect(read).toHaveLength(1);
+    expect(read[0].countExact).toBe(true);
+  });
+  it("is null when its own read throws, and the rest of the tab still reads", async () => {
+    const out = await readCallsTab(fakeClient({ ...CALLS }).db, "tcs", undefined);
+    expect(out.remarks).toBeNull();
+    expect(out.guidance).not.toBeNull();
+    expect(out.calls).toHaveLength(1);
+  });
+});
+
+describe("the Financials tab's segment-changes reads (DD-02, #410)", () => {
+  const FIN: Store = { ...HEADER, company_financials: [], company_metrics: [], company_promoter_holding: [] };
+  const row = { company_slug: "tcs", period_end: "2026-09-30", state: "none_flagged", change_no: null };
+  it("reads the company's rows against the exact count, with the field policies", async () => {
+    store = { ...FIN, segment_changes: [row, { ...row, company_slug: "other" }] as unknown as Row[], field_policy: [{ field_key: "equity.segment_changes", status: "hidden", label: null }] as unknown as Row[] };
+    const out = await readCompanyPage("tcs", "financials");
+    expect(out.ok && out.tabFailed).toBe(false);
+    if (!out.ok) return;
+    expect(out.financials?.segmentChanges).toEqual([row]);
+    expect(out.financials?.policies?.map((p) => p.field_key)).toEqual(["equity.segment_changes"]);
+  });
+  it("leaves each null when its own read throws (view 0038 not pushed yet), and the rest of the tab still reads", async () => {
+    store = { ...FIN };
+    const out = await readCompanyPage("tcs", "financials");
+    expect(out.ok && out.tabFailed).toBe(false);
+    if (!out.ok) return;
+    expect(out.financials?.segmentChanges).toBeNull();
+    expect(out.financials?.policies).toBeNull();
+    expect(out.financials?.financials).toEqual([]);
+    expect(out.financials?.promoter).toEqual([]);
+  });
+});
+
+describe("the Earnings calls tab's tone read (#482)", () => {
+  const TONE_ROW = {
+    company_slug: "tcs", call_slug: "q2-fy27", fiscal_label: "Q2 FY27", period_end: "2026-09-30", call_date: null, filed_at: null, exchange: "NSE",
+    ai_output_id: 9100, n: 18, mean: 0.8, sd: 0.9, opening_n: 6, opening_mean: 1, answers_n: 12, answers_mean: 0.7, prev_call_slug: null,
+    prev_fiscal_label: null, delta: null, se_delta: null, change: null, held_reason: null, rule_version: "r1", policy_label: "AI-scored",
+  };
+  const CALLS: Store = {
+    earnings_calls: [call() as unknown as Row],
+    field_policy: SHOWN as unknown as Row[],
+    ai_outputs: [],
+    call_figures: [],
+    ai_citations: [],
+    citation_pages: [],
+    call_guidance: [],
+    guidance_hit_rates: [],
+    remarks_changes: [],
+  };
+  const OPEN = [...SHOWN, { field_key: "ai.call_tone", status: "labelled", label: "AI-scored" }] as unknown as Row[];
+
+  it("makes no request for api.call_tone while ai.call_tone is hidden, and returns the hidden state", async () => {
+    const { db, seen } = fakeClient({ ...CALLS, call_tone: [TONE_ROW as unknown as Row] });
+    const out = await readCallsTab(db, "tcs", undefined);
+    expect(out.tone).toEqual({ state: "hidden" });
+    expect(seen.filter((s) => s.view === "call_tone")).toHaveLength(0);
+  });
+
+  it("reads the company's rows against the exact count once the field is open, with the selected call's output, citations and pages", async () => {
+    const { db, seen } = fakeClient({ ...CALLS, field_policy: OPEN, call_tone: [TONE_ROW as unknown as Row, { ...TONE_ROW, company_slug: "other" } as unknown as Row] });
+    const out = await readCallsTab(db, "tcs", undefined);
+    expect(out.tone.state).toBe("ok");
+    if (out.tone.state === "ok") expect(out.tone.rows).toHaveLength(1);
+    const read = seen.filter((s) => s.view === "call_tone");
+    expect(read).toHaveLength(1);
+    expect(read[0].countExact).toBe(true);
+    expect(read[0].params.get("company_slug")).toBe("eq.tcs");
+    const outputs = seen.filter((s) => s.view === "ai_outputs" && s.params.get("id") === "eq.9100");
+    expect(outputs).toHaveLength(1);
+  });
+
+  it("holds back only the panel when its read throws (the view missing: 0045 not pushed), and the rest of the tab still reads", async () => {
+    const out = await readCallsTab(fakeClient({ ...CALLS, field_policy: OPEN }).db, "tcs", undefined);
+    expect(out.tone).toEqual({ state: "error" });
+    expect(out.calls).toHaveLength(1);
+    expect(out.guidance).not.toBeNull();
   });
 });
