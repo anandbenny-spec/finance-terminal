@@ -600,7 +600,8 @@ def test_under_the_stop_files_are_fetched_and_stored_as_before_and_the_check_pas
     assert code == 0 and tr[0] == "success" and tr[1] > 0, tr
     assert filing_requests(ex) and len(filings()) >= 2
     stop = checks(tr)["storage_stop"]
-    assert stop["passed"] and not stop["blocking"] and stop["detail"].startswith("not reached: the raw bucket holds 10.0 MB")
+    assert stop["passed"] and not stop["blocking"]
+    assert re.match(r"not reached: the raw bucket holds 1\d\.\d MB of stored objects, under the 900 MB stop", stop["detail"]), stop
     assert open_alerts(STOP_ALERT) == []
 
 
