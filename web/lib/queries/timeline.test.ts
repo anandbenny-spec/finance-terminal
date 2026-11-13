@@ -1,5 +1,5 @@
-// What "How the wording moved" reads (#509): the diffs' pairs a dozen at a time against an exact count, refused when a
-// page grows past its byte limit, and cut to cells before anything is cached. A fake Data API stands in for Supabase
+// What "How the wording moved" reads (#509, marks reworked in #530): the diffs' pairs a dozen at a time against an exact count,
+// refused when a page grows past its byte limit, and cut to cells (a sentence and its marks) before anything is cached. A fake Data API stands in for Supabase
 // (tests/fake-postgrest.ts); its rows are test data shaped like the views, not the banks' documents.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IncompleteReadError } from "@/lib/queries/read";
@@ -93,10 +93,11 @@ describe("readBankTimeline and readLanguageTimeline", () => {
     const { db } = fakeClient(store());
     const { timeline } = await readBankTimeline(db, "RBI", [{ id: 1, event_slug: "mpc-2026-08-06", version_no: 1 }, { id: 2, event_slug: "mpc-2026-10-07", version_no: 1 }], { from: "2019-01-01", to: "2026-11-13" });
     expect(timeline.columns.map((c) => c.slug)).toEqual(["mpc-2026-10-07", "mpc-2026-08-06"]);
+    // The meeting before has no diff (a gap), so there is no previous sentence to compare with: every word of this one is new.
     expect(timeline.columns[0].cells.stance).toEqual({
       kind: "sentence",
-      parts: [{ op: "eq", text: "The MPC also decided to remain " }, { op: "ins", text: "new stance words." }],
-      how: "changed",
+      parts: [{ op: "ins", text: "The MPC also decided to remain new stance words." }],
+      how: "new",
       para: 1,
     });
     // The older meeting has no diff (the first in its series): a gap with its reason, for every row.

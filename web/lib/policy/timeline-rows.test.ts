@@ -2,7 +2,7 @@
 // match, no match (a gap) and two matches (a gap). The sentences are the ones the rules' comments cite.
 import { describe, expect, it } from "vitest";
 import type { RedlinePair } from "@/lib/policy/redline";
-import { cellFor, sentenceText, type RowDef } from "@/lib/policy/timeline";
+import { cellFor, type RowDef } from "@/lib/policy/timeline";
 import { TIMELINE_ROWS } from "@/lib/policy/timeline-rows";
 
 const same = (topic: string, text: string): RedlinePair => ({ kind: "same", text, topic, newPara: 1, oldPara: 1 });
@@ -14,8 +14,8 @@ function eras(bank: "Fed" | "RBI", key: string, topic: string, sentences: [era: 
   describe(`${bank} ${key}`, () => {
     it.each(sentences)("%s: finds its one sentence", (_era, text) => {
       const cell = cellFor(row(bank, key), [FILLER, same(topic, text), same("Global", "Global growth is uneven.")]);
-      expect(cell.kind).toBe("sentence");
-      if (cell.kind === "sentence") expect(sentenceText(cell)).toBe(text);
+      expect(cell.kind).toBe("found");
+      if (cell.kind === "found") expect(cell.text).toBe(text);
     });
     it.each(sentences)("%s: a second matching sentence makes a gap, not a pick", (_era, text) => {
       const cell = cellFor(row(bank, key), [same(topic, text), same(topic, text)]);
@@ -74,11 +74,11 @@ describe("what each row leaves out", () => {
     const stance = row("RBI", "stance");
     expect(cellFor(stance, [same("Decision and stance", "The MPC voted to keep the policy repo rate unchanged.")])).toEqual({ kind: "gap", reason: "none", matched: 0 });
     const rationale = same("Rationale", "Moreover, it also decided to change the stance from neutral to accommodative.");
-    expect(cellFor(stance, [rationale])).toMatchObject({ kind: "sentence" });
+    expect(cellFor(stance, [rationale])).toMatchObject({ kind: "found" });
     // Tier 1 decides when it finds a sentence: the fallback never breaks its tie or adds to it.
     const first = same("Decision and stance", "The MPC also decided to remain accommodative.");
     const out = cellFor(stance, [first, rationale]);
-    expect(out.kind === "sentence" && sentenceText(out)).toBe("The MPC also decided to remain accommodative.");
+    expect(out.kind === "found" && out.text).toBe("The MPC also decided to remain accommodative.");
     expect(cellFor(stance, [first, first, rationale])).toEqual({ kind: "gap", reason: "several", matched: 2 });
   });
 
@@ -119,7 +119,25 @@ describe("what each row leaves out", () => {
       same("Inflation", "Inflation has eased over the past year but remains somewhat elevated."),
       same("Inflation", "In recent months, there has been some further progress toward the Committee's 2 percent inflation objective."),
     ]);
-    expect(out.kind === "sentence" && sentenceText(out)).toBe("Inflation has eased over the past year but remains somewhat elevated.");
+    expect(out.kind === "found" && out.text).toBe("Inflation has eased over the past year but remains somewhat elevated.");
+  });
+
+  // #530: 28 Oct 2026's statement came after the saved pages. Under "Inflation" it holds two sentences, and the policy-stance
+  // one used to make the row a two-match gap on the Fed panel's newest column.
+  const REMAINS = "Inflation remains elevated.";
+  const STANCE = "The accumulation of more information will help the Committee determine the policy stance appropriate to ensure a timely return of inflation to the Committee's 2 percent goal.";
+
+  it("Fed inflation: 28 Oct 2026's two sentences are one match, 'Inflation remains elevated.'", () => {
+    const inflation = row("Fed", "inflation");
+    expect(cellFor(inflation, [same("Inflation", REMAINS), same("Inflation", STANCE)])).toEqual({ kind: "found", text: REMAINS, para: 1 });
+    expect(cellFor(inflation, [same("Inflation", STANCE), same("Inflation", REMAINS)])).toEqual({ kind: "found", text: REMAINS, para: 1 });
+  });
+
+  it("Fed inflation: the policy-stance sentence alone is no match, in either wording of the stance", () => {
+    const inflation = row("Fed", "inflation");
+    expect(cellFor(inflation, [same("Inflation", STANCE)])).toEqual({ kind: "gap", reason: "none", matched: 0 });
+    const other = "The Committee judges that the current stance of monetary policy is appropriate given the outlook for inflation.";
+    expect(cellFor(inflation, [same("Inflation", other)])).toEqual({ kind: "gap", reason: "none", matched: 0 });
   });
 });
 

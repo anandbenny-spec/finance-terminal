@@ -1,5 +1,5 @@
-// LanguageTimelinePanel (#509): one table per bank, the phrase column sticky, a sentence per cell with its new words
-// underlined and its ¶ link, a gap that says why, and the page's gate.
+// LanguageTimelinePanel (#509, marks reworked in #530): one table per bank, the phrase column sticky, a sentence per cell
+// with its new words underlined, its removed words struck and its ¶ link, a gap that says why, and the page's gate.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -9,7 +9,7 @@ import type { BankTimeline } from "@/lib/policy/timeline";
 
 const rbi: BankTimeline = {
   bank: "RBI",
-  rows: [{ key: "stance", label: "Stance" }, { key: "inflation", label: "How inflation is described" }],
+  rows: [{ key: "stance", label: "Stance" }, { key: "inflation", label: "How inflation is described" }, { key: "decision", label: "Rate decision" }],
   latest: "2026-10-07",
   columns: [
     {
@@ -17,13 +17,16 @@ const rbi: BankTimeline = {
       cells: {
         stance: { kind: "sentence", how: "changed", para: 3, parts: [{ op: "eq", text: "The MPC also decided to change the stance to " }, { op: "ins", text: "calibrated tightening" }, { op: "eq", text: "." }] },
         inflation: { kind: "gap", reason: "several", matched: 2 },
+        // Words were only removed since August: still "Changed", with the struck word shown.
+        decision: { kind: "sentence", how: "changed", para: null, parts: [{ op: "eq", text: "The repo rate stays" }, { op: "del", text: " unchanged" }, { op: "eq", text: " at 5.5 per cent." }] },
       },
     },
     {
       slug: "mpc-2026-08-06", date: "2026-08-06", href: "/policy/rbi/2026-08-06/statement",
       cells: {
         stance: { kind: "sentence", how: "same", para: 4, parts: [{ op: "eq", text: "The MPC decided to remain neutral." }] },
-        inflation: { kind: "sentence", how: "added", para: null, parts: [{ op: "ins", text: "8. CPI inflation increased to 4.8 per cent in August 2026." }] },
+        inflation: { kind: "sentence", how: "new", para: null, parts: [{ op: "ins", text: "8. CPI inflation increased to 4.8 per cent in August 2026." }] },
+        decision: { kind: "sentence", how: "same", para: null, parts: [{ op: "eq", text: "The repo rate stays unchanged at 5.5 per cent." }] },
       },
     },
     {
@@ -31,6 +34,7 @@ const rbi: BankTimeline = {
       cells: {
         stance: { kind: "gap", reason: "no_diff", matched: 0 },
         inflation: { kind: "gap", reason: "none", matched: 0 },
+        decision: { kind: "sentence", how: "same", para: null, parts: [{ op: "eq", text: "The repo rate stays unchanged at 5.5 per cent." }] },
       },
     },
   ],
@@ -52,16 +56,18 @@ describe("LanguageTimelinePanel", () => {
   it("has one column per meeting, newest first, after the phrase column, and one row per phrase", () => {
     const heads = [...html.matchAll(/<th[^>]*scope="col"[^>]*>(.*?)<\/th>/g)].map((m) => m[1]);
     expect(heads).toEqual(["Phrase", "07 Oct 2026", "06 Aug 2026", "05 Jun 2026"]);
-    expect(html.match(/<tbody>[\s\S]*<\/tbody>/)![0].match(/<tr /g)).toHaveLength(2);
+    expect(html.match(/<tbody>[\s\S]*<\/tbody>/)![0].match(/<tr /g)).toHaveLength(3);
     expect(html).toContain(">Stance<");
     expect(html).toContain(">How inflation is described<");
+    expect(html).toContain(">Rate decision<");
   });
 
-  it("underlines the words new since the meeting before, and only those", () => {
+  it("underlines the words new since the meeting before and strikes the words removed since then, and only those", () => {
     expect(html).toContain("<ins>calibrated tightening</ins>");
     expect(html).toContain("<span>The MPC also decided to change the stance to </span><ins>calibrated tightening</ins><span>.</span>");
     expect(html.match(/<ins>/g)).toHaveLength(2); // the stance's new words and the wholly new inflation sentence
-    expect(html).not.toContain("<del>");
+    expect(html).toContain("<span>The repo rate stays</span><del> unchanged</del><span> at 5.5 per cent.</span>");
+    expect(html.match(/<del>/g)).toHaveLength(1); // the one struck word; an unchanged sentence has neither mark
   });
 
   it("shows a changed sentence in ink-1 as 'Changed', an unchanged one faded as 'Unchanged', a new one as such", () => {
@@ -71,6 +77,10 @@ describe("LanguageTimelinePanel", () => {
     expect(cell("The MPC decided to remain neutral.")).toMatch(/text-ink-3/);
     expect(cell("The MPC decided to remain neutral.")).toContain("Unchanged");
     expect(cell("8. CPI inflation")).toContain("New sentence");
+    // Words only removed is a change, never "Unchanged".
+    expect(cell("The repo rate stays")).toContain("Changed");
+    expect(cell("The repo rate stays")).not.toContain("Unchanged");
+    expect(cell("The repo rate stays")).toMatch(/text-ink-1/);
   });
 
   it("links ¶n to the paragraph in the meeting's own Statement tab, only where the paragraph is known", () => {
