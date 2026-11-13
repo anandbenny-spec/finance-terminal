@@ -98,6 +98,11 @@ From v8 on (`STRICT_COPIES_FROM`, `REPEATS_FROM`), only a copy that stands as a 
 quotation marks), and a bullet that repeats 12 or more of its own words fails. From v11 on (`summaries.DIFF_JSON_FROM`;
 Anand's decision of 13 Nov 2026, by 07:18 IST) the request takes the json route and the reply is checked with
 `summaries.check_diff_json`: each bullet's quotes found in its document's changed sentences, which become its citations.
+From v12 on (`summaries.DIFF_STRICT_FROM`) a bullet also fails on an unquoted copy or two quotations side by side, and from v13
+on (`summaries.DIFF_WHOLE_FROM`; Anand's decision of 13 Nov 2026, 13:40 IST) on a claim in its own words that something stayed
+the same or a quotation cut in the middle of a phrase, and from v14 on (`summaries.DIFF_SIDES_FROM`; Anand's pick of 13 Nov
+2026, before 17:12 IST) on "again" or "as before" in its own words, or on a claim about the previous document with no quote
+from it. v15 (`summaries.DIFF_FP_FIX_FROM`) is v14's text, with two false positives of those checks fixed.
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -166,8 +171,13 @@ from ft.policy import rbi_resolution
 # plus three rules (under 60 words; quotations fitted to the sentence; no bullet for a date, a title or attendance), on Sonnet.
 # v10: v9 plus a rule against words written only to hold a citation, on Sonnet at effort medium, with `ENDS_FROM`'s check.
 # v11 (Anand's decision of 13 Nov 2026, by 07:18 IST): the structured route (summaries.DIFF_JSON_FROM, check_diff_json).
-# v12: v11 plus a rule, with the unquoted-copy and side-by-side checks (summaries.DIFF_STRICT_FROM).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v12", "stance_extraction": "v2",
+# v12: v11 plus a rule, with the unquoted-copy and side-by-side checks (summaries.DIFF_STRICT_FROM). v13 (Anand's decision of
+# 13 Nov 2026, 13:40 IST, after the judge failed round 11): v12 plus two rules, with the same-claim and cut-quotation checks
+# (summaries.DIFF_WHOLE_FROM). v14 (Anand's pick of 13 Nov 2026, before 17:12 IST, after the build session's read of round 12):
+# v13 plus two rules, with the wider same-claim check and the previous-document check (summaries.DIFF_SIDES_FROM).
+# v15 (Anand's pick of 13 Nov 2026, before 17:36 IST, after round 13): v14's text, with two false positives fixed
+# (summaries.DIFF_FP_FIX_FROM).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v15", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
