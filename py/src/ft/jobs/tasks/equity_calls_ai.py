@@ -322,7 +322,7 @@ class EquityCallsAi(BatchSteps, Task):
         self._ge_version: str | None = None    # the extraction's version this run asks for: the re-run's, or PROMPT_VERSION's
 
     def ge_version(self) -> str:
-        return self._ge_version or PROMPT_VERSION[ge.TASK]
+        return self._ge_version or PROMPT_VERSION.get(ge.TASK, "")
 
     def due(self, db, workflow: str, now=None) -> Due:
         return equity_due(db, self.key, workflow, super().due(db, workflow, now), requires=self.requires)
@@ -452,7 +452,8 @@ class EquityCallsAi(BatchSteps, Task):
         f.rerun = guidance_rerun(ctx.workflow, ctx.target, f.only)     # None unless a dev backfill asks for #511's re-run
         self._ge_version = GUIDANCE_RERUN_VERSION if f.rerun else None
         prompts = {t: load_prompt(t, v) for t, v in PROMPT_VERSION.items()}
-        prompts[ge.TASK] = load_prompt(ge.TASK, self.ge_version())
+        if ge.TASK in prompts:                                          # a task with no prompt version listed isn't asked for
+            prompts[ge.TASK] = load_prompt(ge.TASK, self.ge_version())
         doc_ids = tone_set_documents(f.only, ctx.target)    # None unless a tone-only run on dev names an evaluation set (#175)
         if f.rerun:
             doc_ids, f.rerun_record = self._rerun_documents(db, ctx.since, ctx.until)

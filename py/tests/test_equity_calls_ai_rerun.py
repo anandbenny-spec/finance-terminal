@@ -4,6 +4,7 @@ chooses and prices the same requests and sends nothing. A re-run reply supersede
 checks and holds an item; the old output and its rows stay. The helpers are test_equity_calls_ai_task.py's; the switch's rules and
 prompt v5's are in test_guidance_rerun_rules.py (no database)."""
 import json
+from decimal import Decimal
 
 import psycopg
 import pytest
@@ -85,7 +86,8 @@ def test_the_price_mode_chooses_the_published_older_outputs_prices_them_and_send
     assert rec["mode"] == "price" and rec["version"] == "v5" and rec["sent"] == 0
     assert rec["published"] == 1 and rec["older"] == 1 and rec["outputs"] == [out_id] and rec["older_by_version"] == {"v1": 1}
     assert rec["requests"] == 1 and rec["estimated_input_tokens"] > 0                # the call that found nothing isn't asked
-    assert 0 < float(rec["worst_case_usd"]) and float(rec["run_estimate_usd"]) == 2 * float(rec["worst_case_usd"])
+    worst, run_estimate = Decimal(rec["worst_case_usd"]), Decimal(rec["run_estimate_usd"])
+    assert worst > 0 and abs(run_estimate - 2 * worst) <= Decimal("0.0001")         # each rounded to four places
     assert gx(c["doc"]) == [("published", "", "v1", 1, 1)] and gversions(c["doc"]) == [("v1", "succeeded")]
 
 
