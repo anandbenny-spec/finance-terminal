@@ -41,7 +41,7 @@ function slowClient(store: Store, ms = 5) {
   return { db, seen: fake.seen, started, peak: () => peak };
 }
 
-const policy = (field_key: string, status = "labelled", label: string | null = null): FieldPolicyRow => ({ field_key, status, label });
+const policy = (field_key: string, status: FieldPolicyRow["status"] = "labelled", label: string | null = null): FieldPolicyRow => ({ field_key, status, label });
 // Production after #516's re-flips: the summary hidden, the figures and tone labelled, the opening remarks labelled, the outcomes hidden.
 const PRODUCTION: FieldPolicyRow[] = [
   policy("ai.call_summary", "hidden"),
