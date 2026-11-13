@@ -41,3 +41,10 @@ def test_prompt_v5_is_v2_with_one_section_and_keeps_v1s_definition_and_field_rul
     assert "add nothing to that definition" in shapes
     assert v5.replace(shapes, "") == v2                                          # nothing else changed
     assert load_schema(ge.TASK, "v5") == load_schema(ge.TASK, "v1")              # the same schema is sent
+
+
+def test_v5_asks_with_twice_the_tasks_max_tokens_and_v1_keeps_the_tasks_own():
+    # #511: v5's first dev run stopped at 16,000 output tokens on 68 of 294 calls. v1's requests (production) are unchanged.
+    from ft.ai.client import TASKS
+    assert TASKS[ge.TASK].max_tokens == 16_000 and ge.MAX_TOKENS_OF == {"v5": 32_000}
+    assert ge.MAX_TOKENS_OF.get("v1") is None
