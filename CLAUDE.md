@@ -317,6 +317,12 @@ cd web && npm ci && npm run lint && npm run build          # plus the typecheck 
   which holds no privileges of its own, so every file starts with `set local role anon`, `service_role` or
   `job_writer`; it selects counts, never rows, holds no psql meta-command, and each run is recorded on its issue (the
   run link, the file, the result). Never production: the workflow has no target input.
+- **SQL Anand pastes into Supabase's SQL editor (Anand, 13 Nov 2026, after it happened in many sessions).** The editor's
+  "UPDATE without a WHERE clause" warning splits the text at every `;`, ignoring quotes and comments (Supabase Studio's
+  `isUpdateWithoutWhere`), so a semicolon inside a quoted value (a field policy's `reason`, say) or a comment between an
+  `UPDATE` and its `WHERE` raises it on a correct query. In such files, write those values with commas, never
+  semicolons, and before handing a file over check that each `update` piece between semicolons still holds its `where`.
+  Give him the copy command with it (`pbcopy < <path>`), never a bare file name.
 - The Mac's shell can't run macOS virtual environments, and deleting files there needs Anand's permission.
 - **Campus Wi-Fi (Sophos, from 26 Oct):** `UV_SYSTEM_CERTS=true` for uv, `NODE_EXTRA_CA_CERTS` for npm and the
   Vercel CLI, `http.sslCAInfo` for git. Production (GitHub, Vercel) is unaffected.
