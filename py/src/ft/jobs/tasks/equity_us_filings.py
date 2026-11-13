@@ -35,8 +35,13 @@ Checks, B blocking, W warning:
 - (W) `shares_held`: a company whose latest filing has no share count, with why (a class with no curated ratio);
 - (W) `tag_switch`: a column whose figures came from more than one tag of its chain, the primary named;
 - (W) `debt_held`: a company whose latest current borrowings are held (filed in parts that aren't added, no total);
+  for a company whose one filed caption is its whole current debt (`filed_total`: IBM), every period it is held (#470);
 - (W) `share_rates`: a multi-class issuer whose curated conversion rates took effect more than their `review_days`
   before its newest cover page (Visa's B rates fall with each litigation-escrow deposit; #455);
+- (W) `parts_tie`: wherever a filed total and all of a parts rule's parts are filed for one period (short-term
+  borrowings against commercial paper + other short-term borrowings; pre-tax income against its domestic and foreign
+  parts), the companies and periods more than $1 million apart, tickers and dates only; each has that parts rule off
+  (held) until Anand rules (#470);
 - (W) `kept_fuller`: the filings whose rows weren't stored because they lack figures an earlier filing's row for the
   same period has (#455);
 - (W) `gaps`: for each operating company, the lines a valuation reads (GAP_WORDS) that are empty in its latest
@@ -48,6 +53,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -193,7 +199,7 @@ class UsFilings(Task):
                 raise edgar.EdgarError(f"CIK {cik} files IFRS facts (the slice reads US GAAP filers only)")
             x.raw[cik] = got.raw_file_id
             docs.append((cik, cf))
-        x.stmts = s = edgar.Statements(docs, tags, c.ticker)
+        x.stmts = s = edgar.Statements(docs, tags, c.ticker, since=start)
         window = sorted((f_ for f_ in s.filings.values() if (pe := f_.period_end) is not None and pe >= start),
                         key=lambda f_: (f_.filed, f_.accn))
         latest = window[-1] if window else None
@@ -429,19 +435,9 @@ class UsFilings(Task):
         out.append(Check("tag_switch", not switched, _names(switched) if switched
                          else "every column's figures came from one tag", blocking=False))
 
-        debt = []
-        for x in ok:
-            if not x.built:
-                continue
-            last = max(x.built, key=lambda b: (b.period_end, b.filing.filed))
-            how = next((r.tags.get("borrowings_current") for r in last.rows if r.period_kind == "instant"), None)
-            if how and how.startswith("held"):
-                debt.append(f"{x.c.ticker} {last.period_end}: {how[len('held: '):]}")
-        out.append(Check("debt_held", not debt, ("current borrowings held: " + _names(debt)) if debt
-                         else "every company's latest current borrowings are one filed line or the sum of its filed "
-                              "captions", blocking=False))
-
+        out.append(self._debt_held(f, ok))
         out.append(self._share_rates(tx, f, ok))
+        out.append(self._parts_tie(ok))
 
         kept = [f"{x.c.ticker} {b.filing.form} {b.filing.accn} ({', '.join(b.dropped)})" for x in ok for b in x.built
                 if b.dropped]
@@ -457,6 +453,59 @@ class UsFilings(Task):
                                                                               sorted(r.get("rows", {}).items())) or "none")
                          + f"; window from {f.start.isoformat()}", blocking=False))
         return out
+
+    @staticmethod
+    def _debt_held(f: Fetched, ok: list[Company]) -> Check:
+        """Each company's latest current borrowings where held; for a company whose one filed caption is its whole
+        current debt (`filed_total`: IBM, #470), every period of the window where it is held (its guard)."""
+        debt = []
+        totals = f.tags.columns["borrowings_current"].filed_total if "borrowings_current" in f.tags.columns else {}
+        for x in ok:
+            if not x.built:
+                continue
+            latest: dict = {}
+            for b in sorted(x.built, key=lambda b: (b.filing.filed, b.filing.accn)):
+                for r in b.rows:
+                    if r.period_kind == "instant":
+                        latest[r.period_end] = r.tags.get("borrowings_current")
+            last = max(x.built, key=lambda b: (b.period_end, b.filing.filed))
+            ends = sorted(latest) if x.c.ticker in totals else [last.period_end]
+            for end in ends:
+                how = latest.get(end) if x.c.ticker in totals else next(
+                    (r.tags.get("borrowings_current") for r in last.rows if r.period_kind == "instant"), None)
+                if how and how.startswith("held"):
+                    debt.append(f"{x.c.ticker} {end}: {how[len('held: '):]}")
+        return Check("debt_held", not debt, ("current borrowings held: " + _names(debt)) if debt
+                     else "every company's latest current borrowings are one filed line, its filed total or the sum of "
+                          "its filed captions", blocking=False)
+
+    @staticmethod
+    def _parts_tie(ok: list[Company]) -> Check:
+        """Wherever a filed total and all of a parts rule's parts are filed for one period (short-term borrowings against
+        commercial paper + other short-term borrowings; pre-tax income's chain tag against its domestic and foreign
+        parts), the sum against the total: a company and period more than $1 million apart is named (tickers, columns
+        and dates only, never values: `CLAUDE.md` §4), and that column's parts rule is off for the company (held) until
+        Anand rules (#470)."""
+        bad, tied = [], defaultdict(set)
+        for x in ok:
+            if x.stmts is None:
+                continue
+            for col in sorted({t.column for t in x.stmts.ties}):
+                ts = [t for t in x.stmts.ties if t.column == col]
+                miss = [t for t in ts if not t.ties]
+                if miss:
+                    bad.append(f"{x.c.ticker} {col} ({miss[0].total} against {' + '.join(miss[0].parts)}) at "
+                               + ", ".join(t.period for t in miss[:6]) + (f" and {len(miss) - 6} more" if len(miss) > 6
+                                                                          else "")
+                               + f" ({len(miss)} of {len(ts)} periods): its parts rule is off until Anand rules")
+                else:
+                    tied[col].add(f"{x.c.ticker} {len(ts)}")
+        compared = "; ".join(f"{col}: {', '.join(sorted(v))}" for col, v in sorted(tied.items()))
+        return Check("parts_tie", not bad,
+                     ("more than $1 million apart: " + _names(bad, 40)
+                      + (f"; tied (company, periods): {compared}" if compared else "")) if bad else
+                     (f"every filed total ties with its parts within $1 million (company, periods): {compared}"
+                      if compared else "no period files a total with all of its parts"), blocking=False)
 
     @staticmethod
     def _share_rates(tx, f: Fetched, ok: list[Company]) -> Check:

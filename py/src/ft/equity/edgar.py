@@ -27,9 +27,11 @@ with the cover page's shares). The period end is the latest end of the filing's 
 busiest end's facts (it equals SEC's `reportDate` for every one of the 219 filings the saved submissions list; a
 forward-looking line never sets it); the task checks it against SEC where SEC's
 list holds the filing. The column map and the tag chains are `py/config/equity/us_tags.yaml`. A column whose meaning
-isn't filed is null, never computed from other lines, except the quarter differences above, the equity fills and
-current debt filed in parts (its filed captions summed: #401's question 1, option A; `Statements._parts`); `tags`
-names the element behind each value or why it is held.
+isn't filed is null, never computed from other lines, except the quarter differences above, the equity fills, current
+debt filed in parts (its filed captions summed: #401's question 1, option A; `Statements._parts`; other short-term
+borrowings beside commercial paper: #470) and pre-tax income filed only as its domestic and foreign parts
+(`Statements._all_parts`, #470); `tags` names the element behind each value or why it is held. A parts rule is off,
+held, for a company whose filed totals don't tie with their parts (`Statements.ties`, the task's parts_tie warning).
 
 **A row that lacks a figure never displaces one that has it** (`never_displace`, #455): a reader takes the latest
 filed row for each period, so a later filing's row for a period an earlier filing's row already covers is stored only
@@ -47,7 +49,9 @@ from pathlib import Path
 import yaml
 
 # Bump it when a change alters what a filing's rows are: the task rebuilds older filings' rows from that run's bytes.
-PARSER_VERSION = 2           # 2 (#455, 12 Nov 2026): current debt summed from its filed captions, no row displacing a
+PARSER_VERSION = 3           # 3 (#470, 12 Nov 2026): IBM's filed total, other short-term borrowings beside commercial
+                             # paper, pre-tax income in parts, the parts rules off where they don't tie;
+                             # 2 (#455, 12 Nov 2026): current debt summed from its filed captions, no row displacing a
                              # fuller one, Visa's share classes (1: US-02's first load, #401)
 TAGS_FILE = Path(__file__).resolve().parents[3] / "config" / "equity" / "us_tags.yaml"
 
@@ -212,6 +216,15 @@ class Entry:
 
 
 @dataclass(frozen=True)
+class FiledTotal:
+    """A company whose one filed caption is its whole current debt (IBM's short-term debt: #455's question 1; #470)."""
+    tag: str
+    label: str
+    source: str
+    never_below: tuple[str, ...] = ()   # a part it includes: a date where the first non-zero of them exceeds it is held
+
+
+@dataclass(frozen=True)
 class Column:
     name: str
     kind: str                        # flow, cash_flow, per_share, instant
@@ -220,6 +233,11 @@ class Column:
     sum: tuple[tuple[str, ...], ...] = ()    # the parts added: one from each group (its first non-zero), never two
     included: dict[str, tuple[str, ...]] = field(default_factory=dict)   # a part -> the parts it already includes
     not_summed: dict[str, str] = field(default_factory=dict)            # ticker -> why its parts are never added
+    added_to: dict[str, tuple[str, ...]] = field(default_factory=dict)  # a group's pick -> parts added beside it (#470)
+    tie: dict[str, tuple[str, ...]] = field(default_factory=dict)       # a filed total -> the parts it holds (parts_tie)
+    filed_total: dict[str, FiledTotal] = field(default_factory=dict)    # ticker -> its one caption that is the whole
+    all_parts: tuple[str, ...] = ()  # flows: where no chain tag is filed for a period and all of these are, their sum
+    all_parts_label: str = ""
 
     @property
     def unit(self) -> str:
@@ -319,6 +337,12 @@ def _share_classes(ticker: str, c) -> ShareClasses:
     return ShareClasses(c["note"], ratios, rates, tuple(extra), review)
 
 
+def _filed_total(col: str, ticker: str, c) -> FiledTotal:
+    if not isinstance(c, dict) or not all(isinstance(c.get(k), str) and c[k].strip() for k in ("tag", "label", "source")):
+        raise EdgarError(f"us_tags.yaml: {col}: filed_total {ticker} needs its tag, label and source")
+    return FiledTotal(c["tag"], c["label"].strip(), " ".join(c["source"].split()), tuple(c.get("never_below") or ()))
+
+
 def load_tags(path: Path | None = None) -> TagConfig:
     """`us_tags.yaml`, validated: a file that breaks a rule is refused, naming it."""
     raw = yaml.safe_load((path or TAGS_FILE).read_text("utf-8")) or {}
@@ -345,12 +369,27 @@ def load_tags(path: Path | None = None) -> TagConfig:
             raise EdgarError(f"us_tags.yaml: {name}: parts are for balance-sheet lines only")
         groups = tuple(tuple(g) for g in (spec.get("sum") or ()))
         included = {k: tuple(v) for k, v in (spec.get("included") or {}).items()}
-        named = {t for g in groups for t in g} | set(included) | {t for v in included.values() for t in v}
-        if (groups or included) and not named <= set(parts):
-            raise EdgarError(f"us_tags.yaml: {name}: sum and included name only its parts "
+        added_to = {k: tuple(v) for k, v in (spec.get("added_to") or {}).items()}
+        tie = {k: tuple(v) for k, v in (spec.get("tie") or {}).items()}
+        totals = {str(k): _filed_total(name, str(k), v) for k, v in (spec.get("filed_total") or {}).items()}
+        named = {t for g in groups for t in g}
+        for m in (included, added_to, tie):
+            named |= set(m) | {t for v in m.values() for t in v}
+        named |= {t for ft in totals.values() for t in (ft.tag, *ft.never_below)}
+        if named and not named <= set(parts):
+            raise EdgarError(f"us_tags.yaml: {name}: sum, included, added_to, tie and filed_total name only its parts "
                              f"({', '.join(sorted(named - set(parts)))} isn't one)")
         not_summed = {str(k): str(v) for k, v in (spec.get("not_summed") or {}).items()}
-        cols[name] = Column(name, kind, tuple(chain), parts, groups, included, not_summed)
+        if set(not_summed) & set(totals):
+            raise EdgarError(f"us_tags.yaml: {name}: {', '.join(sorted(set(not_summed) & set(totals)))} is in both "
+                             "not_summed and filed_total")
+        all_parts = tuple(spec.get("all_parts") or ())
+        label = str(spec.get("all_parts_label") or "")
+        if all_parts and (kind != "flow" or len(all_parts) < 2 or not label or set(all_parts) & {e.tag for e in chain}):
+            raise EdgarError(f"us_tags.yaml: {name}: all_parts is for a flow column, two or more tags outside its chain, "
+                             "with all_parts_label")
+        cols[name] = Column(name, kind, tuple(chain), parts, groups, included, not_summed, added_to, tie, totals,
+                            all_parts, label)
     bal = raw.get("balance_check") or {}
     classes = {ticker: _share_classes(ticker, c) for ticker, c in (raw.get("share_classes") or {}).items()}
     need = ("liabilities", "total", "temporary_equity", "temporary_equity_total", "tolerance")
@@ -576,11 +615,31 @@ class Built:
     dropped: list[str] = field(default_factory=list)  # period kinds whose rows aren't stored (never_displace)
 
 
+@dataclass(frozen=True)
+class Tie:
+    """One period where a filed total and all of a parts rule's parts are filed (the parts_tie warning; #470)."""
+    column: str
+    start: dt.date | None
+    end: dt.date
+    total: str
+    parts: tuple[str, ...]
+    ties: bool                       # within TIE_TOLERANCE in every filing that files them all for the period
+
+    @property
+    def period(self) -> str:
+        return self.end.isoformat() if self.start is None else f"{self.start.isoformat()} to {self.end.isoformat()}"
+
+
+TIE_TOLERANCE = Decimal(1_000_000)   # $1 million (#470)
+
+
 class Statements:
     """One company's filings as rows. `docs` is its company facts, its own CIK's first, then each predecessor's, each
-    with the CIK it was read under."""
+    with the CIK it was read under. `since`: the first period end the task registers (its window), from which the parts
+    rules' totals are compared with their parts (`ties`)."""
 
-    def __init__(self, docs: list[tuple[int, dict]], cfg: TagConfig, ticker: str | None = None):
+    def __init__(self, docs: list[tuple[int, dict]], cfg: TagConfig, ticker: str | None = None,
+                 since: dt.date | None = None):
         if not docs or not any(cf.get("facts", {}).get("us-gaap") for _, cf in docs):
             raise EdgarError("company facts hold no us-gaap facts (an IFRS filer?)")
         if any("ifrs-full" in cf.get("facts", {}) for _, cf in docs):
@@ -598,6 +657,58 @@ class Statements:
         for c in cfg.columns.values():
             by_tag = {e.tag: e for e in c.chain}
             self.order[c.name] = [by_tag[t] for t in pick_tags(self.facts, [e.tag for e in c.chain], c.flow)]
+        self.ties = self._ties(since or cfg.start)
+        self.untied = {t.column for t in self.ties if not t.ties}     # columns whose parts rule is off for this company
+
+    # -------------------------------------------------------------- the parts rules' totals against their parts
+    def _ties(self, since: dt.date) -> list[Tie]:
+        """Every period of the window's filings (its own and its comparatives) where a filed total and all of a parts
+        rule's parts are filed, one value each: `tie`'s total against its parts (an instant), and a flow's chain tag
+        (the first of its order filed for the period) against its `all_parts`. A period ties if the sum is within
+        TIE_TOLERANCE of the total in every filing that files them all."""
+        found: dict[tuple, tuple[str, tuple[str, ...], bool]] = {}
+
+        def one(f, tag, unit, start, end):
+            v = f.get(tag, unit, start, end)
+            return next(iter(v)) if len(v) == 1 else None
+
+        def compare(col, start, end, total, tv, parts, pv):
+            k = (col.name, start, end)
+            ok = abs(sum(pv, ZERO) - tv) <= TIE_TOLERANCE
+            prev = found.get(k)
+            found[k] = (total, parts, ok and (prev is None or prev[2]))
+
+        for f in self.filings.values():
+            if f.period_end is None or f.period_end < since:
+                continue
+            for col in self.cfg.columns.values():
+                for total, parts in col.tie.items():
+                    for end in sorted({k[3] for k in f.facts if k[0] == total and k[1] == MONEY and k[2] is None}):
+                        tv, pv = one(f, total, MONEY, None, end), [one(f, p, MONEY, None, end) for p in parts]
+                        if tv is not None and None not in pv:
+                            compare(col, None, end, total, tv, parts, pv)
+                if col.all_parts:
+                    periods = {(k[2], k[3]) for k in f.facts if k[0] == col.all_parts[0] and k[1] == col.unit
+                               and k[2] is not None}
+                    for start, end in sorted(periods):
+                        pv = [one(f, p, col.unit, start, end) for p in col.all_parts]
+                        if None in pv:
+                            continue
+                        e = next((e for e in self.order[col.name] if f.get(e.tag, col.unit, start, end)), None)
+                        tv = one(f, e.tag, col.unit, start, end) if e is not None else None
+                        if tv is not None:
+                            compare(col, start, end, e.tag, tv, col.all_parts, pv)
+        return [Tie(c, s, e, t, p, ok) for (c, s, e), (t, p, ok) in sorted(found.items(), key=lambda kv: (
+            kv[0][0], kv[0][2], kv[0][1] or dt.date.min))]
+
+    def _untied(self, col: Column) -> str:
+        """Why a column's parts rule is off for this company (parts_tie), naming the periods; "" when it isn't."""
+        bad = [t for t in self.ties if t.column == col.name and not t.ties]
+        if not bad:
+            return ""
+        return (f"{' + '.join(bad[0].parts)} didn't tie with the filed {bad[0].total} for this company at "
+                + ", ".join(t.period for t in bad[:4]) + (f" and {len(bad) - 4} more" if len(bad) > 4 else "")
+                + " (parts_tie), so the rule is off until Anand rules")
 
     # -------------------------------------------------------------- one value
     def _value(self, f: Filing, col: Column, start, end) -> tuple[Decimal | None, str | None]:
@@ -615,12 +726,32 @@ class Statements:
                 if f.has(MI):
                     continue                   # this filing presents NCI, but not at this date: no fill
             return v, e.tag                    # (a filing that presents no NCI: the equity line is the whole)
+        if col.all_parts:
+            return self._all_parts(f, col, start, end)
         return None, None
+
+    def _all_parts(self, f: Filing, col: Column, start, end) -> tuple[Decimal | None, str | None]:
+        """No tag of the chain filed for the period (same start and end): the sum of `all_parts` where every one is
+        filed for it (McDonald's pre-tax income as its domestic and foreign parts: #455's question 3; #470). One part
+        alone leaves the field empty; a company whose parts don't tie with its filed totals (parts_tie) is held."""
+        vals = [f.get(p, col.unit, start, end) for p in col.all_parts]
+        if not all(vals):
+            return None, None
+        for p, v in zip(col.all_parts, vals, strict=True):
+            if len(v) > 1:
+                return None, f"held: {p} has {len(v)} different values for this period in this filing"
+        parts = "+".join(col.all_parts)
+        if (why := self._untied(col)):
+            return None, f"held: filed only as {parts}; {why}"
+        return sum((next(iter(v)) for v in vals), ZERO), f"{parts} ({col.all_parts_label}; no total is filed)"
 
     def _parts(self, f: Filing, col: Column, end) -> tuple[Decimal | None, str | None]:
         v, tag = self._value(f, col, None, end)
         if tag is not None:
             return v, tag
+        total = col.filed_total.get(self.ticker or "")
+        if total is not None:
+            return self._filed_total(f, col, total, end)
         filed = {}
         for p in col.parts:
             vals = f.get(p, MONEY, None, end)
@@ -636,6 +767,32 @@ class Statements:
             return (ZERO, "+".join(filed) + " (filed as zero)") if filed else (None, None)
         return self._summed(col, nonzero)
 
+    def _filed_total(self, f: Filing, col: Column, total: FiledTotal, end) -> tuple[Decimal | None, str | None]:
+        """The company's one caption that is its whole current debt (IBM's short-term debt, which includes its current
+        maturities of long-term debt: #455's question 1; #470), nothing added to it. Held where it is below the first
+        non-zero `never_below` part filed at the date (a part it includes can't exceed it), or where it isn't filed
+        and another caption is (a part is never taken for the whole)."""
+        vals = f.get(total.tag, MONEY, None, end)
+        if len(vals) > 1:
+            return None, f"held: {total.tag} has {len(vals)} different values for this date in this filing"
+        if not vals:
+            others = [p for p in col.parts if f.get(p, MONEY, None, end)]
+            if not others:
+                return None, None
+            return None, (f"held: {total.tag}, {self.ticker}'s whole current debt as filed, isn't filed for this date "
+                          f"(filed: {', '.join(others)})")
+        v = next(iter(vals))
+        for p in total.never_below:
+            got = f.get(p, MONEY, None, end)
+            if len(got) > 1:
+                return None, f"held: {p} has {len(got)} different values for this date in this filing"
+            if got and (c := next(iter(got))) != 0:
+                if c > v:
+                    return None, (f"held: {total.tag} ({self.ticker}'s {total.label}) is below its {p} at this date, "
+                                  "which it includes")
+                break
+        return v, f"{total.tag} ({total.label})"
+
     def _summed(self, col: Column, nonzero: dict[str, Decimal]) -> tuple[Decimal | None, str]:
         """Two or more non-zero captions and no total (#401's question 1, option A; Anand, 12 Nov 2026): one from each
         of the column's `sum` groups, the first filed non-zero, added, never two of one group (for current debt: the
@@ -645,7 +802,7 @@ class Statements:
         listed = "held: filed in parts (" + ", ".join(f"{p} {v}" for p, v in nonzero.items()) + ") and no total is filed"
         if self.ticker in col.not_summed:
             return None, f"{listed}; not added: {col.not_summed[self.ticker]}"
-        used, beside = [], {}
+        used, beside, off = [], {}, ""
         for group in col.sum:
             got = next((p for p in group if p in nonzero), None)
             if got is None:
@@ -657,9 +814,16 @@ class Statements:
             for p in col.included.get(got, ()):
                 if p in nonzero:
                     beside[p] = f"{p} (within {got})"
+            # other short-term borrowings beside commercial paper, with no short-term borrowings line (#470)
+            for p in col.added_to.get(got, ()):
+                if p in nonzero and p not in beside and p not in used:
+                    if (why := self._untied(col)):
+                        off = off or f" (not added to {got}: {why})"
+                    else:
+                        used.append(p)
         left = [p for p in nonzero if p not in used and p not in beside]
         if not used or left:
-            return None, f"{listed}; {', '.join(left or nonzero)} outside the decided sum"
+            return None, f"{listed}; {', '.join(left or nonzero)} outside the decided sum{off}"
         how = "+".join(used) + (" (the sum of the filed captions; no total is filed" if len(used) > 1 else
                                 " (no total is filed")
         if beside:
@@ -689,7 +853,26 @@ class Statements:
             if not 80 <= (end - start).days + 1 <= 100:
                 continue
             return next(iter(vals)) - p.val, f"derived: {e.tag} {ytd_kind} − {prior_kind} filed {p.filed.isoformat()}", start
+        if col.all_parts and not self._untied(col):
+            return self._derived_parts(f, col, ytd_start, end, ytd_kind, prior_kind, q_start)
         return None, None, None
+
+    def _derived_parts(self, f: Filing, col: Column, ytd_start, end, ytd_kind: str, prior_kind: str,
+                       q_start) -> tuple[Decimal | None, str | None, dt.date | None]:
+        """A quarter from `all_parts`' sums, as `_derived` does with one tag: every part's year to date in this filing
+        less every part's year to date before it, as one earlier filing filed them all (#470)."""
+        vals = [f.get(p, col.unit, ytd_start, end) for p in col.all_parts]
+        if any(len(v) != 1 for v in vals):
+            return None, None, None
+        prior = [self._prior(p, col.unit, ytd_start, prior_kind, f.filed) for p in col.all_parts]
+        if None in prior or len({(p.end, p.accn) for p in prior}) != 1:
+            return None, None, None
+        start = prior[0].end + dt.timedelta(days=1)
+        if (q_start is not None and start != q_start) or not 80 <= (end - start).days + 1 <= 100:
+            return None, None, None
+        v = sum((next(iter(x)) for x in vals), ZERO) - sum((p.val for p in prior), ZERO)
+        return v, (f"derived: {'+'.join(col.all_parts)} {ytd_kind} − {prior_kind} filed {prior[0].filed.isoformat()} "
+                   f"({col.all_parts_label})"), start
 
     # -------------------------------------------------------------- one filing
     def build(self, f: Filing, *, cover: tuple[Decimal | None, str] | None = None) -> Built | None:
