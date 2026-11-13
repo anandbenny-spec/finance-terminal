@@ -2,7 +2,7 @@
 // api.quality_summary returned (counts by module and period) and formats them. It computes no figure: a count is the
 // database's, a missing measure shows as "Not available" rather than 0, and the one share the projection holds
 // (freshness_on_time_share, 0 to 1) is only shown as a percentage.
-import { formatAxisNumber, formatCount, formatShare, NOT_AVAILABLE } from "@/lib/format";
+import { dateInZone, formatAxisNumber, formatCount, formatShare, NOT_AVAILABLE } from "@/lib/format";
 import type { EvalSummaryRow, QualitySummaryRow } from "@/lib/queries/api";
 
 export type Period = QualitySummaryRow["period"];
@@ -75,10 +75,10 @@ export function onTimeShare(section: ModuleSection): { value: string; context: s
   };
 }
 
-/** The latest `as_of` among the rows shown, as a date (YYYY-MM-DD in UTC), for the panels' "Data to". */
+/** The latest `as_of` among the rows shown, as a date (YYYY-MM-DD in IST, the page's zone), for the panels' "Data to". */
 export function dataTo(rows: readonly QualitySummaryRow[]): string | null {
   const latest = rows.map((r) => r.as_of).sort().at(-1);
-  return latest ? latest.slice(0, 10) : null;
+  return latest ? dateInZone(latest, "Asia/Kolkata") : null;
 }
 
 export type EvalRunLine = { key: string; evalSet: string; metric: string; value: string; items: string; date: string };
@@ -98,7 +98,7 @@ export function evalRunLines(rows: readonly EvalSummaryRow[], formatDay: (isoDat
       metric: plainName(r.metric),
       value: formatAxisNumber(r.value, 2),
       items: r.n_items === null ? NOT_AVAILABLE : formatCount(r.n_items),
-      date: formatDay(r.run_at.slice(0, 10)),
+      date: formatDay(dateInZone(r.run_at, "Asia/Kolkata")),
     }));
 }
 
