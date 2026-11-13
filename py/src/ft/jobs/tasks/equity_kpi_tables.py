@@ -11,11 +11,14 @@ file or its text. A document already read with the same SHA-256 and parser versi
 "never resend an unchanged input"). Run logs print counts and ids only, never a page's text (CLAUDE.md §4).
 
 **Hand-run only, no schedule before 18 Nov** (card): `due()` refuses the daily, weekly and watch workflows, so the
-Sunday weekly never runs it; a `refresh` or `backfill` with `--task equity.kpi_tables` on dev is how the dev run and,
-later, the one production run (DD-06) are started.
+Sunday weekly never runs it; a `backfill` with `--task equity.kpi_tables` on dev is how the dev run and, later, the
+one production run (DD-06) are started. Not `refresh`: its job stops at 30 minutes, and the run's few hundred
+page calls go one after another (DA-10's 384 took about 50 minutes); `backfill` allows 240. A run that stops on
+its cap still resolves every remaining quarter as held, so what it read loads and a re-run picks up the rest
+(read documents with an unchanged SHA-256 are not extracted again).
 
-**AI** inside the pilot's $5 from the $25 pool (pre-approval 2, 11 Nov 2026): every call is priced before it is sent and
-stopped at the run cap or the `ai_monthly_budget_usd` switch; the run's cost goes on `ops.task_run.ai_cost_usd`. Without a
+**AI** inside the pilot's $5 from the $25 pool (pre-approval 2, 11 Nov 2026; $4.61 left after DA-10): every call is priced
+before it is sent and stopped at the run cap or the `ai_monthly_budget_usd` switch; the run's cost goes on `ops.task_run.ai_cost_usd`. Without a
 key or credits the task skips and sends nothing (#197).
 
 Checks, B blocking, W warning (counts and ids only):
@@ -52,7 +55,8 @@ from ft.jobs.tasks import register
 TASK = "kpi_tables"
 KEY = "equity.kpi_tables"
 SHOWN = 12
-RUN_LIMIT_USD = Decimal(5)          # the pilot's $5 ceiling (pre-approval 2); a run never passes it
+RUN_LIMIT_USD = Decimal("4.61")     # what is left of the pilot's $5 (pre-approval 2) after DA-10's $0.3864 (card, #514)
+READ_MAX_PAGES = 500                 # Infosys's results bundles run 186 to 380 pages (DA-10 K3); pdfs.read_pdf stops at 200
 IMAGE_MAX_PAGES = 40                  # an image document longer than this is held (would over-send images)
 NSE_HEADERS = {"Referer": dc.NSE_REFERER, "Accept": "application/json, text/plain, */*"}
 BSE_HEADERS = {"Origin": "https://www.bseindia.com", "Referer": "https://www.bseindia.com/",
@@ -142,7 +146,6 @@ class EquityKpiTables(Task):
     def _get_json(self, ctx: Context, url: str, source: str, params: dict, headers: dict, warm: bool) -> dc.Answer:
         """One feed request, not stored (`keep=lambda _: False`): the body is read and discarded. A 401/403 from NSE is
         retried once after the homepage is visited again for its cookies."""
-        from ft.equity import filings as flg
         f = ctx.fetcher
         for attempt in (1, 2):
             try:
@@ -152,10 +155,7 @@ class EquityKpiTables(Task):
                 return dc.Answer(200, json.loads(body))
             except FetchError as e:
                 if warm and attempt == 1 and e.status in (401, 403):
-                    try:
-                        f.get(flg.HOME, record_url=flg.HOME, keep=lambda _: False)
-                    except FetchError:
-                        pass
+                    self._warm(ctx)
                     continue
                 return dc.Answer(e.status if e.status is not None else "network error")
             except ValueError:
@@ -179,10 +179,14 @@ class EquityKpiTables(Task):
                                    "strType": "C", "subcategory": subcategory}, BSE_HEADERS, warm=False)
         return fetch
 
-    def _warm(self, ctx: Context) -> None:
+    @staticmethod
+    def _warm(ctx: Context) -> None:
+        """Visit NSE's homepage for its cookies, as equity.call_transcripts does: through the HTTP client itself
+        (`ctx.fetcher.http`), which stores and records nothing. (`Fetcher.get` takes no `record_url`: the 13 Nov dev
+        run, ops.task_run 238, failed on that before any request.)"""
         from ft.equity import filings as flg
         try:
-            ctx.fetcher.get(flg.HOME, record_url=flg.HOME, keep=lambda _: False)
+            ctx.fetcher.http.get(flg.HOME, record_url=flg.HOME, stats=ctx.fetcher.counts)
         except FetchError:
             pass
 
@@ -251,8 +255,11 @@ class EquityKpiTables(Task):
             if co.slug not in rules:
                 continue
             for label in kd.quarters(co.slug):
-                if h.stopped:
-                    break
+                if h.stopped:                             # every later quarter is still resolved, as held, so the
+                    q = rules[co.slug].for_quarter(label)  # `documents` check passes and what was read (and spent) loads
+                    h.plans.append(DocPlan(co.entity_id, co.slug, label, kd.period_end(label), q.document_class, "held",
+                                           held_reason=f"not read: the run stopped on the {h.stopped}"))
+                    continue
                 plan = self._one(ctx, db, co, rules[co.slug], label, anns.get(co.entity_id, []), prompt, schema,
                                  budget, month_spend + h.cost, h)
                 h.plans.append(plan)
@@ -279,7 +286,7 @@ class EquityKpiTables(Task):
             plan.held_reason = "the filing is not a PDF"
             return plan
         plan.sha256, plan.bytes = hashlib.sha256(body).digest(), len(body)
-        info = pdfs.read_pdf(body)
+        info = self._read(body)
         plan.page_count = info.pages
         if info.unreadable or info.pages == 0:
             plan.held_reason = "the PDF could not be read"
@@ -306,6 +313,10 @@ class EquityKpiTables(Task):
         plan.status = "read"
         plan.values = [Value(i + 1, e.row, e.value, e.filter_status, e.filter_reason) for i, e in enumerate(extracted)]
         return plan
+
+    @staticmethod
+    def _read(body: bytes) -> pdfs.PdfInfo:
+        return pdfs.read_pdf(body, max_pages=READ_MAX_PAGES)
 
     def _pages(self, rule: kd.Rule, label: str, info: pdfs.PdfInfo, body: bytes) -> tuple[list[ex.Page], str | None]:
         """The pages to read: image pages for an image quarter (rendered), else the text pages cut from the file."""

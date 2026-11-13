@@ -337,3 +337,83 @@ def test_task_write_inserts_document_and_values_and_replaces():
         c.execute("delete from equity.kpi_value where document_id in (select id from equity.kpi_document where entity_id = %s)", (eid,))
         c.execute("delete from equity.kpi_document where entity_id = %s", (eid,))
         c.execute("delete from core.entity where id = %s", (eid,))
+
+
+# ----------------------------------------------------------------------------------- regressions from the first dev run (13 Nov)
+class _Http:
+    def __init__(self):
+        self.calls = []
+
+    def get(self, url, **kw):
+        self.calls.append((url, kw))
+
+
+class _RefusingFetcher:
+    """A fetcher whose own `get` refuses `record_url`, as Fetcher.get does (ops.task_run 238 failed on that)."""
+    def __init__(self, replies=()):
+        self.http, self.counts, self.replies, self.gets = _Http(), {"403": 0}, list(replies), 0
+
+    def get(self, url, *, source, params=None, headers=None, conditional=True, media_type=None, ext=None, keep=None,
+            allow=()):
+        self.gets += 1
+        r = self.replies.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+
+def test_warm_goes_through_the_http_client():
+    from types import SimpleNamespace
+
+    from ft.equity import filings as flg
+    from ft.jobs.tasks import equity_kpi_tables as t
+    f = _RefusingFetcher()
+    t.EquityKpiTables._warm(SimpleNamespace(fetcher=f))
+    assert f.http.calls == [(flg.HOME, {"record_url": flg.HOME, "stats": f.counts})] and f.gets == 0
+
+
+def test_a_refused_feed_request_warms_and_retries_once():
+    from types import SimpleNamespace
+
+    from ft.jobs.fetch import FetchError
+    from ft.jobs.tasks import equity_kpi_tables as t
+    f = _RefusingFetcher([FetchError("u", "HTTP 403", 403), SimpleNamespace(body=b"[]")])
+    ans = t.EquityKpiTables()._get_json(SimpleNamespace(fetcher=f), "https://www.nseindia.com/api/x", "nse", {}, {}, warm=True)
+    assert (ans.status, ans.reply) == (200, []) and f.gets == 2 and len(f.http.calls) == 1
+
+
+def test_a_stop_resolves_every_later_quarter_as_held(monkeypatch):
+    from types import SimpleNamespace
+
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    monkeypatch.setattr(t.batch, "monthly_budget", lambda db: Decimal(25))
+    monkeypatch.setattr(t.batch, "month_spend", lambda db: Decimal(0))
+    monkeypatch.setattr(task, "companies", lambda db, start: [_Co(1, "tcs"), _Co(2, "infy")])
+    monkeypatch.setattr(task, "_claude", lambda: object())
+    monkeypatch.setattr(task, "discover", lambda ctx, cos, start, end: {})
+
+    def one(ctx, db, co, rule, label, anns, prompt, schema, budget, spent, h):
+        h.stopped = "run_cap"                              # the first document hits the cap
+        return t.DocPlan(co.entity_id, co.slug, label, dc.period_end(label), "press_release", "held",
+                         held_reason="stopped on the run_cap")
+    monkeypatch.setattr(task, "_one", one)
+    ctx = SimpleNamespace(fetcher=SimpleNamespace(db=None), now=datetime(2026, 11, 13, 16, 0, tzinfo=IST), until=None)
+    h = task.fetch(ctx)
+    assert len(h.plans) == len(dc.quarters("tcs")) + len(dc.quarters("infy"))
+    assert all(p.status == "held" and "run_cap" in p.held_reason for p in h.plans)
+    checks = {c.name: c for c in task.checks(None, h, 1)}
+    assert checks["documents"].passed and not checks["budget"].passed    # loads what was read; the stop is a warning
+
+
+def test_read_reaches_past_200_pages(monkeypatch):
+    from ft.jobs.tasks import equity_kpi_tables as t
+    seen = {}
+    monkeypatch.setattr(t.pdfs, "read_pdf", lambda body, max_pages=200: seen.setdefault("max_pages", max_pages))
+    t.EquityKpiTables._read(b"%PDF-")
+    assert seen["max_pages"] >= 380                                       # Infosys's longest bundle (DA-10 K3)
+
+
+def test_the_run_cap_is_what_is_left_of_the_pilot():
+    from ft.jobs.tasks import equity_kpi_tables as t
+    assert Decimal("4.61") == t.RUN_LIMIT_USD
