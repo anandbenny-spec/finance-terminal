@@ -51,7 +51,7 @@ import {
   type YearCards,
 } from "@/lib/equity/valuechain";
 import { FEEDS } from "@/lib/feeds";
-import { formatDate, formatFiledShare, formatShare } from "@/lib/format";
+import { formatDate, formatFiledShare, formatRupeesAsCroreFine, formatShare } from "@/lib/format";
 import type { CompanyRow, CorporateActionRow, TaskFreshnessRow } from "@/lib/queries/api";
 import type { ValueChainPageData } from "@/lib/queries/valuechain";
 
@@ -193,7 +193,7 @@ function GroupPanel({ name, currency, data, latestYear, policies, freshness, now
   const latest = data.rpt ? latestRpt(data.rpt) : null;
   const period = latest ? rptPeriod(latest.rows) : null;
   const basis = latest?.rows[0]?.basis;
-  const money = (v: number | null) => amount(v, currency);
+  const money = (v: number | null) => (currency === "INR" ? formatRupeesAsCroreFine(v) : amount(v, currency));
   const none = (what: string) => (
     <StateNote kind="unavailable">Not available: no {what} related-party rows were read from this company&apos;s results filings for the latest year.</StateNote>
   );

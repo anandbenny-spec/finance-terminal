@@ -463,6 +463,20 @@ export function formatRupeesAsCrore(rupees: Num): string {
   return formatMoney(rupees / 10_000_000, "INR", { unit: "crore" });
 }
 
+/**
+ * Rupees given in full, shown in crore for a list of related-party values (VC-06f, #518): from ₹1 cr up exactly as
+ * `formatRupeesAsCrore`; under ₹1 cr two decimals, so a non-zero amount never reads as `₹0 cr` or rounds up to `₹1 cr`;
+ * below ₹0.005 cr (two decimals would print 0.00) `less than ₹0.01 cr`. `4_300_000` → `₹0.43 cr`.
+ */
+export function formatRupeesAsCroreFine(rupees: Num): string {
+  if (isMissing(rupees)) return NOT_AVAILABLE;
+  const crore = rupees / 10_000_000;
+  const abs = Math.abs(crore);
+  if (abs >= 1 || abs === 0) return formatRupeesAsCrore(rupees);
+  if (abs < 0.005) return `${crore < 0 ? MINUS : ""}less than ₹0.01 cr`;
+  return formatMoney(crore, "INR", { unit: "crore", decimals: 2 });
+}
+
 /** Dollars given in full, shown in millions with US grouping (US-06, #405; the US twin of crore): `3.94328e11` → `$394,328 mn`. */
 export function formatDollarsAsMillion(dollars: Num): string {
   if (isMissing(dollars)) return NOT_AVAILABLE;

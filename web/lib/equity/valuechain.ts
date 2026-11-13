@@ -402,7 +402,8 @@ export type RptRow = { key: string; rank: string; counterparty: string; relation
 /** One list of the top five: rows with the value in rupees as crore. `amount` formats a value in the company's currency. */
 export function rptRows(rows: readonly RelatedPartyTopRow[], type: RelatedPartyTopRow["txn_type"], amount: (v: number | null) => string): RptRow[] {
   return rows
-    .filter((r) => r.txn_type === type && r.counterparty !== null)
+    // A value summed to 0 or below (a net zero or a net reversal once the half-years are added) is not one of the largest (VC-06f, #518).
+    .filter((r) => r.txn_type === type && r.counterparty !== null && (r.value === null || r.value > 0))
     .sort((a, b) => a.rank - b.rank)
     .map((r) => ({ key: `${type}|${r.rank}`, rank: formatCount(r.rank), counterparty: r.counterparty as string, relationship: r.relationship ?? NOT_AVAILABLE, value: amount(r.value) }));
 }
