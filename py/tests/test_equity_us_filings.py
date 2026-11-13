@@ -106,7 +106,18 @@ def test_the_column_map_loads_and_refuses_a_broken_file(tmp_path):
     assert debt.parts[:3] == ("LongTermDebtCurrent", "ShortTermBorrowings", "CommercialPaper")
     assert debt.sum == (("LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent"),
                         ("ShortTermBorrowings", "CommercialPaper"))                 # never both of one group (#455)
-    assert debt.included == {"ShortTermBorrowings": ("OtherShortTermBorrowings",)} and list(debt.not_summed) == ["IBM"]
+    assert debt.included == {"ShortTermBorrowings": ("OtherShortTermBorrowings",)} and debt.not_summed == {}
+    # #455's questions 1 to 3 (Anand, 12 Nov 2026; #470)
+    assert debt.added_to == {"CommercialPaper": ("OtherShortTermBorrowings",)}
+    assert debt.tie == {"ShortTermBorrowings": ("CommercialPaper", "OtherShortTermBorrowings")}
+    ibm = debt.filed_total["IBM"]
+    assert (ibm.tag, ibm.label, ibm.never_below) == (
+        "ShortTermBorrowings", "short-term debt as filed, including current maturities of long-term debt",
+        ("LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent"))
+    assert ibm.source.startswith("IBM's 10-K: the balance sheet's \"Short-term debt\" line")
+    assert t.columns["pbt"].all_parts == ("IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
+                                          "IncomeLossFromContinuingOperationsBeforeIncomeTaxesForeign")
+    assert t.columns["pbt"].all_parts_label == "the sum of the filed domestic and foreign parts"
     assert sorted(t.share_classes) == ["GOOGL", "NKE", "V"]
     assert set(t.columns) <= set(task_module.columns(t)) and "shares_outstanding" in task_module.columns(t)
     text = E.TAGS_FILE.read_text()
@@ -117,7 +128,16 @@ def test_the_column_map_loads_and_refuses_a_broken_file(tmp_path):
                          (text.replace("included: {ShortTermBorrowings: [OtherShortTermBorrowings]}",
                                        "included: {ShortTermBorrowings: [NotesPayableCurrent]}"), "NotesPayableCurrent isn't one"),
                          (text.replace("effective: 2026-09-18", "effective: soon", 1), "effective is a date"),
-                         (text.replace("review_days: 120", "review_days: -1"), "review_days")):
+                         (text.replace("review_days: 120", "review_days: -1"), "review_days"),
+                         (text.replace("added_to: {CommercialPaper: [OtherShortTermBorrowings]}",
+                                       "added_to: {CommercialPaper: [NotesPayableCurrent]}"), "NotesPayableCurrent isn't one"),
+                         (text.replace("never_below: [LongTermDebtCurrent,", "never_below: [DebtCurrent,"),
+                          "DebtCurrent isn't one"),
+                         (text.replace("        label: short-term debt as filed", "        lable: short-term debt as filed"),
+                          "filed_total IBM needs its tag, label and source"),
+                         (text.replace("not_summed: {}", "not_summed: {IBM: why}"), "IBM is in both"),
+                         (text.replace("    all_parts_label: the sum of the filed domestic and foreign parts\n", ""),
+                          "all_parts is for a flow column")):
         (tmp_path / "t.yaml").write_text(bad)
         with pytest.raises(E.EdgarError, match=message):
             E.load_tags(tmp_path / "t.yaml")
@@ -264,16 +284,184 @@ def test_current_debt_in_parts_takes_one_caption_of_each_group_never_both():
         f"{other} (within {stb}))"))
     # one current-part line only: the one without finance leases first, as borrowings_noncurrent's chain
     assert debt({lt: 5, lcl: 6, cp: 1})[0] == 6
-    # other short-term borrowings beside commercial paper, with no short-term borrowings line: outside the sum, held
-    v, how = debt({lt: 1960, cp: 4209, other: 348})
-    assert v is None and how == (f"held: filed in parts ({lt} 1960, {cp} 4209, {other} 348) and no total is filed; "
+    # other short-term borrowings beside commercial paper, with no short-term borrowings line: added to it (#455's
+    # question 2; Anand, 12 Nov 2026; #470). Coca-Cola's year ends from 2023 file these three (2025's, $ millions)
+    assert debt({lcl: 1960, cp: 4209, other: 348}, "KO") == (1960 + 4209 + 348, (
+        f"{lcl}+{cp}+{other} (the sum of the filed captions; no total is filed)"))
+    assert debt({cp: 4209, other: 348}) == (4557, f"{cp}+{other} (the sum of the filed captions; no total is filed)")
+    # ... where a short-term borrowings line is filed, nothing changes: it holds both (Coca-Cola 2020-22, above)
+    assert debt({lcl: 399, stb: 2373, cp: 2146, other: 227}, "KO")[0] == 399 + 2373
+    # ... other short-term borrowings with neither commercial paper nor a short-term borrowings line still hold (Apple's
+    # 2020 quarters, which file no commercial paper beside them)
+    v, how = debt({lt: 10392, other: 10029})
+    assert v is None and how == (f"held: filed in parts ({lt} 10392, {other} 10029) and no total is filed; "
                                  f"{other} outside the decided sum")
-    # IBM: its short-term borrowings include its current maturities, so its parts are never added
-    v, how = debt({stb: 7013, lcl: 7009}, "IBM")
-    assert v is None and how.startswith(f"held: filed in parts ({stb} 7013, {lcl} 7009) and no total is filed; not added: "
-                                        "IBM's ShortTermBorrowings is its balance sheet's short-term debt")
-    assert debt({stb: 7013, lcl: 7009}, "SHW")[0] == 14022
-    assert debt({stb: 8530}, "IBM") == (8530, stb)                                    # one caption is the whole
+    assert debt({lt: 10392, cp: 0, other: 10029})[0] is None                          # commercial paper filed as zero
+    # IBM (#455's question 1; #470): its short-term borrowings are its whole current debt, current maturities within
+    ibm = "ShortTermBorrowings (short-term debt as filed, including current maturities of long-term debt)"
+    assert debt({stb: 7013, lcl: 7009}, "IBM") == (7013, ibm)                         # 30 Sep 2026: nothing added
+    assert debt({stb: 8530, cp: 2988, lt: 5147}, "IBM") == (8530, ibm)                # 30 Jun 2019
+    assert debt({stb: 8530}, "IBM") == (8530, ibm)
+    assert debt({"DebtCurrent": 9, stb: 8}, "IBM") == (9, "DebtCurrent")              # a filed DebtCurrent still wins
+    # ... a date where the current part it includes is above it is held, naming both (no values)
+    v, how = debt({stb: 7000, lt: 7009, lcl: 1}, "IBM")
+    assert v is None and how == (f"held: {stb} (IBM's short-term debt as filed, including current maturities of long-term "
+                                 f"debt) is below its {lt} at this date, which it includes")
+    assert debt({stb: 7000, lt: 0, lcl: 7009}, "IBM")[0] is None                       # the first non-zero part
+    # ... a date with captions but no short-term borrowings line: held, a part is never taken for the whole
+    assert debt({lt: 5147, cp: 2988}, "IBM") == (None, (
+        f"held: {stb}, IBM's whole current debt as filed, isn't filed for this date (filed: {lt}, {cp})"))
+    assert debt({stb: 7013, lcl: 7009}, "SHW")[0] == 14022                            # other companies: option A
+
+
+def test_where_short_term_borrowings_and_their_parts_dont_tie_the_added_part_is_held():
+    """parts_tie (#470): a company whose ShortTermBorrowings differ from CommercialPaper + OtherShortTermBorrowings by more
+    than $1 million in a period that files all three has the addition switched off; within it, it stays on."""
+    lcl, stb, cp, other = ("LongTermDebtAndCapitalLeaseObligationsCurrent", "ShortTermBorrowings", "CommercialPaper",
+                           "OtherShortTermBorrowings")
+    m = 1_000_000
+    k22, k23 = "0000000005-23-000001", "0000000005-24-000001"
+    at = lambda v, end, accn, filed: fact(v, end, accn=accn, form="10-K", filed=filed)
+
+    def ko(stb_2022: int, since: date | None = None) -> E.Statements:
+        old = {lcl: 399 * m, stb: stb_2022, cp: 2146 * m, other: 227 * m}
+        new = {lcl: 1960 * m, cp: 4209 * m, other: 348 * m}
+        cf = facts({t: {"USD": ([at(old[t], "2022-12-31", k22, "2023-02-20")] if t in old else [])
+                        + ([at(new[t], "2023-12-31", k23, "2024-02-20")] if t in new else [])}
+                    for t in (lcl, stb, cp, other)}
+                   | {"NetIncomeLoss": {"USD": [fact(1, "2022-12-31", "2022-01-01", accn=k22, form="10-K", filed="2023-02-20"),
+                                                fact(1, "2023-12-31", "2023-01-01", accn=k23, form="10-K", filed="2024-02-20")]},
+                      "Assets": {"USD": [at(9, "2022-12-31", k22, "2023-02-20"), at(9, "2023-12-31", k23, "2024-02-20")]}})
+        return E.Statements([(1, cf)], E.load_tags(), "KO", since=since)
+
+    def latest(s):
+        r = next(r for r in s.build(s.filings[k23]).rows if r.period_kind == "instant")
+        return r.values.get("borrowings_current"), r.tags.get("borrowings_current")
+
+    s = ko(2373 * m)                                          # 2,146 + 227 = 2,373: ties, so the rule is on
+    assert [(t.column, t.period, t.total, t.ties) for t in s.ties] == [("borrowings_current", "2022-12-31", stb, True)]
+    assert s.untied == set() and latest(s)[0] == (1960 + 4209 + 348) * m
+    s = ko(2373 * m + m)                                      # exactly $1 million apart: still ties
+    assert s.untied == set() and latest(s)[0] == (1960 + 4209 + 348) * m
+    s = ko(2373 * m + m + 1)                                  # more than $1 million apart: off, held
+    assert s.untied == {"borrowings_current"}
+    v, how = latest(s)
+    assert v is None and how.endswith(
+        f"{other} outside the decided sum (not added to {cp}: {cp} + {other} didn't tie with the filed {stb} for this "
+        "company at 2022-12-31 (parts_tie), so the rule is off until Anand rules)")
+    # only the window's filings are compared (the task's `since`): a mismatch in a filing before it switches nothing off
+    s = ko(2373 * m + 2 * m, since=D(2023, 1, 1))
+    assert s.ties == [] and s.untied == set() and latest(s)[0] == (1960 + 4209 + 348) * m
+
+
+DOM, FOR = ("IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
+            "IncomeLossFromContinuingOperationsBeforeIncomeTaxesForeign")
+PBT = "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"
+K21, Q22, K22 = "0000000006-22-000001", "0000000006-22-000002", "0000000006-23-000001"
+
+
+def mcd(pbt_2021: int | None = 7_000, *, domestic_2022: bool = True, nine_months: bool = True) -> E.Statements:
+    """McDonald's shape (#455's question 3): its FY2021 10-K files the total and its tax note's two parts; from 2022 its
+    10-Ks file only the parts. Its Q3 2022 10-Q files the nine months' parts (and the total, as a 10-Q does)."""
+    yr = lambda v, y, accn, filed: fact(v, f"{y}-12-31", f"{y}-01-01", accn=accn, form="10-K", filed=filed)
+    nine = lambda v: fact(v, "2022-09-30", "2022-01-01", accn=Q22, filed="2022-10-27")
+    us_gaap = {
+        DOM: {"USD": [yr(2_000, 2021, K21, "2022-02-24")] + ([yr(2_600, 2022, K22, "2023-02-23")] if domestic_2022 else [])
+              + ([nine(1_900)] if nine_months else [])},
+        FOR: {"USD": [yr(5_000, 2021, K21, "2022-02-24"), yr(5_300, 2022, K22, "2023-02-23")]
+              + ([nine(3_950)] if nine_months else [])},
+        "NetIncomeLoss": {"USD": [yr(1, 2021, K21, "2022-02-24"), yr(1, 2022, K22, "2023-02-23"), nine(1)]},
+    }
+    if pbt_2021 is not None:
+        us_gaap[PBT] = {"USD": [yr(pbt_2021, 2021, K21, "2022-02-24"), nine(5_850)]}
+    return E.Statements([(1, facts(us_gaap))], E.load_tags(), "MCD")
+
+
+def rows(s: E.Statements, accn: str) -> dict:
+    return {r.period_kind: r for r in s.build(s.filings[accn]).rows}
+
+
+def test_pre_tax_income_filed_only_in_its_domestic_and_foreign_parts_is_their_sum():
+    """#455's question 3 (Anand, 12 Nov 2026; #470): where no tag of pbt's chain is filed for a period (same end and
+    duration) and both parts are, their sum; one part alone leaves it empty; a filed total is used where there is one."""
+    s = mcd()
+    assert [(t.column, t.period, t.total, t.ties) for t in s.ties] == [("pbt", "2021-01-01 to 2021-12-31", PBT, True),
+                                                                      ("pbt", "2022-01-01 to 2022-09-30", PBT, True)]
+    y22 = rows(s, K22)
+    assert (y22["year"].values["pbt"], y22["year"].tags["pbt"]) == (
+        7_900, f"{DOM}+{FOR} (the sum of the filed domestic and foreign parts; no total is filed)")
+    # the fourth quarter: the year's parts less the nine months' parts as the 10-Q filed them (the total isn't used for
+    # one side and the parts for the other)
+    assert (y22["quarter"].values["pbt"], y22["quarter"].tags["pbt"]) == (
+        7_900 - 5_850, f"derived: {DOM}+{FOR} FY − 9M filed 2022-10-27 (the sum of the filed domestic and foreign parts)")
+    assert y22["quarter"].period_start == D(2022, 10, 1)
+    assert (rows(s, K21)["year"].values["pbt"], rows(s, K21)["year"].tags["pbt"]) == (7_000, PBT)   # a filed total
+    assert rows(s, Q22)["nine_months"].tags["pbt"] == PBT
+    # one part alone: empty (no tag), as before; the gaps warning still names the part filed
+    s = mcd(domestic_2022=False)
+    assert "pbt" not in rows(s, K22)["year"].values and "pbt" not in rows(s, K22)["year"].tags
+    assert "pbt" not in rows(s, K22)["quarter"].values
+    # no nine months' parts filed: the fourth quarter isn't derived (the year's total isn't mixed with them)
+    s = mcd(nine_months=False)
+    assert rows(s, K22)["year"].values["pbt"] == 7_900 and "pbt" not in rows(s, K22)["quarter"].values
+    # parts_tie: the 2021 total more than $1 million away from its parts switches the rule off for the company
+    s = mcd(pbt_2021=7_000 + 1_000_001)
+    assert s.untied == {"pbt"}
+    y22 = rows(s, K22)
+    assert "pbt" not in y22["year"].values and y22["year"].tags["pbt"] == (
+        f"held: filed only as {DOM}+{FOR}; {DOM} + {FOR} didn't tie with the filed {PBT} for this company at 2021-01-01 to "
+        "2021-12-31 (parts_tie), so the rule is off until Anand rules")
+    assert "pbt" not in y22["quarter"].values
+    assert rows(s, K21)["year"].values["pbt"] == 7_000 + 1_000_001          # a filed total is still the total
+
+
+def us_company(ticker: str) -> task_module.Company:
+    return task_module.Company(next(c for c in us.load_us_config().companies if c.ticker == ticker), 1)
+
+
+def test_the_parts_tie_warning_names_companies_and_periods_never_values():
+    x, y = us_company("MCD"), us_company("KO")
+    x.stmts, y.stmts = mcd(pbt_2021=7_000 + 1_000_001), mcd()
+    got = UsFilings._parts_tie([x, y])
+    assert not got.passed and not got.blocking
+    assert got.detail == (f"more than $1 million apart: MCD pbt ({PBT} against {DOM} + {FOR}) at 2021-01-01 to 2021-12-31 "
+                          "(1 of 2 periods): its parts rule is off until Anand rules; tied (company, periods): pbt: KO 2")
+    assert not any(str(v) in got.detail for v in (7_000, 1_007_001, 2_000, 5_000, 1_900, 3_950, 5_850))
+    x.stmts = mcd()
+    got = UsFilings._parts_tie([x, y])
+    assert got.passed and got.detail == ("every filed total ties with its parts within $1 million (company, periods): "
+                                         "pbt: KO 2, MCD 2")
+    x.stmts = y.stmts = mcd(pbt_2021=None)                                   # no total filed anywhere: nothing compared
+    assert UsFilings._parts_tie([x, y]).detail == "no period files a total with all of its parts"
+
+
+def test_the_debt_held_warning_names_every_period_ibms_filed_total_is_held():
+    """IBM's guard (#470): a date where its current part of long-term debt is above its short-term debt is held and
+    named, every such date in the window, not only the latest; other companies: the latest, as before."""
+    stb, lt = "ShortTermBorrowings", "LongTermDebtCurrent"
+    q = lambda end, accn, filed, v: fact(v, end, accn=accn, filed=filed)
+    dates = (("2026-03-31", "0000000007-26-000001", "2026-04-28", 7_000, 7_009),
+             ("2026-06-30", "0000000007-26-000002", "2026-07-28", 7_013, 7_009))
+    cf = facts({stb: {"USD": [q(e, a, f, s) for e, a, f, s, _ in dates]},
+                lt: {"USD": [q(e, a, f, c) for e, a, f, _, c in dates]},
+                "NetIncomeLoss": {"USD": [fact(1, e, e[:5] + ("01-01" if e.endswith("03-31") else "04-01"), accn=a, filed=f)
+                                          for e, a, f, _, _ in dates]},
+                "Assets": {"USD": [q(e, a, f, 9) for e, a, f, _, _ in dates]}})
+    tags = E.load_tags()
+    x = us_company("IBM")
+    x.stmts = E.Statements([(1, cf)], tags, "IBM")
+    x.built = [x.stmts.build(fl) for fl in x.stmts.filings.values()]
+    got = UsFilings._debt_held(task_module.Fetched(START, tags), [x])
+    assert not got.passed and got.detail == (
+        f"current borrowings held: IBM 2026-03-31: {stb} (IBM's short-term debt as filed, including current maturities of "
+        f"long-term debt) is below its {lt} at this date, which it includes")
+    assert "7000" not in got.detail and "7009" not in got.detail
+    last = next(r for r in x.built[-1].rows if r.period_kind == "instant")
+    assert last.values["borrowings_current"] == 7_013
+    y = us_company("KO")                                                     # the latest only, as before
+    y.stmts = E.Statements([(1, cf)], tags, "KO")
+    y.built = [y.stmts.build(fl) for fl in y.stmts.filings.values()]
+    assert UsFilings._debt_held(task_module.Fetched(START, tags), [y]).passed
 
 
 def test_a_row_that_lacks_a_figure_never_displaces_one_that_has_it():
@@ -689,7 +877,11 @@ def test_the_first_load_registers_every_filing_since_2019_unpublished(s3, monkey
     assert checks(tr) == {"company_facts": (True, True), "period_end": (True, True), "balance_sheet": (True, True),
                           "coverage": (True, True), "shares": (True, True), "shares_held": (True, False),
                           "tag_switch": (False, False), "debt_held": (True, False), "share_rates": (True, False),
-                          "kept_fuller": (True, False), "gaps": (False, False), "loaded": (True, False)}
+                          "parts_tie": (True, False), "kept_fuller": (True, False), "gaps": (False, False),
+                          "loaded": (True, False)}
+    # every E1 name's pre-tax income ties with its domestic and foreign parts wherever it files all three (#470)
+    assert detail(tr, "parts_tie") == ("every filed total ties with its parts within $1 million (company, periods): "
+                                       "pbt: GOOGL 9, JPM 9, MSFT 10, NVDA 10, WMT 10")
     assert detail(tr, "gaps").startswith("AAPL finance_cost empty in 10 of its periods")       # tag names only
     assert q("""select fn.borrowings_current, fn.tags->>'borrowings_current' from equity.financials fn
                   join core.document d on d.id = fn.document_id
