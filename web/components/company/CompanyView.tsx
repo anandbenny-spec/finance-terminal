@@ -412,6 +412,7 @@ export function CompanyView({
       <CompanyHeader company={company} day={day} indexNames={data.indexNames} />
       <Tabs
         prefetch={false}
+        scrollCurrent
         label={`${company.name} sections`}
         items={tabsFor(company.market).map((t) => ({ id: t.id, label: t.label, href: companyHref(company.slug, t.id) }))}
         current={tab}

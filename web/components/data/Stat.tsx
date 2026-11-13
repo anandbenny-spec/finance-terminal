@@ -16,6 +16,7 @@ export function Stat({
   context,
   asOf,
   market,
+  className,
 }: {
   label: ReactNode;
   value: ReactNode;
@@ -23,9 +24,11 @@ export function Stat({
   context?: ReactNode;
   asOf?: ReactNode;
   market?: "US" | "IN";
+  /** Extra classes on the stat (the scenario panel drops its horizontal padding to share its controls' left edge). */
+  className?: string;
 }) {
   return (
-    <div className={cn("min-w-0 bg-panel p-3", market && EDGE[market])}>
+    <div className={cn("min-w-0 bg-panel p-3", market && EDGE[market], className)}>
       <div className="text-meta text-ink-2">{label}</div>
       <div className="mt-1 mb-0.5 text-figure font-semibold text-ink-1">
         <span className="whitespace-nowrap">{value}</span>

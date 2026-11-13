@@ -160,6 +160,10 @@ describe("the Valuation tab", () => {
       expect(bannedWordsIn(t)).toEqual([]);
       expect(t).not.toMatch(/%\s*(above|below)|versus|vs\./i);
     });
+    it("drops the value's own side padding so it shares the controls' left edge (#483)", () => {
+      const out = renderToStaticMarkup(<ScenarioControls rows={grid()} options={options} initial={centre} currency="INR" />);
+      expect(out).toMatch(/class="[^"]*\bp-3\b[^"]*\bpx-0\b[^"]*"[^>]*><div class="text-meta text-ink-2">Model-implied value/);
+    });
     it("gives the value no colour", () => {
       const out = renderToStaticMarkup(<ScenarioControls rows={grid()} options={options} initial={centre} currency="INR" />);
       expect(out).not.toMatch(/text-(up|down)\b/);
