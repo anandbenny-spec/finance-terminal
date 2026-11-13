@@ -9,6 +9,7 @@ import { AIBlock } from "@/components/ai/AIBlock";
 import { KeyChanges } from "@/components/ai/KeyChanges";
 import { CallsTable, FiguresTable, GuidanceTable } from "@/components/company/calls/CallTables";
 import { RemarksStrip } from "@/components/company/calls/RemarksStrip";
+import { TonePanel } from "@/components/company/calls/TonePanel";
 import { TabError } from "@/components/company/TabError";
 import { Gated, fieldPolicy } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
@@ -262,6 +263,8 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
 
       {stored && (
         <>
+          <TonePanel tone={calls.tone} policies={calls.policies} call={call} name={name} companyName={company.name} now={now} foot={foot(call)} />
+
           <OpeningRemarks data={calls} call={call} companySlug={company.slug} name={name} foot={foot(call)} />
 
           <Panel

@@ -835,6 +835,37 @@ export type RemarksChangeRow = {
   policy_label: string | null;
 };
 
+/**
+ * api.call_tone (0045): one row per published call that has a tone score (Spec 02B §5.7). Empty while ai.call_tone is hidden. The mean is
+ * on a -2 to +2 scale; the change fields are null where either call is held or the previous call is not published. No transcript text:
+ * the evidence quotes come through api.ai_outputs (content.evidence) and api.ai_citations.
+ */
+export type CallToneRow = {
+  company_slug: string;
+  call_slug: string;
+  fiscal_label: string;
+  period_end: string | null;
+  call_date: string | null;
+  filed_at: string | null;
+  exchange: string | null;
+  ai_output_id: number | null;
+  n: number | null;
+  mean: number | null;
+  sd: number | null;
+  opening_n: number | null;
+  opening_mean: number | null;
+  answers_n: number | null;
+  answers_mean: number | null;
+  prev_call_slug: string | null;
+  prev_fiscal_label: string | null;
+  delta: number | null;
+  se_delta: number | null;
+  change: "more_positive" | "more_negative" | "little_changed" | null;
+  held_reason: string | null;
+  rule_version: string;
+  policy_label: string | null;
+};
+
 /** api.call_figures (0029): a target (kind 'target') or a figure management stated (kind 'stated') on a call, with its quote's page. */
 export type CallFigureRow = {
   kind: "target" | "stated";
@@ -1007,6 +1038,7 @@ export type ApiDatabase = {
       earnings_calls: View<EarningsCallRow>;
       call_figures: View<CallFigureRow>;
       remarks_changes: View<RemarksChangeRow>;
+      call_tone: View<CallToneRow>;
       earnings_latest: View<EarningsListRow & UnattributedRow>;
       citation_pages: View<CitationPageRow>;
       call_guidance: View<CallGuidanceRow>;
