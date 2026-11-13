@@ -27,6 +27,8 @@ before it is sent and stopped at the run cap or the `ai_monthly_budget_usd` swit
 key or credits the task skips and sends nothing (#197).
 
 Checks, B blocking, W warning (counts and ids only):
+- (B) `feed`: every company's announcements came from NSE and at least one of its quarters has a results day, checked
+  before any file is read or AI is asked; a failure reads and writes nothing, so the last good rows stand;
 - (B) `documents`: every company-quarter resolved to a read or a held document (none left silently unresolved);
 - (W) `held`: the documents held, with the reason (not found, could not be cut, image bundle, unreadable), named;
 - (W) `extracted`: documents read, pages read (text and image), rows kept and filtered by reason, the AI cost;
@@ -113,6 +115,9 @@ class Harvest:
     stopped: str | None = None         # 'run_cap' | 'budget'
     unavailable: str | None = None     # 'no_key' | 'auth' | 'billing'
     companies: list = field(default_factory=list)
+    feed: dict[int, str] = field(default_factory=dict)        # entity_id → 'nse' (every NSE window answered) | 'bse' | 'none'
+    results_days: dict[int, int] = field(default_factory=dict)  # entity_id → quarters with a results day found
+    preflight: str | None = None       # why nothing was read or written (the feed check failed before any AI call)
 
 
 @register
@@ -122,6 +127,7 @@ class EquityKpiTables(Task):
 
     def __init__(self):
         self.claude: Client | None = None
+        self.feed: dict[int, str] = {}
 
     # ------------------------------------------------------------------ scheduling (hand-run only before 18 Nov)
     def due(self, db, workflow: str, now=None) -> Due:
@@ -218,7 +224,9 @@ class EquityKpiTables(Task):
                     if a is not None:
                         found.append(self._join(a, index, co))
                         category[(a.exchange, a.filing_key)] = str(r.get("desc") or "").strip() or None
+            self.feed[co.entity_id] = "nse" if ok and found else "none"
             if (not ok or not found) and co.bse_code:
+                self.feed[co.entity_id] = "bse"
                 brows, _bok, _problems = dc.bse_company(bse, co.bse_code, start, end)
                 for r in brows:
                     a = dc.norm_bse(r)
@@ -264,11 +272,18 @@ class EquityKpiTables(Task):
         except AIUnavailable as e:
             h.unavailable = e.reason
             return h                                      # nothing to read without AI (#197)
+        self.feed = {}
         anns = self.discover(ctx, h.companies, start, end)
+        h.preflight = self._preflight(h, anns, rules)
         for co in h.companies:
             if co.slug not in rules:
                 continue
             for label in kd.quarters(co.slug):
+                if h.preflight:                           # nothing is read, and the load writes nothing (#512, run 3)
+                    q = rules[co.slug].for_quarter(label)
+                    h.plans.append(DocPlan(co.entity_id, co.slug, label, kd.period_end(label), q.document_class, "held",
+                                           held_reason="not read: the feed check failed"))
+                    continue
                 if h.stopped:                             # every later quarter is still resolved, as held, so the
                     q = rules[co.slug].for_quarter(label)  # `documents` check passes and what was read (and spent) loads
                     h.plans.append(DocPlan(co.entity_id, co.slug, label, kd.period_end(label), q.document_class, "held",
@@ -278,6 +293,28 @@ class EquityKpiTables(Task):
                                  budget, month_spend + h.cost, h)
                 h.plans.append(plan)
         return h
+
+    def _preflight(self, h: Harvest, anns: dict[int, list[kd.Filing]], rules: dict[str, kd.Rule]) -> str | None:
+        """Before any file is read or any AI call is made: every company's announcements came from NSE (every window
+        answered: BSE's fallback asks only the call subcategories, so it can't carry a results filing), and at least one
+        of its quarters has a results day. Otherwise the run reads nothing and its blocking `feed` check fails, so the
+        last good rows stand (dev run 3, 14 Nov 2026: NSE answered nothing, every quarter came out held, and the load
+        replaced run 2's rows). Returns the reason, or None."""
+        h.feed = {co.entity_id: self.feed.get(co.entity_id, "none") for co in h.companies if co.slug in rules}
+        for co in h.companies:
+            if co.slug in rules:
+                h.results_days[co.entity_id] = sum(
+                    1 for label in kd.quarters(co.slug)
+                    if kd.results_day(anns.get(co.entity_id, []), rules[co.slug].for_quarter(label), label) is not None)
+        slug = {co.entity_id: co.slug for co in h.companies}
+        not_nse = sorted(slug[e] for e, src in h.feed.items() if src != "nse")
+        no_days = sorted(slug[e] for e in h.feed if not h.results_days.get(e))
+        problems = []
+        if not_nse:
+            problems.append("NSE didn't answer every window for " + ", ".join(not_nse))
+        if no_days:
+            problems.append("no results day found for " + ", ".join(no_days))
+        return "; ".join(problems) or None
 
     def _one(self, ctx, db, co, rule: kd.Rule, label: str, anns, prompt, schema, budget, spent_before, h: Harvest) -> DocPlan:
         pe = kd.period_end(label)
@@ -448,6 +485,8 @@ class EquityKpiTables(Task):
     # ------------------------------------------------------------------ load (one transaction)
     def load(self, tx, h: Harvest, task_run_id: int) -> int:
         n = 0
+        if h.preflight:
+            return 0                                      # nothing was read: the last good rows stand
         for plan in h.plans:
             n += self._rewrite_filters(tx, plan) if plan.reused else self._write(tx, plan)
         tx.execute("update ops.task_run set ai_cost_usd = %s where id = %s",
@@ -503,7 +542,12 @@ class EquityKpiTables(Task):
         kept = sum(1 for p in read for v in p.values if v.filter_status == fl.KEPT)
         filtered = Counter(v.filter_reason for p in read for v in p.values if v.filter_status == fl.FILTERED)
         empty = [p for p in read if not any(v.filter_status == fl.KEPT for v in p.values)]
+        slug = {c.entity_id: c.slug for c in h.companies}
         checks = [
+            Check("feed", h.preflight is None,
+                  (h.preflight + "; nothing read or written") if h.preflight else json.dumps(
+                      {"nse": sum(1 for v in h.feed.values() if v == "nse"), "companies": len(h.feed),
+                       "results_days": {slug[e]: n for e, n in sorted(h.results_days.items())}})),
             Check("documents", resolved == expected,
                   json.dumps({"expected": expected, "resolved": resolved, "read": len(read), "held": len(held),
                               "reused": sum(1 for p in read if p.reused)})),
