@@ -6,6 +6,8 @@ from __future__ import annotations
 import base64
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -16,12 +18,20 @@ from ft.equity.kpi import extraction as ex
 from ft.equity.kpi import filters as fl
 
 IST = ZoneInfo("Asia/Kolkata")
+FEED = Path(__file__).resolve().parents[2] / "data" / "fixtures" / "equity" / "calls"
+needs_feed = pytest.mark.skipif(not (FEED / "nse").exists(), reason="the saved files aren't checked out (data/fixtures)")
 
 
 class Ann:
-    def __init__(self, subject, file_name, disseminated, url="u", filing_key="k", exchange="NSE"):
+    def __init__(self, subject, file_name, disseminated, url="u", filing_key="k", exchange="NSE", category=None):
         self.subject, self.file_name, self.disseminated = subject, file_name, disseminated
-        self.url, self.filing_key, self.exchange = url, filing_key, exchange
+        self.url, self.filing_key, self.exchange, self.category = url, filing_key, exchange, category
+
+
+def results(day, company="Acme Limited", **kw):
+    """NSE's results submission on `day` (the filing that fixes the results day)."""
+    return Ann(f"{company} has submitted to the Exchange, the financial results for the period ended", "results.pdf",
+               day, category="Outcome of Board Meeting", **kw)
 
 
 # ----------------------------------------------------------------------------------- documents: window and periods
@@ -44,23 +54,107 @@ def test_window_and_previous_four():
 
 
 # ----------------------------------------------------------------------------------- documents: choosing and cutting
-def test_select_matches_subject_in_window_earliest_wins():
+def test_select_takes_the_results_day_press_release():
     rules = dc.load_rules()
     r = rules["tcs"]
     anns = [
-        Ann("Outcome of board meeting", "outcome.pdf", datetime(2026, 10, 9, 18, 0, tzinfo=IST)),   # no subject match
-        Ann("Press Release Q2 FY27", "pr.pdf", datetime(2026, 10, 9, 19, 5, tzinfo=IST)),           # match (earliest PR)
-        Ann("Press Release (revised)", "pr2.pdf", datetime(2026, 10, 15, 11, 0, tzinfo=IST)),       # later PR
-        Ann("Press Release", "old.pdf", datetime(2025, 10, 9, 19, 0, tzinfo=IST)),                  # a year early: out of window
+        Ann("Press Release", "notice.pdf", datetime(2026, 10, 1, 21, 42, tzinfo=IST)),      # before results day (dev run 2)
+        results(datetime(2026, 10, 9, 15, 30, tzinfo=IST)),                                # results day: 9 Oct
+        Ann("Press Release Q2 FY27", "pr.pdf", datetime(2026, 10, 9, 15, 58, tzinfo=IST)),  # the pilot document
+        Ann("Press Release (revised)", "pr2.pdf", datetime(2026, 10, 15, 11, 0, tzinfo=IST)),  # days later: not a candidate
+        Ann("Press Release", "old.pdf", datetime(2025, 10, 9, 19, 0, tzinfo=IST)),           # a year early: out of window
     ]
     got = dc.select(anns, r, "Q2 FY27")
     assert got is not None and got.file_name == "pr.pdf"
+    rd, cands = dc.candidates(anns, r, "Q2 FY27")
+    assert rd.isoformat() == "2026-10-09" and [a.file_name for a in cands] == ["pr.pdf"]
 
 
 def test_select_none_when_no_match():
     rules = dc.load_rules()
-    anns = [Ann("Investor Presentation", "ppt.pdf", datetime(2026, 10, 9, 19, 0, tzinfo=IST))]
+    anns = [results(datetime(2026, 10, 9, 15, 30, tzinfo=IST)),
+            Ann("Investor Presentation", "ppt.pdf", datetime(2026, 10, 9, 19, 0, tzinfo=IST))]
     assert dc.select(anns, rules["tcs"], "Q2 FY27") is None
+    # and with no results filing at all, there is no results day: the quarter is held, never guessed
+    assert dc.candidates([Ann("Press Release", "pr.pdf", datetime(2026, 10, 9, 19, 0, tzinfo=IST))],
+                         rules["tcs"], "Q2 FY27") == (None, [])
+
+
+def test_results_day_skips_notices_clarifications_and_intimations():
+    rules = dc.load_rules()
+    r = rules["infy"]
+    anns = [
+        Ann("Infosys Limited has informed the Exchange regarding 'Infosys to Announce First Quarter Results on July 17'",
+            "PR.pdf", datetime(2025, 7, 7, 15, 0, tzinfo=IST), category="Updates"),
+        Ann("Infosys Limited has informed the Exchange regarding Clarification on financial results", "Clarification_letter.pdf",
+            datetime(2025, 7, 8, 12, 3, tzinfo=IST), category="Clarification - Financial Results"),
+        Ann("Infosys Limited has informed the Exchange about Board Meeting to be held on 17-Jul-2025 to consider and approve "
+            "the financial results", "BM.pdf", datetime(2025, 7, 9, 10, 0, tzinfo=IST), category="Board Meeting Intimation"),
+        Ann("Infosys Limited has informed the Exchange about Earnings call on financial results", "call.pdf",
+            datetime(2025, 7, 10, 18, 0, tzinfo=IST), category="Analysts/Institutional Investor Meet/Con. Call Updates"),
+        results(datetime(2025, 7, 17, 16, 5, tzinfo=IST), "Infosys Limited"),
+    ]
+    assert dc.results_day(anns, r, "Q1 FY26").isoformat() == "2025-07-17"
+    assert [a.file_name for a in dc.candidates(anns, r, "Q1 FY26")[1]] == ["results.pdf"]
+
+
+def test_results_day_is_close_to_the_quarter_end():
+    """A missing Q4 results filing must not let the next quarter's results day (about 100 days on) stand in for it."""
+    rules = dc.load_rules()
+    anns = [results(datetime(2025, 7, 10, 15, 30, tzinfo=IST)),
+            Ann("Press Release", "q1.pdf", datetime(2025, 7, 10, 16, 0, tzinfo=IST))]
+    assert dc.results_day(anns, rules["tcs"], "Q4 FY25") is None            # 31 Mar + 101 days: past the 75-day limit
+    assert dc.results_day(anns, rules["tcs"], "Q1 FY26").isoformat() == "2025-07-10"
+
+
+def test_another_listed_companys_filing_is_never_taken():
+    """Dev run 2 took HDFC Life's board outcome (filed through HDFC Bank) for HDFC Bank's Q4 FY26."""
+    rules = dc.load_rules()
+    r = rules["hdfcbank"]
+    anns = [
+        Ann("HDFC Bank Limited has informed the Exchange regarding Outcome of Board Meeting held on April 16, 2026 - "
+            "audited financial results approved", "Outcome_of_BM-16APRIL2026_-_HDFC_Life.pdf",
+            datetime(2026, 4, 16, 16, 39, tzinfo=IST), category="Outcome of Board Meeting"),
+        results(datetime(2026, 4, 18, 15, 0, tzinfo=IST), "HDFC Bank Limited", url="hdfc"),
+    ]
+    rd, cands = dc.candidates(anns, r, "Q4 FY26")
+    assert rd.isoformat() == "2026-04-18" and [a.url for a in cands] == ["hdfc"]
+    # HDFC Bank names its own results outcome 'SEintimation…': the file name never rejects
+    own = results(datetime(2025, 10, 18, 14, 8, tzinfo=IST), "HDFC Bank Limited", url="own")
+    own.file_name = "HDFCBANK_18102025140719_SEintimationBMFinancialResults18102025.pdf"
+    assert [a.url for a in dc.candidates([own], r, "Q2 FY26")[1]] == ["own"]
+
+
+def test_preference_order_axis_press_release_before_results_statements():
+    rules = dc.load_rules()
+    r = rules["axisbank"]
+    day = datetime(2025, 7, 17, 15, 39, tzinfo=IST)
+    anns = [
+        Ann("Axis Bank Limited has submitted to the Exchange, the financial results for the period ended June 30, 2025",
+            "Signed_UFR_and_Audit_report_Q1FY26.pdf", day, category="Outcome of Board Meeting", url="ufr"),
+        Ann("Axis Bank Limited has informed the Exchange about Investor Presentation", "InvestorPresentation.pdf",
+            day.replace(hour=16, minute=30), category="Investor Presentation", url="ppt"),
+        Ann("Axis Bank Limited has informed the Exchange about Press Release", "InvestorPressReleaseSigned.pdf",
+            day.replace(hour=16, minute=45), category="Press Release", url="pr"),
+        Ann("Axis Bank Limited has informed the Exchange about Earnings call", "SE_Earningscall.pdf",
+            day.replace(hour=17), category="Analysts/Institutional Investor Meet/Con. Call Updates", url="call"),
+    ]
+    _rd, cands = dc.candidates(anns, r, "Q1 FY26")
+    assert [a.url for a in cands] == ["pr", "ppt"]                          # the results statements aren't a candidate
+
+
+def test_usable_needs_min_pages_and_the_cut():
+    rules = dc.load_rules()
+    icici = rules["icicibank"]
+    assert dc.usable(icici, "Q2 FY26", ["cover letter", "earnings call details"]) == ([], "2 pages, fewer than 10")
+    pages = ["cover"] + ["statement"] * 20 + ["ICICI Bank\nNews Release October 18, 2025", "table", "table",
+                                              "Except for the historical information"] + ["annex"] * 5
+    assert dc.usable(icici, "Q2 FY26", pages) == ([22, 23, 24], None)
+    assert dc.usable(icici, "Q2 FY26", ["statement"] * 12)[1].startswith("the start heading was not found")
+    # an image quarter isn't cut by text: every page is read (HDFC Bank)
+    hdfc = rules["hdfcbank"]
+    assert dc.usable(hdfc, "Q2 FY26", [""] * 24) == (list(range(1, 25)), None)
+    assert dc.usable(hdfc, "Q2 FY26", [""]) == ([], "1 page, fewer than 5")
 
 
 def test_hdfc_q3fy25_override_switches_to_own_filing():
@@ -339,6 +433,41 @@ def test_task_write_inserts_document_and_values_and_replaces():
         c.execute("delete from core.entity where id = %s", (eid,))
 
 
+@pytest.mark.db
+def test_a_reused_documents_changed_rows_are_updated_in_place():
+    """#512's fix round: a reused document keeps its document row and row numbers; only the re-filtered rows change."""
+    import psycopg
+    from conftest import dsn
+
+    from ft.jobs.tasks import equity_kpi_tables as t
+    admin = dsn("postgres")
+    with psycopg.connect(admin, autocommit=True) as c:
+        c.execute("delete from equity.kpi_value where document_id in (select id from equity.kpi_document where entity_id in (select id from core.entity where slug like 'zr-%'))")
+        c.execute("delete from equity.kpi_document where entity_id in (select id from core.entity where slug like 'zr-%')")
+        c.execute("delete from core.entity where slug like 'zr-%'")
+        eid = c.execute("""insert into core.entity (kind, slug, name, market, currency, is_published)
+                           values ('company','zr-hdfc','ZR HDFC','IN','INR',true) returning id""").fetchone()[0]
+    task = t.EquityKpiTables()
+    first = _read_plan(t, eid, "zr-hdfc", "Q2 FY26", [
+        (fl.Row("CASA ratio", None, "percent", Decimal("34.5"), "%", 2), Decimal("34.5"), fl.FILTERED, fl.TILE_UNCONFIRMED),
+        (fl.Row("Net profit growth", None, "percent_change", Decimal(12), "%", 3), Decimal(12), fl.FILTERED, fl.STATEMENT_TOTAL),
+    ])
+    with psycopg.connect(admin, autocommit=True) as c:
+        task._write(c, first)
+        doc = c.execute("select id from equity.kpi_document where entity_id = %s", (eid,)).fetchone()[0]
+        again = _read_plan(t, eid, "zr-hdfc", "Q2 FY26", [])
+        again.reused = True
+        again.refiltered = [t.Value(1, first.values[0].row, Decimal("34.5"), fl.KEPT, None)]
+        assert task._rewrite_filters(c, again) == 1
+        rows = c.execute("""select v.document_id, v.row_no, v.filter_status, v.filter_reason from equity.kpi_value v
+                             where v.document_id = %s order by v.row_no""", (doc,)).fetchall()
+        assert rows == [(doc, 1, "kept", None), (doc, 2, "filtered", "statement_total")]
+        assert task._rewrite_filters(c, _read_plan(t, eid, "zr-hdfc", "Q2 FY26", [])) == 0     # nothing changed: no write
+        c.execute("delete from equity.kpi_value where document_id = %s", (doc,))
+        c.execute("delete from equity.kpi_document where entity_id = %s", (eid,))
+        c.execute("delete from core.entity where id = %s", (eid,))
+
+
 # ----------------------------------------------------------------------------------- regressions from the first dev run (13 Nov)
 class _Http:
     def __init__(self):
@@ -415,5 +544,146 @@ def test_read_reaches_past_200_pages(monkeypatch):
 
 
 def test_the_run_cap_is_what_is_left_of_the_pilot():
+    """The pilot's $5 (pre-approval 2) less DA-10's $0.3864 and dev run 2's $0.6196 (13 Nov 2026), rounded down: no
+    single run can take the pilot past $5 (#512's fix round tightened it from $4.61)."""
     from ft.jobs.tasks import equity_kpi_tables as t
-    assert Decimal("4.61") == t.RUN_LIMIT_USD
+    assert Decimal("3.99") == t.RUN_LIMIT_USD <= Decimal(5) - Decimal("0.3864") - Decimal("0.6196")
+
+
+# ----------------------------------------------------------------------------------- the fix round (#512 part 2, 14 Nov)
+def test_an_image_only_document_gets_no_tile_check():
+    """Dev run 2 filtered every row of HDFC Bank's image quarters as tile_unconfirmed: no text table to confirm them."""
+    img = [ex.Page(n, image_base64="x", image_media_type="image/png") for n in (1, 2)]
+    mixed = [ex.Page(1, text="a table"), ex.Page(2, image_base64="x", image_media_type="image/png")]
+    assert ex.tile_pages(img) == frozenset() and ex.tile_pages(mixed) == frozenset({2})
+    rows = [fl.Row("CASA ratio", None, "percent", Decimal("34.5"), "%", 1),
+            fl.Row("Branches", None, "count", Decimal(9500), None, 2)]
+    out = ex.filter_rows(rows, img)
+    assert [e.filter_status for e in out] == [fl.KEPT, fl.KEPT]
+    # in a mixed document the image page's figure still needs a table match
+    out = ex.filter_rows([fl.Row("CASA ratio", None, "percent", Decimal("34.5"), "%", 2)], mixed)
+    assert (out[0].filter_status, out[0].filter_reason) == (fl.FILTERED, fl.TILE_UNCONFIRMED)
+
+
+class _Got:
+    def __init__(self, body):
+        self.body = body
+
+
+class _DocFetcher:
+    """A fetcher serving each candidate's body by URL (nothing stored); records the URLs asked."""
+    def __init__(self, bodies):
+        self.bodies, self.asked, self.db = bodies, [], None
+
+    def get(self, url, *, source, keep=None, allow=()):
+        self.asked.append(url)
+        return _Got(self.bodies[url])
+
+
+def _info(texts):
+    from ft.equity.calls import pdfs
+    return pdfs.PdfInfo(True, page_texts=list(texts), pages=len(texts), text_layer=True)
+
+
+def test_one_tries_candidates_in_order_and_takes_the_first_usable(monkeypatch):
+    """ICICI Bank: the results day's first candidate is too short; the next one holds the news release."""
+    from types import SimpleNamespace
+
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    day = datetime(2025, 10, 18, 14, 41, tzinfo=IST)
+    anns = [Ann("ICICI Bank Limited has submitted to the Exchange, the unaudited financial results", "a.pdf", day,
+                url="short", category="Outcome of Board Meeting"),
+            Ann("ICICI Bank Limited has informed the Exchange regarding Outcome of Board Meeting", "b.pdf",
+                day.replace(minute=54), url="full", category="Outcome of Board Meeting")]
+    texts = {b"%PDF-short": ["cover", "letter"],
+             b"%PDF-full": ["cover"] + ["statement"] * 12 + ["News Release", "table", "Except for the historical"]}
+    monkeypatch.setattr(t.pdfs, "is_pdf_bytes", lambda b: b.startswith(b"%PDF"))
+    monkeypatch.setattr(task, "_read", lambda body: _info(texts[body]))
+    monkeypatch.setattr(task, "_already_read", lambda *a: False)
+    sent = {}
+
+    def extract(pages, co, label, prompt, schema, budget, spent, h):
+        sent["pages"] = [p.page for p in pages]
+        return {14: [fl.Row("CASA ratio", None, "percent", Decimal("38.5"), "%", 14)]}, Decimal("0.01"), None
+    monkeypatch.setattr(task, "_extract", extract)
+    f = _DocFetcher({"short": b"%PDF-short", "full": b"%PDF-full"})
+    ctx = SimpleNamespace(fetcher=f)
+    h = t.Harvest()
+    plan = task._one(ctx, None, _Co(5, "icicibank"), dc.load_rules()["icicibank"], "Q2 FY26", anns, None, None,
+                     Decimal(25), Decimal(0), h)
+    assert f.asked == ["short", "full"] and plan.status == "read" and plan.source_url == "full"
+    assert plan.pages_used == sent["pages"] == [14, 15] and plan.page_count == 16
+    assert [v.filter_status for v in plan.values] == [fl.KEPT] and h.cost == Decimal("0.01")
+
+
+def test_one_holds_when_no_candidate_is_usable(monkeypatch):
+    from types import SimpleNamespace
+
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    day = datetime(2025, 10, 18, 14, 41, tzinfo=IST)
+    anns = [Ann("ICICI Bank Limited has submitted to the Exchange, the unaudited financial results", "a.pdf", day,
+                url="short", category="Outcome of Board Meeting")]
+    monkeypatch.setattr(t.pdfs, "is_pdf_bytes", lambda b: True)
+    monkeypatch.setattr(task, "_read", lambda body: _info(["cover", "letter"]))
+    f = _DocFetcher({"short": b"%PDF"})
+    plan = task._one(SimpleNamespace(fetcher=f), None, _Co(5, "icicibank"), dc.load_rules()["icicibank"], "Q2 FY26",
+                     anns, None, None, Decimal(25), Decimal(0), t.Harvest())
+    assert plan.status == "held" and plan.source_url == "short"
+    assert plan.held_reason == "results day 18 Oct 2025: no usable filing (1 tried: 2 pages, fewer than 10)"
+    none = task._one(SimpleNamespace(fetcher=f), None, _Co(5, "icicibank"), dc.load_rules()["icicibank"], "Q2 FY26",
+                     [], None, None, Decimal(25), Decimal(0), t.Harvest())
+    assert none.held_reason == "no results filing found in the announcements feed"
+
+
+class _StoredDb:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def execute(self, sql, params):
+        return SimpleNamespace(fetchall=lambda: self.rows)
+
+
+def test_a_reused_image_document_is_refiltered_without_ai(monkeypatch):
+    """HDFC Bank's image quarters keep their files (same SHA-256): their stored rows are re-filtered, not re-asked."""
+    from ft.jobs.tasks import equity_kpi_tables as t
+    stored = [(1, "CASA ratio", None, "percent", Decimal("34.5"), "%", 1, "filtered", "tile_unconfirmed"),
+              (2, "Net profit growth", None, "percent_change", Decimal(12), "%", 1, "filtered", "statement_total"),
+              (3, "Branches", None, "count", Decimal(9500), None, 2, "filtered", "tile_unconfirmed")]
+    plan = t.DocPlan(5, "hdfcbank", "Q2 FY26", dc.period_end("Q2 FY26"), "press_release", "read", pages_used=[1, 2],
+                     image_page_count=2, reused=True)
+    plan.values = values = t.EquityKpiTables()._refilter(_StoredDb(stored), plan, _info(["", ""]))
+    assert [(v.row_no, v.filter_status, v.filter_reason) for v in values] == [
+        (1, fl.KEPT, None), (2, fl.FILTERED, fl.STATEMENT_TOTAL), (3, fl.KEPT, None)]
+    assert [v.row_no for v in plan.refiltered] == [1, 3]                    # only the changed rows are rewritten
+    checks = {c.name: c for c in t.EquityKpiTables().checks(None, t.Harvest(plans=[plan], companies=[]), 1)}
+    assert '"rows_refiltered": 2' in checks["extracted"].detail and "1 of 1 read documents" in checks["empty"].detail
+
+
+@needs_feed
+def test_the_saved_feed_picks_the_results_outcome():
+    """On the saved NSE replies (1 Oct 2025 to 30 Sep 2026): ICICI Bank's results outcome, never its call notices (dev
+    run 2 held all eight ICICI quarters on 2-page notices); Infosys's outcome bundle, as before."""
+    import gzip
+    import json
+
+    from ft.equity.calls import discovery as disc
+    rules = dc.load_rules()
+    want = {("ICICIBANK", "icicibank"): {"Q2 FY26": "18 Oct 14:41", "Q3 FY26": "17 Jan 15:06", "Q4 FY26": "18 Apr 14:59",
+                                         "Q1 FY27": "18 Jul 14:23"},
+            ("INFY", "infy"): {"Q2 FY26": "16 Oct 16:06", "Q3 FY26": "14 Jan 16:05", "Q4 FY26": "23 Apr 17:01",
+                               "Q1 FY27": "23 Jul 16:20"}}
+    for (sym, slug), quarters in want.items():
+        with gzip.open(next((FEED / "nse").glob(f"nse_ann_{sym}_*.json.gz"))) as fh:
+            rows = json.loads(fh.read())
+        filings = []
+        for r in rows:
+            a = disc.norm_nse(r)
+            if a is not None:
+                filings.append(dc.Filing(a.exchange, a.filing_key, a.disseminated, a.subject, a.file_name, a.url,
+                                         r.get("desc")))
+        for label, first in quarters.items():
+            _rd, cands = dc.candidates(filings, rules[slug], label)
+            assert cands and cands[0].disseminated.strftime("%d %b %H:%M") == first, (slug, label)
+            assert not any("call" in (c.subject or "").lower() for c in cands)

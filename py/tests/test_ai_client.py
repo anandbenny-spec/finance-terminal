@@ -88,6 +88,18 @@ def test_input_hash_covers_everything_that_changes_the_output():
                 req(instruction="Go again.").input_sha256, req(model="claude-sonnet-5-5").input_sha256}) == 5
 
 
+def test_a_text_request_hashes_as_before_image_sources():
+    """#512 (regression): PR #522 put `image_media_type` (None) into every source's part of the hash, so every text
+    request of every task hashed differently from the same request before it, and #511's open retry batch was collected
+    as stale. A text request's hash is pinned to its value before #522 (computed from that commit's client.py)."""
+    assert req().input_sha256.hex() == "8e1584ac186406fa6b32599d720601d8640beef915ed5471ae31ec5255f635ac"
+    img = Request("doc_summary", Prompt("doc_summary", "v1", "Summarise."),
+                  (Source(7, "", "page 1", image_base64="AAAA", image_media_type="image/png"),), "Go.")
+    other = Request("doc_summary", Prompt("doc_summary", "v1", "Summarise."),
+                    (Source(7, "", "page 1", image_base64="AAAA", image_media_type="image/jpeg"),), "Go.")
+    assert img.input_sha256 != other.input_sha256                     # an image source still hashes its media type
+
+
 def test_prompts_load_from_the_repo_without_their_notes():
     for task in ("doc_summary", "statement_diff_summary"):
         p = load_prompt(task)

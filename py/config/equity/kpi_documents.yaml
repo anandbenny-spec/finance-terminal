@@ -8,20 +8,43 @@
 #   document_class  press_release | fact_sheet | data_sheet  (stored on equity.kpi_document)
 #   source          own_filing  (its own announcement) | bundle  (cut from the results-outcome filing)
 #   subject         a regex the announcement subject or attachment name must match (case-insensitive)
+#   prefer          regexes in order: a candidate matching an earlier one is tried first (then the earliest filed)
+#   reject          a regex for another listed company's filings made through this one (subject, category or file name)
+#   min_pages       a candidate with fewer pages isn't the pilot document (a cover letter, a call notice)
 #   cut             null, or {start, end}: the release/fact-sheet pages are from the first page matching `start` to the
 #                   page before the first page matching `end` (end omitted = to the last page). Matched on a page's text.
 #   image_quarters  fiscal labels (e.g. 'Q3 FY25') read as page images, not text (no usable text layer; DA-10 K2)
 #   overrides       per-fiscal-label overrides of any field above (HDFC Bank's separate Q3 FY25 "Press Release" filing)
 #
+# **Which filing (#512's fix round, 14 Nov 2026).** The first dev run took the nearest matching filing in a 120-day window,
+# which picked press releases filed before results day, a clarification letter, call notices and HDFC Life's board outcome.
+# Now the quarter's **results day** is fixed first: the earliest filing within 75 days of the quarter end that names
+# results and is an outcome, a results submission or an approval (`results_day`), and isn't rejected. The candidates are
+# the filings of that day and the next that match the company's `subject` and aren't rejected, tried in `prefer` order;
+# the first with at least `min_pages` pages whose cut finds its start heading is the pilot document. None passing = held.
+#
 # The window and the companies are fixed in code (ft/equity/kpi/documents.py): the 7 companies are DA-10's eight IT and
 # bank names less Wipro (not in the company master); the quarters run Q3 FY25 to Q2 FY27 (TCS from Q2 FY25), so each
 # flagged quarter has its previous four documents.
+
+# What marks the results filing (on the subject and NSE's category, e.g. "Outcome of Board Meeting"): it names results,
+# and it is an outcome, NSE's "has submitted to the Exchange, the … financial results", a results update or an approval.
+results_day:
+  names: '(?i)\bresults?\b'
+  kind: '(?i)outcome|submitted\s+to\s+the\s+exchange|financial\s+result\s+updates?|\bapproved\b'
+
+# Never taken, as the results filing or as a candidate (subject and NSE's category; not the file name, since HDFC Bank
+# names its results outcome "SEintimation…"): call and media-call notices, clarifications, board-meeting intimations,
+# "to announce" notices, newspaper copies, analyst-meet updates.
+reject: '(?i)earnings\s*call|con(ference)?\.?\s*call|call\s+with\s+(the\s+)?media|clarification|to\s+announce|board\s+meeting\s+intimation|intimation\s+of\s+(the\s+)?board\s+meeting|prior\s+intimation|meeting\s+to\s+be\s+held|newspaper|analysts?\s*/|investor\s+meet'
 
 companies:
   tcs:
     document_class: press_release
     source: own_filing
     subject: '(?i)press\s*release'
+    prefer: ['(?i)press\s*release']
+    min_pages: 8                     # DA-10 K3: 12 to 16 pages; the 1 Apr 2025 and 1 Oct 2026 notices were 3 and 4
     cut: null
     image_quarters: []
 
@@ -29,6 +52,8 @@ companies:
     document_class: fact_sheet
     source: bundle
     subject: '(?i)financial\s*results|outcome|fact\s*sheet'
+    prefer: ['(?i)fact\s*sheet', '(?i)financial\s*results', '(?i)outcome']
+    min_pages: 2                     # the fact sheet is 2 to 6 pages; its bundle 186 to 380 (DA-10 K3)
     cut: {start: '(?i)fact\s*sheet', end: '(?i)safe\s*harbor|about\s+infosys|forward[-\s]*looking'}
     image_quarters: []
 
@@ -36,13 +61,18 @@ companies:
     document_class: press_release
     source: own_filing
     subject: '(?i)press\s*release|investor\s*release'
+    prefer: ['(?i)investor\s*release', '(?i)press\s*release']
+    min_pages: 15                    # 30 to 40 pages (DA-10 K3)
     cut: null
     image_quarters: []
 
   hdfcbank:
     document_class: press_release
     source: bundle
-    subject: '(?i)outcome|financial\s*results|press\s*release'
+    subject: '(?i)outcome|financial\s*results|press\s*release|result'
+    prefer: ['(?i)press\s*release', '(?i)financial\s*results|result', '(?i)outcome']
+    reject: '(?i)HDFC[\s_-]*(Life|ERGO|AMC|Asset|Securities|Credila|Capital|Sales)|HDB[\s_-]*Financial'
+    min_pages: 5                     # the separate release is 7 pages, the outcomes 16 to 32; the call letter is 1
     cut: {start: '(?i)press\s*release|financial\s*results\s+for', end: '(?i)safe\s*harbor'}
     image_quarters: ['Q3 FY25', 'Q2 FY26', 'Q4 FY26', 'Q1 FY27']
     overrides:
@@ -54,6 +84,9 @@ companies:
     document_class: press_release
     source: bundle
     subject: '(?i)outcome|financial\s*results|news\s*release'
+    prefer: ['(?i)news\s*release', '(?i)financial\s*results', '(?i)outcome']
+    reject: '(?i)ICICI[\s_-]*(Prudential|Pru\b|Lombard|Securities|Venture|Home\s*Finance|Bank\s*UK|Bank\s*Canada)'
+    min_pages: 10                    # the outcome is 27 to 38 pages; the call notices 2 (DA-10 K3; dev run 2)
     cut: {start: '(?i)news\s*release', end: '(?i)except\s+for\s+the\s+historical|safe\s*harbor'}
     image_quarters: []
 
@@ -61,12 +94,19 @@ companies:
     document_class: press_release
     source: own_filing
     subject: '(?i)press\s*release'
+    prefer: ['(?i)press\s*release']
+    reject: '(?i)SBI[\s_-]*(Life|Card|Funds|General|Mutual|Capital|Pension)'
+    min_pages: 2                     # 3 pages: the cover letter and the 2-page release (DA-10 K3)
     cut: {start: '(?i)key\s*summary|press\s*release', end: null}
     image_quarters: []
 
   axisbank:
     document_class: press_release
     source: own_filing
-    subject: '(?i)press\s*release|financial\s*results|outcome'
+    subject: '(?i)press\s*release|presentation'
+    prefer: ['(?i)press\s*release', '(?i)presentation']
+    reject: '(?i)Max[\s_-]*Life|Axis[\s_-]*(Finance|Securities|Capital|Mutual|AMC|Trustee|Pension|Max)'
+    min_pages: 30                    # one file with the investor presentation, 76 to 88 pages (DA-10 §2); the results
+                                     # statements alone (14 to 20 pages) are not the pilot document
     cut: {start: '(?i)press\s*release|^\s*axis\s+bank', end: '(?i)safe\s*harbor'}
     image_quarters: []

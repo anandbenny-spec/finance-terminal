@@ -339,9 +339,18 @@ class Request:
                 "prompt_sha256": self.prompt.sha256, "route": self.spec.route, "effort": self.spec.effort,
                 "max_tokens": self.spec.max_tokens, "instruction": self.instruction, "note": self.note,
                 "schema": self.schema,
-                "sources": [{"document_id": s.document_id, "seg_start": s.seg_start, "title": s.title,
-                             "context": s.context, "text_sha256": s.text_sha256,
-                             "image_media_type": s.image_media_type} for s in self.sources]}
+                "sources": [self._canonical_source(s) for s in self.sources]}
+
+    @staticmethod
+    def _canonical_source(s: Source) -> dict:
+        """One source's part of the input hash. `image_media_type` is added for an image source only, so a text request
+        hashes exactly as it did before image sources existed (#512: PR #522 added the key to every source, which changed
+        every task's hash, so an open batch's replies were collected as stale and every retry restarted at attempt 1)."""
+        out = {"document_id": s.document_id, "seg_start": s.seg_start, "title": s.title, "context": s.context,
+               "text_sha256": s.text_sha256}
+        if s.is_image:
+            out["image_media_type"] = s.image_media_type
+        return out
 
     @property
     def input_sha256(self) -> bytes:
