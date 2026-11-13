@@ -96,9 +96,9 @@ insert into core.event_reaction (event_id, entity_id, window_key, source_id, pre
 
 -- C: a held factor (a split, ex 2025-07-10); D: a dividend (ex 2025-08-02)
 insert into core.event (event_type, entity_id, slug, title, starts_on, status, is_published)
-  select 'corporate_action', id, 'r44-split-c', 'r44', '2025-07-10', 'effective', true from core.entity where slug = 'r44-c'
+  select 'corporate_action', id, 'r44-split-c', 'r44', date '2025-07-10', 'effective', true from core.entity where slug = 'r44-c'
   union all
-  select 'corporate_action', id, 'r44-div-d', 'r44', '2025-08-02', 'effective', true from core.entity where slug = 'r44-d';
+  select 'corporate_action', id, 'r44-div-d', 'r44', date '2025-08-02', 'effective', true from core.entity where slug = 'r44-d';
 insert into equity.corporate_action (event_id, kind, ex_date, subject, exchange)
   select id, case when slug = 'r44-split-c' then 'split' else 'dividend' end, starts_on, 'r44', 'NSE'
     from core.event where slug in ('r44-split-c','r44-div-d');
