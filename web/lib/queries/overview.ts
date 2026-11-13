@@ -154,5 +154,6 @@ export async function readPolicyOverview(): Promise<PolicyOverview> {
     }),
     attempt("statement changes", () => readStatementChanges(db)),
   ]);
+  if ([fieldPolicy, history, fed, rbi, rates, reactions, longRates, changes].some((part) => !part.ok)) cacheLife("failedRead");
   return { readAt, fieldPolicy, history, fed, rbi, rates, reactions, longRates, changes };
 }

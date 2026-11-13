@@ -130,6 +130,7 @@ export async function readSectorPage(): Promise<SectorPageData> {
     ]);
     return { ok: true, readAt, stats, groups: peerGroupsOf(screener), policies, niftyAttribution };
   } catch (error) {
+    cacheLife("failedRead");
     console.error(`[rate] sector view read failed: ${error instanceof Error ? error.message : String(error)}`);
     return { ok: false, readAt };
   }

@@ -83,6 +83,7 @@ export async function readDocumentPage(id: number): Promise<DocumentPage> {
       return { cited: output ? { output, citations: await readCitations(db, output.id) } : null };
     }),
   ]);
+  if ([document, chunks, fieldPolicy, summary].some((part) => !part.ok)) cacheLife("failedRead");
   return { readAt, document, chunks, fieldPolicy, summary };
 }
 
@@ -97,8 +98,10 @@ export async function readSpanCitations(
   cacheTag("documents", `document-${id}`);
   const db = publicClient();
   if (!db) return failed(`document ${id} span`, UNCONFIGURED);
-  return attempt(`document ${id} span ${start}-${end}`, async () => {
+  const read = await attempt(`document ${id} span ${start}-${end}`, async () => {
     const citations = await readCitationsOfSpan(db, id, [start, end]);
     return { citations, outputs: await readOutputs(db, citations.map((c) => c.ai_output_id)) };
   });
+  if (!read.ok) cacheLife("failedRead");
+  return read;
 }
