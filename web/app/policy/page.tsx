@@ -16,6 +16,7 @@ import { RateStats } from "@/components/policy/RateStats";
 import { ReactionsPanel } from "@/components/policy/ReactionsPanel";
 import { LongRatesPanel } from "@/components/policy/LongRatesPanel";
 import { RatesPanel } from "@/components/policy/RatesPanel";
+import { VotesOverTimePanel } from "@/components/policy/VotesOverTime";
 import { DAILY_TASKS, FEEDS, type TaskKey } from "@/lib/feeds";
 import { formatDate } from "@/lib/format";
 import { buildChangeStrips, stripScale } from "@/lib/policy/changestrip";
@@ -23,6 +24,7 @@ import { historyRows } from "@/lib/policy/decisions";
 import { pressReleaseLabel } from "@/lib/policy/document";
 import { reactionRows, reactionSources } from "@/lib/policy/reactions";
 import { POLICY_SECTIONS } from "@/lib/policy/sections";
+import { votesOverTime, votesOverTimeShown } from "@/lib/policy/votes-over-time";
 import { readPolicyOverview } from "@/lib/queries/overview";
 import { POLICY_START } from "@/lib/queries/policy";
 import { readFreshness, readNextMeetings } from "@/lib/queries/shell";
@@ -53,6 +55,7 @@ export default async function PolicyPage() {
   const pageFresh = panelFreshness(freshness, allTasks, null, now, DAILY_TASKS);
   const stanceLabel = policies?.find((p) => p.field_key === "ai.stance_extraction" && p.status === "labelled")?.label ?? null;
   const rbiDoc = rbi?.document;
+  const history = o.history.ok ? o.history : null;
   const strips = o.changes.ok && o.history.ok ? buildChangeStrips(o.history.decisions, o.changes.documents, o.changes.diffs) : null;
 
   return (
@@ -159,6 +162,29 @@ export default async function PolicyPage() {
           )}
         </PanelGrid>
       </Section>
+
+      {votesOverTimeShown(policies) && (
+        // Hidden until Anand flips `site.votes_over_time` (#508): with no row nothing here renders or reads.
+        <Section id="votes-over-time" title="How members voted over time">
+          <PanelGrid>
+            {history ? (
+              (["Fed", "RBI"] as const).map((bank) => {
+                const data = votesOverTime(bank, history.decisions, history.votes);
+                return (
+                  <VotesOverTimePanel
+                    key={bank}
+                    data={data}
+                    refresh={FEEDS.policyHistory}
+                    footer={foot([bank === "Fed" ? fedSource : rbiSource], FEEDS.policyHistory, data.latest)}
+                  />
+                );
+              })
+            ) : (
+              <ErrorPanel title="How members voted over time" id="panel-votes-over-time" refresh={FEEDS.policyHistory} />
+            )}
+          </PanelGrid>
+        </Section>
+      )}
 
       <Section {...POLICY_SECTIONS.history}>
         <PanelGrid>
