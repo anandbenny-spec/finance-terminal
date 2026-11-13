@@ -162,6 +162,12 @@ def marked_text(call: CallDoc) -> str:
     return "".join(out)
 
 
+# A prompt version's `max_tokens` where it isn't the task's (16,000; client.TASKS). v5 (#511): its first dev run stopped at
+# 16,000 on 68 of 294 calls (the longest: v1's published replies on those calls already reached about 11,400 tokens at the median),
+# so v5 has twice the headroom. Only the ceiling changes; the reply is billed for the tokens it uses.
+MAX_TOKENS_OF = {"v5": 32_000}
+
+
 def guidance_request(call: CallDoc, prompt: Prompt, schema: dict, *, note: str | None = None) -> Request:
     if call.fy_end_month is None or not 1 <= call.fy_end_month <= 12:
         raise ValueError(f"{call.title}: the fiscal-year end month isn't known")
@@ -171,7 +177,8 @@ def guidance_request(call: CallDoc, prompt: Prompt, schema: dict, *, note: str |
     instruction = (f"Extract the targets and the stated figures from the earnings call above ({call.title}), following the "
                    f"rules. {call.company}'s fiscal year ends in {MONTHS[call.fy_end_month - 1]}. The call date is "
                    f"{_when(call.day)}.")
-    return Request(TASK, prompt, (src,), instruction, schema=schema, note=_note(note))
+    return Request(TASK, prompt, (src,), instruction, schema=schema, note=_note(note),
+                   max_tokens=MAX_TOKENS_OF.get(prompt.version))
 
 
 # ---------------------------------------------------------------------------------------------- periods

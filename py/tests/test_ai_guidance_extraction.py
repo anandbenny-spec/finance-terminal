@@ -733,3 +733,15 @@ def test_stated_figures_repeating_the_same_metric_period_and_basis_are_duplicate
 def test_the_reason_phrase_table_matches_what_check_writes():
     (phrase,) = ge.REASON_PHRASES["format"]
     assert re.search(phrase, check("not json", one(GROWTH), METRICS).reasons()[0], re.IGNORECASE)
+
+
+def test_a_v5_request_has_32000_max_tokens_and_a_v1_request_keeps_the_tasks_16000_and_its_input_hash():
+    # #511: v5's own ceiling (MAX_TOKENS_OF). v1's requests are built as before, so production's stay unchanged.
+    call = doc((RAO, "management", GROWTH))
+    v1 = ge.guidance_request(call, PROMPT, SCHEMA)
+    v5 = ge.guidance_request(call, load_prompt(ge.TASK, "v5"), load_schema(ge.TASK, "v5"))
+    assert v1.max_tokens is None and v1.spec.max_tokens == 16_000
+    assert v5.max_tokens == 32_000 and v5.spec.max_tokens == 32_000
+    assert v5.params()["max_tokens"] == 32_000 and v1.params()["max_tokens"] == 16_000
+    same = ge.guidance_request(call, PROMPT, SCHEMA)
+    assert v1.input_sha256 == same.input_sha256 != v5.input_sha256
