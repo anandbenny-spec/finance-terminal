@@ -6,6 +6,7 @@
 // accessible name is that visible word. The top bar is sticky, so the button stays in view while the page scrolls.
 import { Menu } from "lucide-react";
 import { Suspense, useState } from "react";
+import { tourHoldsFocus } from "@/components/shell/GuidedTour";
 import { NavLinks, NavList } from "@/components/shell/Nav";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -21,7 +22,13 @@ export function MobileNav() {
           Menu
         </Button>
       </SheetTrigger>
-      <SheetContent side="left" closeLabel="Close menu">
+      <SheetContent
+        side="left"
+        closeLabel="Close menu"
+        onCloseAutoFocus={(e) => {
+          if (tourHoldsFocus(document.activeElement)) e.preventDefault(); // "Take the tour" closed the drawer: the step keeps focus (#494)
+        }}
+      >
         <div className="flex h-(--topbar-h) shrink-0 items-center border-b border-line px-4">
           <SheetTitle>Menu</SheetTitle>
         </div>
