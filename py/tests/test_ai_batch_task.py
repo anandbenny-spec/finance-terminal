@@ -230,9 +230,9 @@ def test_decision_day_publishes_cited_summaries_and_embeddings_in_real_time():
     assert [b["messages"][0]["content"][0]["title"] for b in fake.requests] == [
         "FOMC statement, 14 Mar 2046", "Previous FOMC statement, 24 Jan 2046"]
     got = outputs(new)
-    assert [(g[0], g[1], g[3], g[5], g[6]) for g in got] == [   # a new decision gets the current versions (v9: #445)
+    assert [(g[0], g[1], g[3], g[5], g[6]) for g in got] == [   # a new decision gets the current versions (v10: #445)
         ("doc_summary", "published", 3, "v1", "claude-haiku-5-5"),
-        ("statement_diff_summary", "published", 3, "v9", "claude-sonnet-5-5")]
+        ("statement_diff_summary", "published", 3, "v10", "claude-sonnet-5-5")]
     assert all(g[4] > 0 for g in got) and r["cost"] > 0                      # every call's cost; the run's total
     assert outputs(old) == [] and [x[:2] for x in requests(new)] == [
         ("doc_summary", "succeeded"), ("statement_diff_summary", "succeeded")]
@@ -455,7 +455,7 @@ def test_a_new_prompt_version_supersedes_the_published_output(monkeypatch):
     monkeypatch.setattr(ai_batch, "load_prompt", v2)
     again(task([s0, s1], fake), date(2047, 12, 10), decision_day(date(2047, 12, 10), 30))
     got = [(g[0], g[1], g[5]) for g in outputs(new)]
-    assert got == [("doc_summary", "superseded", "v1"), ("statement_diff_summary", "superseded", "v9"),   # v9: #445
+    assert got == [("doc_summary", "superseded", "v1"), ("statement_diff_summary", "superseded", "v10"),   # v10: #445
                    ("doc_summary", "published", "v2"), ("statement_diff_summary", "published", "v2")]
     assert as_anon("select count(*) from api.ai_outputs where document_id = %s", new) == [(2,)]
 
@@ -469,7 +469,7 @@ def test_a_new_decisions_what_changed_is_asked_with_the_quotation_mark_rule():
     (diff,) = [b for b in fake.requests if len(b["messages"][0]["content"]) > 2]     # two documents and the instruction
     assert "double quotation marks" in diff["system"] and "don't repeat the sentence it came from" in diff["system"]
     assert [(g[0], g[1], g[5]) for g in outputs(new)] == [("doc_summary", "published", "v1"),
-                                                         ("statement_diff_summary", "published", "v9")]
+                                                         ("statement_diff_summary", "published", "v10")]
 
 
 # ---------------------------------------------------------------------------------------------- the Batch API (B7.2)
@@ -1148,11 +1148,11 @@ def sent(fake: FakeClaude) -> list[dict]:
 def test_older_diff_summaries_move_to_the_current_version_only_through_the_rerun_and_each_target_is_sent_once(
         monkeypatch):
     slugs, (old, new) = published_with_v1(monkeypatch, [date(2068, 1, 25), date(2068, 3, 14)])
-    # Merging v9 changes nothing by itself: a scheduled run finds every target answered (v1, pinned) and sends nothing.
+    # Merging v10 changes nothing by itself: a scheduled run finds every target answered (v1, pinned) and sends nothing.
     quiet = FakeClaude(["ok"])
     assert daily(task(slugs, quiet), datetime(2069, 1, 2, 12, tzinfo=UTC)) == 0
     assert quiet.create_calls == 0 and last_run()["rows"] == 0
-    # The re-run: this task's older outputs only, with the current version (v9); no other target, no embeddings.
+    # The re-run: this task's older outputs only, with the current version (v10); no other target, no embeddings.
     fake, voyage = FakeClaude(["ok"]), FakeVoyage()
     assert backfill(task(slugs, fake, voyage), datetime(2069, 1, 3, 12, tzinfo=UTC), monkeypatch, "all") == 0
     r = last_run()
@@ -1161,13 +1161,13 @@ def test_older_diff_summaries_move_to_the_current_version_only_through_the_rerun
     assert "double quotation marks" in body["system"] and len(body["messages"][0]["content"]) > 2
     assert voyage.calls == []
     got = [(g[0], g[1], g[5]) for g in outputs(new)]
-    assert sorted(got) == [("doc_summary", "published", "v1"), ("statement_diff_summary", "published", "v9"),
+    assert sorted(got) == [("doc_summary", "published", "v1"), ("statement_diff_summary", "published", "v10"),
                            ("statement_diff_summary", "superseded", "v1")]
     assert [(g[0], g[1]) for g in outputs(old)] == [("doc_summary", "published")]
     rerun = json.loads(r["checks"]["rerun"]["detail"])
     assert r["checks"]["rerun"]["passed"] and (rerun["meetings"], rerun["older"], rerun["targets"]) == ("all", 1, 1)
     assert rerun["outcomes"] == {"published": 1} and rerun["rejected_documents"] == []
-    assert visible_diff_version(new) == "v9"
+    assert visible_diff_version(new) == "v10"
     # Once: the same re-run again sends nothing, and neither does a scheduled run.
     again_fake = FakeClaude(["ok"])
     assert backfill(task(slugs, again_fake), datetime(2069, 1, 4, 12, tzinfo=UTC), monkeypatch, "all") == 0
@@ -1183,7 +1183,7 @@ def test_a_rerun_reply_rejected_twice_leaves_the_old_output_published_and_is_nev
     r = last_run()
     assert fake.create_calls == 2                                       # the first reply, then its retry, in one run
     diffs = [(g[1], g[5]) for g in outputs(new) if g[0] == "statement_diff_summary"]
-    assert diffs == [("published", "v1"), ("rejected", "v9"), ("rejected", "v9")]
+    assert diffs == [("published", "v1"), ("rejected", "v10"), ("rejected", "v10")]
     assert not r["checks"]["rerun"]["passed"]
     assert json.loads(r["checks"]["rerun"]["detail"])["rejected_documents"] == [new]
     assert visible_diff_version(new) == "v1"
@@ -1206,7 +1206,7 @@ def test_a_rerun_can_name_its_meetings_and_an_unknown_meeting_stops_it_before_an
     assert backfill(task(slugs, fake), datetime(2071, 1, 3, 12, tzinfo=UTC), monkeypatch, slugs[2]) == 0
     assert len(sent(fake)) == 1 and json.loads(last_run()["checks"]["rerun"]["detail"])["meetings"] == [slugs[2]]
     assert [(g[1], g[5]) for g in outputs(last) if g[0] == "statement_diff_summary"] == [("superseded", "v1"),
-                                                                                       ("published", "v9")]
+                                                                                       ("published", "v10")]
     assert [(g[1], g[5]) for g in outputs(mid) if g[0] == "statement_diff_summary"] == [("published", "v1")]
     # A re-run is a backfill's: a daily run that somehow has the variable set stops before sending.
     monkeypatch.setenv(ai_batch.RERUN_ENV, "all")
@@ -1244,8 +1244,8 @@ def test_the_current_version_asks_sonnet_and_a_reply_quoting_words_its_bullet_do
     assert backfill(task(slugs, fake), datetime(2073, 1, 3, 12, tzinfo=UTC), monkeypatch, "all") == 0
     assert fake.create_calls == 2 and [b["model"] for b in sent(fake)] == ["claude-sonnet-5-5"] * 2
     diffs = [(g[1], g[5], g[6]) for g in outputs(new) if g[0] == "statement_diff_summary"]
-    assert diffs == [("published", "v1", "claude-haiku-5-5"), ("rejected", "v9", "claude-sonnet-5-5"),
-                     ("rejected", "v9", "claude-sonnet-5-5")]
+    assert diffs == [("published", "v1", "claude-haiku-5-5"), ("rejected", "v10", "claude-sonnet-5-5"),
+                     ("rejected", "v10", "claude-sonnet-5-5")]
     reasons_ = [g[2] for g in outputs(new) if g[1] == "rejected"]
     assert all("quoted words not in its cited passages" in x and "Uncertainty about the economic outlook" in x
                for x in reasons_)
@@ -1259,5 +1259,5 @@ def test_the_current_version_publishes_when_each_bullet_cites_what_it_quotes(mon
     assert backfill(task(slugs, fake), datetime(2073, 1, 4, 12, tzinfo=UTC), monkeypatch, "all") == 0
     assert last_run()["status"] == "success", last_run()["error"]
     assert [(g[1], g[5], g[6]) for g in outputs(new) if g[0] == "statement_diff_summary"] == [
-        ("superseded", "v1", "claude-haiku-5-5"), ("published", "v9", "claude-sonnet-5-5")]
-    assert visible_diff_version(new) == "v9"
+        ("superseded", "v1", "claude-haiku-5-5"), ("published", "v10", "claude-sonnet-5-5")]
+    assert visible_diff_version(new) == "v10"

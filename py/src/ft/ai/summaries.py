@@ -25,6 +25,8 @@ passages they cite.
   (`DIFF_MODEL_OF`).
 - From v8 on (#445, round 7; `strict_copies`, `check_repeats`): only a copy that stands as a whole sentence comes out, and
   every other copy goes in quotation marks; and a bullet that repeats a stretch of its own words fails (`repeat_problem`).
+- From v10 on (#445, round 9; `check_ends`): a bullet that doesn't end as a sentence ends fails (`end_problem`). v10 runs at
+  effort medium (`DIFF_EFFORT_OF`).
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
 (`policy.ai_batch`). The database checks the published output's citations again at commit (Architecture 01 §1.4).
@@ -44,8 +46,11 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # round 6; Anand's decision of 12 Nov 2026, 22:36 IST): the judge failed Haiku's round 5 (v6) on 7 of 10 targets, mostly on
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
-DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7);
-# v9: v8 plus three rules (round 8)
+DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET}   # v8: v7's text, marking the copies rule's
+# revision (round 7); v9: v8 plus three rules (round 8); v10: v9 plus a rule on citation carriers (round 9).
+# The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
+# its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
+DIFF_EFFORT_OF = {"v10": "medium"}
 _MARK = re.compile(r"^[ \t]*(?:[-*•–—]|\d{1,2}[.)])[ \t]+")
 
 
@@ -171,7 +176,7 @@ def diff_summary_request(new: Doc, old: Doc, segments: dict, prompt: Prompt, *, 
                    f"{redline_text(segments, old.text, new.text)}\n\n"
                    f"In {lo} to {hi} bullets, explain what changed, following the rules.")
     return Request("statement_diff_summary", prompt, sources, instruction, model=DIFF_MODEL_OF.get(prompt.version),
-                   note=_note(note))
+                   effort=DIFF_EFFORT_OF.get(prompt.version), note=_note(note))
 
 
 # ---------------------------------------------------------------------------------------------- checking a reply
@@ -278,18 +283,19 @@ REASON_PHRASES: dict[str, tuple[str, ...]] = {
     "citation": (r"no verified citation", r"quoted words not in its cited passages"),
     "numbers": (r"numbers not in its cited passages",),
     "format": (r"text outside the bullets", r"no bullets \(each bullet", r"\d+ bullets, not \d+ to \d+",
-               r"an unclosed quotation mark", r"repeats its own words"),
+               r"an unclosed quotation mark", r"repeats its own words", r"doesn't end as a sentence ends"),
 }
 
 
 def verify_bullet(body: str, cites: list, sources: tuple[Source, ...], mapping: Counter, *,
                   changed: dict[int, list[tuple[int, int]]] | None = None,
-                  full_text: dict[int, str] | None = None, quotes: bool = False, repeats: bool = False) -> Bullet:
+                  full_text: dict[int, str] | None = None, quotes: bool = False, repeats: bool = False,
+                  ends: bool = False) -> Bullet:
     """One bullet against our copies of the documents: each citation mapped into them (`citations.map_api_citation`),
     then the bullet kept only with a verified citation and only figures from its cited passages. `mapping` counts how
     the citations mapped. `changed`: for statement_diff_summary, each document's changed spans. `quotes`: also only
     quotations from its cited passages (`quote_problem`; statement_diff_summary from v7 on). `repeats`: and no stretch of
-    its own words twice (`repeat_problem`; from v8 on)."""
+    its own words twice (`repeat_problem`; from v8 on). `ends`: and it ends as a sentence ends (`end_problem`; v10 on)."""
     b = Bullet(body)
     seen = set()
     passages = []
@@ -327,6 +333,8 @@ def verify_bullet(body: str, cites: list, sources: tuple[Source, ...], mapping: 
         b.problem = q
     elif repeats and (r := repeat_problem(body)):
         b.problem = r
+    elif ends and (e := end_problem(body)):
+        b.problem = e
     return b
 
 
@@ -375,6 +383,17 @@ def repeat_problem(body: str) -> str | None:
             return f"repeats its own words: \"{' '.join(gram)}\""
         seen.add(gram)
     return None
+
+
+# #445, round 9 (from prompt v10 on, `ai_batch.ENDS_FROM`; a tightening): a bullet ends as a sentence ends: a full stop, a
+# question or exclamation mark, then at most closing quotation marks or brackets. Round 8 (v9, Sonnet) left words written
+# only to hold a citation after a bullet's last sentence (dev's 2510: "…per cent". Previous new").
+_ENDS = re.compile("[.!?][\"'\u201d\u2019)\\]]*$")
+
+
+def end_problem(body: str) -> str | None:
+    """Why a bullet doesn't end as a sentence ends (see above), or None."""
+    return None if _ENDS.search(body.rstrip()) else "doesn't end as a sentence ends"
 
 
 def quote_problem(body: str, passages: list[str]) -> str | None:
@@ -632,13 +651,13 @@ def settle_copies(body: str, tally: Counter, strict: bool = False) -> str:
 def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
           changed: dict[int, list[tuple[int, int]]] | None = None, full_text: dict[int, str] | None = None,
           drop_copies: bool = False, check_quotes: bool = False, strict_copies: bool = False,
-          check_repeats: bool = False) -> Checked:
+          check_repeats: bool = False, check_ends: bool = False) -> Checked:
     """Check a reply against our copies of the documents it was given (`sources`; `full_text` by document id when a
     source is a segment). `changed`: for statement_diff_summary, each document's changed spans. `drop_copies`: for
     statement_diff_summary from prompt v4 on (`ai_batch.COPIES_FROM`), the copies rule above; `check_quotes`: from v7 on
     (`ai_batch.QUOTES_FROM`), the quotations rule above; `strict_copies` and `check_repeats`: from v8 on
-    (`ai_batch.STRICT_COPIES_FROM`, `REPEATS_FROM`), the copies rule's strict form and the repeats rule. All four are
-    ignored for other tasks."""
+    (`ai_batch.STRICT_COPIES_FROM`, `REPEATS_FROM`), the copies rule's strict form and the repeats rule; `check_ends`:
+    from v10 on (`ENDS_FROM`), the ends rule. All five are ignored for other tasks."""
     lo, hi = BULLETS[task]
     mapping: Counter = Counter()
     copies: Counter = Counter()
@@ -650,8 +669,9 @@ def check(task: str, reply: Reply, sources: tuple[Source, ...], *,
         stray = [unmark(x) for x in stray]
     quotes = check_quotes and task == "statement_diff_summary"
     repeats = check_repeats and task == "statement_diff_summary"
+    ends = check_ends and task == "statement_diff_summary"
     bullets = [verify_bullet(body, cites, sources, mapping, changed=changed, full_text=full_text, quotes=quotes,
-                             repeats=repeats)
+                             repeats=repeats, ends=ends)
                for body, cites in found]
     problems = []
     if stray:

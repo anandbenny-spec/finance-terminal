@@ -162,12 +162,14 @@ from ft.policy import rbi_resolution
 # they were answered with until the re-run (`PINNED_TASKS`, `RERUN_ENV`). v8: v7's text, on Sonnet 5.5, marking the copies
 # rule's strict form and the repeats check (round 7, after v7's dev sample: `STRICT_COPIES_FROM`, `REPEATS_FROM`). v9: v8
 # plus three rules (under 60 words; quotations fitted to the sentence; no bullet for a date, a title or attendance), on Sonnet.
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v9", "stance_extraction": "v2",
+# v10: v9 plus a rule against words written only to hold a citation, on Sonnet at effort medium, with `ENDS_FROM`'s check.
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v10", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
 STRICT_COPIES_FROM = 8                       # ... and from v8 on with strict_copies (only whole-sentence copies come out)
 REPEATS_FROM = 8                             # ... and with check_repeats (summaries.repeat_problem)
+ENDS_FROM = 10                               # ... and from v10 on with check_ends (summaries.end_problem)
 PINNED_TASKS = ("statement_diff_summary",)   # a target keeps the version it was answered with (module docstring)
 RERUN_TASK = "statement_diff_summary"        # the one task the re-run sends (#445)
 RERUN_ENV = "POLICY_AI_RERUN"                # empty or 'none' (the default) | 'all' | meeting slugs, comma-separated
@@ -247,8 +249,10 @@ class Work:
             check_quotes = _vnum(req.prompt.version) >= QUOTES_FROM     # a pinned v1-v6 reply, likewise
             strict = _vnum(req.prompt.version) >= STRICT_COPIES_FROM    # a pinned v4-v7 reply keeps the looser rule
             repeats = _vnum(req.prompt.version) >= REPEATS_FROM
+            ends = _vnum(req.prompt.version) >= ENDS_FROM
             return summaries.check(self.task, reply, req.sources, changed=changed, drop_copies=drop_copies,
-                                   check_quotes=check_quotes, strict_copies=strict, check_repeats=repeats)
+                                   check_quotes=check_quotes, strict_copies=strict, check_repeats=repeats,
+                                   check_ends=ends)
         return summaries.check(self.task, reply, req.sources, changed=changed, drop_copies=drop_copies,
                                check_quotes=check_quotes)
 

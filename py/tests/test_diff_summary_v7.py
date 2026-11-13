@@ -12,7 +12,7 @@ from test_diff_summary_copies import FRONT_PAGE
 
 from ft.ai import summaries
 from ft.ai.client import HAIKU, SONNET, load_prompt
-from ft.ai.summaries import check, quote_problem, repeat_problem
+from ft.ai.summaries import check, end_problem, quote_problem, repeat_problem
 from ft.engines.document.diff import diff_texts
 from ft.jobs.tasks import ai_batch
 from ft.jobs.tasks.ai_batch import PROMPT_VERSION, Work
@@ -97,7 +97,7 @@ def test_v7_is_v6_plus_a_paragraph_on_coverage_and_four_rules_and_v6_is_left_as_
 
 
 def test_v7_runs_on_sonnet_with_the_tasks_settings_and_every_earlier_version_on_haiku():
-    assert REQ.model_id == SONNET and summaries.DIFF_MODEL_OF == {"v7": SONNET, "v8": SONNET, "v9": SONNET}
+    assert REQ.model_id == SONNET and summaries.DIFF_MODEL_OF == {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET}
     assert (REQ.spec.route, REQ.spec.effort, REQ.spec.max_tokens) == ("citations", "low", 8_000)
     for version in ("v1", "v2", "v3", "v4", "v5", "v6"):
         req = summaries.diff_summary_request(NEW, OLD, D.segments, load_prompt("statement_diff_summary", version))
@@ -286,7 +286,7 @@ RULES_V9 = [
 ]
 
 
-def test_v9_is_v8_plus_three_rules_after_say_each_change_once_and_is_current():
+def test_v9_is_v8_plus_three_rules_after_say_each_change_once():
     """Round 7 (v8 on dev): a quotation bent into the sentence's grammar ("described as having "rose to 7.0 per cent"",
     dev's 2497), a five-sentence bullet about a date (2502), the same change stated twice (2497)."""
     v8, v9 = load_prompt("statement_diff_summary", "v8"), load_prompt("statement_diff_summary", "v9")
@@ -296,8 +296,52 @@ def test_v9_is_v8_plus_three_rules_after_say_each_change_once_and_is_current():
     assert [x for x in nine if x not in RULES_V9] == eight                    # every v8 line kept, in the same order
     assert nine[nine.index("- Say each change once.") + 1:][:3] == RULES_V9
     assert summaries.diff_summary_request(NEW, OLD, D.segments, v9).model_id == SONNET
-    assert PROMPT_VERSION["statement_diff_summary"] == "v9"
     # The strict copies rule and the repeats check hold for v9 too.
     text = f"{SENTENCE} {SENTENCE}"
     assert at("v9", bullet(text, old(A_RATE), new(B_RATE), first=True) + DECISION).bullets[0].problem.startswith(
         "repeats its own words: ")
+
+
+# ---------------------------------------------------------------------------------------------- v10 (round 9)
+CARRIER_RULE = ("- Put each citation on the words of yours that use the cited passage. Never write a sentence, a phrase or a "
+                "label only to hold a citation, such as a sentence saying that the earlier wording was replaced by the new "
+                "wording.")
+
+
+def test_v10_is_v9_plus_the_carrier_rule_on_sonnet_at_effort_medium_and_is_current():
+    """Round 8 (v9 on dev): Sonnet wrote words only to hold a citation ("Previous new", dev's 2510; "The earlier figure was
+    replaced by the new figure.", 2508)."""
+    v9, v10 = load_prompt("statement_diff_summary", "v9"), load_prompt("statement_diff_summary", "v10")
+    nine, ten = v9.text.splitlines(), v10.text.splitlines()
+    assert [x for x in ten if x not in nine] == [CARRIER_RULE]
+    assert [x for x in ten if x != CARRIER_RULE] == nine
+    assert ten[ten.index(RULES_V9[-1]) + 1] == CARRIER_RULE
+    req = summaries.diff_summary_request(NEW, OLD, D.segments, v10)
+    assert (req.model_id, req.spec.effort, req.spec.route) == (SONNET, "medium", "citations")
+    assert summaries.diff_summary_request(NEW, OLD, D.segments, v9).spec.effort == "low"     # v9 ran at the task's
+    assert summaries.DIFF_EFFORT_OF == {"v10": "medium"} and ai_batch.ENDS_FROM == 10
+    assert PROMPT_VERSION["statement_diff_summary"] == "v10"
+
+
+@pytest.mark.parametrize("text, ok", [
+    ("The decision changed.", True),
+    ('The decision changed from "maintain" to "lower".', True),
+    ('The statement now says "Inflation remains somewhat elevated."', True),
+    ("Growth slowed (in the third quarter.)", True),
+    ("Did the decision change?", True),
+    ('The decision changed from "maintain" to "lower". Previous new', False),     # round 8's 2510
+    ("The decision changed", False),
+    ("The decision changed:", False),
+])
+def test_end_problem(text, ok):
+    assert (end_problem(text) is None) is ok
+
+
+def test_from_v10_a_bullet_with_words_after_its_last_sentence_is_dropped():
+    blocks = bullet('The decision changed from "maintain" to "lower" the target range.', old(A_RATE), new(B_RATE),
+                    first=True) + [{"type": "text", "text": " Previous", "citations": [old(A_RATE)]},
+                                   {"type": "text", "text": " new", "citations": [new(B_RATE)]}] + DECISION
+    assert at("v9", blocks).ok
+    c = at("v10", blocks)
+    assert c.bullets[0].problem == "doesn't end as a sentence ends" and c.bullets[1].problem is None
+    assert reasons.categorise("rejected", "; ".join(c.reasons())) == ("format", True)
