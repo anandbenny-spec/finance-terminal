@@ -92,6 +92,15 @@ describe("the Earnings calls tab's guidance record", () => {
     expect(out.selected).toBeNull();
     expect(seen.filter((s) => s.view === "earnings_latest")).toHaveLength(1);
   });
+  it("doesn't ask api.guidance_hit_rates while equity.guidance_hit_rate is hidden, and still reads the guidance rows (#532)", async () => {
+    // guidance_hit_rates is absent from the store, so a request for it would answer 404 and the record would be null.
+    const outcomesOnly = SHOWN.filter((p) => p.field_key !== "equity.guidance_hit_rate");
+    const { db, seen } = fakeClient({ ...CALLS, field_policy: outcomesOnly as unknown as Row[], call_guidance: [] });
+    const out = await readCallsTab(db, "tcs", undefined);
+    expect(out.guidance).toEqual({ rows: [], rate: null, unattributed: 0, citations: [], pages: [] });
+    expect(seen.some((s) => s.view === "call_guidance")).toBe(true);
+    expect(seen.some((s) => s.view === "guidance_hit_rates")).toBe(false);
+  });
   it("still throws when the calls list itself can't be read", async () => {
     const { db } = fakeClient({ field_policy: SHOWN as unknown as Row[], call_guidance: [], guidance_hit_rates: [], earnings_latest: [] });
     await expect(readCallsTab(db, "tcs", undefined)).rejects.toThrow();

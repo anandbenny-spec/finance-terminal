@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CompanyView } from "@/components/company/CompanyView";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { guidanceFiguresOpen, guidanceGroups, hitRate, outcomeText, unattributedAll, unattributedLine } from "@/lib/equity/guidance";
+import { guidanceFiguresOpen, guidanceGroups, guidanceHitRateOpen, hitRate, outcomeText, unattributedAll, unattributedLine } from "@/lib/equity/guidance";
 import type { CallGuidanceRow, GuidanceHitRateRow } from "@/lib/queries/api";
 import { readGuidanceRecord, type CallsTabData, type GuidanceRecordData } from "@/lib/queries/calls";
 import { bannedCallWordsIn } from "@/tests/banned-words";
@@ -195,5 +195,98 @@ describe("the read", () => {
     // Its quotes' citations and pages are read with the selected call's, in one read each (#516).
     expect(Object.keys(got).sort()).toEqual(["rate", "rows"]);
     expect(seen.some((s) => s.view === "earnings_latest")).toBe(false);
+  });
+});
+
+// 0048 (#532; Anand's option A, 13 Nov 2026): outcomes show per target once equity.guidance_outcome does; the hit rate, first stated,
+// the latest statement's revision and "in the rate?" wait for equity.guidance_hit_rate (the recall check). The view gives those
+// columns as null meanwhile, so the rows here are what it returns then.
+describe("outcomes shown, hit rate held back (#532)", () => {
+  const withoutKey = SHOWN.filter((p) => p.field_key !== "equity.guidance_hit_rate");
+  const keyHidden = SHOWN.map((p) => (p.field_key === "equity.guidance_hit_rate" ? { ...p, status: "hidden" as const } : p));
+  const gated = (over: Partial<CallGuidanceRow> = {}) => g({ is_first: null, revision: null, counted: null, first_call_slug: null, first_stated_on: null, ...over });
+  const missed = gated({ outcome: "missed", relation: "below", actual: 24.5, metric: "margin_b", metric_label: "Operating margin", target_end: "2026-03-31" });
+  const pending = gated({ outcome: "pending", relation: null, actual: null, metric: "revenue", metric_label: "Revenue", period_text: "FY28", target_end: "2028-03-31" });
+  const panelOf = (out: string) => out.slice(out.indexOf("panel-guidance-record"));
+  const held = (policies = withoutKey) => html(tab({ rows: [gated(), missed, pending], rate: null }, policies));
+
+  it("reads the key as the views do: shown or labelled, not hidden, no row means hidden", () => {
+    expect(guidanceHitRateOpen(SHOWN)).toBe(true);
+    expect(guidanceHitRateOpen([{ field_key: "equity.guidance_hit_rate", status: "shown", label: null }])).toBe(true);
+    expect(guidanceHitRateOpen(keyHidden)).toBe(false);
+    expect(guidanceHitRateOpen(withoutKey)).toBe(false);
+    expect(guidanceHitRateOpen([{ field_key: "equity.guidance_outcome", status: "labelled", label: "derived" }])).toBe(false);
+  });
+
+  it("says the hit rate is held back, and shows no rate, n or window, with the key hidden or without its row", () => {
+    for (const policies of [withoutKey, keyHidden]) {
+      // a rate row passed in anyway (the read skips it while the key is hidden) is still not shown
+      for (const r of [null, rate()]) {
+        const t = text(panelOf(html(tab({ rows: [gated(), missed, pending], rate: r }, policies))));
+        expect(t).toContain("Hit rate held back: the AI extraction may not list every target on a call yet.");
+        expect(t).not.toContain("Delivered of scored targets");
+        expect(t).not.toContain("Too few scored targets");
+        expect(t).not.toContain("67%");
+        expect(t).not.toContain("Delivered 4 of 6");
+        expect(t).not.toContain("Stated from");
+      }
+    }
+  });
+
+  it("still lists each target with its outcome, relation, actual and quote", () => {
+    const out = panelOf(held());
+    const t = text(out);
+    expect(t).toContain("EBIT margin 26% to 28%");
+    expect(t).toContain("Delivered (within the range)");
+    expect(t).toContain("Missed (below the range)");
+    expect(t).toContain("24.5%");
+    expect(t).toContain("Pending");
+    expect(t).toContain("p. 7 ↗");
+    expect(out).toContain("guidance targets scored as delivered or missed");
+    expect(out).toContain("guidance targets pending or not scored");
+  });
+
+  it("leaves out the first-stated, latest-statement and in-the-rate columns, and every value they would hold", () => {
+    const t = text(panelOf(held()));
+    for (const header of ["Metric", "Figure as stated", "Period", "Basis", "Actual", "Outcome", "Quote", "Page"]) expect(t).toContain(header);
+    for (const header of ["First stated", "Latest statement", "In the rate?"]) expect(t).not.toContain(header);
+    expect(t).not.toMatch(/\b(Yes|No|Raised|Cut|Reiterated|Restated|Stated, Q2 FY27 call)\b/);
+  });
+
+  it("adds the subtitle's line once the record shows, in both states, and not while the record is held back", () => {
+    const line = "Targets are AI-extracted, and a call's list may not be complete.";
+    expect(text(panelOf(held()))).toContain(line);
+    expect(text(panelOf(html(tab())))).toContain(line);
+    expect(text(panelOf(html(tab({}, HELD))))).not.toContain(line);
+  });
+
+  it("shows the rate and every column once both keys show", () => {
+    const t = text(panelOf(html(tab())));
+    expect(t).toContain("Delivered of scored targets");
+    expect(t).not.toContain("Hit rate held back");
+    for (const header of ["First stated", "Latest statement", "In the rate?"]) expect(t).toContain(header);
+  });
+
+  it("uses no colour and none of the banned words while the hit rate is held back", () => {
+    // the held note's info icon is the one svg (StateNote's); no Delta triangle, no up or down colour
+    const out = panelOf(held()).replace(/<svg[^>]*lucide-info[\s\S]*?<\/svg>/g, "");
+    expect(out).not.toMatch(/text-(up|down|positive|negative|green|red)|bg-(up|down)|<svg/);
+    expect(bannedCallWordsIn(text(out))).toEqual([]);
+  });
+
+  it("writes an em dash, not No, for in the rate when the view gives null", () => {
+    expect(guidanceGroups([gated()], [], []).scored[0].inRate).toBe("—");
+    expect(guidanceGroups([g({ counted: false })], [], []).scored[0].inRate).toBe("No");
+  });
+
+  it("doesn't ask for the hit rate while its key is hidden, and asks once it shows", async () => {
+    const { db, seen } = fakeClient({ call_guidance: [g() as unknown as Row], guidance_hit_rates: [rate() as unknown as Row] });
+    const got = await readGuidanceRecord(db, "tcs", false);
+    expect(got.rate).toBeNull();
+    expect(got.rows).toHaveLength(1);
+    expect(seen.some((s) => s.view === "guidance_hit_rates")).toBe(false);
+    const both = fakeClient({ call_guidance: [g() as unknown as Row], guidance_hit_rates: [rate() as unknown as Row] });
+    expect((await readGuidanceRecord(both.db, "tcs", true)).rate?.n).toBe(6);
+    expect(both.seen.some((s) => s.view === "guidance_hit_rates")).toBe(true);
   });
 });

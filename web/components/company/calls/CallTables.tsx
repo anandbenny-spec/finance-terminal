@@ -96,9 +96,16 @@ export function FiguresTable({ rows, caption, figureHeader, empty }: { rows: Fig
   return <DataTable columns={columns} rows={rows} rowKey={(r) => r.key} caption={caption} focusable empty={<StateNote kind="empty">{empty}</StateNote>} />;
 }
 
-/** The guidance record's table (Spec 02B §8; #267): metric · figure as stated · period · basis · first stated · latest · actual · outcome (words) · in the rate · quote chip · page. */
-export function GuidanceTable({ rows, caption }: { rows: GuidanceRow[]; caption: string }) {
-  const columns: Column<GuidanceRow>[] = [
+/** The columns that wait for equity.guidance_hit_rate (#532). */
+const RATE_COLUMNS = new Set(["first", "latest", "rate"]);
+
+/**
+ * The guidance record's table (Spec 02B §8; #267): metric · figure as stated · period · basis · first stated · latest · actual ·
+ * outcome (words) · in the rate · quote chip · page. `withRate` false (equity.guidance_hit_rate hidden, #532) leaves out "First
+ * stated", "Latest statement" and "In the rate?": they need a call's list of targets to be complete, and the view gives them as null.
+ */
+export function GuidanceTable({ rows, caption, withRate = true }: { rows: GuidanceRow[]; caption: string; withRate?: boolean }) {
+  const all: Column<GuidanceRow>[] = [
     { id: "metric", header: "Metric", cell: (r) => r.metric },
     { id: "figure", header: "Figure as stated", cell: (r) => r.figure },
     { id: "period", header: "Period", cell: (r) => r.period },
@@ -111,5 +118,6 @@ export function GuidanceTable({ rows, caption }: { rows: GuidanceRow[]; caption:
     { id: "quote", header: "Quote", cell: (r) => (r.citation ? <CitationChip citation={r.citation} /> : <span className="text-ink-3">{NOT_AVAILABLE}</span>) },
     { id: "page", header: "Page", cell: (r) => (r.page ? <PageLink page={r.page} /> : <span className="text-ink-3">{NOT_AVAILABLE}</span>) },
   ];
+  const columns = withRate ? all : all.filter((c) => !RATE_COLUMNS.has(c.id));
   return <DataTable columns={columns} rows={rows} rowKey={(r) => r.key} caption={caption} focusable empty={<StateNote kind="empty">No targets in this group</StateNote>} />;
 }

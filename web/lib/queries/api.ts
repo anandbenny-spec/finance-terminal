@@ -941,7 +941,10 @@ export type EarningsListRow = EarningsLatestRow & {
   roles_partial: boolean | null;
 };
 
-/** api.call_guidance (0027, 0028): one row per guidance target management stated on a call; the outcome columns are null while equity.guidance_outcome is hidden. */
+/**
+ * api.call_guidance (0027, 0028, 0048): one row per guidance target management stated on a call; the outcome columns are null while
+ * equity.guidance_outcome is hidden, and is_first, revision, counted, first_call_slug and first_stated_on also while equity.guidance_hit_rate is.
+ */
 export type CallGuidanceRow = {
   company_slug: string;
   company_name: string;
@@ -982,7 +985,7 @@ export type CallGuidanceRow = {
   first_stated_on: string | null;
 };
 
-/** api.guidance_hit_rates (0027, 0028): delivered and missed counts per scope; `rate` is null below 5 scored targets. */
+/** api.guidance_hit_rates (0027, 0028, 0048): delivered and missed counts per scope; `rate` is null below 5 scored targets; no rows while equity.guidance_hit_rate is hidden. */
 export type GuidanceHitRateRow = {
   scope: "company" | "peer_group" | "nifty50";
   scope_key: string;
