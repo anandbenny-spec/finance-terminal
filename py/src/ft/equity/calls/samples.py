@@ -65,6 +65,15 @@ item was drawn or read):
   Nifty 50's own industry field.
 - At most 2 scored outcomes a company, as the other samples (the spec sets no cap). Alternative: none.
 - Seeds are the sitting's date and the gate's number (2026110801 to 2026110803), fixed before any item is read.
+
+The prompt round of #511 (2B-15d, 13 Nov 2026; `--round`, rule version 4, decided by Claude under the standing delegation of 24 Oct
+2026 and posted on #511 with the seeds before any run). The four samples of a fresh draw (recall, targets, scoring and stated, with
+sitting 1's and 2's rules unchanged) come from the round's dev re-run only (`ROUND_VERSION`): the targets, stated figures and
+scored outcomes of its published outputs, and the recall calls it re-ran (an output of that version in any status, so a call
+where the round found nothing still counts against it). **No call of set A or set B is drawn, and no other call of their
+companies** (`ROUND_EXCLUDED_EVENTS`): #511's card excludes the calls, and excluding the companies too only tightens, since the
+prompt was written after reading those companies' misses (the alternative: the ten calls only). The recall comparison reads the
+round's published rows only (`recall_extraction_sql(..., prompt_version=ROUND_VERSION)`), never a superseded output's.
 """
 from __future__ import annotations
 
@@ -72,6 +81,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterable
@@ -87,6 +97,16 @@ GATES = ("targets", "unattributed", "stated", "links")           # sitting 1: `-
 GATES_2 = ("summaries", "recall", "scoring")                     # sitting 2: `--gate sitting2`
 ALL_GATES = GATES + GATES_2
 SITTING_OF = {**dict.fromkeys(GATES, 1), **dict.fromkeys(GATES_2, 2)}
+
+# #511's prompt round (module notes): a fresh draw from the round's dev re-run, its own seeds, sets A and B's companies left out.
+ROUND = "2b15d"
+ROUND_RULE_VERSION = 4
+ROUND_VERSION = "v5"            # the round's prompt version (equity_calls_ai.GUIDANCE_RERUN_VERSION)
+ROUND_GATES = ("recall", "targets", "scoring", "stated")
+ROUND_SEEDS = {"recall": 2026111301, "targets": 2026111302, "scoring": 2026111303, "stated": 2026111304}
+ROUND_SET_A = (3743, 3780, 4002, 3855, 3863)     # #178's 8 Nov development calls (call event ids)
+ROUND_SET_B = (3689, 3850, 4003, 4011, 3714)     # #178's 12 Nov gate draw, on whose misses the round's prompt was written
+ROUND_EXCLUDED_EVENTS = ROUND_SET_A + ROUND_SET_B
 
 # Spec 02B §5.11 row 2 names five sectors; the peer groups that stand for each are a decision of the sampler (see the module notes).
 RECALL_BUCKETS = {
@@ -431,7 +451,34 @@ where o.outcome in ('delivered', 'missed') and o.speaker_role = 'management' and
 order by o.guidance_id"""
 
 
-def read_pool(conn, gate: str) -> list[Item]:
+# #511's round: the same pools, limited to the round's re-run and with sets A and B's companies left out. Parameters, in order: the
+# pool's own (targets: the role), then the round's prompt version, then the excluded call events.
+_ROUND_COMPANIES = "(select ecx.entity_id from equity.earnings_call ecx where ecx.event_id = any(%s))"
+
+POOL_TARGETS_ROUND = POOL_TARGETS.replace(
+    "where g.speaker_role = %s and g.duplicate_of is null",
+    f"where g.speaker_role = %s and g.duplicate_of is null and o.prompt_version = %s and g.entity_id not in {_ROUND_COMPANIES}")
+
+POOL_STATED_ROUND = POOL_STATED.replace(
+    "where s.duplicate_of is null",
+    f"where s.duplicate_of is null and o.prompt_version = %s and s.entity_id not in {_ROUND_COMPANIES}")
+
+POOL_SCORING_ROUND = POOL_SCORING.replace(
+    "where o.outcome in ('delivered', 'missed') and o.speaker_role = 'management' and g.duplicate_of is null",
+    "where o.outcome in ('delivered', 'missed') and o.speaker_role = 'management' and g.duplicate_of is null"
+    f" and ao.prompt_version = %s and g.entity_id not in {_ROUND_COMPANIES}")
+
+POOL_RECALL_ROUND = POOL_RECALL.replace(
+    "order by ec.event_id",
+    """  and exists (select 1 from core.ai_output r where r.document_id = ec.transcript_document_id
+                and r.task = 'guidance_extraction' and r.prompt_version = %s)
+  and ec.entity_id not in """ + _ROUND_COMPANIES + """
+order by ec.event_id""")
+
+
+def read_pool(conn, gate: str, *, round_: bool = False) -> list[Item]:
+    if round_:
+        return _read_round_pool(conn, gate)
     if gate in ("targets", "unattributed"):
         role = "management" if gate == "targets" else "unknown"
         return [Item(id=i, company=co, group=KIND_GROUP[kind], family=family_of(metric), not_scored=ns,
@@ -450,6 +497,24 @@ def read_pool(conn, gate: str) -> list[Item]:
         return [Item(id=i, company=co, kind=kind, family=family_of(metric), document=doc, counted=bool(counted))
                 for i, co, kind, metric, doc, counted in conn.execute(POOL_SCORING).fetchall()]
     return [Item(id=i, company=co, source=src, document=doc) for i, co, src, doc in conn.execute(POOL_LINKS).fetchall()]
+
+
+def _read_round_pool(conn, gate: str) -> list[Item]:
+    ex = list(ROUND_EXCLUDED_EVENTS)
+    if gate == "targets":
+        return [Item(id=i, company=co, group=KIND_GROUP[kind], family=family_of(metric), not_scored=ns,
+                     role_held=rh, no_mgmt_turn=nm, document=doc)
+                for i, co, kind, metric, ns, rh, nm, doc in conn.execute(POOL_TARGETS_ROUND, ("management", ROUND_VERSION, ex)).fetchall()]
+    if gate == "stated":
+        return [Item(id=i, company=co, family=family_of(metric), document=doc)
+                for i, co, metric, doc in conn.execute(POOL_STATED_ROUND, (ROUND_VERSION, ex)).fetchall()]
+    if gate == "recall":
+        return [Item(id=i, company=co, peer=peer or "", bucket=bucket_of(peer or ""), document=doc)
+                for i, co, peer, doc in conn.execute(POOL_RECALL_ROUND, (ROUND_VERSION, ex)).fetchall()]
+    if gate == "scoring":
+        return [Item(id=i, company=co, kind=kind, family=family_of(metric), document=doc, counted=bool(counted))
+                for i, co, kind, metric, doc, counted in conn.execute(POOL_SCORING_ROUND, (ROUND_VERSION, ex)).fetchall()]
+    raise ValueError(f"the round draws {', '.join(ROUND_GATES)} only, not {gate!r}")
 
 
 # ---------------------------------------------------------------------------------------------- showing items to Anand
@@ -573,13 +638,21 @@ where ch.document_id = {int(document_id)} and ch.chunk_no between {int(first_chu
 order by ch.chunk_no"""
 
 
-def recall_extraction_sql(event_ids: Iterable[int]) -> str:
+def recall_extraction_sql(event_ids: Iterable[int], prompt_version: str | None = None) -> str:
     """The extraction's management targets of the chosen calls, with their quotes: for comparing with the reader's list. The
-    reader never sees this."""
+    reader never sees this. With `prompt_version` (#511's round), only the rows of that version's published output, so a call
+    the round re-ran is compared with the round's rows and never with a superseded output's (and a call where the round found
+    nothing has none)."""
+    version = ""
+    if prompt_version is not None:
+        if not re.fullmatch(r"v\d{1,3}", prompt_version):
+            raise ValueError(f"not a prompt version: {prompt_version!r}")
+        version = (f"\n  and exists (select 1 from core.ai_output o where o.id = x.ai_output_id and o.status = 'published'"
+                   f" and o.task = 'guidance_extraction' and o.prompt_version = '{prompt_version}')")
     return f"""select x.call_event_id, x.id, x.kind, x.metric, x.metric_text, x.value, x.low, x.high, x.unit, x.direction,
        x.comparison, x.period_text, x.not_scored_reason, x.char_start, x.char_end, {_quote('x')} as quote
 from equity.guidance x
-where x.call_event_id in ({_ids(event_ids)}) and x.speaker_role = 'management' and x.duplicate_of is null
+where x.call_event_id in ({_ids(event_ids)}) and x.speaker_role = 'management' and x.duplicate_of is null{version}
 order by x.call_event_id, x.char_start"""
 
 
@@ -695,28 +768,40 @@ def annotation(title: str, text: str) -> str:
 
 def main(argv: list[str] | None = None, *, env=None, out=print) -> int:
     p = argparse.ArgumentParser(prog="python -m ft.equity.calls.samples", description=__doc__.split("\n\n")[0])
-    p.add_argument("--gate", choices=(*ALL_GATES, "all", "sitting2"), default="all",
+    p.add_argument("--gate", choices=(*ALL_GATES, "all", "sitting2", "round"), default="all",
                    help='"all" is sitting 1\'s four gates and the page-map check; "sitting2" is summaries, recall and scoring')
     p.add_argument("--seed", type=int, default=None, help="a new sample after a failed gate: one gate only; record the seed")
     p.add_argument("--target", choices=("dev",), default="dev", help="logged; the workflow reads dev's credentials only")
+    p.add_argument("--round", choices=(ROUND,), default=None,
+                   help=f"#511's fresh draw from the {ROUND_VERSION} re-run, sets A and B left out: --gate round, or one of its gates")
     args = p.parse_args(argv)
-    if args.seed is not None and args.gate in ("all", "sitting2"):
+    if args.seed is not None and args.gate in ("all", "sitting2", "round"):
         p.error("--seed needs one --gate")
+    if args.round is None and args.gate == "round":
+        p.error("--gate round needs --round " + ROUND)
+    if args.round is not None and args.gate not in (*ROUND_GATES, "round"):
+        p.error(f"--round draws {', '.join(ROUND_GATES)} (or --gate round), not {args.gate}")
     env = os.environ if env is None else env
     dsn = (env.get("JOB_DATABASE_URL") or "").strip()
     if not dsn:
         p.error("JOB_DATABASE_URL is not set (the workflow reads the DEV_ secret)")
     from ft.jobs.runner import connect
 
-    gates = {"all": GATES, "sitting2": GATES_2}.get(args.gate, (args.gate,))
+    gates = {"all": GATES, "sitting2": GATES_2, "round": ROUND_GATES}.get(args.gate, (args.gate,))
+    on_round = args.round is not None
     with connect(dsn, autocommit=True, role="gate-samples") as conn:
         conn.execute("set default_transaction_read_only = on")
         for gate in gates:
-            pool = read_pool(conn, gate)
-            d = draw_recall(pool, args.seed) if gate == "recall" else draw(pool, gate, args.seed)
-            body = {"gate": gate, "sitting": SITTING_OF[gate], "rule_version": RULE_VERSION, "seed": d.seed, "attempt": d.attempt,
+            pool = read_pool(conn, gate, round_=on_round)
+            seed = args.seed if args.seed is not None else (ROUND_SEEDS[gate] if on_round else None)
+            d = draw_recall(pool, seed) if gate == "recall" else draw(pool, gate, seed)
+            body = {"gate": gate, "sitting": SITTING_OF[gate], "rule_version": ROUND_RULE_VERSION if on_round else RULE_VERSION,
+                    "seed": d.seed, "attempt": d.attempt,
                     "target": args.target, "pool": d.pool, "n": len(d.items), "ids": [it.id for it in d.items],
                     "strata": d.strata(), "shortfalls": d.shortfalls}
+            if on_round:
+                body.update({"round": args.round, "prompt_version": ROUND_VERSION,
+                             "excluded_events": list(ROUND_EXCLUDED_EVENTS)})
             if gate == "recall":
                 body["extra_ids"] = [it.id for it in d.extra]
             out(annotation(f"sample {gate} seed {d.seed}", json.dumps(body, separators=(",", ":"))))

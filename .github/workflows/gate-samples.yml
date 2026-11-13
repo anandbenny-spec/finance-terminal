@@ -9,12 +9,17 @@ on:
       gate:
         description: 'Which sample to draw ("all" is sitting 1 and also runs the page-map check; "sitting2" is summaries, recall and scoring)'
         type: choice
-        options: [all, sitting2, targets, unattributed, stated, links, summaries, recall, scoring]
+        options: [all, sitting2, round, targets, unattributed, stated, links, summaries, recall, scoring]
         default: all
       seed:
         description: A new seed after a failed gate (one gate only); leave empty for the recorded seed
         type: string
         default: ""
+      round:
+        description: '#511''s fresh draw from the v5 re-run, sets A and B left out (gate round, recall, targets, scoring or stated); none for the sittings'
+        type: choice
+        options: [none, 2b15d]
+        default: none
 concurrency:
   group: gate-samples
   cancel-in-progress: false
@@ -40,10 +45,12 @@ jobs:
         run: |
           args=(--gate "$GATE")
           if [ -n "$SEED" ]; then args+=(--seed "$SEED"); fi
+          if [ "$ROUND" != "none" ]; then args+=(--round "$ROUND"); fi
           uv run --locked python -m ft.equity.calls.samples "${args[@]}"
         env:
           GATE: ${{ inputs.gate }}
           SEED: ${{ inputs.seed }}
+          ROUND: ${{ inputs.round }}
           # Dev's credentials only; a missing DEV_ secret leaves the variable empty (the script then stops), never falling
           # back to production's.
           JOB_DATABASE_URL: ${{ secrets.DEV_JOB_DATABASE_URL }}

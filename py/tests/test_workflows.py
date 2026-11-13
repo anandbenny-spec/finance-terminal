@@ -277,6 +277,25 @@ def test_the_backfill_can_rerun_the_diff_summaries_through_env_and_no_other_work
         assert ai_batch.RERUN_ENV not in json.dumps(load(name))
 
 
+def test_the_backfill_can_rerun_the_extraction_through_env_and_no_other_workflow_sets_it():
+    # #511: the re-run of the published extractions to the round's version is a backfill's input only; none is the default.
+    from ft.ai import guidance_extraction as ge
+    from ft.jobs.tasks import equity_calls_ai as eca
+    wf = load("backfill")
+    option = wf["on"]["workflow_dispatch"]["inputs"]["guidance_rerun"]
+    assert option["default"] == "none" and option["options"] == ["none", "price", "all"]
+    run = next(s for s in wf["jobs"]["run"]["steps"] if s.get("name") == "Run")
+    expr = run["env"][eca.GUIDANCE_RERUN_ENV]
+    base = {"secrets": {}, "env": {}, "github": {"event_name": "workflow_dispatch"}}
+    assert interpolate(expr, {**base, "inputs": {"guidance_rerun": "price"}}) == "price"
+    defaults = interpolate(expr, {**base, "inputs": manual_inputs("backfill")})
+    assert eca.guidance_rerun("backfill", "production", None, {eca.GUIDANCE_RERUN_ENV: defaults}) is None   # defaults: nothing
+    assert eca.guidance_rerun("backfill", "dev", ge.TASK, {eca.GUIDANCE_RERUN_ENV: "all"}) == "all"
+    assert len(wf["on"]["workflow_dispatch"]["inputs"]) <= 10                    # GitHub's limit on dispatch inputs
+    for name in ("daily", "watch", "weekly", "refresh"):
+        assert eca.GUIDANCE_RERUN_ENV not in json.dumps(load(name))
+
+
 def test_the_evaluator_follows_githubs_rules():
     ctx = {"secrets": {"A": "a"}, "inputs": {}, "env": {}, "github": {"event_name": "push"}}
     assert evaluate("secrets.MISSING", ctx) == "" and evaluate("inputs.target", ctx) is None
