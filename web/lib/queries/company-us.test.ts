@@ -1,6 +1,7 @@
 // A US company's reads (US-06, #405; Spec 02A.1 §7): the page reads only what it shows. No earnings-call or rate-decision view
 // (those tabs don't apply), no value chain, promoter, segment-change or IMF India view (Indian disclosures), and the 10-year
-// Treasury's source line instead of India's 10-year. India's reads are company-page.test.ts's, unchanged. A fake Data API
+// Treasury's source line instead of India's 10-year. The Overview and Valuation tabs also read the filed period ends (US-06b,
+// #564), for their dates. India's reads are company-page.test.ts's, unchanged. A fake Data API
 // answers every view (empty unless given rows) and records which ones were asked for.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeClient, type Row, type Store } from "@/tests/fake-postgrest";
@@ -34,9 +35,9 @@ const tabViews = () => [...new Set(asked.filter((v) => !HEADER.includes(v)))].so
 
 describe("a US company's reads", () => {
   it.each<[TabId, string[]]>([
-    ["overview", ["company_metrics", "company_prices", "peer_comps"]],
+    ["overview", ["company_financials", "company_metrics", "company_prices", "peer_comps"]],
     ["financials", ["company_financials", "company_metrics"]],
-    ["valuation", ["company_valuation", "field_policy", "series", "valuation_scenarios"]],
+    ["valuation", ["company_financials", "company_valuation", "field_policy", "series", "valuation_scenarios"]],
     ["calls", []],
     ["rate-decisions", []],
   ])("reads only what the %s tab shows", async (tab, views) => {
@@ -47,7 +48,7 @@ describe("a US company's reads", () => {
 
   it("leaves out the Indian parts of each tab's data", async () => {
     const overview = await readCompanyPage("us-aapl", "overview");
-    expect(overview.ok && overview.overview).toEqual({ prices: [], metrics: [], peers: [] });
+    expect(overview.ok && overview.overview).toEqual({ prices: [], metrics: [], peers: [], filed: [] });
     const financials = await readCompanyPage("us-aapl", "financials");
     expect(financials.ok && financials.financials).toEqual({ financials: [], metrics: [], promoter: null });
     const valuation = await readCompanyPage("us-aapl", "valuation");
@@ -56,6 +57,15 @@ describe("a US company's reads", () => {
       const out = await readCompanyPage("us-aapl", tab);
       expect(out.ok && [out.overview, out.financials, out.valuation, out.rates, out.calls]).toEqual([null, null, null, null, null]);
     }
+  });
+
+  it("reads the filed ends of quarters, years and balance sheets only, for the Overview's and Valuation's dates (US-06b, #564)", async () => {
+    const end = (period_kind: string, period_end: string) => ({ slug: "us-aapl", period_kind, period_end }) as unknown as Row;
+    given = { ...given, company_financials: [end("quarter", "2026-09-26"), end("year", "2026-09-26"), end("instant", "2026-09-26"), end("nine_months", "2026-06-27")] };
+    const overview = await readCompanyPage("us-aapl", "overview");
+    expect(overview.ok && overview.overview?.filed?.map((r) => r.period_kind).sort()).toEqual(["instant", "quarter", "year"]);
+    const valuation = await readCompanyPage("us-aapl", "valuation");
+    expect(valuation.ok && valuation.valuation?.filed?.length).toBe(3);
   });
 
   it("asks the series view for the 10-year Treasury, not India's 10-year or the IMF's India forecasts", async () => {

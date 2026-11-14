@@ -92,6 +92,23 @@ export async function readFinancials(db: CompanyDb, slug: string): Promise<Compa
   );
 }
 
+/** The filed ends of a US company's quarters, years and balance sheets (US-06b, #564): what its Overview and Valuation
+ * dates are resolved against (components/company/us/filedDates.ts), so a 52/53-week filer's figure shows its filed end. */
+export type FiledEndRow = Pick<CompanyFinancialRow, "period_kind" | "period_end">;
+
+export async function readFiledEnds(db: CompanyDb, slug: string): Promise<FiledEndRow[]> {
+  return readAll<FiledEndRow>("api.company_financials ends", (from, to) =>
+    db
+      .from("company_financials")
+      .select("period_kind, period_end", { count: "exact" })
+      .eq("slug", slug)
+      .in("period_kind", ["quarter", "year", "instant"])
+      .order("period_kind")
+      .order("period_end")
+      .range(from, to),
+  );
+}
+
 export async function readActions(db: CompanyDb, slug: string): Promise<CorporateActionRow[]> {
   return readAll<CorporateActionRow>("api.company_corporate_actions", (from, to) =>
     db
@@ -186,6 +203,8 @@ export type OverviewData = {
   peers: PeerCompRow[];
   /** The value chain panel's reads (VC-06, #191); each part null when its read failed (view 0034 not pushed yet). Absent: not read. */
   valueChain?: ValueChainOverviewData;
+  /** A US company's filed period ends (US-06b, #564), for the key figures' dates. Absent: not read (India). */
+  filed?: FiledEndRow[];
 };
 export type FinancialsData = {
   financials: CompanyFinancialRow[];
@@ -210,6 +229,8 @@ export type ValuationData = {
   imf: ForecastRow[] | null;
   /** The IMF series' and the India 10-year's source lines; null when they can't be read. */
   series: SeriesRow[] | null;
+  /** A US company's filed period ends (US-06b, #564), for the assumptions' dates. Absent: not read (India). */
+  filed?: FiledEndRow[];
 };
 
 export type CompanyPageData =
@@ -377,16 +398,17 @@ export function tabReadFailed(data: TabData, market: "IN" | "US"): boolean {
   return false;
 }
 
-/** A US company's tab reads (Spec 02A.1 §7). Earnings calls and rate decisions read nothing: the page says they don't apply. */
+/** A US company's tab reads (Spec 02A.1 §7). Earnings calls and rate decisions read nothing: the page says they don't apply.
+ * The Overview and Valuation tabs also read the filed period ends (US-06b, #564), whole or not at all like the tab's other reads. */
 async function loadUsTab(db: CompanyDb, slug: string, tab: TabId, data: TabData): Promise<TabData> {
   if (tab === "overview") {
-    const [prices, metrics, peers] = await Promise.all([readCompanyPrices(db, slug), readCompanyMetrics(db, slug), readPeers(db, slug)]);
-    data.overview = { prices, metrics, peers };
+    const [prices, metrics, peers, filed] = await Promise.all([readCompanyPrices(db, slug), readCompanyMetrics(db, slug), readPeers(db, slug), readFiledEnds(db, slug)]);
+    data.overview = { prices, metrics, peers, filed };
   } else if (tab === "financials") {
     const [rows, metrics] = await Promise.all([readFinancials(db, slug), readCompanyMetrics(db, slug)]);
     data.financials = { financials: rows, metrics, promoter: null };
   } else if (tab === "valuation") {
-    const [runs, scenarios, policies, series] = await Promise.all([
+    const [runs, scenarios, policies, series, filed] = await Promise.all([
       readValuationRuns(db, slug),
       readScenarios(db, slug),
       readFieldPolicy(db as PolicyDb),
@@ -394,8 +416,9 @@ async function loadUsTab(db: CompanyDb, slug: string, tab: TabId, data: TabData)
         logFailure(`${slug} valuation series`, error);
         return null;
       }),
+      readFiledEnds(db, slug),
     ]);
-    data.valuation = { runs, scenarios, policies, imf: null, series };
+    data.valuation = { runs, scenarios, policies, imf: null, series, filed };
   }
   return data;
 }
