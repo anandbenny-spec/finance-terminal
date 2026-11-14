@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { CompanyView } from "@/components/company/CompanyView";
 import { KIND_SENTENCE, KIND_TITLE, SEGMENT_HELD, segmentModel } from "@/components/company/SegmentChangesPanel";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { FieldPolicyRow, SegmentChangeRow, TaskFreshnessRow } from "@/lib/queries/api";
+import type { CompanyFinancialRow, FieldPolicyRow, SegmentChangeRow, TaskFreshnessRow } from "@/lib/queries/api";
 import { bannedWordsIn } from "@/tests/banned-words";
 import { financial, page } from "@/tests/company-rows";
 
@@ -32,12 +32,22 @@ const FRESH: TaskFreshnessRow[] = [
   { task_key: "equity.segment_changes", last_success_at: "2021-01-25T03:00:00Z", last_run_at: "2021-01-25T03:00:00Z", last_status: "succeeded", overdue_after: "10 days" } as unknown as TaskFreshnessRow,
 ];
 
-const html = (segmentChanges: SegmentChangeRow[] | null | undefined, policies: FieldPolicyRow[] | null | undefined, freshness: TaskFreshnessRow[] | null = null) =>
+// The statements the tab reads: by default their latest consolidated quarter is the one the test rows compare (31 Dec 2020), so
+// the flags show as they did before #553's decision 3; the "later results" tests pass their own.
+const STATEMENTS: CompanyFinancialRow[] = [financial("quarter", "2020-12-31"), financial("quarter", "2020-09-30")];
+
+const html = (
+  segmentChanges: SegmentChangeRow[] | null | undefined,
+  policies: FieldPolicyRow[] | null | undefined,
+  freshness: TaskFreshnessRow[] | null = null,
+  statements: CompanyFinancialRow[] = STATEMENTS,
+  basis: "consolidated" | "standalone" = "consolidated",
+) =>
   renderToStaticMarkup(
     <TooltipProvider>
       <CompanyView
-        data={page({ tab: "financials", overview: null, financials: { financials: [financial("quarter", "2026-06-30")], metrics: [], promoter: [], segmentChanges, policies } })}
-        basis="consolidated"
+        data={page({ tab: "financials", overview: null, financials: { financials: statements, metrics: [], promoter: [], segmentChanges, policies } })}
+        basis={basis}
         freshness={freshness}
       />
     </TooltipProvider>,
@@ -153,6 +163,68 @@ describe("the Segment changes panel once released", () => {
   });
 });
 
+describe("a flag shows only on the company's latest results (#553, decision 3)", () => {
+  // Coal India's case: the flag is the Jun 2026 quarter's, and the statements already hold Sep 2026's consolidated results.
+  const coal = [
+    seg({ period_end: "2026-06-30", kind: "single_to_multi", revenue_ratio: null, segments_before: [], segments_after: ["Coal", "Solar"], previous_period_end: "2026-03-31" }),
+  ];
+  const later = [financial("quarter", "2026-09-30"), financial("quarter", "2026-06-30"), financial("year", "2026-03-31")];
+  const NOTE = "Not compared: the segments in the results for the quarter ended 30 Sep 2026 are not on record. The last quarter compared was the quarter ended 30 Jun 2026.";
+
+  it("shows the note naming both quarters, and no flag, when the statements hold a later consolidated quarter", () => {
+    const p = panel(html(coal, SHOWN, FRESH, later));
+    const t = text(p);
+    expect(t).toContain(NOTE);
+    expect(p).toContain('data-state-kind="unavailable"');
+    for (const word of ["Coal", "Solar", "Before", "After", KIND_TITLE.single_to_multi, KIND_SENTENCE.single_to_multi, "against the four quarters before it"]) {
+      expect(t).not.toContain(word);
+    }
+    expect(p).not.toContain("example.test/filing/latest");
+    expect(t).toContain("Source: NSE");
+    expect(segmentModel(coal, SHOWN, "2026-09-30")).toEqual({ kind: "not_latest", periodEnd: "2026-06-30", latest: "2026-09-30" });
+  });
+
+  it("shows the flags as before when the statements' latest consolidated quarter is the one compared", () => {
+    const t = text(panel(html(coal, SHOWN, FRESH, later.slice(1))));
+    expect(t).not.toContain("Not compared");
+    expect(t).toContain(`${KIND_TITLE.single_to_multi} ${KIND_SENTENCE.single_to_multi}`);
+    expect(t).toContain("After Coal Solar Quarter ended 30 Jun 2026");
+    expect(segmentModel(coal, SHOWN, "2026-06-30").kind).toBe("changed");
+  });
+
+  it("reads the consolidated quarters only, whichever basis the tab shows", () => {
+    const standaloneLater = [financial("quarter", "2026-09-30", { basis: "standalone" }), financial("quarter", "2026-06-30")];
+    expect(text(panel(html(coal, SHOWN, FRESH, standaloneLater)))).toContain(`${KIND_TITLE.single_to_multi} ${KIND_SENTENCE.single_to_multi}`);
+    expect(text(panel(html(coal, SHOWN, FRESH, later, "standalone")))).toContain(NOTE);
+  });
+
+  it("renders as before when the statements can't tell: no quarterly consolidated rows, or none read", () => {
+    for (const statements of [[], [financial("year", "2026-09-30")], [financial("quarter", "2026-09-30", { basis: "standalone" })]]) {
+      expect(text(panel(html(coal, SHOWN, FRESH, statements)))).toContain(`${KIND_TITLE.single_to_multi} ${KIND_SENTENCE.single_to_multi}`);
+    }
+    expect(segmentModel(coal, SHOWN).kind).toBe("changed");
+    expect(segmentModel(coal, SHOWN, null).kind).toBe("changed");
+  });
+
+  it("leaves the other states as they are: each names its own quarter", () => {
+    expect(text(panel(html([state("single_segment", { period_end: "2026-06-30" })], SHOWN, null, later)))).toContain(
+      "One reportable segment, as filed in the results for the quarter ended 30 Jun 2026.",
+    );
+    expect(text(panel(html([state("none_flagged", { period_end: "2026-06-30" })], SHOWN, null, later)))).toContain(
+      "No segment flagged: each segment reported in the four quarters before is in the results for the quarter ended 30 Jun 2026.",
+    );
+    expect(text(panel(html([state("not_compared", { period_end: "2026-06-30", quarters_compared: 3 })], SHOWN, null, later)))).toContain(
+      "Not compared: segments are on record for 3 of the 4 quarters before the quarter ended 30 Jun 2026, and the comparison needs all four.",
+    );
+  });
+
+  it("stays held back while the field is hidden", () => {
+    const t = text(panel(html(coal, HIDDEN, FRESH, later)));
+    expect(t).toContain(SEGMENT_HELD);
+    expect(t).not.toContain("Not compared");
+  });
+});
+
 describe("words, never colour", () => {
   const all = (Object.keys(KIND_TITLE) as (keyof typeof KIND_TITLE)[]).map((kind, i) => seg({ change_no: i + 1, kind, revenue_ratio: kind === "merged" ? 0.9 : null }));
   const outs = [
@@ -163,6 +235,7 @@ describe("words, never colour", () => {
     html([], SHOWN),
     html(null, SHOWN),
     html(all, HIDDEN),
+    html([seg({ period_end: "2026-06-30" })], SHOWN, null, [financial("quarter", "2026-09-30")]),
   ].map(panel);
 
   it("gives no flag or state a market colour", () => {
