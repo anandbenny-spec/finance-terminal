@@ -296,6 +296,26 @@ def test_the_backfill_can_rerun_the_extraction_through_env_and_no_other_workflow
         assert eca.GUIDANCE_RERUN_ENV not in json.dumps(load(name))
 
 
+def test_the_backfill_can_rerun_the_calls_whose_turns_changed_through_env_and_no_other_workflow_sets_it():
+    # #554: the re-run of the calls whose turns changed is a backfill's input only; none is the default.
+    from ft.ai import guidance_extraction as ge
+    from ft.jobs.tasks import equity_calls_ai as eca
+    wf = load("backfill")
+    option = wf["on"]["workflow_dispatch"]["inputs"]["turns_rerun"]
+    assert option["default"] == "none" and option["options"] == ["none", "price", "all"] and option["type"] == "choice"
+    run = next(s for s in wf["jobs"]["run"]["steps"] if s.get("name") == "Run")
+    expr = run["env"][eca.TURNS_RERUN_ENV]
+    base = {"secrets": {}, "env": {}, "github": {"event_name": "workflow_dispatch"}}
+    assert interpolate(expr, {**base, "inputs": {"turns_rerun": "price"}}) == "price"
+    defaults = {k: interpolate(run["env"][k], {**base, "inputs": manual_inputs("backfill")})
+                for k in (eca.TURNS_RERUN_ENV, eca.GUIDANCE_RERUN_ENV, eca.TONE_SET_ENV)}
+    assert eca.turns_rerun("backfill", None, defaults) is None                  # a dispatch left at its defaults re-runs nothing
+    assert eca.turns_rerun("backfill", ge.TASK, {**defaults, eca.TURNS_RERUN_ENV: "all"}) == "all"   # the other defaults don't refuse
+    assert len(wf["on"]["workflow_dispatch"]["inputs"]) <= 10                    # GitHub's limit on dispatch inputs
+    for name in ("daily", "watch", "weekly", "refresh"):
+        assert eca.TURNS_RERUN_ENV not in json.dumps(load(name))
+
+
 def test_the_evaluator_follows_githubs_rules():
     ctx = {"secrets": {"A": "a"}, "inputs": {}, "env": {}, "github": {"event_name": "push"}}
     assert evaluate("secrets.MISSING", ctx) == "" and evaluate("inputs.target", ctx) is None
