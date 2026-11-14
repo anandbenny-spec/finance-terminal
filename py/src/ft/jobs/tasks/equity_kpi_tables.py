@@ -194,7 +194,7 @@ class Review:
     """The Sonnet check and the quotes of one run's flags (DD-05 part 2, #513). Counts only reach the checks."""
     mode: str                                         # 'price' | 'all'
     rows: list[FlagRow] = field(default_factory=list)  # the flags to write ('all' only)
-    outcomes: Counter = field(default_factory=Counter)   # kc.KEEP | DROP_PRESENT | DROP_REASON | UNCHECKED, by flag
+    outcomes: Counter = field(default_factory=Counter)   # kc.KEEP | DROP_PRESENT | DROP_REASON | WITHDRAWN | UNCHECKED
     by_company: dict[str, Counter] = field(default_factory=dict)
     value_held: int = 0                               # flags kept with their last value held back
     check_cost: Decimal = Decimal(0)
@@ -567,12 +567,12 @@ class EquityKpiTables(Task):
         stand: list[tuple[str, kf.Flag, kdict.Metric, kc.Verdict | None, tuple | None, tuple | None]] = []
         for slug, f, metric in flags:
             v = verdicts[id(f)]
-            outcome = v.outcome if v is not None else kc.UNCHECKED
+            outcome = kc.outcome(f, verdicts)
             r.outcomes[outcome] += 1
             r.by_company.setdefault(slug, Counter())[outcome] += 1
             if slug == "tcs" and f.current.fiscal_label == "Q2 FY26" and f.key in ("workforce", "attrition_ltm"):
                 r.k6[f.key] = f"{f.kind}, {outcome}"
-            if outcome in (kc.DROP_PRESENT, kc.DROP_REASON):
+            if outcome in (kc.DROP_PRESENT, kc.DROP_REASON, kc.WITHDRAWN):
                 continue
             key = (entity[slug], f.current.fiscal_label)
             if key not in transcripts:
