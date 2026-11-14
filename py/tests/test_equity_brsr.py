@@ -560,3 +560,149 @@ def test_the_weekly_window_starts_30_days_before_the_latest_stored_filing_and_a_
     assert t._window(Ctx("weekly"), Db(datetime(2026, 7, 4, tzinfo=UTC)))[0] == D(2026, 6, 4)
     assert t._window(Ctx("backfill"), Db(datetime(2026, 7, 4, tzinfo=UTC)))[0] == D(2024, 4, 1)
     assert t._window(Ctx("weekly", D(2025, 1, 1)), Db(None))[0] == D(2025, 1, 1)
+
+
+# ---------------------------------------------------------------------------------------------- the storage stop (F3-02, #496)
+STOP_ALERT = f"storage_stop:{KEY}"
+FILE_PATHS = (".xml", ".html")
+
+
+def open_alerts(dedupe_key):
+    return q("select severity, message from ops.alert where dedupe_key = %s and resolved_at is null", dedupe_key)
+
+
+def filing_requests(ex: Exchanges) -> list[str]:
+    """The filing files asked for (not the lists, not the homepage)."""
+    return [r.url.path for r in ex.seen if r.url.path.endswith(FILE_PATHS)]
+
+
+def record_puts(monkeypatch) -> list[str]:
+    """The media type of every `Storage.put` (the fetcher's store of each body), in order."""
+    from ft.storage import Storage
+    puts: list[str] = []
+    real = Storage.put
+
+    def put(self, data, *, source, media_type, ext):
+        puts.append(media_type)
+        return real(self, data, source=source, media_type=media_type, ext=ext)
+    monkeypatch.setattr(Storage, "put", put)
+    return puts
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_under_the_stop_files_are_fetched_and_stored_as_before_and_the_check_passes(s3, monkeypatch):
+    from ft.storage import MB, Storage
+    make_companies(("M&M",))
+    monkeypatch.setattr(Storage, "stored_bytes", lambda self: (1, 10 * MB))
+    ex = Exchanges()
+    code, tr = go(ex, since=D(2024, 4, 1), until=D(2026, 11, 11))
+    assert code == 0 and tr[0] == "success" and tr[1] > 0, tr
+    assert filing_requests(ex) and len(filings()) >= 2
+    stop = checks(tr)["storage_stop"]
+    assert stop["passed"] and not stop["blocking"]
+    assert re.match(r"not reached: the raw bucket holds 1\d\.\d MB of stored objects, under the 900 MB stop", stop["detail"]), stop
+    assert open_alerts(STOP_ALERT) == []
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_over_the_stop_no_file_is_fetched_or_stored_the_lists_are_recorded_and_the_check_and_an_error_alert_open(s3, monkeypatch):
+    from ft.storage import MB, Storage
+    make_companies(("M&M",))
+    puts = record_puts(monkeypatch)
+    monkeypatch.setattr(Storage, "stored_bytes", lambda self: (1, 950 * MB))
+    ex = Exchanges()
+    code, tr = go(ex, since=D(2024, 4, 1), until=D(2026, 11, 11))
+    assert code == 0 and tr[0] == "success", tr                                  # held, not failed: discovery is kept
+    assert filing_requests(ex) == []                                             # no filing file fetched
+    assert any(r.url.path == br.NSE_LIST_PATH for r in ex.seen)                  # both lists were read
+    assert "application/json" in puts and "application/xml" not in puts          # the list replies recorded; no file stored
+    assert filings() == [] and q("select count(*) from core.document where entity_id in "
+                                 "(select id from core.entity where slug like 'zb-%%')")[0][0] == 0
+    c = checks(tr)
+    stop = c["storage_stop"]
+    assert not stop["passed"] and not stop["blocking"]
+    assert stop["detail"].startswith("storage stop reached: the raw bucket holds 950.0 MB of stored objects, at or over the "
+                                     "900 MB stop for new files; held: ")
+    n_held, n_checked = map(int, re.search(r"held: (\d+) of (\d+) company-years", stop["detail"]).groups())
+    assert n_held == n_checked >= 2                                              # over at the start: every company-year is held
+    assert "zb-" not in stop["detail"]                                           # counts and sizes only
+    served = c["files_served"]                                                   # the held company-years are named here
+    assert not served["passed"] and not served["blocking"]
+    assert "zb-mm FY 2023-24 (held by the storage stop" in served["detail"]
+    [(severity, message)] = open_alerts(STOP_ALERT)
+    assert severity == "error" and message.startswith(f"{KEY}: storage stop reached: ") and "zb-" not in message
+    assert open_alerts(f"check:{KEY}:storage_stop")                              # the failed check's own warning too
+
+    monkeypatch.undo()                                                           # space freed: the next run reads the filings
+    code, tr = go(Exchanges(), since=D(2024, 4, 1), until=D(2026, 11, 11))
+    assert code == 0 and tr[0] == "success" and tr[1] > 0 and len(filings()) >= 2, tr
+    c = checks(tr)
+    assert c["storage_stop"]["passed"] and c["files_served"]["passed"]
+    assert open_alerts(STOP_ALERT) == [] and open_alerts(f"check:{KEY}:storage_stop") == []              # both resolved
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_the_stop_is_kept_current_with_each_file_stored_so_a_later_company_year_is_held(s3, monkeypatch):
+    from ft.storage import MB, Storage
+    make_companies(("M&M",))
+    monkeypatch.setattr(Storage, "stored_bytes", lambda self: (1, 900 * MB - 1))  # one byte under: the first file may be stored
+    ex = Exchanges()
+    code, tr = go(ex, since=D(2024, 4, 1), until=D(2026, 11, 11))
+    assert code == 0 and tr[0] == "success", tr
+    years = [r[1] for r in filings()]
+    assert years == ["FY 2023-24"], years                                        # the oldest year took the bucket over
+    stop = checks(tr)["storage_stop"]
+    assert not stop["passed"] and "at or over the 900 MB stop for new files; held: " in stop["detail"]
+    n_held, n_checked = map(int, re.search(r"held: (\d+) of (\d+) company-years", stop["detail"]).groups())
+    assert 1 <= n_held < n_checked                                               # the year before the stop wasn't held
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_bucket_that_cant_be_listed_holds_new_files_with_its_own_message(s3, monkeypatch):
+    from ft.storage import Storage
+    make_companies(("M&M",))
+
+    def refuse(self):
+        raise RuntimeError("listing refused")
+    monkeypatch.setattr(Storage, "stored_bytes", refuse)
+    ex = Exchanges()
+    code, tr = go(ex, since=D(2024, 4, 1), until=D(2026, 11, 11))
+    assert code == 0 and tr[0] == "success", tr
+    assert filing_requests(ex) == [] and filings() == []
+    stop = checks(tr)["storage_stop"]
+    assert not stop["passed"] and stop["detail"].startswith(
+        "storage stop reached: the raw bucket's size couldn't be read, so new files are held (the stop fails closed; ")
+    assert "listing refused" not in stop["detail"]
+    [(severity, message)] = open_alerts(STOP_ALERT)
+    assert severity == "error" and "couldn't be read" in message and "listing refused" not in message
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_filing_already_registered_keeps_its_rows_and_is_not_held_when_the_stop_is_reached_later(s3, monkeypatch):
+    from ft.storage import MB, Storage
+    make_companies(("M&M",))
+    ex = Exchanges()
+    go(ex, since=D(2024, 4, 1), until=D(2026, 11, 11))
+    before = (filings(), q("select count(*) from core.document")[0][0])
+    monkeypatch.setattr(Storage, "stored_bytes", lambda self: (1, 950 * MB))       # the bucket is over the stop now
+    code, tr = go(ex, since=D(2024, 4, 1), until=D(2026, 11, 11))
+    assert code == 0 and tr[0] == "success" and tr[1] == 0, tr                   # the same files: nothing new, nothing held
+    assert (filings(), q("select count(*) from core.document")[0][0]) == before
+    c = checks(tr)
+    assert c["storage_stop"]["passed"] and c["files_served"]["passed"]
+    assert open_alerts(STOP_ALERT) == []
+
+
+def test_only_equity_brsr_among_the_document_tasks_builds_a_storage_stop():
+    """`equity.filings` and `equity.shareholding` never construct a StorageStop (the stop is opt-in, F3-02)."""
+    from pathlib import Path as P
+    tasks = P(__file__).resolve().parents[1] / "src" / "ft" / "jobs" / "tasks"
+    users = {p.name for p in tasks.glob("*.py") if "StorageStop(" in p.read_text(encoding="utf-8")}
+    assert users == {"equity_brsr.py", "equity_call_transcripts.py"}, sorted(users)
+    for task_file in ("equity_filings.py", "equity_shareholding.py"):
+        assert (tasks / task_file).exists(), task_file                             # the scan would pass vacuously for a rename
