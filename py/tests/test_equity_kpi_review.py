@@ -295,13 +295,14 @@ def test_a_price_run_sends_nothing_writes_no_flag_and_keeps_the_last_answers(mon
     monkeypatch.setenv("KPI_CHECK", "everything")                                  # anything else is a price run
     assert task._review(None, _harvest(t), Decimal(25), Decimal(0)).mode == "price"
     monkeypatch.delenv("KPI_CHECK")
+    monkeypatch.setattr(t, "REVIEW_FILE", t.REVIEW_FILE.parent / "no-such-file.yaml")   # no setting at all: price
     assert task._review(None, _harvest(t), Decimal(25), Decimal(0)).mode == "price"
 
 
 def test_the_mode_comes_from_the_review_file_unless_the_environment_names_one(monkeypatch, tmp_path):
     from ft.jobs.tasks import equity_kpi_tables as t
     monkeypatch.delenv("KPI_CHECK", raising=False)
-    assert t.review_mode() == "price"                                              # the file as merged: a dry run
+    assert t.review_mode() == "all"                                                # the file: set for #513's dev run
     f = tmp_path / "r.yaml"
     monkeypatch.setattr(t, "REVIEW_FILE", f)
     f.write_text("mode: all\n")

@@ -8,4 +8,5 @@
 # NSE task's refresh keeps its six-day minimum interval. So the price run (the dry run every AI run gets first, CLAUDE.md
 # §6) and the run that sends are two backfills, with a reviewed change to this line between them.
 # The environment variable KPI_CHECK, if set, takes precedence (tests; a local run).
-mode: price
+# Set to all on Sat 14 Nov 2026 for #513's dev run, after the dry run in price (dev run on main d2f65fa, recorded on #513).
+mode: all
