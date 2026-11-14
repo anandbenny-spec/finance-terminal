@@ -271,6 +271,16 @@ def test_links_are_ranked_and_recordings_social_and_meeting_links_are_dropped():
     assert got[-1] in ("https://www.bseindia.com/corporates/", "https://www.co.in")
 
 
+def test_an_nseindia_in_link_scores_as_an_exchange_link():
+    # nseindia.in is NSE's second domain (Anand, 14 Nov 2026: #512): its links rank like nseindia.com's, below the
+    # company's own file at the same score.
+    co, nse_in, nse_com = ("https://www.co.in/files/q2.pdf", "https://nsearchives.nseindia.in/corporate/q2.pdf",
+                           "https://nsearchives.nseindia.com/corporate/q2.pdf")
+    got = pdfs.candidate_links(pdfs.PdfInfo(True, links_annot=[nse_in, nse_com, co]))
+    assert got == [co, nse_in, nse_com]
+    assert "nseindia.in" in pdfs.EXCHANGE_HOSTS
+
+
 def test_a_text_url_cut_at_a_line_end_is_rejoined_but_a_following_address_is_not_glued():
     assert pdfs.text_urls("see https://www.co.in/investors/\nearnings/q2.pdf for it") == ["https://www.co.in/investors/earnings/q2.pdf"]
     assert pdfs.text_urls("website www.srf.com\nRegd. Office: Block C") == ["https://www.srf.com"]
