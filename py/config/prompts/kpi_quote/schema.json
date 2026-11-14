@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": ["string", "null"],
+      "description": "The id (M…) of the one management sentence that says the company stopped reporting this metric, changed how or where it reports it, or why it is not in the release; null if no candidate does."
+    },
+    "asked": {
+      "type": ["string", "null"],
+      "description": "The id (A…) of the one analyst sentence that asks about this metric (its figure, its trend, or why it isn't disclosed); null if no candidate does."
+    }
+  },
+  "required": ["reason", "asked"],
+  "additionalProperties": false
+}

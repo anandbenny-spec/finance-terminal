@@ -73,6 +73,14 @@ class Metric:
     unit: str                     # the curated unit kind (rule 4)
     terms: tuple[str, ...]        # words a speaker uses for it (the transcript candidates)
     member_terms: tuple[str, ...] = ()   # for a breakdown member: its name and aliases (a sentence must name one)
+    measures: tuple[str, ...] = ()       # the curated measure kinds (rule 4 compares them with the unit, #513 part 2)
+
+    @property
+    def kind(self) -> tuple[str, tuple[str, ...]]:
+        """What rule 4's "matching units" compares: the curated unit and the measure kinds. A share and a growth rate
+        both print "%", but a level in % and a change in % aren't the same unit (#513 part 2, from dev run 13's TCS
+        attrition, which rule 4 paired with a new QoQ growth rate)."""
+        return (self.unit, self.measures)
 
 
 @dataclass
@@ -100,6 +108,7 @@ def _company(slug_: str, raw: dict) -> Company:
         measures = entry["measure"] if isinstance(entry["measure"], list) else [entry["measure"]]
         labels = [x["label"] for x in entry["labels"]]
         terms = tuple(t.lower() for t in entry.get("terms") or ())
+        kinds = tuple(sorted(set(measures)))
         for x in entry["labels"][1:]:
             if not (x.get("why") or "").strip():
                 raise DictionaryError(f"{slug_}.{key}: the merged label {x['label']!r} has no reason")
@@ -115,11 +124,12 @@ def _company(slug_: str, raw: dict) -> Company:
             for canon, display in members.items():
                 k = f"{key}.{slug(canon)}"
                 said = (canon, *[a for a, c in aliases.items() if c == canon]) if canon else ()
-                metric = Metric(k, f"{entry['name']}: {display}", str(entry["unit"]), terms, tuple(x for x in said if x))
+                metric = Metric(k, f"{entry['name']}: {display}", str(entry["unit"]), terms, tuple(x for x in said if x),
+                                kinds)
                 _add(co, metric, labels, measures, [canon, *[a for a, c in aliases.items() if c == canon]])
         else:
             accepted = [norm_member(m) for m in (entry.get("member") or [""])]
-            _add(co, Metric(key, entry["name"], str(entry["unit"]), terms), labels, measures, accepted)
+            _add(co, Metric(key, entry["name"], str(entry["unit"]), terms, (), kinds), labels, measures, accepted)
     return co
 
 

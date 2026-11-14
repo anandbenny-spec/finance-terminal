@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "properties": {
+    "flags": {
+      "type": "array",
+      "description": "One object per flag in the request, in its order.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "flag": {
+            "type": "integer",
+            "description": "The flag's number, as the request gives it."
+          },
+          "present": {
+            "type": "string",
+            "enum": ["yes", "no", "unsure"],
+            "description": "Do the current document's pages state this metric for the current quarter, under any label or wording?"
+          },
+          "previous_value": {
+            "type": "string",
+            "enum": ["yes", "no", "unsure"],
+            "description": "Does the previous document's page state this value for this metric for its quarter?"
+          },
+          "reason_in_release": {
+            "type": "string",
+            "enum": ["yes", "no", "unsure"],
+            "description": "Do the current document's pages say that this metric is no longer reported, is now reported differently or elsewhere, or why it is not reported?"
+          }
+        },
+        "required": ["flag", "present", "previous_value", "reason_in_release"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["flags"],
+  "additionalProperties": false
+}
