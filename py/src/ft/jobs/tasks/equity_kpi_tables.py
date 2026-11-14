@@ -91,8 +91,10 @@ RUN_LIMIT_USD = Decimal("3.14")     # what is left of the pilot's $5 (pre-approv
                                      # (DA-10's $0.3864, dev runs 2 to 13; #513, 14 Nov 2026), rounded down: no single run,
                                      # extraction and the flag review together, can take the pilot past $5 (card's stop;
                                      # was $3.17 before #513 part 2, $3.99 before run 9)
-CHECK_LIMIT_USD = Decimal("0.60")   # the Sonnet check of a run's flags (#513 part 2: about $2.5 stays for DD-06's production
-                                     # run, its extraction about $0.85 and its own review)
+CHECK_LIMIT_USD = Decimal("0.75")   # the Sonnet check of a run's flags: the dry run of 14 Nov 2026 (ops.task_run 266, dev)
+                                     # priced its 25 requests at $0.5643 central, and a wave is admitted at its worst case
+                                     # (about $0.06 a request), so $0.60 would have left the last ones unasked. DD-06's
+                                     # production run (extraction about $0.85 plus its review) still fits the pilot's $5
 QUOTE_LIMIT_USD = Decimal("0.10")   # Haiku's picks of the transcript quotes
 CHECK_MODES = ("price", "all")      # config/equity/kpi_review.yaml's `mode` (KPI_CHECK overrides): price sends nothing
 REVIEW_FILE = kdict.PATH.parent / "kpi_review.yaml"
