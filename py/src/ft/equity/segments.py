@@ -31,33 +31,63 @@ change needs every quarter's segments, which are in every quarterly results XBRL
   recorded on #409, from the fixture run in its handoff; the alternative was every member as filed, which flagged 9
   reconciling rows in the fixtures.
 
-**Which names are one segment.** Descriptions are compared after case, spacing, punctuation and footnote marks (`*`, `#`,
-`$`, `^`), "&" and "and", an enumerator ("(a)", "(1)", "b)"), and a plural "s" at the end of a word are set aside: Bajaj
-Finserv files "Investment and others" and "Investments and others" in turn (2019 to 2025), Infosys "Financial Services (1)"
-(Sep 2024), Tata Motors "(a) Commercial Vehicle" then "(a) Passenger Vehicle" after the demerger. A segment of the previous
-quarter and a new name in the latest that differ by at most two letters, both of at least ten, are one segment too (typos as
-filed: HUL's "Beaty & Personal care", SBI's "Other Banking oprations"). Any other difference is a different name ("Quick
-commerce business" and "Quick commerce" are two names). Decided by Claude under the standing delegation (24 Oct 2026) on
-11 Nov 2026, recorded on #409; the alternative was the exact text as filed, which flagged 6 spelling changes in the fixtures.
+**Which names are one segment** (`key`, `RULE_VERSION` 2; #553, decision 1). A name is compared as its *set of words*, in any
+order, after case, spacing, punctuation and footnote marks (`*`, `#`, `$`, `^`), "&" and "and", enumerators, and a plural "s"
+at the end of a word are set aside:
 
-**The rule** (`RULE_VERSION` 1; #409 step 3), the latest quarter against the four before it, all consolidated:
+- an enumerator is a single letter, a roman numeral or a one- or two-digit number, written "(i)", "(a)", "(1)" or "a)"
+  wherever it stands in the name, or "A." at the start only (once, and not when another letter and a dot follow, so "U.S."
+  keeps its letters). Anything else stays: "(UK)" and "(US)" are words, and "Europe and U.S. Stores" and "Europe Stores" are
+  two names;
+- why: ONGC typed its six segments three ways in six quarters (#411's verdict): "a) Offshore" under the headings "A. In India"
+  and "(i) E&P" (Jun and Sep 2025), "A. (i) (a) In India - E&P - Offshore" (Dec 2025 to Jun 2026), "A. In India - (i) E&P -
+  a) Offshore" (Sep 2026). Rule 1 set aside an enumerator only at the start and compared the words in order, so the Sep 2026
+  names read as five new segments. Now the last two are one name. Alternative: match rows by their position on the axis,
+  rejected because filers reorder and insert rows;
+- as in rule 1: Bajaj Finserv's "Investment and others" and "Investments and others" (2019 to 2025), Infosys' "Financial
+  Services (1)" (Sep 2024) and Tata Motors' "(a) Commercial Vehicle" are spellings, not new segments. A segment of the previous
+  quarter and a new name in the latest whose keys differ by at most two letters, both of at least ten, are one segment too
+  (typos as filed: HUL's "Beaty & Personal care", SBI's "Other Banking oprations"). Decided by Claude under the standing
+  delegation (24 Oct 2026) on 11 Nov 2026, recorded on #409; the alternative was the exact text as filed, which flagged 6
+  spelling changes in the fixtures.
+
+Any other difference is a different name ("Quick commerce business" and "Quick commerce" are two names), and a pair of them
+may still be one segment under a changed label (the pairing, below).
+
+**The rule** (`RULE_VERSION` 2; #409 step 3, #553), the latest quarter against the four before it, all consolidated:
 
 - the four previous quarters must each have a line-up (consecutive quarter ends), or nothing is compared;
 - a segment is *absent* when it was filed in each of the four previous quarters, with a revenue other than zero in at least
   one of them, and is not in the latest at all; *new* when it is filed with a revenue other than zero in the latest and is in
   none of the four (Tata Motors filed "(a) Commercial Vehicle" at 0 in the Sep 2025 quarter, the demerger's, and dropped it
-  in Dec 2025: flagged; a reconciling row filed at 0 every quarter never is);
+  in Dec 2025: flagged; a reconciling row or a heading filed at 0 every quarter never is: ONGC's "A. In India");
+- **the pairing** (#553, decision 2): an absent name and a new name whose words contain the other's are one segment under a
+  changed label ("B. Outside India" and "B. Outside India-E&P"; "a) Offshore" and "A. (i) (a) In India - E&P - Offshore"). Each
+  pair is its own **renamed** flag: before, the earlier name; after, the new one. Pairs are one-to-one: an absent name that
+  fits two new names, or a new name that fits two absent ones, pairs with nothing ("Retail" and "Wholesale" absent with
+  "Retail and Wholesale" new go to the merged rule). Alternative: a pair is the same segment and flags nothing, rejected
+  because the page would read "none flagged" over a redefinition ("Retail" becoming "Retail and Wholesale");
+- what is left after the pairing goes through the kinds below;
 - **dropped:** one or more absent and none new (one flag per absent segment);
 - **merged:** two or more absent and exactly one new, whose revenue in the latest quarter is within ±25% (`MERGE_BAND`) of
   the absent segments' summed revenue in the previous quarter;
 - **renamed** (renamed or redefined): exactly one absent and exactly one new;
 - **multi_to_single**, **single_to_multi:** the latest quarter reports one segment and the previous quarter several, or the
-  reverse (one flag; the set rule doesn't apply in that quarter);
-- **other:** any other change that leaves a segment of the previous four absent (two absent and two new; one absent and two
-  new, a split; two absent and one new outside the band). Shown as the segments missing and the segments new, with no kind
-  claimed. Decided by Claude under the standing delegation (24 Oct 2026) on 11 Nov 2026, recorded on #409; the alternative
-  was to flag nothing and name it in a warning, which would let the page read "none flagged" over a change;
+  reverse (one flag; the set rule doesn't apply in that quarter). The multi side lists only the segments filed with a revenue
+  other than zero, the rule's own test for a new segment (#553, decision 4: Coal India's "Share of Joint Venture Profit/Loss",
+  a results line filed at 0 on the segment axis, isn't listed). If fewer than two such segments remain, the side lists every
+  line as filed, so the flag never shows one name under "several" and a change is never silenced (decided by Claude under the
+  standing delegation, 24 Oct 2026, on 14 Nov 2026, recorded on #553; no switch in the saved filings or in production's line-ups
+  of 11 Nov 2026 falls back). Alternative: no flag, which would let the page read "none flagged" over a switch;
+- **other:** any other change that leaves a segment of the previous four absent (two absent and two new that don't pair; one
+  absent and two new, a split; two absent and one new outside the band). Shown as the segments missing and the segments new,
+  with no kind claimed; its judge confirms it only if every segment before is truly missing and every one after truly new.
+  Decided by Claude under the standing delegation (24 Oct 2026) on 11 Nov 2026, recorded on #409; the alternative was to flag
+  nothing and name it in a warning, which would let the page read "none flagged" over a change;
 - a single-segment filer is never flagged while it stays single; a new segment alone is not a flag.
+
+Every stored flag carries the rule's version (`equity.segment_change.rule_version`); a run on a new version rewrites every
+flag, so none keeps an older version's number.
 
 The wording (D8, for DD-02): "Not in the latest results; reported in the previous four." Never a motive.
 """
@@ -72,7 +102,7 @@ from decimal import Decimal
 from ft.equity import xbrl
 
 PARSER_VERSION = 1
-RULE_VERSION = 1
+RULE_VERSION = 2                            # 2: names as word sets, the pairing, the switch lists (#553)
 AXIS = "ReportableSegmentsAxis"
 PREVIOUS = 4                                # quarters the latest is compared with
 HISTORY = 6                                 # quarters read per company: the latest and the five before it
@@ -136,18 +166,43 @@ class Outcome:
 
 # ----------------------------------------------------------------------------------------------------------------------
 _WORD = re.compile(r"[0-9a-z]+")
-_ENUM_LEAD = re.compile(r"^\s*(\(\s*[0-9a-z]{1,3}\s*\)|[0-9a-z]{1,3}[.)])\s*")      # "(a) ", "b) ", "1. ", "(ii) "
-_ENUM_ANY = re.compile(r"\(\s*[0-9]{1,2}\s*\)")                                     # a footnote number: "(5)"
+_ENUM = r"(?:[a-z]|[0-9]{1,2}|(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3}))"                  # a letter, a roman numeral, 1 or 2 digits
+_ENUM_LEAD = re.compile(rf"^\s*{_ENUM}\.(?![0-9a-z]\.)")                           # "A. " at the start, never "U.S."
+_ENUM_ANY = re.compile(rf"\(\s*{_ENUM}\s*\)|(?<![^\s\-–:,]){_ENUM}\)")            # "(i)", "(a)", "(1)", "a)" anywhere,
+                                                                                    # "a)" only after a space, dash, colon,
+                                                                                    # comma or the start ("(E&P)" stays)
 _RECONCILING = re.compile(r"^\W*(add|less)\b|\bunalloca(ted|ble)\b", re.IGNORECASE)    # "Less: ...", "(c) Corporate/Unallocable"
 TYPO_LETTERS = 2                            # one segment when two names differ by at most this many letters ...
 TYPO_MIN_LENGTH = 10                        # ... and both are at least this long
 
 
 def key(description: str) -> str:
-    """The spelling-free form of a segment name: case, spacing, punctuation and footnote marks, "&"/"and", an enumerator and
-    a word's plural "s" set aside."""
-    t = _ENUM_ANY.sub(" ", _ENUM_LEAD.sub("", description.casefold())).replace("&", " and ")
-    return " ".join(w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in _WORD.findall(t))
+    """The spelling-free form of a segment name: its set of words, sorted, with case, spacing, punctuation and footnote marks,
+    "&"/"and", enumerators and a word's plural "s" set aside (rule 2: the order of the words and where an enumerator stands
+    don't matter)."""
+    t = _ENUM_ANY.sub(" ", _ENUM_LEAD.sub(" ", description.casefold())).replace("&", " and ")
+    return " ".join(sorted({w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in _WORD.findall(t)}))
+
+
+def _contains(a: str, b: str) -> bool:
+    """One key's words contain the other's (both keys have words)."""
+    wa, wb = set(a.split()), set(b.split())
+    return bool(wa) and bool(wb) and (wa <= wb or wb <= wa)
+
+
+def pair(absent: list[str], new: list[str]) -> list[tuple[str, str]]:
+    """The one-to-one pairs of an absent key and a new key whose words contain the other's (#553, decision 2), in `absent`'s
+    order. An absent key that fits two new keys, or a new key that fits two absent ones, pairs with nothing."""
+    fits_a = {a: [n for n in new if _contains(a, n)] for a in absent}
+    fits_n = {n: [a for a in absent if _contains(a, n)] for n in new}
+    return [(a, fits_a[a][0]) for a in absent if len(fits_a[a]) == 1 and len(fits_n[fits_a[a][0]]) == 1]
+
+
+def _multi_side(lineup: Lineup) -> list[str]:
+    """A switch flag's multi side: the segments filed with a revenue other than zero, or every line as filed when fewer than
+    two have one (#553, decision 4)."""
+    earning = [ln.description for ln in lineup.lines if ln.revenue]
+    return earning if len(earning) >= 2 else [ln.description for ln in lineup.lines]
 
 
 def is_reconciling(description: str) -> bool:
@@ -287,9 +342,9 @@ def compare(latest: Lineup, previous: list[Lineup | None]) -> Outcome:
     if latest.reporting == "single":
         if last_reporting == "single":
             return Outcome("single_segment")
-        return Outcome("changed", [Change("multi_to_single", [ln.description for ln in prev[0].lines], [])])
+        return Outcome("changed", [Change("multi_to_single", _multi_side(prev[0]), [])])
     if last_reporting == "single":
-        return Outcome("changed", [Change("single_to_multi", [], [ln.description for ln in latest.lines])])
+        return Outcome("changed", [Change("single_to_multi", [], _multi_side(latest))])
     now = latest.keyed()
     filed = [set(p.keyed()) if p.reporting == "multi" else set() for p in prev]
     earned = {k for p in prev if p.reporting == "multi" for k, ln in p.keyed().items() if ln.revenue}
@@ -303,19 +358,23 @@ def compare(latest: Lineup, previous: list[Lineup | None]) -> Outcome:
         if twin is not None:
             absent.remove(a)
             new.remove(twin)
+    pairs = pair(absent, new)                                         # a changed label: one renamed flag per pair
+    flags = [Change("renamed", [last[a].description], [now[n].description]) for a, n in pairs]
+    absent = [a for a in absent if a not in {a for a, _ in pairs}]
+    new = [n for n in new if n not in {n for _, n in pairs}]
     if not absent:
-        return Outcome("none_flagged")
+        return Outcome("changed", flags) if flags else Outcome("none_flagged")
     before = [last[k].description for k in absent]
     after = [now[k].description for k in new]
     if not new:
-        return Outcome("changed", [Change("dropped", [d], []) for d in before])
+        return Outcome("changed", flags + [Change("dropped", [d], []) for d in before])
     if len(absent) == 1 and len(new) == 1:
-        return Outcome("changed", [Change("renamed", before, after)])
+        return Outcome("changed", flags + [Change("renamed", before, after)])
     if len(absent) >= 2 and len(new) == 1:
         base = [last[k].revenue for k in absent]
         got = now[new[0]].revenue
         if got is not None and all(b is not None for b in base) and sum(base) > 0:
             ratio = got / sum(base)
             if abs(ratio - 1) <= MERGE_BAND:
-                return Outcome("changed", [Change("merged", before, after, ratio)])
-    return Outcome("changed", [Change("other", before, after)])
+                return Outcome("changed", flags + [Change("merged", before, after, ratio)])
+    return Outcome("changed", flags + [Change("other", before, after)])

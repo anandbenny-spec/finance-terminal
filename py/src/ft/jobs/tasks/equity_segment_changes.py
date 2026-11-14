@@ -25,7 +25,7 @@ held back until its judge passes):
 - (W) `latest_unread`: a company whose latest consolidated filing gave no line-up, so an earlier quarter is the latest
   compared;
 - (W) `not_compared`: a company whose latest quarter wasn't compared (an earlier quarter missing or held, no segment
-  disclosure, no consolidated filing), named;
+  disclosure, no consolidated filing), named; one with no line-up in any quarter also with its filings' reason classes;
 - (W) `flags`: the flags by kind, with the companies (passing: flags aren't faults; the judge reads each one, DD-03);
 - (W) `parsed`: what the run read and stored, always passing.
 """
@@ -47,6 +47,13 @@ SHOWN = 12
 
 def _names(items: list[str]) -> str:
     return "; ".join(items[:SHOWN]) + (f"; and {len(items) - SHOWN} more" if len(items) > SHOWN else "")
+
+
+def _why_none(items: list[Item], entity_id: int) -> str:
+    """A company with no line-up in any quarter: its filings' reason classes with counts (" (no_disclosure 6)"), never a name
+    (#553 step 5: HDFC Life's reason was in no check's detail)."""
+    why = Counter(it.error.check if it.error else "not read" for it in items if it.entity_id == entity_id and it.lineup is None)
+    return f" ({', '.join(f'{k} {v}' for k, v in sorted(why.items()))})" if why else ""
 
 
 @dataclass
@@ -279,7 +286,8 @@ class EquitySegmentChanges(Task):
                   for ev in f.evaluations if ev.period_end != ev.last_filed]
         out.append(Check("latest_unread", not unread, ("the latest consolidated filing gave no line-up: " + _names(unread))
                          if unread else "every company's latest consolidated filing gave its line-up", blocking=False))
-        nc = [f"{ev.slug}: " + ("; ".join(ev.missing) if ev.missing else "no line-up in any of its latest six quarters")
+        nc = [f"{ev.slug}: " + ("; ".join(ev.missing) if ev.missing else "no line-up in any of its latest six quarters"
+                                + _why_none(f.items, ev.entity_id))
               for ev in f.evaluations if ev.outcome is None or ev.outcome.state == "not_compared"]
         nc += [f"{s}: no consolidated filing stored" for s in f.no_consolidated]
         out.append(Check("not_compared", not nc, ("latest quarter not compared: " + _names(nc)) if nc
