@@ -545,10 +545,11 @@ def test_read_reaches_past_200_pages(monkeypatch):
 
 
 def test_the_run_cap_is_what_is_left_of_the_pilot():
-    """The pilot's $5 (pre-approval 2) less DA-10's $0.3864 and dev run 2's $0.6196 (13 Nov 2026), rounded down: no
-    single run can take the pilot past $5 (#512's fix round tightened it from $4.61)."""
+    """The pilot's $5 (pre-approval 2) less DA-10's $0.3864, dev run 2's $0.6196 (13 Nov 2026) and dev run 9's $0.8178
+    (14 Nov 2026), rounded down: no single run can take the pilot past $5 (#512's fix round tightened it from $4.61 to
+    $3.99, part 4 to $3.17)."""
     from ft.jobs.tasks import equity_kpi_tables as t
-    assert Decimal("3.99") == t.RUN_LIMIT_USD <= Decimal(5) - Decimal("0.3864") - Decimal("0.6196")
+    assert Decimal("3.17") == t.RUN_LIMIT_USD <= Decimal(5) - Decimal("0.3864") - Decimal("0.6196") - Decimal("0.8178")
 
 
 # ----------------------------------------------------------------------------------- the fix round (#512 part 2, 14 Nov)
@@ -791,3 +792,112 @@ def test_an_nse_reply_that_is_not_a_row_list_is_counted(monkeypatch):
     task.discover(SimpleNamespace(fetcher=None), [co], datetime(2026, 1, 1).date(), datetime(2026, 6, 30).date())
     assert task.feed == {1: "none"} and task.nse_errors["HTTP 200 without a row list"] >= 1
     assert set(task.nse_errors) == {"HTTP 200 without a row list"}
+
+
+# ----------------------------------------------------------------------------------- one window per quarter (#512 part 4)
+def test_feed_windows_one_per_quarter_clipped_to_the_run():
+    """Dev run 9 (14 Nov 2026) asked NSE for 365-day windows and came back without six companies' April 2025 results
+    filings. Each quarter now has its own window: the quarter end's next day to 76 days after it."""
+    from datetime import date
+    from itertools import pairwise
+    w = dc.feed_windows("tcs", date(2024, 10, 1), date(2026, 11, 14))
+    assert len(w) == len(dc.quarters("tcs")) == 9
+    assert w[0] == (date(2024, 10, 1), date(2024, 12, 15))
+    assert (date(2025, 4, 1), date(2025, 6, 15)) in w                       # Q4 FY25: TCS's 10 Apr 2025 results day
+    assert w[-1] == (date(2026, 10, 1), date(2026, 11, 14))                 # Q2 FY27, cut at the run's date
+    assert all((b - a).days < dc.FEED_DAYS and b < c for (a, b), (c, _) in pairwise(w))   # short, in order, apart
+    assert len(dc.feed_windows("infy", date(2024, 10, 1), date(2026, 11, 14))) == 8          # no Q2 FY25
+    assert dc.feed_windows("infy", date(2026, 1, 1), date(2026, 6, 30)) == [(date(2026, 1, 1), date(2026, 3, 17)),
+                                                                            (date(2026, 4, 1), date(2026, 6, 15))]
+
+
+def test_results_day_counts_say_why_a_quarter_has_none():
+    rules = dc.load_rules()
+    day = datetime(2025, 4, 10, 16, 0, tzinfo=IST)
+    feed = [
+        Ann("Acme has submitted to the Exchange, the financial results for the period ended; earnings call", "x.pdf",
+            day, category="Outcome of Board Meeting"),                       # named, an outcome, rejected (a call)
+        Ann("Press release on the results", "pr.pdf", day, category="Updates"),   # named, not an outcome
+        Ann("Record date for the dividend", "rd.pdf", day, category="Record Date"),
+        results(datetime(2025, 7, 10, 16, 0, tzinfo=IST)),                   # outside Q4 FY25's 75 days
+    ]
+    assert dc.results_day(feed, rules["tcs"], "Q4 FY25") is None
+    assert dc.results_day_counts(feed, rules["tcs"], "Q4 FY25") == {"rows": 3, "named": 2, "outcome": 1, "rejected": 1}
+    assert dc.results_day_counts([], rules["tcs"], "Q4 FY25") == {"rows": 0, "named": 0, "outcome": 0, "rejected": 0}
+
+
+class _Feed:
+    """NSE's announcements as a fake fetch: answers each window with the rows filed inside it, and records the windows."""
+
+    def __init__(self, rows):
+        self.rows, self.asked = rows, []
+
+    def __call__(self, symbol, a, b):
+        from ft.equity.calls import discovery as calls
+        self.asked.append((a, b))
+        inside = [r for r in self.rows
+                  if a <= datetime.strptime(r["an_dt"], "%d-%b-%Y %H:%M:%S").date() <= b]
+        return calls.Answer(200, inside)
+
+
+def _nse_row(seq, when, text, desc):
+    return {"seq_id": seq, "an_dt": when, "exchdisstime": when, "attchmntText": text, "desc": desc, "symbol": "TCS",
+            "sm_isin": "INE467B01029", "attchmntFile": f"https://nsearchives.nseindia.com/corporate/{seq}.pdf"}
+
+
+def test_discover_asks_one_window_per_quarter_and_finds_the_april_results_day(monkeypatch):
+    from datetime import date
+
+    from ft.equity.calls import discovery as calls
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    feed = _Feed([
+        _nse_row("1", "10-Apr-2025 15:30:00", "Tata Consultancy Services Limited has submitted to the Exchange, the "
+                 "financial results for the period ended March 31, 2025.", "Outcome of Board Meeting"),
+        _nse_row("2", "10-Apr-2025 16:00:00", "Press Release", "Press Release"),
+        _nse_row("3", "20-Mar-2025 10:00:00", "Trading window closure", "Trading Window"),   # in no quarter's window
+    ])
+    monkeypatch.setattr(task, "_nse", lambda ctx: feed)
+    monkeypatch.setattr(task, "_warm", lambda ctx, errors=None: None)
+    co = calls.Company(1, "tcs", "TCS", "INE467B01029", None)
+    anns = task.discover(SimpleNamespace(fetcher=None), [co], date(2024, 10, 1), date(2026, 11, 14))
+    assert feed.asked == dc.feed_windows("tcs", date(2024, 10, 1), date(2026, 11, 14))     # 9 windows, no 365-day one
+    assert task.feed == {1: "nse"} and sorted(a.filing_key for a in anns[1]) == ["1", "2"]
+    rd, cands = dc.candidates(anns[1], dc.load_rules()["tcs"], "Q4 FY25")
+    assert rd == date(2025, 4, 10) and [c.filing_key for c in cands] == ["2"]
+
+    h = t.Harvest(companies=[co])
+    assert task._preflight(h, anns, dc.load_rules()) is None
+    assert h.windows["tcs"] == {"requests": 9, "leaves": 9, "answered": 9, "rows": 2, "largest": 2, "round": []}
+    assert set(h.no_day) == {f"tcs {q}" for q in dc.quarters("tcs") if q != "Q4 FY25"}
+    assert h.no_day["tcs Q1 FY26"] == {"rows": 0, "named": 0, "outcome": 0, "rejected": 0}
+    checks = {c.name: c for c in task.checks(None, h, 1)}
+    assert checks["feed"].passed and '"requests": 9' in checks["feed"].detail
+    assert '"tcs Q1 FY26": {"rows": 0' in checks["feed"].detail
+    assert "Tata" not in checks["feed"].detail and "Press" not in checks["feed"].detail      # counts only (CLAUDE.md §4)
+
+
+def test_window_counts_name_a_leaf_at_a_round_count():
+    from datetime import date
+
+    from ft.equity.calls import discovery as calls
+    from ft.jobs.tasks import equity_kpi_tables as t
+    logs = [calls.WindowLog("TCS", date(2025, 4, 1), date(2025, 6, 15), 200, True, 50, 0, "round count 50", True),
+            calls.WindowLog("TCS", date(2025, 4, 1), date(2025, 5, 8), 200, True, 50, 1),
+            calls.WindowLog("TCS", date(2025, 5, 9), date(2025, 6, 15), 200, True, 31, 1),
+            calls.WindowLog("TCS", date(2025, 7, 1), date(2025, 9, 15), 503, False, 0, 0)]
+    assert t.EquityKpiTables._window_counts(logs) == {
+        "requests": 4, "leaves": 3, "answered": 2, "rows": 81, "largest": 50,
+        "round": ["2025-04-01..2025-05-08 depth 1: 50"]}
+
+
+def test_a_failed_feed_check_still_gives_the_counts():
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    task.feed = {1: "nse"}
+    h = t.Harvest(companies=[_Co(1, "tcs")])
+    h.preflight = task._preflight(h, {1: []}, dc.load_rules())
+    assert h.preflight == "no results day found for tcs"
+    detail = {c.name: c for c in task.checks(None, h, 1)}["feed"].detail
+    assert detail.startswith("no results day found for tcs; nothing read or written; {")
+    assert '"windows": {"tcs": {"requests": 0' in detail and '"tcs Q4 FY25": {"rows": 0' in detail
