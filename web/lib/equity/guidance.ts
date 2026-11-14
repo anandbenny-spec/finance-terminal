@@ -38,13 +38,37 @@ const RELATION = {
   moved_against: "moved the other way",
 } as const;
 
-/** "Delivered (above the range)", "Missed (below the range)", "Pending", "Not scored: <the stored reason>". */
+/**
+ * Spec 02B §5.10's not-scored reasons in words (#532 part 2). The scorer and the extraction store the key (`no_filed_figure`, …),
+ * and a visitor never sees a key (CLAUDE.md §4), so each is written out here. A `definition` reason covers both of §5.10's cases
+ * (the company's figure differs from ours, or there's no stated figure to check it against).
+ */
+const NOT_SCORED_REASON: Readonly<Record<string, string>> = {
+  no_filed_figure: "no filed figure to compare with",
+  currency: "stated in another currency",
+  undated: "no datable period",
+  vague_figure: "no exact figure stated",
+  scope: "about a segment, subsidiary or region, not the whole company",
+  structural_break: "a merger or demerger falls within the period",
+  definition: "the company's own definition of this figure couldn't be matched to the filed lines",
+  filed_figures_unavailable: "the period's filed figures aren't available",
+  duplicate: "stated more than once on this call",
+};
+const REASON_KEY = /^\S+$/;   // no space: a key, not words
+
+/**
+ * "Delivered (above the range)", "Missed (below the range)", "Pending", "Not scored: <the reason in words>". A reason key this map
+ * doesn't know gives plain "Not scored", never the key; a reason already in words (it holds a space) is shown as stored.
+ */
 export function outcomeText(r: Pick<CallGuidanceRow, "outcome" | "relation" | "reason" | "not_scored_reason">): string {
   const relation = r.relation ? ` (${RELATION[r.relation] ?? r.relation})` : "";
   if (r.outcome === "delivered") return `Delivered${relation}`;
   if (r.outcome === "missed") return `Missed${relation}`;
   if (r.outcome === "pending") return "Pending";
-  return `Not scored: ${r.reason ?? r.not_scored_reason ?? "no reason stored"}`;
+  const reason = r.reason ?? r.not_scored_reason;
+  if (reason === null || reason === undefined || reason.trim() === "") return "Not scored";
+  const words = Object.hasOwn(NOT_SCORED_REASON, reason) ? NOT_SCORED_REASON[reason] : REASON_KEY.test(reason) ? null : reason;
+  return words ? `Not scored: ${words}` : "Not scored";
 }
 
 export type GuidanceRow = {
