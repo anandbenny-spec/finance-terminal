@@ -8,6 +8,8 @@
 // exists, the Financials tab says that holding isn't published yet and the rest of the page is unaffected. The segment-changes
 // reads (DD-02, #410: view 0038 and the field policy) fail on their own the same way: before 0038 is pushed, or when either read
 // fails, the panel holds back (no policy read is a hidden field) or says it couldn't load, and the rest of the tab is unaffected.
+// The KPI-table pilot's reads (DD-06, #514: view 0047, and the company's calls) are made for the 7 pilot companies only, and fail
+// on their own the same way; the calls are read only when the view returned a flag (none while equity.kpi_changes is hidden).
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cacheLife, cacheTag } from "next/cache";
 import { dateInZone } from "@/lib/format";
@@ -19,8 +21,10 @@ import type {
   CompanyRow,
   CompanyValuationRow,
   CorporateActionRow,
+  EarningsCallRow,
   FieldPolicyRow,
   ForecastRow,
+  KpiChangeRow,
   PeerCompRow,
   PromoterHoldingRow,
   SegmentChangeRow,
@@ -29,12 +33,13 @@ import type {
 } from "@/lib/queries/api";
 import { indexesOf, readIndexMembers } from "@/lib/queries/equity";
 import { readFieldPolicy, readSeriesInfo, type PolicyDb } from "@/lib/queries/policy";
-import { readCallsTab, type CallsTabData } from "@/lib/queries/calls";
+import { readCallsTab, readCompanyCalls, type CallsTabData } from "@/lib/queries/calls";
 import { readRateTab, type RateTabData } from "@/lib/queries/rate";
 import { readAll } from "@/lib/queries/read";
 import { readValueChainOverview, type ValueChainOverviewData } from "@/lib/queries/valuechain";
 import { publicClient } from "@/lib/supabase/public";
 import type { TabId } from "@/lib/equity/company";
+import { isKpiPilot } from "@/lib/equity/kpi";
 import { IMF_CPI, IMF_GDP } from "@/lib/equity/valuation";
 import { IN_10Y, US_10Y } from "@/lib/policy/longrates";
 
@@ -113,6 +118,34 @@ export async function readSegmentChanges(db: CompanyDb, slug: string): Promise<S
   );
 }
 
+/** The KPI-table pilot's confirmed flags for the company (0047, #512): none while equity.kpi_changes is hidden or none is confirmed. */
+export async function readKpiChanges(db: CompanyDb, slug: string): Promise<KpiChangeRow[]> {
+  return readAll<KpiChangeRow>("api.kpi_changes", (from, to) =>
+    db
+      .from("kpi_changes")
+      .select("*", { count: "exact" })
+      .eq("company_slug", slug)
+      .order("period_end", { ascending: false })
+      .order("dict_key")
+      .range(from, to),
+  );
+}
+
+/** The pilot panel's reads (DD-06, #514): its flags, then the company's calls only when there is a flag to word. Each part null
+ * when its read failed; the calls undefined when not read. */
+export async function readKpiPanel(db: CompanyDb, slug: string): Promise<{ kpiChanges: KpiChangeRow[] | null; kpiCalls?: EarningsCallRow[] | null }> {
+  const kpiChanges = await readKpiChanges(db, slug).catch((error: unknown) => {
+    logFailure(`${slug} KPI changes`, error);
+    return null;
+  });
+  if (!kpiChanges || kpiChanges.length === 0) return { kpiChanges };
+  const kpiCalls = await readCompanyCalls(db, slug).catch((error: unknown) => {
+    logFailure(`${slug} KPI calls`, error);
+    return null;
+  });
+  return { kpiChanges, kpiCalls };
+}
+
 export async function readValuationRuns(db: CompanyDb, slug: string): Promise<CompanyValuationRow[]> {
   return readAll<CompanyValuationRow>("api.company_valuation", (from, to) =>
     db.from("company_valuation").select("*", { count: "exact" }).eq("slug", slug).order("kind").range(from, to),
@@ -163,6 +196,10 @@ export type FinancialsData = {
   segmentChanges?: SegmentChangeRow[] | null;
   /** The field policies, for the segment-changes panel's gate; null or absent when not read, which holds the panel back. */
   policies?: FieldPolicyRow[] | null;
+  /** api.kpi_changes for a pilot company (DD-06, #514); null when its read failed. Absent: not a pilot company, or not read. */
+  kpiChanges?: KpiChangeRow[] | null;
+  /** The company's calls, read only when kpiChanges has a flag; null when that read failed. */
+  kpiCalls?: EarningsCallRow[] | null;
 };
 
 export type ValuationData = {
@@ -301,7 +338,7 @@ export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: st
     ]);
     data.overview = { prices, metrics, peers, valueChain };
   } else {
-    const [rows, metrics, promoter, segmentChanges, policies] = await Promise.all([
+    const [rows, metrics, promoter, segmentChanges, policies, kpi] = await Promise.all([
       readFinancials(db, slug),
       readCompanyMetrics(db, slug),
       readPromoterHolding(db, slug).catch((error: unknown) => {
@@ -316,8 +353,9 @@ export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: st
         logFailure(`${slug} field policy`, error);
         return null;
       }),
+      isKpiPilot(slug) ? readKpiPanel(db, slug) : Promise.resolve(null),
     ]);
-    data.financials = { financials: rows, metrics, promoter, segmentChanges, policies };
+    data.financials = { financials: rows, metrics, promoter, segmentChanges, policies, ...(kpi ?? {}) };
   }
   return data;
 }
@@ -333,6 +371,7 @@ export function tabReadFailed(data: TabData, market: "IN" | "US"): boolean {
   const vc = overview?.valueChain;
   if (vc && (vc.rows === null || vc.products === null || vc.policies === null)) return true;
   if (financials && ((market === "IN" && financials.promoter === null) || financials.segmentChanges === null || financials.policies === null)) return true;
+  if (financials && (financials.kpiChanges === null || financials.kpiCalls === null)) return true;
   if (valuation && (valuation.series === null || (market === "IN" && valuation.imf === null))) return true;
   if (calls && (calls.guidance === null || calls.remarks === null || calls.results.state === "error" || calls.tone.state === "error")) return true;
   return false;

@@ -545,14 +545,25 @@ def test_read_reaches_past_200_pages(monkeypatch):
 
 
 def test_the_run_cap_is_what_is_left_of_the_pilot():
-    """The pilot's $5 (pre-approval 2) less the $1.8519 spent by dev run 13 (DA-10's $0.3864, dev run 2's $0.6196 on 13 Nov
-    2026, dev run 9's $0.8178 and runs 10 to 13 on 14 Nov 2026), rounded down: no single run, extraction and the flag
-    review together, can take the pilot past $5 (#512's fix round tightened it from $4.61 to $3.99, part 4 to $3.17;
-    #513 part 2 to $3.14). The review's own caps sit inside it."""
+    """The pilot's $5 (pre-approval 2) less the $2.4733 spent by dev run 15 (DA-10's $0.3864, dev run 2's $0.6196 on 13 Nov
+    2026, dev run 9's $0.8178 and runs 10 to 13 on 14 Nov 2026, $1.8519 in all; dev run 15's flag review $0.6214, #513),
+    rounded down: DD-06's one production run (#514), extraction and the flag review together, can't take the pilot past $5
+    (#512's fix round tightened it from $4.61 to $3.99, part 4 to $3.17; #513 part 2 to $3.14; DD-06 to $2.52). The
+    review's own caps sit inside it."""
     from ft.jobs.tasks import equity_kpi_tables as t
-    assert Decimal("3.14") == t.RUN_LIMIT_USD <= Decimal(5) - Decimal("1.8519")
+    assert Decimal("2.52") == t.RUN_LIMIT_USD <= Decimal(5) - Decimal("1.8519") - Decimal("0.6214")
     assert Decimal("1.8519") >= Decimal("0.3864") + Decimal("0.6196") + Decimal("0.8178")
     assert t.CHECK_LIMIT_USD + t.QUOTE_LIMIT_USD <= t.RUN_LIMIT_USD
+
+
+def test_the_web_panel_shows_on_the_pilot_companies_only():
+    """DD-06 (#514): the Financials tab's panel lists the pilot's companies in web/lib/equity/kpi.ts; they are this task's,
+    in the same order, so the panel never shows on a company the task doesn't read (or misses one it does)."""
+    import re
+    ts = (Path(__file__).resolve().parents[2] / "web" / "lib" / "equity" / "kpi.ts").read_text(encoding="utf-8")
+    m = re.search(r"export const KPI_PILOT = \[([^\]]*)\] as const;", ts)
+    assert m, "KPI_PILOT not found in web/lib/equity/kpi.ts"
+    assert tuple(re.findall(r'"([a-z&-]+)"', m[1])) == dc.COMPANIES
 
 
 # ----------------------------------------------------------------------------------- the fix round (#512 part 2, 14 Nov)
