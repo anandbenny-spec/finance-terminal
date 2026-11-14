@@ -30,6 +30,18 @@ describe("the header", () => {
     expect(t).toContain("IT services curated");
     expect(t).toContain("Nifty 50");
   });
+  it("wraps the peer group's label and its qualifier as a pair, so the chip is never wider than its column (#541)", () => {
+    expect(out).toContain("inline-flex max-w-full flex-wrap");
+    expect(out).toContain("min-w-0 break-words");
+    for (const label of ["Exchanges and capital-market infrastructure", "Lenders other than banks, and financial holding companies"]) {
+      const long = html(page({ company: company({ peer_group_label: label }) }));
+      expect(long).toContain("inline-flex max-w-full flex-wrap");
+      expect(text(long)).toContain(`${label} curated`);
+    }
+    const us = html(page({ company: company({ market: "US", currency: "USD", peer_group_label: "Banks, investment banks and card lenders" }) }));
+    expect(us).toContain("inline-flex max-w-full flex-wrap");
+    expect(text(us)).toContain("Banks, investment banks and card lenders curated");
+  });
   it("shows the last close with its date and the day's change with a sign and a triangle", () => {
     const t = text(out);
     expect(t).toContain("₹3,456.70");
