@@ -58,12 +58,15 @@ from ft.ai import batch
 from ft.ai.client import AIUnavailable, CallError, Client, Failed, TooLong, cost_usd, load_prompt, load_schema
 from ft.equity.calls import discovery as dc
 from ft.equity.calls import pdfs
+from ft.equity.calls.turns import ROLE_HOLD_SHARE
 from ft.equity.guard import equity_due
+from ft.equity.kpi import check as kc
 from ft.equity.kpi import dictionary as kdict
 from ft.equity.kpi import documents as kd
 from ft.equity.kpi import extraction as ex
 from ft.equity.kpi import filters as fl
 from ft.equity.kpi import flags as kf
+from ft.equity.kpi import quotes as kq
 from ft.equity.kpi import render as rn
 from ft.jobs.due import Due
 from ft.jobs.fetch import FetchError
@@ -73,9 +76,15 @@ from ft.jobs.tasks import register
 TASK = "kpi_tables"
 KEY = "equity.kpi_tables"
 SHOWN = 12
-RUN_LIMIT_USD = Decimal("3.17")     # what is left of the pilot's $5 (pre-approval 2) after DA-10's $0.3864, dev run 2's
-                                     # $0.6196 (13 Nov 2026) and dev run 9's $0.8178 (14 Nov 2026; #512), rounded down: no
-                                     # single run can take the pilot past $5 (card's stop; was $3.99 before run 9)
+RUN_LIMIT_USD = Decimal("3.14")     # what is left of the pilot's $5 (pre-approval 2) after the $1.8519 spent by dev run 13
+                                     # (DA-10's $0.3864, dev runs 2 to 13; #513, 14 Nov 2026), rounded down: no single run,
+                                     # extraction and the flag review together, can take the pilot past $5 (card's stop;
+                                     # was $3.17 before #513 part 2, $3.99 before run 9)
+CHECK_LIMIT_USD = Decimal("0.60")   # the Sonnet check of a run's flags (#513 part 2: about $2.5 stays for DD-06's production
+                                     # run, its extraction about $0.85 and its own review)
+QUOTE_LIMIT_USD = Decimal("0.10")   # Haiku's picks of the transcript quotes
+CHECK_MODES = ("price", "all")      # KPI_CHECK (the backfill's `kpi_check` input): price sends nothing and writes no flag
+CENTRAL_OUTPUT = {kc.TASK: 1_200, kq.TASK: 500}   # output tokens a request is priced at (central; the cap uses max_tokens)
 READ_MAX_PAGES = 500                 # Infosys's results bundles run 186 to 380 pages (DA-10 K3); pdfs.read_pdf stops at 200
 IMAGE_MAX_PAGES = 40                  # an image document longer than this is held (would over-send images)
 NSE_HEADERS = {"Referer": dc.NSE_REFERER, "Accept": "application/json, text/plain, */*"}
@@ -147,6 +156,47 @@ class DocPlan:
     reused: bool = False               # unchanged since a previous run: values not re-extracted, only re-filtered
     refiltered: list[Value] = field(default_factory=list)   # a reused document's rows whose value or verdict changed
     kept: bool = False                 # its file couldn't be fetched or read this run: the stored document stands as is
+    texts: dict[int, str] = field(default_factory=dict, repr=False)   # pages_used' text, this run only (never stored)
+    body: bytes | None = field(default=None, repr=False)   # an image document's file, this run only, to render pages
+
+
+@dataclass
+class FlagRow:
+    """One flag as `equity.kpi_change` stores it (DD-05 part 2): the grid's flag, its curated metric, the last value (None
+    when the Sonnet check didn't confirm it) and the two verified transcript quotes, if any."""
+    entity_id: int
+    slug: str
+    flag: kf.Flag
+    metric: kdict.Metric
+    value: Decimal | None
+    unit: str | None
+    reason: kq.Quote | None = None
+    asked: kq.Quote | None = None
+
+
+@dataclass
+class Review:
+    """The Sonnet check and the quotes of one run's flags (DD-05 part 2, #513). Counts only reach the checks."""
+    mode: str                                         # 'price' | 'all'
+    rows: list[FlagRow] = field(default_factory=list)  # the flags to write ('all' only)
+    outcomes: Counter = field(default_factory=Counter)   # kc.KEEP | DROP_PRESENT | DROP_REASON | UNCHECKED, by flag
+    by_company: dict[str, Counter] = field(default_factory=dict)
+    value_held: int = 0                               # flags kept with their last value held back
+    check_cost: Decimal = Decimal(0)
+    quote_cost: Decimal = Decimal(0)
+    sent: Counter = field(default_factory=Counter)    # task → requests sent
+    reused: Counter = field(default_factory=Counter)  # task → answers reused from the last run (never sent again)
+    stopped: dict[str, str] = field(default_factory=dict)   # task or 'all' → why it stopped sending: 'check_cap',
+                                                      # 'quote_cap', 'run_cap', 'budget', 'unavailable'
+    estimate: dict = field(default_factory=dict)      # task → {requests, central, worst} (price mode)
+    calls: Counter = field(default_factory=Counter)   # the flags' transcripts: searched, role_held, none stored
+    quotes: Counter = field(default_factory=Counter)  # reason / asked: yes, and picks that didn't verify
+    answers: dict[str, dict] = field(default_factory=dict)   # input SHA-256 → the reply's JSON (ids and enums only)
+    k6: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def cost(self) -> Decimal:
+        return self.check_cost + self.quote_cost
 
 
 @dataclass
@@ -162,6 +212,23 @@ class Harvest:
     windows: dict[str, dict] = field(default_factory=dict)     # slug → the NSE windows' counts (`feed` check, #512 part 4)
     no_day: dict[str, dict] = field(default_factory=dict)      # 'tcs Q4 FY25' → why no results day, as counts
     grids: dict[str, kf.Grid] = field(default_factory=dict)    # slug → the grid and its flags (DD-05, #513)
+    plan_of: dict[tuple[str, str], DocPlan] = field(default_factory=dict)   # (slug, fiscal label) → its plan
+    review: Review | None = None      # the Sonnet check and the quotes (DD-05 part 2)
+
+
+def evidence(x: FlagRow) -> bytes:
+    """A flag's evidence hash (`kpi_change.evidence_sha256`): SHA-256 over its documents' SHA-256s (previous, then
+    current) and everything the flag shows: the kind, the rule version, the key and its label, the last value with its
+    unit and quarter, the corporate-action note and both quotes' spans. A re-run that changes any of them changes the
+    hash, so the judge's confirmation (`kpi_review`) no longer matches and the flag un-shows until reviewed again."""
+    f = x.flag
+
+    def q(v: kq.Quote | None) -> str:
+        return f"{v.document_id}:{v.start}:{v.end}:{v.page}" if v else "-"
+    parts = [*((d.sha256 or b"").hex() for d in f.previous), (f.current.sha256 or b"").hex(), f.kind,
+             str(kf.RULE_VERSION), f.key, x.metric.label, "" if x.value is None else format(x.value, "f"), x.unit or "",
+             f.last.fiscal_label, f.note or "", q(x.reason), q(x.asked)]
+    return hashlib.sha256("\x1f".join(parts).encode()).digest()
 
 
 @register
@@ -385,14 +452,15 @@ class EquityKpiTables(Task):
                 h.plans.append(plan)
         if not h.preflight:
             self._flags(db, h)
+            h.review = self._review(db, h, budget, month_spend)
         return h
 
     # ------------------------------------------------------------------ the dictionary and the grid (DD-05, #513)
     @staticmethod
     def _flags(db, h: Harvest) -> None:
         """Each kept row's curated key (`ft.equity.kpi.dictionary`), then each company's grid under Plan 05 §1.3's rules
-        (`ft.equity.kpi.flags`, rule_version 1). Part 1 of DD-05 computes the candidate flags and counts them in the
-        `flags` check; it writes no `equity.kpi_change` row (part 2 adds the Sonnet check and the transcript quotes)."""
+        (`ft.equity.kpi.flags`, rule_version 1), counted in the `flags` check. `_review` then checks each flag and finds
+        its quotes, and the load writes what is left to `equity.kpi_change` (DD-05 part 2)."""
         dictionary = kdict.load()
         breaks = _breaks(db, [c.entity_id for c in h.companies]) if db is not None else {}
         by_company: dict[str, list[DocPlan]] = {}
@@ -404,14 +472,245 @@ class EquityKpiTables(Task):
                 continue
             docs = []
             for plan in plans:
+                h.plan_of[(slug, plan.fiscal_label)] = plan
                 for v in plan.values:
                     v.dict_key = (words.key_of(v.row.label, v.row.member, v.row.measure)
                                   if v.filter_status == fl.KEPT else None)
                 rows = [(v.row_no, v.dict_key, v.value, v.row.unit, v.row.page) for v in plan.values if v.dict_key]
                 docs.append(kf.Doc(None, plan.fiscal_label, plan.period_end, plan.document_class, plan.status,
                                    kf.reported(rows) if plan.status == "read" else {}, plan.sha256))
-            units = {k: m.unit for k, m in words.metrics.items()}
+            units = {k: m.kind for k, m in words.metrics.items()}            # rule 4: the unit and the measure kind
             h.grids[slug] = kf.grid(docs, units, words.document_class, breaks.get(plans[0].entity_id, []))
+
+    # ------------------------------------------------------------------ the flag review (DD-05 part 2, #513)
+    def _review(self, db, h: Harvest, budget: Decimal, month_spend: Decimal) -> Review:
+        """Each flag the rules left, checked by Sonnet against the pages it rests on (`ft.equity.kpi.check`), then, for
+        the flags that stand, "reason stated" and "an analyst asked" from the same quarter's stored transcript
+        (`ft.equity.kpi.quotes`). `KPI_CHECK` (the backfill's `kpi_check` input) is `price` (the default: every request is
+        built and priced, nothing is sent and no flag is written) or `all`.
+
+        An answer the last successful run got for the same input (its `ai_answers` check) is used again, never sent again
+        (CLAUDE.md §6). Every request is priced before it is sent and stopped at CHECK_LIMIT_USD, QUOTE_LIMIT_USD, the
+        run's cap or the monthly switch; a flag left unchecked stands for the judge with its last value held back."""
+        mode = (os.environ.get("KPI_CHECK") or "price").strip().lower()
+        r = Review(mode if mode in CHECK_MODES else "price")
+        if not h.grids:
+            return r
+        memo = self._memo(db) if db is not None else {}
+        dictionary = kdict.load()
+        cprompt, cschema = load_prompt(kc.TASK), load_schema(kc.TASK)
+        qprompt, qschema = load_prompt(kq.TASK), load_schema(kq.TASK)
+        spent = lambda: h.cost + r.cost                      # this run's spend so far
+        entity = {p.slug: p.entity_id for p in h.plans}
+        verdicts: dict[int, kc.Verdict | None] = {}          # id(flag) → its verdict (None: unchecked)
+        flags: list[tuple[str, kf.Flag, kdict.Metric]] = []
+        by_doc: dict[tuple[str, str], list[kc.Item]] = {}
+        pages_of: dict[tuple[str, str], dict[int, kc.Page]] = {}
+        for slug, g in sorted(h.grids.items()):
+            words = dictionary[slug]
+            for f in g.flags:
+                metric = words.metrics[f.key]
+                flags.append((slug, f, metric))
+                verdicts[id(f)] = None
+                cur, last = h.plan_of[(slug, f.current.fiscal_label)], h.plan_of[(slug, f.last.fiscal_label)]
+                k = (slug, f.current.fiscal_label)
+                if k not in pages_of:
+                    pages_of[k] = self._check_pages(cur)
+                if not pages_of[k]:
+                    continue                                 # not read this run (kept as stored): unchecked
+                row = next((x.row for x in last.values if x.row_no == f.last_reported.rows[0]), None)
+                printed, member = (row.label, row.member) if row else (metric.label, None)
+                by_doc.setdefault(k, []).append(kc.Item(
+                    f, metric, printed, member, self._previous_page(last, f.last_reported.page, printed, f.last_value),
+                    kc.pick_pages(f, metric, pages_of[k]), [words.metrics[x].label for x in f.renamed_to]))
+        # 1. the Sonnet check, one current document's flags at a time
+        for (slug, label), items in by_doc.items():
+            plan = h.plan_of[(slug, label)]
+            for group in kc.groups(items):
+                current = self._render(plan, pages_of[(slug, label)], {p for it in group for p in it.pages})
+                req = kc.request(slug, plan.document_class, group, current, cprompt, cschema)
+                answer = self._ask(req, r, kc.TASK, memo, CHECK_LIMIT_USD, r.check_cost, spent, budget, month_spend)
+                if answer is None:
+                    continue
+                for n, v in kc.parse(answer, len(group)).items():
+                    verdicts[id(group[n - 1].flag)] = v
+        # 2. the quotes, for each flag that stands
+        transcripts: dict[tuple[int, str], tuple | None] = {}
+        for slug, f, metric in flags:
+            v = verdicts[id(f)]
+            outcome = v.outcome if v is not None else kc.UNCHECKED
+            r.outcomes[outcome] += 1
+            r.by_company.setdefault(slug, Counter())[outcome] += 1
+            if slug == "tcs" and f.current.fiscal_label == "Q2 FY26" and f.key in ("workforce", "attrition_ltm"):
+                r.k6[f.key] = f"{f.kind}, {outcome}"
+            if outcome in (kc.DROP_PRESENT, kc.DROP_REASON):
+                continue
+            eid = entity[slug]
+            key = (eid, f.current.fiscal_label)
+            if key not in transcripts:
+                transcripts[key] = self._transcript(db, eid, f.current.fiscal_label) if db is not None else None
+            reason, asked = self._quotes(transcripts[key], slug, f, metric, r, memo, qprompt, qschema, spent, budget,
+                                         month_spend)
+            if r.mode != "all":
+                continue
+            ok = v is not None and v.value_ok and f.last_value is not None
+            r.value_held += 0 if ok else 1
+            r.rows.append(FlagRow(eid, slug, f, metric, f.last_value if ok else None,
+                                  f.last_reported.unit if ok else None, reason, asked))
+        if r.mode == "price":
+            r.answers = memo                                 # a price run keeps the last run's answers for the next
+        return r
+
+    def _ask(self, req, r: Review, task: str, memo: dict, limit: Decimal, task_cost: Decimal, spent, budget: Decimal,
+             month_spend: Decimal) -> dict | None:
+        """One request's answer: the last run's for the same input, else (mode `all`) sent within the caps; in mode
+        `price` it is priced and not sent. Returns the reply's JSON, or None."""
+        key = req.input_sha256.hex()
+        if key in memo:
+            r.reused[task] += 1
+            r.answers[key] = memo[key]
+            return memo[key]
+        worst = self._worst_case(req)
+        if r.mode == "price":
+            est = r.estimate.setdefault(task, {"requests": 0, "central": Decimal(0), "worst": Decimal(0)})
+            est["requests"] += 1
+            est["central"] += self._central(req, task)
+            est["worst"] += worst
+            return None
+        if r.stopped.get("all") or r.stopped.get(task):
+            return None
+        why = ("budget" if month_spend + spent() + worst > budget else "run_cap" if spent() + worst > RUN_LIMIT_USD
+               else f"{task.split('_')[1]}_cap" if task_cost + worst > limit else None)
+        if why:
+            r.stopped["all" if why in ("budget", "run_cap") else task] = why
+            return None
+        try:
+            reply = self._claude().send(req)
+        except Failed as e:
+            self._add_cost(r, task, e.reply.cost_usd)
+            r.sent[task] += 1
+            return None
+        except AIUnavailable:
+            r.stopped["all"] = "unavailable"
+            return None
+        except (CallError, TooLong):
+            return None
+        r.sent[task] += 1
+        self._add_cost(r, task, reply.cost_usd)
+        try:
+            answer = reply.json()
+        except (ValueError, json.JSONDecodeError):
+            return None
+        r.answers[key] = answer
+        return answer
+
+    @staticmethod
+    def _add_cost(r: Review, task: str, cost: Decimal) -> None:
+        if task == kc.TASK:
+            r.check_cost += cost
+        else:
+            r.quote_cost += cost
+
+    @staticmethod
+    def _central(req, task: str) -> Decimal:
+        """A request's central price: its characters at four a token (the guard counts three), images at 1,600 tokens,
+        and CENTRAL_OUTPUT tokens out."""
+        from ft.ai.client import Usage
+        chars = len(req.prompt.text) + len(req.instruction) + sum(len(s.text) + len(s.title) for s in req.sources)
+        if req.schema is not None:
+            chars += len(json.dumps(req.schema))
+        tokens = chars // 4 + 1_600 * sum(1 for s in req.sources if s.is_image)
+        return cost_usd(req.model_id, Usage(input=tokens, output=CENTRAL_OUTPUT[task]))
+
+    @staticmethod
+    def _memo(db) -> dict[str, dict]:
+        """The answers the last successful run got (its `ai_answers` check), by input SHA-256."""
+        row = db.execute("""select checks from ops.task_run where task_key = %s and status = 'success'
+                             and checks is not null order by id desc limit 1""", (KEY,)).fetchone()
+        for c in (row[0] if row else None) or []:
+            if isinstance(c, dict) and c.get("name") == "ai_answers":
+                try:
+                    got = json.loads(c.get("detail") or "{}").get("answers")
+                except (ValueError, AttributeError):
+                    return {}
+                return dict(got) if isinstance(got, dict) else {}
+        return {}
+
+    @staticmethod
+    def _check_pages(plan: DocPlan) -> dict[int, kc.Page]:
+        """A document's pages as the check may send them: text pages cut to PAGE_CHARS, or an image document's pages as
+        placeholders (rendered by `_render` when chosen). Empty when the document wasn't read this run."""
+        if plan.body is not None:
+            return {n: kc.Page(n) for n in plan.pages_used}
+        return {n: kc.Page(n, text=t[:kc.PAGE_CHARS]) for n, t in sorted(plan.texts.items()) if t and t.strip()}
+
+    @staticmethod
+    def _render(plan: DocPlan, pages: dict[int, kc.Page], chosen: set[int]) -> dict[int, kc.Page]:
+        if plan.body is None:
+            return pages
+        return {**pages, **{n: kc.Page(n, image=rn.render_page_base64(plan.body, n - 1)) for n in chosen}}
+
+    @staticmethod
+    def _previous_page(plan: DocPlan, page: int, printed: str, value: Decimal | None) -> kc.Page | None:
+        """The previous document's page that held the last value, as the check sends it: an excerpt of its text, or its
+        image; None when the page wasn't read this run."""
+        if plan.body is not None and page in plan.pages_used:
+            return kc.Page(page, image=rn.render_page_base64(plan.body, page - 1))
+        text = plan.texts.get(page)
+        return kc.Page(page, text=kc.excerpt(text, printed, value)) if text and text.strip() else None
+
+    @staticmethod
+    def _transcript(db, entity_id: int, fiscal_label: str) -> tuple | None:
+        """The stored transcript of a company's quarter: (document id, text, turns, page map, unknown-role share), or None
+        when no call is stored or its text isn't whole (as `equity.call_scores` reads it)."""
+        row = db.execute(
+            """select ec.transcript_document_id, d.char_count, ec.unknown_role_share
+                 from equity.earnings_call ec
+                 join core.event ev on ev.id = ec.event_id and ev.status = 'stored'
+                 join core.document d on d.id = ec.transcript_document_id
+                where ec.entity_id = %s and ec.fiscal_label = %s and ec.status_reason is null
+                order by ec.event_id desc limit 1""", (entity_id, fiscal_label)).fetchone()
+        if row is None:
+            return None
+        doc, count, share = row
+        text = db.execute("select string_agg(body, '' order by chunk_no) from core.chunk where document_id = %s",
+                          (doc,)).fetchone()[0]
+        if text is None or len(text) != count:
+            return None
+        turns = [kq.Turn(a, b, role) for a, b, role in db.execute(
+            """select char_start, char_end, role from equity.call_turn where document_id = %s
+                and role in ('management','analyst') order by turn_no""", (doc,)).fetchall()]
+        pages = db.execute("""select pdf_page, char_start, char_end from equity.transcript_page where document_id = %s
+                               order by pdf_page""", (doc,)).fetchall()
+        return doc, text, turns, [tuple(p) for p in pages], share
+
+    def _quotes(self, tr, slug: str, f: kf.Flag, metric: kdict.Metric, r: Review, memo: dict, prompt, schema, spent,
+                budget: Decimal, month_spend: Decimal) -> tuple[kq.Quote | None, kq.Quote | None]:
+        """One flag's "reason stated" and "an analyst asked" quotes, verified, or None for each."""
+        if tr is None:
+            r.calls["none_stored"] += 1
+            return None, None
+        doc, text, turns, pages, share = tr
+        r.calls["searched"] += 1
+        if share is not None and Decimal(str(share)) > Decimal(str(ROLE_HOLD_SHARE)):
+            r.calls["role_held_known_turns_only"] += 1
+        reason = kq.candidates(text, turns, "management", metric.terms, metric.member_terms)
+        asked = kq.candidates(text, turns, "analyst", metric.terms, metric.member_terms)
+        if not reason and not asked:
+            r.calls["no_candidate"] += 1
+            return None, None
+        req = kq.request(slug, f.current.fiscal_label, metric.label, f.kind, reason, asked, prompt, schema, doc)
+        answer = self._ask(req, r, kq.TASK, memo, QUOTE_LIMIT_USD, r.quote_cost, spent, budget, month_spend)
+        if answer is None:
+            return None, None
+        rc, ac = kq.parse(answer, reason, asked)
+        rq, aq = kq.verify(text, rc, doc, pages), kq.verify(text, ac, doc, pages)
+        for name, c, q in (("reason", rc, rq), ("asked", ac, aq)):
+            if q is not None:
+                r.quotes[f"{name}_yes"] += 1
+            elif c is not None:
+                r.quotes[f"{name}_unverified"] += 1
+        return rq, aq
 
     def _preflight(self, h: Harvest, anns: dict[int, list[kd.Filing]], rules: dict[str, kd.Rule]) -> str | None:
         """Before any file is read or any AI call is made: every company's announcements came from NSE (every window
@@ -502,6 +801,7 @@ class EquityKpiTables(Task):
             plan.status, plan.reused = "read", True
             plan.pages_used, plan.image_page_count = self._stored_shape(db, co.entity_id, pe, q.document_class)
             plan.values = self._refilter(db, plan, info)
+            self._keep_pages(plan, info, body)
             return plan
         pages, held = self._pages(rule, label, info, body, nums)
         if held is not None:
@@ -517,8 +817,19 @@ class EquityKpiTables(Task):
             return plan
         extracted = ex.extract_document(pages, rows_by_page, tile_pages=ex.tile_pages(pages))
         plan.status = "read"
+        self._keep_pages(plan, info, body)
         plan.values = [Value(i + 1, e.row, e.value, e.filter_status, e.filter_reason) for i, e in enumerate(extracted)]
         return plan
+
+    @staticmethod
+    def _keep_pages(plan: DocPlan, info: pdfs.PdfInfo, body: bytes) -> None:
+        """The pages this run read, kept in memory for the flag check (DD-05 part 2), never stored: each text page's
+        text, and an image document's file (its pages are rendered when the check asks for them)."""
+        image = plan.image_page_count > 0 and plan.image_page_count == len(plan.pages_used)
+        if image:
+            plan.body = body
+            return
+        plan.texts = {n: info.page_texts[n - 1] for n in plan.pages_used if 0 < n <= len(info.page_texts)}
 
     def _fetch_pdf(self, ctx, ann) -> tuple[bytes | None, pdfs.PdfInfo | None, str | None]:
         """One candidate's file, read and not stored: (body, info, None), or a reason it can't be the document. A file
@@ -664,13 +975,52 @@ class EquityKpiTables(Task):
         n = 0
         if h.preflight:
             return 0                                      # nothing was read: the last good rows stand
+        # The pilot companies' flags go first (DD-05 part 2): `kpi_change.current_document_id` references a document
+        # without a cascade, and a re-read quarter's document is replaced below. A run that writes flags rewrites them
+        # all; a price run that replaces no document leaves them as they are.
+        ids = sorted({p.entity_id for p in h.plans})
+        write_flags = h.review is not None and h.review.mode == "all"
+        if ids and (write_flags or any(not p.reused for p in h.plans)):
+            tx.execute("delete from equity.kpi_change where entity_id = any(%s)", (ids,))
         for plan in h.plans:
             n += self._rewrite_filters(tx, plan) if plan.reused else self._write(tx, plan)
             if plan.reused and plan.status == "read":
                 self._write_keys(tx, plan)
+        if write_flags:
+            n += self._write_flags(tx, h.review.rows, ids)
+        cost = h.cost + (h.review.cost if h.review else Decimal(0))
         tx.execute("update ops.task_run set ai_cost_usd = %s where id = %s",
-                   (h.cost.quantize(Decimal("0.0001")), task_run_id))
+                   (cost.quantize(Decimal("0.0001")), task_run_id))
         return n
+
+    @staticmethod
+    def _write_flags(tx, rows: list[FlagRow], ids: list[int]) -> int:
+        """The flags into `equity.kpi_change`, each with its documents' ids as written this run and its evidence hash."""
+        if not rows:
+            return 0
+        docs = {(e, pe, cls): i for e, pe, cls, i in tx.execute(
+            """select entity_id, period_end, document_class, id from equity.kpi_document where entity_id = any(%s)""",
+            (ids,)).fetchall()}
+        out = []
+        for x in rows:
+            f = x.flag
+            cur = docs[(x.entity_id, f.current.period_end, f.current.document_class)]
+            prev = [docs[(x.entity_id, d.period_end, d.document_class)] for d in f.previous]
+            r, a = x.reason, x.asked
+            out.append((x.entity_id, f.key, f.current.period_end, f.current.fiscal_label, x.metric.label, f.kind, prev,
+                        cur, x.value, x.unit, f.last.fiscal_label, f.note,
+                        r is not None, r and r.document_id, r and r.start, r and r.end, r and r.text, r and r.page,
+                        a is not None, a and a.document_id, a and a.start, a and a.end, a and a.text, a and a.page,
+                        evidence(x), kf.RULE_VERSION))
+        with tx.cursor() as c:
+            c.executemany(
+                """insert into equity.kpi_change (entity_id, dict_key, period_end, fiscal_label, metric_label, kind,
+                       previous_documents, current_document_id, last_value, last_value_unit, last_value_quarter,
+                       corporate_action_note, reason_stated, reason_document_id, reason_char_start, reason_char_end,
+                       reason_quote, reason_page, analyst_asked, analyst_document_id, analyst_char_start,
+                       analyst_char_end, analyst_quote, analyst_page, evidence_sha256, rule_version)
+                   values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", out)
+        return len(out)
 
     def _write(self, tx, plan: DocPlan) -> int:
         # replace this company/quarter/class document (a run re-reads it): delete the old, insert the new
@@ -760,7 +1110,35 @@ class EquityKpiTables(Task):
         ]
         if h.grids:
             checks += self._flag_checks(h)
+        if h.review is not None:
+            checks += self._review_checks(h.review)
         return checks
+
+    @staticmethod
+    def _review_checks(r: Review) -> list[Check]:
+        """(W) `review`: the flag review's counts (DD-05 part 2): the mode; the flags by outcome, overall and by company
+        (kept, dropped as present or as explained in the release, unchecked); last values held back; the transcripts
+        searched; the quotes found; requests sent and answers reused; the cost or, in a price run, the estimate; why it
+        stopped sending, if it did; K6 for information. Counts, fiscal labels and keys only (CLAUDE.md §4).
+        (W, always passes) `ai_answers`: the answers this run used, by input SHA-256 (enums and candidate ids, no text),
+        so the next run never sends the same input again (CLAUDE.md §6)."""
+        detail = {
+            "mode": r.mode,
+            "flags": dict(sorted(r.outcomes.items())),
+            "by_company": {s: dict(sorted(c.items())) for s, c in sorted(r.by_company.items())},
+            "written": len(r.rows), "last_value_held": r.value_held,
+            "transcripts": dict(sorted(r.calls.items())), "quotes": dict(sorted(r.quotes.items())),
+            "sent": dict(sorted(r.sent.items())), "reused": dict(sorted(r.reused.items())),
+            "cost_usd": {"check": str(r.check_cost.quantize(Decimal("0.0001"))),
+                         "quote": str(r.quote_cost.quantize(Decimal("0.0001")))},
+            **({"estimate_usd": {t: {"requests": e["requests"], "central": str(e["central"].quantize(Decimal("0.0001"))),
+                                     "worst": str(e["worst"].quantize(Decimal("0.0001")))}
+                                 for t, e in sorted(r.estimate.items())}} if r.estimate else {}),
+            **({"stopped": dict(sorted(r.stopped.items()))} if r.stopped else {}),
+            "k6_tcs_q2_fy26": r.k6,
+        }
+        return [Check("review", not r.stopped, json.dumps(detail), blocking=False),
+                Check("ai_answers", True, json.dumps({"answers": r.answers}, sort_keys=True), blocking=False)]
 
     @staticmethod
     def _flag_checks(h: Harvest) -> list[Check]:

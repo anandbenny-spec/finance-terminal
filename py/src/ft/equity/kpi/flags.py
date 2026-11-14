@@ -11,6 +11,8 @@ The rules as Plan 05 §1.3 writes them, with the thresholds Data Audit 10 fixed:
    not usable, so it neither makes nor answers a flag, and the next quarter compares against the last usable one.
 4. **A dropped metric and a new one with the same unit in the same quarter is "renamed or redefined", not dropped.** New:
    present in this document and in none of the usable previous four. A renamed metric is not escalated by rule 6.
+   "The same unit" is the curated unit together with the measure kind (`dictionary.Metric.kind`; #513 part 2): a share
+   and a growth rate both print "%", and dev run 13 paired TCS's LTM attrition with a new QoQ growth rate.
 5. **Corporate actions annotate the flag:** a merger or demerger effective after the metric's last report and by the
    quarter's end is named on the flag.
 6. **A first absence is "missing this quarter"; it becomes "dropped" at the second:** the next usable quarter after a
@@ -119,8 +121,9 @@ def reported(rows: list[tuple[int, str, Decimal | None, str | None, int]]) -> di
     return out
 
 
-def grid(docs: list[Doc], units: dict[str, str], document_class: str, breaks: list[Break] = ()) -> Grid:
-    """The flags for one company. `units` maps each metric key to its curated unit (rule 4)."""
+def grid(docs: list[Doc], units: dict[str, object], document_class: str, breaks: list[Break] = ()) -> Grid:
+    """The flags for one company. `units` maps each metric key to what rule 4 compares: its curated unit kind (the task
+    passes `dictionary.Metric.kind`, the unit and the measure kinds; any value compared by equality)."""
     docs = sorted(docs, key=lambda d: d.period_end)
     by_q = {quarter_index(d.fiscal_label): d for d in docs}
     usable: dict[str, bool] = {}
@@ -168,7 +171,7 @@ def grid(docs: list[Doc], units: dict[str, str], document_class: str, breaks: li
     return Grid(flags, usable, held3, before, Counter(f.kind for f in flags))
 
 
-def _first_absence(key: str, d: Doc, by_q: dict[int, Doc], ok, units: dict[str, str]) -> Flag | None:
+def _first_absence(key: str, d: Doc, by_q: dict[int, Doc], ok, units: dict[str, object]) -> Flag | None:
     """Rule 1 at a first absence, then rule 4."""
     q = quarter_index(d.fiscal_label)
     window = [by_q.get(q - i) for i in range(1, PREVIOUS + 1)]
