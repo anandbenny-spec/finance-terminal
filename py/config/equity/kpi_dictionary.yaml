@@ -1,0 +1,2610 @@
+# The KPI-table pilot's per-company dictionary (DD-05, #513; Plan 05 §1.3 "a per-company dictionary of names"; Data Audit
+# 10 §8 finding 3). Labelled curated: written by the lane D build session (Opus 5.5) on Sat 14 Nov 2026 from dev run 12's
+# extracted labels (#512: ops.task_run 261, 51 read documents, 3,556 kept rows), read through the read-only dev connector.
+# Read by ft/equity/kpi/dictionary.py, which maps each kept `equity.kpi_value` row to one metric key or to none.
+#
+# How a row maps (ft/equity/kpi/dictionary.py):
+#   - a label is normalised: lower case, "&" read as "and", every run of non-letters (digits, signs, brackets, "%") a
+#     space, "q o q" read as "qoq" and "y o y" as "yoy", and the stray tokens "q", "fy", "h" and "s" (a "Q2 FY26" stamp,
+#     "H1", a possessive) dropped. So "Q-o-Q CC Growth (%)" and "q o q cc growth" are one label;
+#   - the row's member is normalised the same way (and through the metric's `aliases`), and its words are taken out of
+#     the label once, so "Geography Composition (%): UK" with member "UK" reads as "geography composition";
+#   - the row maps to the metric whose `labels` (normalised the same way, the member taken out likewise) hold that label,
+#     whose `measure` holds the row's measure, and whose members hold the row's member: `members` (each member its own
+#     key, `<key>.<member>`, the empty member "" the total) or `member` (the members the one key accepts; default "");
+#   - no metric: the row is unmapped (`dict_key` stays null) and never makes or answers a flag. Two metrics of a company
+#     can't share a label, member and measure (a test checks), so a row maps to at most one.
+#
+# Each label carries `seen`: where dev run 12 had it, one character per document in the company's `quarters` order
+# ("1" present, "." absent, "h" held), so a rename shows in the file. Every label after a metric's first is a merge, and
+# its `why` says why it is the same metric. Values are never in this file (CLAUDE.md §1, NSE posture).
+# `unit` is the curated unit kind that rule 4 compares ("renamed or redefined": a dropped metric and a new one with the
+# same unit in the same quarter). `terms` are the words that name the metric when management or an analyst speaks of
+# it on the call: the candidates for "reason stated" and "an analyst asked" (a member metric's sentence must also name
+# its member, or one of its aliases).
+version: 1
+companies:
+  tcs:
+    document_class: press_release
+    quarters: [Q2 FY25, Q3 FY25, Q4 FY25, Q1 FY26, Q2 FY26, Q3 FY26, Q4 FY26, Q1 FY27, Q2 FY27]
+    metrics:
+      - key: workforce
+        name: Workforce
+        measure: [people]
+        unit: people
+        labels:
+          - {label: workforce strength, seen: "11h....1."}
+          - {label: workforce, seen: "1.h......", why: "the same closing headcount, printed as 'Workforce' in the highlights"}
+          - {label: employee headcount, seen: "..h...1..", why: "the same closing headcount under the Q4 FY26 wording"}
+        terms: [workforce, headcount, head count]
+      - key: attrition_ltm
+        name: Attrition, LTM, IT services
+        measure: [percent]
+        unit: "%"
+        member: ["", it services]
+        labels:
+          - {label: ltm it services attrition rate, seen: "11h......"}
+          - {label: it services attrition, seen: "11h1.....", why: "the same LTM IT-services attrition rate, printed without 'LTM' in the highlights"}
+          - {label: ltm attrition it services, seen: "..h....1.", why: "the same rate with its words reordered (Q1 FY27)"}
+        terms: [attrition]
+      - key: women_share
+        name: Women in the workforce
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: women in the workforce, seen: "11h......"}
+          - {label: women, seen: "1.h......", why: "the same share, printed as 'Women' beside the workforce figure"}
+        terms: [women, gender, diversity]
+      - key: patents_applied_quarter
+        name: Patents applied for in the quarter
+        measure: [count]
+        unit: patents
+        labels:
+          - {label: patents applied during the quarter, seen: "11h11..11"}
+          - {label: applied during the quarter patents, seen: "..h..1...", why: "the same quarterly count with its words reordered (Q3 FY26)"}
+        terms: [patent]
+      - key: patents_granted_quarter
+        name: Patents granted in the quarter
+        measure: [count]
+        unit: patents
+        labels:
+          - {label: patents granted during the quarter, seen: "11h11..11"}
+          - {label: granted during the quarter patents, seen: "..h..1...", why: "the same quarterly count with its words reordered (Q3 FY26)"}
+        terms: [patent]
+      - key: patents_applied_cumulative
+        name: Patents applied for, cumulative
+        measure: [count]
+        unit: patents
+        labels:
+          - {label: patents applied, seen: "1.h1....."}
+          - {label: patents applied for, seen: ".1h.1....", why: "the same cumulative count ('has applied for … patents'); the quarter's own count is 'during the quarter'"}
+          - {label: applied for patents, seen: "..h..1...", why: "the same cumulative count with its words reordered (Q3 FY26)"}
+          - {label: patents filed cumulative, seen: "..h...1..", why: "the same cumulative count, labelled 'filed' and 'cumulative' from Q4 FY26"}
+          - {label: applied for patents cumulative, seen: "..h....1.", why: "the same cumulative count (Q1 FY27 wording)"}
+          - {label: patents applied for cumulative as of september, seen: "..h.....1", why: "the same cumulative count, with its as-of date (Q2 FY27)"}
+        terms: [patent]
+      - key: patents_granted_cumulative
+        name: Patents granted, cumulative
+        measure: [count]
+        unit: patents
+        labels:
+          - {label: patents granted, seen: "11h11...."}
+          - {label: granted patents, seen: "..h..1...", why: "the same cumulative count with its words reordered (Q3 FY26)"}
+          - {label: patents granted cumulative, seen: "..h...1..", why: "the same cumulative count, labelled 'cumulative' from Q4 FY26"}
+          - {label: granted patents cumulative, seen: "..h....1.", why: "the same cumulative count (Q1 FY27 wording)"}
+          - {label: patents granted cumulative as of september, seen: "..h.....1", why: "the same cumulative count, with its as-of date (Q2 FY27)"}
+        terms: [patent]
+      - key: industry_share
+        name: Revenue share by industry
+        measure: [percent]
+        unit: "%"
+        members:
+          bfsi: BFSI
+          consumer business: Consumer Business
+          life sciences and healthcare: Life Sciences and Healthcare
+          manufacturing: Manufacturing
+          technology and services: Technology and Services
+          communication and media: Communication and Media
+          energy resources and utilities: Energy, Resources and Utilities
+          regional markets and others: Regional Markets and Others
+        labels:
+          - {label: industry composition, seen: "..h11..1."}
+          - {label: composition q fy, seen: "11h......", why: "the same industry table, titled 'Composition (%) Q2 FY25'; the industry members tell it from the geography table"}
+          - {label: industry composition q fy, seen: "..h..1...", why: "the same table with its quarter in the title (Q3 FY26)"}
+          - {label: vertical q fy, seen: "..h...1..", why: "the same table titled by vertical (Q4 FY26)"}
+          - {label: composition, seen: "..h.....1", why: "the same table titled 'Composition (%)' (Q2 FY27); the industry members tell it from the geography table"}
+        terms: [revenue share, share of revenue, contribution]
+      - key: geography_share
+        name: Revenue share by geography
+        measure: [percent]
+        unit: "%"
+        members:
+          north america: North America
+          latin america: Latin America
+          uk: UK
+          continental europe: Continental Europe
+          india: India
+          asia pacific: Asia Pacific
+          mea: Middle East and Africa
+        aliases:
+          middle east and africa: mea
+        labels:
+          - {label: geography composition, seen: "..h11...."}
+          - {label: composition q fy, seen: "11h......", why: "the same geography table, titled 'Composition (%) Q2 FY25'; the geography members tell it from the industry table"}
+          - {label: geography composition q fy, seen: "..h..1...", why: "the same table with its quarter in the title (Q3 FY26)"}
+          - {label: geography q fy, seen: "..h...1..", why: "the same table titled by geography (Q4 FY26)"}
+          - {label: composition, seen: "..h....11", why: "the same table titled 'Composition (%)' (Q1 and Q2 FY27); the geography members tell it from the industry table"}
+        terms: [revenue share, share of revenue, contribution]
+      - key: cc_growth_qoq_industry
+        name: Revenue growth, QoQ, constant currency, by industry
+        measure: [percent_change]
+        unit: "%"
+        members:
+          bfsi: BFSI
+          consumer business: Consumer Business
+          life sciences and healthcare: Life Sciences and Healthcare
+          manufacturing: Manufacturing
+          technology and services: Technology and Services
+          communication and media: Communication and Media
+          energy resources and utilities: Energy, Resources and Utilities
+          regional markets and others: Regional Markets and Others
+        aliases:
+          tss: technology and services
+          cmi: communication and media
+          cbg: consumer business
+          consumer business group: consumer business
+          eru: energy resources and utilities
+        labels:
+          - {label: q o q cc growth, seen: "..h.11111"}
+          - {label: qoq cc, seen: "..h.1....", why: "the same growth in the highlights ('BFSI (+…% QoQ CC)'), the member taken out of the label"}
+          - {label: growth qoq cc, seen: "..h.....1", why: "the same growth (Q2 FY27 highlights wording)"}
+          - {label: growth led by qoq in cc, seen: "..h...1..", why: "the same growth in the Q4 FY26 highlights ('growth led by CBG … QoQ in CC')"}
+          - {label: growth led by, seen: ".1h......", why: "the same growth in the Q3 FY25 highlights ('growth led by Consumer Business Group')"}
+        terms: [growth, grew, constant currency]
+      - key: cc_growth_qoq_geography
+        name: Revenue growth, QoQ, constant currency, by geography
+        measure: [percent_change]
+        unit: "%"
+        members:
+          north america: North America
+          latin america: Latin America
+          uk: UK
+          continental europe: Continental Europe
+          india: India
+          asia pacific: Asia Pacific
+          mea: Middle East and Africa
+          international: International
+        aliases:
+          middle east and africa: mea
+        labels:
+          - {label: q o q cc growth, seen: "..h..1111"}
+          - {label: qoq in cc, seen: "..h...1..", why: "the same growth in the Q4 FY26 highlights ('North America … QoQ in CC'), the member taken out"}
+          - {label: growth led by qoq in cc, seen: "..h...1..", why: "the same growth in the Q4 FY26 highlights ('growth led by UK … QoQ in CC')"}
+          - {label: international revenue grows qoq in constant currency, seen: "..h.1....", why: "the international markets' growth in the highlights (member International)"}
+          - {label: international revenue qoq in constant currency, seen: "..h.....1", why: "the same international growth (Q2 FY27 wording)"}
+        terms: [growth, grew, constant currency]
+      - key: cc_growth_qoq
+        name: Revenue growth, QoQ, constant currency
+        measure: [percent_change]
+        unit: "%"
+        labels:
+          - {label: q o q cc growth, seen: "..h.1..1."}
+          - {label: growth qoq in cc, seen: "..h...111", why: "the same company growth in the highlights ('… growth QoQ in CC')"}
+          - {label: total q o q cc growth, seen: "..h..11..", why: "the same company growth, the table's total row"}
+          - {label: sequential growth in constant currency, seen: "..h.1....", why: "the same company growth (Q2 FY26 highlights: 'Sequential growth … in Constant Currency')"}
+        terms: [constant currency, sequential growth]
+      - key: tcv
+        name: Total contract value
+        measure: [amount]
+        unit: US$ billion
+        labels:
+          - {label: q total contract value tcv, seen: "..h.1..1."}
+          - {label: tcv for q, seen: "..h...1..", why: "the same quarter's order book (TCV), Q4 FY26 wording"}
+        terms: [tcv, total contract value, order book, deal wins]
+      - key: ai_revenue_annualised
+        name: Annualised AI revenue
+        measure: [amount]
+        unit: US$ billion
+        labels:
+          - {label: annualized ai revenue, seen: "..h...11."}
+        terms: [ai revenue]
+  infy:
+    document_class: fact_sheet
+    quarters: [Q3 FY25, Q4 FY25, Q1 FY26, Q2 FY26, Q3 FY26, Q4 FY26, Q1 FY27, Q2 FY27]
+    # `seen` for a single key is every document where the label maps a row of that key (any of its members); a row whose
+    # label equals a listed label once the member is taken out counts for that label (noted where it happens).
+    metrics:
+      - key: workforce
+        name: Total employees
+        measure: [people]
+        unit: people
+        labels:
+          - {label: total employees, seen: "1h111111"}
+        terms: [headcount, employees, workforce]
+      - key: headcount_net_addition_qoq
+        name: Net headcount addition, QoQ
+        measure: [people]
+        unit: people
+        labels:
+          - {label: headcount increased by, seen: "1h..1..."}
+          - {label: employee headcount, seen: ".h.1....", why: "the same QoQ net addition, labelled 'Employee headcount' in the Q2 FY26 highlights (it equals that quarter's change in total employees, checked)"}
+        terms: [net addition, net add, headcount]
+      - key: software_professionals
+        name: Software professionals
+        measure: [people]
+        unit: people
+        member: ["", s w professionals]
+        labels:
+          - {label: s w professionals, seen: "1h111111"}
+        terms: [software professionals]
+      - key: sales_and_support
+        name: Sales and support staff
+        measure: [people]
+        unit: people
+        member: ["", sales and support]
+        labels:
+          - {label: sales and support, seen: "1h111111"}
+        terms: [sales and support, support staff]
+      - key: attrition_voluntary_ltm
+        name: Voluntary attrition, LTM, IT services
+        measure: [percent]
+        unit: "%"
+        member: ["", it services]
+        labels:
+          - {label: voluntary attrition ltm it services, seen: "1h111111"}
+        terms: [attrition]
+      - key: women_share
+        name: Women employees
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: of women employees, seen: "1h111111"}
+        terms: [women, gender, diversity]
+      - key: utilisation_incl_trainees
+        name: Utilisation, including trainees
+        measure: [percent]
+        unit: "%"
+        member: ["", including trainees, utilization]
+        labels:
+          # Q3 FY26, Q4 FY26 and Q2 FY27 print 'Utilization' with the member 'Including trainees': the same label once the
+          # member is taken out, so those documents count here.
+          - {label: utilization including trainees, seen: "1h1111.1"}
+          - {label: including trainees, seen: ".h....1.", why: "the same rate with its label and member swapped in Q1 FY27 ('Including trainees' under 'Utilization')"}
+        terms: [utilization, utilisation]
+      - key: utilisation_excl_trainees
+        name: Utilisation, excluding trainees
+        measure: [percent]
+        unit: "%"
+        member: ["", excluding trainees, utilization]
+        labels:
+          # Q3 FY26, Q4 FY26 and Q2 FY27 print 'Utilization' with the member 'Excluding trainees' (see above).
+          - {label: utilization excluding trainees, seen: "1h1111.1"}
+          - {label: excluding trainees, seen: ".h....1.", why: "the same rate with its label and member swapped in Q1 FY27 ('Excluding trainees' under 'Utilization')"}
+        terms: [utilization, utilisation]
+      - key: effort_onsite
+        name: Effort mix, onsite
+        measure: [percent]
+        unit: "%"
+        member: ["", onsite, effort]
+        labels:
+          # Q3 and Q4 FY26 print 'Effort' with the member 'Onsite': the same label once the member is taken out.
+          - {label: effort onsite, seen: "1h1111.."}
+          - {label: onsite, seen: ".h....11", why: "the same onsite share of effort, printed as 'Onsite' (member 'Effort' in Q1 FY27, no member in Q2 FY27)"}
+        terms: [onsite, onsite effort]
+      - key: effort_offshore
+        name: Effort mix, offshore
+        measure: [percent]
+        unit: "%"
+        member: ["", offshore, effort]
+        labels:
+          # Q3 and Q4 FY26 print 'Effort' with the member 'Offshore': the same label once the member is taken out.
+          - {label: effort offshore, seen: "1h1111.."}
+          - {label: offshore, seen: ".h....11", why: "the same offshore share of effort, printed as 'Offshore' (member 'Effort' in Q1 FY27, no member in Q2 FY27)"}
+        terms: [offshore, offshore effort]
+      - key: clients_active
+        name: Active clients
+        measure: [count]
+        unit: clients
+        member: ["", active]
+        labels:
+          - {label: active, seen: "1h.11.11"}
+          - {label: number of clients active, seen: ".h1..1..", why: "the same count from the 'Number of Clients' table with the member 'Active' (Q1 FY26 'Number of Clients', Q4 FY26 'Number of Clients: Active'; the same label once the member is taken out)"}
+        terms: [active clients, clients]
+      - key: clients_added_gross
+        name: Clients added in the quarter, gross
+        measure: [count]
+        unit: clients
+        member: ["", added during the period gross]
+        labels:
+          - {label: added during the period gross, seen: "1h111.11"}
+          - {label: number of clients added during the period gross, seen: ".h...1..", why: "the same count, printed under 'Number of Clients' with the row as its member (Q4 FY26)"}
+        terms: [new clients, clients added, client additions]
+      - key: large_deal_tcv
+        name: Large deal TCV
+        measure: [amount]
+        unit: US$ billion
+        labels:
+          # Left out (rule 5): the tile's own label 'large deal tcv' (seen ".h11..1."). Q4 FY26 prints it twice, with the
+          # members 'FY' (the full year) and 'Q4' (the quarter); the normaliser drops both as stray tokens, so the two rows
+          # share label, member and measure and the full-year figure would land on this quarterly key. Add it back once the
+          # code keeps an 'FY' member apart.
+          - {label: tcv of large deal wins, seen: ".h.1...."}
+          - {label: tcv of large deal wins was billion, seen: "1h......", why: "the same quarter's large deal TCV in the Q3 FY25 highlights ('TCV of large deal wins was $… billion')"}
+          - {label: billion tcv of large deal wins, seen: ".h..1...", why: "the same TCV in the Q3 FY26 highlights ('$… billion TCV of large deal wins')"}
+          - {label: large deal tcv net new, seen: ".h.....1", why: "the Q2 FY27 tile's amount, labelled with the tile's whole text 'Large Deal TCV (…% Net New)'; its net-new share is a separate percent row"}
+        terms: [large deal, tcv, deal wins, total contract value]
+      - key: large_deal_tcv_net_new_share
+        name: Large deal TCV, net-new share
+        measure: [percent]
+        unit: "%"
+        member: ["", large deal tcv]
+        labels:
+          - {label: large deal tcv net new, seen: ".h1.1.11"}
+          - {label: large deal tcv net new share, seen: ".h.1....", why: "the same share, labelled 'Net New share' on the Q2 FY26 tile"}
+          - {label: net new, seen: "1h.1....", why: "the same share in the highlights ('…% net new' in Q3 FY25; 'Net new' with the member 'large deal TCV' in Q2 FY26, equal to that quarter's tile, checked)"}
+        terms: [net new, net-new]
+      - key: cc_growth_qoq
+        name: Revenue growth, QoQ, constant currency
+        measure: [percent_change]
+        unit: "%"
+        labels:
+          - {label: cc growth qoq, seen: ".h.1..1."}
+          - {label: revenues in cc terms grew by qoq, seen: ".h1.1...", why: "the same company growth in the highlights ('Revenues in CC terms grew by …% QoQ'), equal to the tile in Q1 FY26 (checked)"}
+          - {label: qoq cc growth, seen: ".h1.....", why: "the same growth on the Q1 FY26 tile ('…% QoQ CC Growth'), its words reordered"}
+        terms: [constant currency, sequential growth, cc growth]
+      - key: ai_revenue_share
+        name: AI share of revenue
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: ai as a of revenue, seen: ".h....11"}
+        terms: [ai revenue, ai share]
+      - key: segment_share
+        name: Revenue share by business segment
+        measure: [percent]
+        unit: "%"
+        members:
+          financial services: Financial Services
+          manufacturing: Manufacturing
+          energy utilities resources and services: Energy, Utilities, Resources and Services
+          retail: Retail
+          communication: Communication
+          hi tech: Hi-Tech
+          life sciences: Life Sciences
+          others: Others
+        aliases:
+          eurs: energy utilities resources and services
+          high tech: hi tech
+        labels:
+          - {label: revenues by business segments, seen: ".h.11..."}
+          - {label: revenues by business segments in, seen: ".h1..1..", why: "the same table titled 'Revenues by Business Segments (in %)' (Q1 FY26; Q4 FY26 prints the segment after the title, taken out with the member)"}
+          - {label: financial services, seen: "1h....11", why: "the table's Financial Services row printed under its own name, without the title (Q3 FY25, Q1 and Q2 FY27)"}
+          - {label: manufacturing, seen: "1h....11", why: "the table's Manufacturing row printed under its own name, without the title"}
+          - {label: energy utilities resources and services, seen: "1h....11", why: "the table's Energy, Utilities, Resources and Services row printed under its own name, without the title"}
+          - {label: retail, seen: "1h....11", why: "the table's Retail row printed under its own name, without the title"}
+          - {label: communication, seen: "1h....11", why: "the table's Communication row printed under its own name, without the title"}
+          - {label: hi tech, seen: "1h....11", why: "the table's Hi-Tech row printed under its own name, without the title"}
+          - {label: life sciences, seen: "1h....11", why: "the table's Life Sciences row printed under its own name, without the title"}
+          - {label: others, seen: "1h....11", why: "the table's Others row printed under its own name, without the title"}
+        terms: [revenue share, share of revenue, contribution]
+      - key: geography_share
+        name: Revenue share by client geography
+        measure: [percent]
+        unit: "%"
+        members:
+          north america: North America
+          europe: Europe
+          india: India
+          rest of the world: Rest of the World
+        labels:
+          - {label: revenues by client geography, seen: ".h.11..."}
+          - {label: revenues by client geography in, seen: ".h1..1..", why: "the same table titled 'Revenues by Client Geography (in %)' (Q1 FY26; Q4 FY26 prints the geography after the title, taken out with the member)"}
+          - {label: north america, seen: "1h....11", why: "the table's North America row printed under its own name, without the title (Q3 FY25, Q1 and Q2 FY27)"}
+          - {label: europe, seen: "1h....11", why: "the table's Europe row printed under its own name, without the title"}
+          - {label: india, seen: "1h....11", why: "the table's India row printed under its own name, without the title"}
+          - {label: rest of the world, seen: "1h....11", why: "the table's Rest of the World row printed under its own name, without the title"}
+        terms: [revenue share, share of revenue, contribution]
+  hcltech:
+    document_class: press_release
+    quarters: [Q3 FY25, Q4 FY25, Q1 FY26, Q2 FY26, Q3 FY26, Q4 FY26, Q1 FY27, Q2 FY27]
+    metrics:
+      - key: workforce
+        name: Workforce
+        measure: [people]
+        unit: people
+        labels:
+          - {label: total people count, seen: "1h111111"}
+        terms: [headcount, head count, people count, employees]
+      - key: workforce_by_role
+        name: Workforce by role
+        measure: [people]
+        unit: people
+        members:
+          technical: Technical
+          sales and support: Sales and Support
+        labels:
+          - {label: technical, seen: "1h1111.."}
+          - {label: sales and support, seen: "1h1111..", why: "the people table's other row, labelled by its member as Technical is; both rows stop from Q1 FY27, when the table drops the split"}
+        terms: [headcount, head count, employees]
+      - key: net_additions
+        name: Net additions to the workforce
+        measure: [people]
+        unit: people
+        labels:
+          - {label: net addition, seen: "1h1111.1"}
+        terms: [net addition, net additions, net add]
+      - key: freshers_added
+        name: Freshers added
+        measure: [people]
+        unit: people
+        labels:
+          - {label: freshers added, seen: "1h111111"}
+          - {label: added freshers, seen: "1h1111..", why: "the same quarter's count in the highlights ('Added … freshers'), the people table's figure in each quarter"}
+        terms: [freshers, fresher, campus]
+      - key: attrition_ltm
+        name: Attrition, LTM
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: attrition ltm, seen: "1h111111"}
+          - {label: ltm attrition, seen: "1h1111..", why: "the same LTM rate in the highlights with its words reordered, the people table's figure in each quarter"}
+        terms: [attrition]
+      - key: women_share
+        name: Women employees, share of the workforce
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: women employees, seen: "1h111111"}
+        terms: [women, gender, diversity]
+      - key: tcv_new_deal_wins
+        name: New deal wins, total contract value
+        measure: [amount]
+        unit: US$ million
+        labels:
+          - {label: tcv new deal wins, seen: "1h1111.."}
+        terms: [tcv, total contract value, deal wins, new deals]
+      - key: bookings_new_deal_wins
+        name: Bookings (new deal wins)
+        measure: [amount]
+        unit: US$ million
+        labels:
+          - {label: bookings new deal wins, seen: ".h....11"}
+        terms: [bookings, deal wins, new deals]
+      - key: hclsoftware_arr
+        name: HCLSoftware annual recurring revenue (ARR)
+        measure: [amount]
+        unit: US$ million
+        member: ["", hclsoftware]
+        labels:
+          - {label: arr, seen: "1h111111"}
+        terms: [arr, annual recurring revenue, recurring revenue]
+      - key: advanced_ai_revenue
+        name: Advanced AI revenue
+        measure: [amount]
+        unit: US$ million
+        member: ["", advanced ai]
+        labels:
+          - {label: advanced ai revenue, seen: ".h..1111"}
+        terms: [advanced ai, ai revenue]
+      - key: digital_share
+        name: Digital revenue, share of Services revenue
+        measure: [percent]
+        unit: "%"
+        member: [digital, services]
+        labels:
+          - {label: contributes of services, seen: ".h.11..."}
+          - {label: digital revenue contributes of services, seen: ".h1.....", why: "the same share (Q1 FY26 wording 'Digital Revenue (contributes … of Services)')"}
+          - {label: digital revenue contribution, seen: "1h......", why: "the same share (Q3 FY25 wording 'Digital Revenue contribution', member Services: the share is of Services revenue)"}
+        terms: [digital]
+      - key: digital_cc_growth
+        name: Digital revenue growth, constant currency
+        measure: [percent_change]
+        unit: "%"
+        member: [digital]
+        labels:
+          - {label: digital cc revenue, seen: ".h.11..."}
+        terms: [digital]
+      - key: cc_growth_qoq
+        name: Revenue growth, QoQ, constant currency
+        measure: [percent_change]
+        unit: "%"
+        member: ["", total a b c d, hcltech a b c d]
+        labels:
+          - {label: qoq cc growth, seen: "1h11.1.1"}
+          - {label: qoq cc growth total a b c d, seen: ".h..1...", why: "the same segment table's total row with its member repeated in the label (Q3 FY26)"}
+          - {label: growth at qoq in constant currency, seen: "1h......", why: "the same company growth in the Q3 FY25 highlights ('growth at …% QoQ in constant currency')"}
+        terms: [constant currency, sequential, quarter on quarter]
+      - key: cc_growth_qoq_segment
+        name: Revenue growth, QoQ, constant currency, by segment
+        measure: [percent_change]
+        unit: "%"
+        members:
+          it and business services: IT and Business Services
+          engineering and r and d services: Engineering and R&D Services
+          services: Services (IT and Business Services plus Engineering and R&D)
+          hclsoftware: HCLSoftware
+        aliases:
+          it and business services a: it and business services
+          engineering and r and d services b: engineering and r and d services
+          engineering and r and d: engineering and r and d services
+          er and d services: engineering and r and d services
+          er and d: engineering and r and d services
+          services a b: services
+          hcltech services revenue: services
+          hclsoftware c: hclsoftware
+        labels:
+          - {label: qoq cc growth, seen: "1h11.1.1"}
+          - {label: qoq cc growth it and business services a, seen: ".h..1...", why: "the same segment row with its member repeated in the label (Q3 FY26)"}
+          - {label: qoq cc growth engineering and r and d services b, seen: ".h..1...", why: "the same segment row with its member repeated in the label (Q3 FY26)"}
+          - {label: qoq cc growth services a b, seen: ".h..1...", why: "the same segment row with its member repeated in the label (Q3 FY26)"}
+          - {label: qoq cc growth hclsoftware c, seen: ".h..1...", why: "the same segment row with its member repeated in the label (Q3 FY26)"}
+          - {label: growth cc qoq, seen: "1h..111.", why: "Services' QoQ CC growth in the revenue-trend table ('Growth % (CC) QoQ', member HCLTech Services Revenue), the segment table's Services figure; only that member maps (the table's no-member rows are left out)"}
+        terms: [constant currency, sequential, quarter on quarter, growth]
+      - key: roic_ltm
+        name: Return on invested capital (ROIC), LTM, company
+        measure: [percent]
+        unit: "%"
+        member: ["", company, hcltech]
+        labels:
+          - {label: ltm roic, seen: "1h111111"}
+          - {label: roic on ltm basis company, seen: "1h111...", why: "the same company ROIC in the highlights ('ROIC (on LTM basis) – Company')"}
+          - {label: roic on ltm basis, seen: ".h....11", why: "the same company ROIC in the Q1 FY27 and Q2 FY27 highlights, printed without 'Company'"}
+          - {label: roic company, seen: ".h...1..", why: "the same company ROIC (Q4 FY26 highlights, 'ROIC – Company')"}
+          - {label: ltm return on invested capital roic for the company, seen: "1h......", why: "the same company ROIC in the Q3 FY25 text"}
+          - {label: ltm return on invested capital roic, seen: ".h..1...", why: "the same company ROIC in the Q3 FY26 text, the row without a segment member"}
+          - {label: ltm roic jun, seen: ".h1.....", why: "the segment table's HCLTech column with its as-of date in the label (Q1 FY26)"}
+          - {label: ltm roic hcltech, seen: ".h..1...", why: "the segment table's HCLTech column with its member repeated in the label (Q3 FY26)"}
+          - {label: ltm roic hcltech jun, seen: ".h....1.", why: "the same, with its as-of date (Q1 FY27)"}
+        terms: [roic, return on invested capital]
+      - key: roic_ltm_services
+        name: Return on invested capital (ROIC), LTM, Services
+        measure: [percent]
+        unit: "%"
+        member: [services, hcltech services, services business]
+        labels:
+          - {label: ltm roic, seen: "1h.11111"}
+          - {label: roic on ltm basis services, seen: "1h111...", why: "the same Services ROIC in the highlights ('ROIC (on LTM basis) – Services')"}
+          - {label: roic services, seen: ".h...1..", why: "the same Services ROIC (Q4 FY26 highlights, 'ROIC – Services')"}
+          - {label: ltm return on invested capital roic for services, seen: "1h......", why: "the same Services ROIC in the Q3 FY25 text"}
+          - {label: ltm roic for services business, seen: ".h1.....", why: "the same Services ROIC in the Q1 FY26 text"}
+          - {label: ltm return on invested capital roic, seen: ".h..1...", why: "the same Services ROIC in the Q3 FY26 text (member Services)"}
+          - {label: ltm roic jun, seen: ".h1.....", why: "the segment table's HCLTech Services column with its as-of date in the label (Q1 FY26)"}
+          - {label: ltm roic hcltech services, seen: ".h..1...", why: "the segment table's HCLTech Services column with its member repeated in the label (Q3 FY26)"}
+          - {label: ltm roic hcltech services jun, seen: ".h....1.", why: "the same, with its as-of date (Q1 FY27)"}
+        terms: [roic, return on invested capital]
+      - key: roic_ltm_hclsoftware
+        name: Return on invested capital (ROIC), LTM, HCLSoftware
+        measure: [percent]
+        unit: "%"
+        member: [hclsoftware]
+        labels:
+          - {label: ltm roic, seen: "1h.11111"}
+          - {label: ltm roic jun, seen: ".h1.....", why: "the segment table's HCLSoftware column with its as-of date in the label (Q1 FY26)"}
+          - {label: ltm return on invested capital roic, seen: ".h..1...", why: "the same HCLSoftware ROIC in the Q3 FY26 text (member HCLSoftware)"}
+          - {label: ltm roic hclsoftware, seen: ".h..1...", why: "the segment table's HCLSoftware column with its member repeated in the label (Q3 FY26)"}
+          - {label: ltm roic hclsoftware jun, seen: ".h....1.", why: "the same, with its as-of date (Q1 FY27)"}
+        terms: [roic, return on invested capital]
+      - key: patents_filed
+        name: Patent applications filed in the quarter
+        measure: [count]
+        unit: patents
+        labels:
+          - {label: patents filed, seen: "1h...11."}
+          - {label: patents were filed, seen: "1h......", why: "the same quarter's count in the Q3 FY25 text, the table's 'Patents filed' figure"}
+          - {label: patent applications were filed, seen: ".h.1...1", why: "the same count worded as applications in the text (Q2 FY26, Q2 FY27)"}
+          - {label: patent applications filed, seen: ".h.1....", why: "the same count in the Q2 FY26 table, worded as applications"}
+        terms: [patent]
+      - key: patents_granted
+        name: Patents granted in the quarter
+        measure: [count]
+        unit: patents
+        labels:
+          - {label: patents granted, seen: "1h.1.11."}
+          - {label: patents were granted, seen: "1h.1...1", why: "the same quarter's count in the text ('… patents were granted'), the table's figure where both appear"}
+        terms: [patent]
+      - key: revenue_per_employee
+        name: Revenue per employee, per annum
+        measure: [currency_per_unit]
+        unit: US$ thousand
+        labels:
+          - {label: revenue per employee per annum, seen: ".h....11"}
+          - {label: revenue per employee k p a, seen: ".h.....1", why: "the same figure in the people table ('Revenue per Employee ($K p.a.)')"}
+        terms: [revenue per employee, productivity]
+      - key: vertical_share
+        name: Services revenue share by vertical
+        measure: [percent]
+        unit: "%"
+        members:
+          financial services: Financial Services
+          manufacturing: Manufacturing
+          lifesciences and healthcare: Lifesciences and Healthcare
+          technology and services: Technology and Services
+          telecommunications media publishing and entertainment: Telecommunications, Media, Publishing and Entertainment
+          retail and cpg: Retail and CPG
+          public services: Public Services
+        aliases:
+          life sciences and healthcare: lifesciences and healthcare
+          telecom: telecommunications media publishing and entertainment
+        labels:
+          - {label: financial services, seen: "1h111111"}
+          - {label: manufacturing, seen: "1h111111", why: "the same vertical table's row, labelled by its member"}
+          - {label: lifesciences and healthcare, seen: "1h111111", why: "the same vertical table's row, labelled by its member"}
+          - {label: technology and services, seen: "1h111111", why: "the same vertical table's row, labelled by its member"}
+          - {label: telecommunications media publishing and entertainment, seen: "1h111111", why: "the same vertical table's row, labelled by its member"}
+          - {label: retail and cpg, seen: "1h111111", why: "the same vertical table's row, labelled by its member"}
+          - {label: public services, seen: "1h111111", why: "the same vertical table's row, labelled by its member"}
+          - {label: services revenue share financial services, seen: ".h1.....", why: "the same row in the Q1 FY26 wording ('Services revenue share, …')"}
+          - {label: services revenue share manufacturing, seen: ".h1.....", why: "the same row in the Q1 FY26 wording ('Services revenue share, …')"}
+          - {label: services revenue share lifesciences and healthcare, seen: ".h1.....", why: "the same row in the Q1 FY26 wording ('Services revenue share, …')"}
+          - {label: services revenue share technology and services, seen: ".h1.....", why: "the same row in the Q1 FY26 wording ('Services revenue share, …')"}
+          - {label: services revenue share telecommunications media publishing and entertainment, seen: ".h1.....", why: "the same row in the Q1 FY26 wording ('Services revenue share, …')"}
+          - {label: services revenue share retail and cpg, seen: ".h1.....", why: "the same row in the Q1 FY26 wording ('Services revenue share, …')"}
+          - {label: services revenue share public services, seen: ".h1.....", why: "the same row in the Q1 FY26 wording ('Services revenue share, …')"}
+          - {label: services revenue mix financial services, seen: ".h....1.", why: "the same row in the Q1 FY27 wording ('Services revenue mix, …')"}
+          - {label: services revenue mix manufacturing, seen: ".h....1.", why: "the same row in the Q1 FY27 wording ('Services revenue mix, …')"}
+          - {label: services revenue mix lifesciences and healthcare, seen: ".h....1.", why: "the same row in the Q1 FY27 wording ('Services revenue mix, …')"}
+          - {label: services revenue mix technology and services, seen: ".h....1.", why: "the same row in the Q1 FY27 wording ('Services revenue mix, …')"}
+          - {label: services revenue mix telecommunications media publishing and entertainment, seen: ".h....1.", why: "the same row in the Q1 FY27 wording ('Services revenue mix, …')"}
+          - {label: services revenue mix retail and cpg, seen: ".h....1.", why: "the same row in the Q1 FY27 wording ('Services revenue mix, …')"}
+          - {label: services revenue mix public services, seen: ".h....1.", why: "the same row in the Q1 FY27 wording ('Services revenue mix, …')"}
+        terms: [revenue mix, share of revenue, contribution, vertical]
+      - key: geography_share
+        name: Services revenue share by geography
+        measure: [percent]
+        unit: "%"
+        members:
+          usa: USA
+          europe: Europe
+          india: India
+          americas: Americas
+        aliases:
+          united states: usa
+        labels:
+          - {label: europe, seen: "1h.111.1"}
+          - {label: usa, seen: ".h.111.1", why: "the same geography table's row, labelled by its member (from Q1 FY26)"}
+          - {label: india, seen: ".h.111.1", why: "the same geography table's row, labelled by its member (from Q1 FY26)"}
+          - {label: americas, seen: "1h......", why: "the Q3 FY25 table's row, labelled by its member; from Q1 FY26 the table shows USA and India instead, so Americas stays its own member and its end shows"}
+          - {label: services revenue share usa, seen: ".h1.....", why: "the same row in the Q1 FY26 wording ('Services revenue share, …')"}
+          - {label: services revenue share europe, seen: ".h1.....", why: "the same row in the Q1 FY26 wording ('Services revenue share, …')"}
+          - {label: services revenue share india, seen: ".h1.....", why: "the same row in the Q1 FY26 wording ('Services revenue share, …')"}
+          - {label: services revenue mix usa, seen: ".h....1.", why: "the same row in the Q1 FY27 wording ('Services revenue mix, …')"}
+          - {label: services revenue mix europe, seen: ".h....1.", why: "the same row in the Q1 FY27 wording ('Services revenue mix, …')"}
+          - {label: services revenue mix india, seen: ".h....1.", why: "the same row in the Q1 FY27 wording ('Services revenue mix, …')"}
+        terms: [revenue mix, share of revenue, contribution, geography]
+  hdfcbank:
+    document_class: press_release
+    quarters: [Q3 FY25, Q4 FY25, Q1 FY26, Q2 FY26, Q3 FY26, Q4 FY26, Q1 FY27, Q2 FY27]
+    # Left unmapped on purpose: the average-balance growth rates (YoY and QoQ share one label in Q3 FY25 and Q2 FY26, and
+    # the "growth over <month> quarter" labels are YoY in one quarter and QoQ in another, so no label names one basis);
+    # month-end advances-under-management growth (a total); the notes' project-finance (DCCO), security-receipt and
+    # loan-transfer disclosures; HSL's revenue and profit; the Q1 FY26 core NIM row with no basis.
+    metrics:
+      - key: average_deposits
+        name: Average deposits (quarterly average)
+        measure: [amount]
+        unit: ₹ billion
+        labels:
+          - {label: average deposits, seen: "1h11.11."}
+          - {label: the bank s average deposits, seen: ".h.....1", why: "the same quarterly-average deposits, Q2 FY27 wording ('The Bank's average deposits')"}
+        terms: [average deposits]
+      - key: average_casa_deposits
+        name: Average CASA deposits (quarterly average)
+        measure: [amount]
+        unit: ₹ billion
+        labels:
+          - {label: average casa deposits, seen: "1h.1.11."}
+          - {label: the bank s average casa deposits, seen: ".h.....1", why: "the same quarterly-average CASA deposits, Q2 FY27 wording"}
+        terms: [average casa, casa]
+      - key: average_advances
+        name: Average advances under management (quarterly average)
+        measure: [amount]
+        unit: ₹ billion
+        labels:
+          - {label: average advances under management, seen: ".h11.11."}
+          - {label: advances under management on an average basis, seen: "1h......", why: "the same quarterly-average advances, Q3 FY25 wording ('on an average basis')"}
+          - {label: the bank s average advances under management, seen: ".h.....1", why: "the same quarterly-average advances, Q2 FY27 wording"}
+        terms: [average advances, advances under management]
+      - key: casa_ratio
+        name: CASA ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: casa deposits comprising of total deposits, seen: "1h1....1"}
+          - {label: casa deposits comprising share of total deposits, seen: ".h..11..", why: "the same CASA share of total deposits (Q3 and Q4 FY26 wording)"}
+          - {label: casa deposits comprising, seen: ".h.1....", why: "the same CASA share, its tail cut (Q2 FY26)"}
+          - {label: casa deposits share of total deposits, seen: ".h....1.", why: "the same CASA share (Q1 FY27 wording)"}
+        terms: [casa ratio, casa]
+      - key: casa_growth
+        name: CASA deposits growth, YoY (period end)
+        measure: [percent_change]
+        unit: "%"
+        labels:
+          - {label: casa deposits, seen: "1h.1...."}
+          - {label: casa deposits growth, seen: ".h...11.", why: "the same year-on-year growth of period-end CASA deposits ('CASA deposits grew by'), Q4 FY26 wording"}
+        terms: [casa]
+      - key: savings_deposits
+        name: Savings account deposits (period end)
+        measure: [amount]
+        unit: ₹ billion
+        labels:
+          - {label: savings account deposits, seen: "1h.11111"}
+        terms: [savings account, savings deposits]
+      - key: current_deposits
+        name: Current account deposits (period end)
+        measure: [amount]
+        unit: ₹ billion
+        labels:
+          - {label: current account deposits, seen: "1h.1111."}
+        terms: [current account, current deposits]
+      - key: time_deposits
+        name: Time deposits (period end)
+        measure: [amount]
+        unit: ₹ billion
+        labels:
+          - {label: time deposits, seen: "1h.1111."}
+        terms: [time deposits, term deposits]
+      - key: time_deposits_growth
+        name: Time deposits growth, YoY (period end)
+        measure: [percent_change]
+        unit: "%"
+        labels:
+          - {label: time deposits, seen: "1h.1...."}
+          - {label: time deposits growth, seen: ".h...11.", why: "the same year-on-year growth of period-end time deposits (Q4 FY26 wording)"}
+          - {label: time deposits increase over corresponding quarter of previous year, seen: ".h1.1...", why: "the same growth, its year-on-year basis spelled out (Q1 and Q3 FY26)"}
+          - {label: time deposits increase over september, seen: ".h.....1", why: "the same growth over the year-ago quarter end (Q2 FY27); the release compares period-end deposits only year on year"}
+        terms: [time deposits, term deposits]
+      - key: loan_growth_segment
+        name: Loan growth by segment, YoY (advances under management)
+        measure: [percent_change]
+        unit: "%"
+        members:
+          retail: Retail
+          small and mid market enterprises: Small and mid-market enterprises
+          corporate and other wholesale: Corporate and other wholesale
+          commercial and rural banking: Commercial and rural banking
+        aliases:
+          retail loans: retail
+          small and mid market enterprises loans: small and mid market enterprises
+          sme: small and mid market enterprises
+          corporate and other wholesale loans: corporate and other wholesale
+          crb: commercial and rural banking
+        labels:
+          - {label: retail loans grew by, seen: ".h1.11.."}
+          - {label: small and mid market enterprises loans grew by, seen: ".h..11..", why: "the same sentence for the SME book; the member tells the segments apart"}
+          - {label: corporate and other wholesale loans grew by, seen: ".h..111.", why: "the same sentence for the corporate and wholesale book"}
+          - {label: retail loans grew, seen: "1h......", why: "the same growth without 'by' (Q3 FY25)"}
+          - {label: commercial and rural banking loans grew, seen: "1h......", why: "the same sentence for the Q3 FY25 commercial and rural banking book (replaced by SME from Q1 FY26, kept as its own member)"}
+          - {label: corporate and other wholesale loans were lower by, seen: "1h......", why: "the same year-on-year change printed as a fall (Q3 FY25)"}
+          - {label: retail loans, seen: ".h.1....", why: "the same growth, the verb dropped (Q2 FY26)"}
+          - {label: small and mid market enterprises loans, seen: ".h.1....", why: "the same growth, the verb dropped (Q2 FY26)"}
+          - {label: corporate and other wholesale loans, seen: ".h.1....", why: "the same growth, the verb dropped (Q2 FY26)"}
+          - {label: retail loans growth, seen: ".h....1.", why: "the same growth (Q1 FY27 wording)"}
+          - {label: small and mid market enterprises loans growth, seen: ".h....1.", why: "the same growth (Q1 FY27 wording)"}
+        terms: [loan growth, grew, growth]
+      - key: overseas_advances_share
+        name: Overseas advances, share of total advances
+        measure: [percent]
+        unit: "%"
+        member: ["", overseas, overseas advances]
+        labels:
+          - {label: overseas advances constituted of total advances, seen: "1h.....1"}
+          - {label: overseas advances, seen: ".h.1....", why: "the same share, the sentence cut to its subject (Q2 FY26)"}
+          - {label: overseas advances constituted, seen: ".h..11..", why: "the same share without 'of total advances' (Q3 and Q4 FY26)"}
+        terms: [overseas]
+      - key: total_car
+        name: Capital adequacy ratio (total, Basel III)
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: total capital adequacy ratio car as per basel iii guidelines, seen: ".h11.1.."}
+          - {label: capital adequacy ratio car as per basel iii guidelines, seen: "1h......", why: "the same total CAR, printed without 'total' (Q3 FY25)"}
+          - {label: total capital adequacy ratio car, seen: ".h....1.", why: "the same total CAR without the Basel III tail (Q1 FY27)"}
+          - {label: capital adequacy ratio, seen: ".h1..11.", why: "the same ratio in the results' analytical-ratio notes; it equals the release's figure in each quarter read"}
+          - {label: ii capital adequacy ratio, seen: ".h.1....", why: "the same notes ratio, numbered (ii) (Q2 FY26)"}
+        terms: [capital adequacy, capital ratio]
+      - key: tier1_car
+        name: Tier 1 capital ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: tier car, seen: "1h11.11."}
+        terms: [tier 1, tier one]
+      - key: cet1_ratio
+        name: CET1 ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: common equity tier capital ratio, seen: "1h11.11."}
+        terms: [cet1, common equity tier]
+      - key: risk_weighted_assets
+        name: Risk-weighted assets
+        measure: [amount]
+        unit: ₹ billion
+        labels:
+          - {label: risk weighted assets, seen: "1h1..11."}
+        terms: [risk weighted assets, rwa]
+      - key: core_nim_total_assets
+        name: Core net interest margin, on total assets
+        measure: [percent]
+        unit: "%"
+        member: [on total assets]
+        labels:
+          - {label: core net interest margin, seen: "1h.11..."}
+        terms: [core net interest margin, net interest margin, nim, margin]
+      - key: core_nim_interest_earning_assets
+        name: Core net interest margin, on interest-earning assets
+        measure: [percent]
+        unit: "%"
+        member: [based on interest earning assets]
+        labels:
+          - {label: core net interest margin, seen: "1h..1..."}
+        terms: [core net interest margin, net interest margin, nim, margin]
+      # From Q4 FY26 the release prints "Net interest margin" instead of "Core net interest margin": kept as separate
+      # metrics (rule 6), so rule 4 sees the change as renamed or redefined.
+      - key: nim_total_assets
+        name: Net interest margin, on total assets
+        measure: [percent]
+        unit: "%"
+        member: ["", total assets]
+        labels:
+          - {label: net interest margin on total assets, seen: ".h...11."}
+        terms: [net interest margin, nim, margin]
+      - key: nim_interest_earning_assets
+        name: Net interest margin, on interest-earning assets
+        measure: [percent]
+        unit: "%"
+        member: ["", interest earning assets]
+        labels:
+          - {label: net interest margin based on interest earning assets, seen: ".h...11."}
+        terms: [net interest margin, nim, margin]
+      - key: gnpa_ratio
+        name: Gross NPA ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: gross non performing assets, seen: "1h1.111."}
+          - {label: gross non performing assets were at of gross advances, seen: ".h.1....", why: "the same ratio, the sentence printed whole (Q2 FY26)"}
+          - {label: gross non performing assets of gross advances, seen: ".h.....1", why: "the same ratio (Q2 FY27 wording)"}
+          - {label: of gross npas to gross advances, seen: ".h...111", why: "the same ratio in the results' analytical-ratio notes; it equals the release's figure"}
+          - {label: c of gross npas to gross advances, seen: ".h.1....", why: "the same notes ratio, item (c) (Q2 FY26)"}
+        terms: [gross npa, gnpa, asset quality]
+      # The Q3 FY25, Q1 FY26, Q3 FY26 and Q1 FY27 rows read "Gross non-performing assets" with the exclusion as their
+      # member; the member's words come out of this metric's first label, so they map here and never to gnpa_ratio.
+      - key: gnpa_ratio_ex_agri
+        name: Gross NPA ratio, excluding agriculture
+        measure: [percent]
+        unit: "%"
+        member: [excluding npas in the agricultural segment, ""]
+        labels:
+          - {label: gross non performing assets excluding npas in the agricultural segment, seen: ".h.1.1.."}
+          - {label: gross non performing assets excluding agricultural segment of gross advances, seen: ".h.....1", why: "the same ratio excluding the agricultural segment (Q2 FY27 wording)"}
+        terms: [agricultural, agri, gross npa]
+      - key: nnpa_ratio
+        name: Net NPA ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: net non performing assets, seen: "1h1.111."}
+          - {label: net non performing assets were at of net advances, seen: ".h.1....", why: "the same ratio, the sentence printed whole (Q2 FY26)"}
+          - {label: net non performing assets of net advances, seen: ".h.....1", why: "the same ratio (Q2 FY27 wording)"}
+          - {label: of net npas to net advances, seen: ".h...111", why: "the same ratio in the results' analytical-ratio notes; it equals the release's figure"}
+          - {label: d of net npas to net advances, seen: ".h.1....", why: "the same notes ratio, item (d) (Q2 FY26)"}
+          - {label: d of net np as to net advances, seen: ".h..1...", why: "the same notes ratio, 'NPAs' read as 'NP As' from the Q3 FY26 page image"}
+        terms: [net npa, nnpa]
+      - key: gnpa_amount
+        name: Gross NPAs
+        measure: [amount]
+        unit: ₹ crore
+        labels:
+          - {label: gross npas, seen: ".h...111"}
+          - {label: a gross npas, seen: ".h.1....", why: "the same amount, item (a) of the Q2 FY26 notes"}
+        terms: [gross npa, gnpa]
+      - key: nnpa_amount
+        name: Net NPAs
+        measure: [amount]
+        unit: ₹ crore
+        labels:
+          - {label: net npas, seen: ".h...111"}
+          - {label: b net npas, seen: ".h.1....", why: "the same amount, item (b) of the Q2 FY26 notes"}
+        terms: [net npa, nnpa]
+      - key: roa_quarterly
+        name: Return on assets, quarterly average, not annualised
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: return on assets average not annualized, seen: ".h...111"}
+          - {label: v return on assets average not annualized, seen: ".h.1....", why: "the same notes ratio, item (v) (Q2 FY26)"}
+        terms: [return on assets, roa]
+      - key: credit_cost_ratio
+        name: Total credit cost ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: total credit cost ratio, seen: ".h.1.111"}
+        terms: [credit cost]
+      - key: branches
+        name: Branches
+        measure: [count]
+        unit: branches
+        labels:
+          - {label: branches, seen: "1h11..11"}
+          - {label: distribution network branches, seen: ".h..11..", why: "the same branch count, printed under 'distribution network' (Q3 and Q4 FY26)"}
+        terms: [branches, branch]
+      - key: atms
+        name: ATMs
+        measure: [count]
+        unit: ATMs
+        labels:
+          - {label: atms, seen: "1h111111"}
+        terms: [atm, atms]
+      - key: cities_towns
+        name: Cities and towns covered
+        measure: [count]
+        unit: cities and towns
+        labels:
+          - {label: cities towns, seen: "1h111111"}
+        terms: [cities, towns]
+      - key: business_correspondents
+        name: Business correspondents
+        measure: [count]
+        unit: business correspondents
+        labels:
+          - {label: business correspondents, seen: "1h111111"}
+        terms: [business correspondents]
+      - key: semi_urban_rural_branch_share
+        name: Branches in semi-urban and rural areas, share
+        measure: [percent]
+        unit: "%"
+        member: ["", semi urban and rural areas]
+        labels:
+          - {label: branches in semi urban and rural areas, seen: "1h1.11.."}
+          - {label: of our branches are in semi urban and rural areas, seen: ".h11....", why: "the same share, the sentence printed whole (Q1 and Q2 FY26)"}
+          - {label: of the branches are in semi urban and rural areas, seen: ".h....1.", why: "the same share (Q1 FY27 wording)"}
+          - {label: branches in semi urban and rural areas of branches, seen: ".h.....1", why: "the same share, '% of branches' in the label (Q2 FY27)"}
+        terms: [semi-urban, semi urban, rural]
+      - key: employees
+        name: Employees
+        measure: [people]
+        unit: people
+        labels:
+          - {label: number of employees, seen: "1h.111.."}
+          - {label: employees, seen: ".h1....1", why: "the same headcount, printed as 'employees'"}
+          - {label: the number of employees were at, seen: ".h1.....", why: "the same headcount, the sentence printed whole (Q1 FY26)"}
+          - {label: the number of employees, seen: ".h....1.", why: "the same headcount (Q1 FY27 wording)"}
+        terms: [employees, headcount, head count]
+      # The three HDB Financial Services metrics accept the empty member: Q1 FY27 printed them in the HDBFSL paragraph
+      # (its own page) without the subsidiary's name; the bank's own ratios use other labels (tier car, total capital
+      # adequacy ratio ...).
+      - key: hdb_financial_services_stage_three_loans
+        name: HDB Financial Services, Stage 3 loans
+        measure: [percent]
+        unit: "%"
+        member: [hdb financial services ltd hdbfsl, hdb financial services ltd, hdbfsl, ""]
+        labels:
+          - {label: stage loans, seen: "1h.1.1.."}
+        terms: [stage 3, hdb]
+      - key: hdb_financial_services_total_ratio
+        name: HDB Financial Services, total capital adequacy ratio
+        measure: [percent]
+        unit: "%"
+        member: [hdb financial services ltd hdbfsl, hdb financial services ltd, hdbfsl, ""]
+        labels:
+          - {label: total car, seen: "1h.1.1.."}
+        terms: [hdb, hdb financial]
+      - key: hdb_financial_services_tier_one_ratio
+        name: HDB Financial Services, Tier I capital ratio
+        measure: [percent]
+        unit: "%"
+        member: [hdb financial services ltd hdbfsl, hdb financial services ltd, hdbfsl, ""]
+        labels:
+          - {label: tier i car, seen: "1h.1.1.."}
+        terms: [hdb, hdb financial]
+      - key: hdfc_amc_qaaum
+        name: HDFC AMC, quarterly average assets under management
+        measure: [amount]
+        unit: ₹ billion
+        member: [hdfc amc, hdfc asset management company ltd hdfc amc, hdfc asset management company ltd]
+        labels:
+          - {label: quarterly average assets under management, seen: ".h1....1"}
+          - {label: hdfc amc s quarterly average assets under management, seen: "1h....1.", why: "the same subsidiary AUM with the company named in the label ('HDFC AMC's ...')"}
+        terms: [hdfc amc, aum, assets under management]
+  icicibank:
+    document_class: press_release
+    quarters: [Q3 FY25, Q4 FY25, Q1 FY26, Q2 FY26, Q3 FY26, Q4 FY26, Q1 FY27, Q2 FY27]
+    metrics:
+      - key: average_casa_ratio
+        name: Average CASA ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: average current account and savings account casa ratio, seen: "1h111111"}
+        terms: [casa, current account, savings account]
+      - key: average_deposits
+        name: Average deposits
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", average deposits]
+        labels:
+          - {label: average deposits, seen: "1h111.11"}
+          - {label: average deposits q, seen: ".h.1....", why: "the same quarterly average, with the quarter in the label (Q2 FY26 table, member 'average deposits')"}
+        terms: [average deposits, deposits]
+      - key: average_deposits_growth_yoy
+        name: Average deposits growth, YoY
+        measure: [percent_change]
+        unit: "%"
+        member: ["", average deposits]
+        labels:
+          - {label: average deposits year on year growth, seen: "1h.....1"}
+          - {label: average deposits, seen: "1h1...11", why: "the highlights' growth line, which states only the year-on-year rate (it matches the body's year-on-year line in each quarter)"}
+          - {label: average deposits grew by year on year, seen: ".h.11...", why: "the same growth (Q2 and Q3 FY26 wording)"}
+          - {label: average deposits increased by year on year, seen: ".h1.....", why: "the same growth (Q1 FY26 wording)"}
+          - {label: average deposits growth year on year, seen: ".h.1....", why: "the same growth (Q2 FY26 table, member 'average deposits')"}
+          - {label: average deposits year on year increase, seen: ".h....1.", why: "the same growth (Q1 FY27 wording)"}
+        terms: [deposit growth, deposits grew, average deposits]
+      - key: average_deposits_growth_qoq
+        name: Average deposits growth, QoQ
+        measure: [percent_change]
+        unit: "%"
+        member: ["", average deposits]
+        labels:
+          - {label: average deposits sequential growth, seen: "1h.....1"}
+          - {label: average deposits increased by sequentially, seen: ".h1.....", why: "the same sequential growth (Q1 FY26 wording)"}
+          - {label: average deposits growth sequential, seen: ".h.1....", why: "the same sequential growth (Q2 FY26 table, member 'average deposits')"}
+          - {label: average deposits sequential increase, seen: ".h....1.", why: "the same sequential growth (Q1 FY27 wording)"}
+        terms: [sequentially, deposits grew, average deposits]
+      - key: average_ca_growth_yoy
+        name: Average current account deposits growth, YoY
+        measure: [percent_change]
+        unit: "%"
+        member: ["", current account, current account deposits]
+        labels:
+          - {label: average current account deposits year on year growth, seen: "1h......"}
+          - {label: average current account deposits increased by year on year, seen: ".h1.....", why: "the same growth (Q1 FY26 wording, member 'current account')"}
+          - {label: average current account deposits growth year on year, seen: ".h.1....", why: "the same growth (Q2 FY26 table, member 'current account deposits')"}
+        terms: [current account]
+      - key: average_ca_growth_qoq
+        name: Average current account deposits growth, QoQ
+        measure: [percent_change]
+        unit: "%"
+        member: ["", current account, current account deposits]
+        labels:
+          - {label: average current account deposits sequential growth, seen: "1h......"}
+          - {label: average current account deposits increased by sequentially, seen: ".h1.....", why: "the same sequential growth (Q1 FY26 wording, member 'current account')"}
+          - {label: average current account deposits growth sequential, seen: ".h.1....", why: "the same sequential growth (Q2 FY26 table, member 'current account deposits')"}
+        terms: [current account]
+      - key: average_sa_growth_yoy
+        name: Average savings account deposits growth, YoY
+        measure: [percent_change]
+        unit: "%"
+        member: ["", savings account, savings account deposits]
+        labels:
+          - {label: average savings account deposits year on year growth, seen: "1h......"}
+          - {label: average savings account deposits increased by year on year, seen: ".h1.....", why: "the same growth (Q1 FY26 wording, member 'savings account')"}
+          - {label: average savings account deposits growth year on year, seen: ".h.1....", why: "the same growth (Q2 FY26 table, member 'savings account deposits')"}
+        terms: [savings account, savings deposits]
+      - key: average_sa_growth_qoq
+        name: Average savings account deposits growth, QoQ
+        measure: [percent_change]
+        unit: "%"
+        member: ["", savings account, savings account deposits]
+        labels:
+          - {label: average savings account deposits sequential growth, seen: "1h......"}
+          - {label: average savings account deposits increased by sequentially, seen: ".h1.....", why: "the same sequential growth (Q1 FY26 wording, member 'savings account')"}
+          - {label: average savings account deposits growth sequential, seen: ".h.1....", why: "the same sequential growth (Q2 FY26 table, member 'savings account deposits')"}
+        terms: [savings account, savings deposits]
+      - key: average_casa_growth_yoy
+        name: Average CASA deposits growth, YoY
+        measure: [percent_change]
+        unit: "%"
+        member: ["", current and savings account, current and savings account deposits]
+        labels:
+          - {label: average current and savings account deposits increased by year on year, seen: ".h...1.."}
+          - {label: average current and savings account deposits year on year increase, seen: ".h....1.", why: "the same combined CASA growth (Q1 FY27 wording)"}
+          - {label: average current and savings account deposits year on year growth, seen: ".h.....1", why: "the same combined CASA growth (Q2 FY27 wording)"}
+        terms: [casa, current and savings account]
+      - key: average_casa_growth_qoq
+        name: Average CASA deposits growth, QoQ
+        measure: [percent_change]
+        unit: "%"
+        member: ["", current and savings account, current and savings account deposits]
+        labels:
+          - {label: average current and savings account deposits increased by sequentially in q, seen: ".h...1.."}
+          - {label: average current and savings account deposits sequential increase, seen: ".h....1.", why: "the same combined CASA sequential growth (Q1 FY27 wording)"}
+          - {label: average current and savings account deposits sequential growth, seen: ".h.....1", why: "the same combined CASA sequential growth (Q2 FY27 wording)"}
+        terms: [casa, current and savings account]
+      - key: loan_growth_yoy
+        name: Loan portfolio growth, YoY, by segment
+        measure: [percent_change]
+        unit: "%"
+        members:
+          retail: Retail
+          rural: Rural
+          business banking: Business banking
+          domestic corporate: Domestic corporate
+          retail and rural: Retail and rural
+        aliases:
+          retail loan portfolio: retail
+          rural portfolio: rural
+          business banking portfolio: business banking
+          domestic corporate portfolio: domestic corporate
+        labels:
+          - {label: retail loan portfolio growth year on year, seen: ".h.11..."}
+          - {label: business banking portfolio growth year on year, seen: ".h.11...", why: "the same segment growth table, its business banking line (Q2 and Q3 FY26)"}
+          - {label: rural portfolio growth year on year, seen: ".h.1....", why: "the same table, its rural line (Q2 FY26)"}
+          - {label: domestic corporate portfolio growth year on year, seen: ".h.1....", why: "the same table, its domestic corporate line (Q2 FY26)"}
+          - {label: retail loan portfolio grew year on year, seen: "1h....1.", why: "the same retail growth (Q3 FY25 and Q1 FY27 wording)"}
+          - {label: rural portfolio grew year on year, seen: "1h....1.", why: "the same rural growth (Q3 FY25 and Q1 FY27 wording)"}
+          - {label: business banking portfolio grew year on year, seen: "1h....1.", why: "the same business banking growth (Q3 FY25 and Q1 FY27 wording)"}
+          - {label: domestic corporate portfolio grew year on year, seen: "1h....1.", why: "the same domestic corporate growth (Q3 FY25 and Q1 FY27 wording)"}
+          - {label: the retail loan portfolio grew by year on year, seen: ".h1..1..", why: "the same retail growth (Q1 and Q4 FY26 body text)"}
+          - {label: the business banking portfolio grew by year on year, seen: ".h1..1..", why: "the same business banking growth (Q1 and Q4 FY26 body text)"}
+          - {label: the domestic corporate portfolio grew by year on year, seen: ".h1..1..", why: "the same domestic corporate growth (Q1 and Q4 FY26 body text)"}
+          - {label: the rural portfolio declined by year on year, seen: ".h1.....", why: "the same rural growth, worded 'declined' when it fell (Q1 FY26)"}
+          - {label: the rural portfolio grew by year on year, seen: ".h...1..", why: "the same rural growth (Q4 FY26 body text)"}
+          - {label: business banking portfolio year on year growth, seen: ".h.....1", why: "the same business banking growth (Q2 FY27 wording)"}
+          - {label: domestic corporate portfolio year on year growth, seen: ".h.....1", why: "the same domestic corporate growth (Q2 FY27 wording)"}
+          - {label: retail and rural loan portfolio year on year growth, seen: ".h.....1", why: "the combined retail-and-rural line that replaces the separate retail and rural lines in Q2 FY27; its own member, never merged with either"}
+        terms: [loan growth, grew, growth, year-on-year]
+      - key: loan_growth_qoq
+        name: Loan portfolio growth, QoQ, by segment
+        measure: [percent_change]
+        unit: "%"
+        members:
+          retail: Retail
+          rural: Rural
+          business banking: Business banking
+          domestic corporate: Domestic corporate
+          retail and rural: Retail and rural
+        aliases:
+          retail loan portfolio: retail
+          rural portfolio: rural
+          business banking portfolio: business banking
+          domestic corporate portfolio: domestic corporate
+        labels:
+          - {label: retail loan portfolio growth sequential, seen: ".h.11..."}
+          - {label: business banking portfolio growth sequential, seen: ".h.11...", why: "the same segment growth table, its business banking line (Q2 and Q3 FY26)"}
+          - {label: rural portfolio growth sequential, seen: ".h.1....", why: "the same table, its rural line (Q2 FY26)"}
+          - {label: domestic corporate portfolio growth sequential, seen: ".h.1....", why: "the same table, its domestic corporate line (Q2 FY26)"}
+          - {label: retail loan portfolio grew sequentially, seen: "1h....1.", why: "the same retail sequential growth (Q3 FY25 and Q1 FY27 wording)"}
+          - {label: rural portfolio grew sequentially, seen: "1h....1.", why: "the same rural sequential growth (Q3 FY25 and Q1 FY27 wording)"}
+          - {label: business banking portfolio grew sequentially, seen: "1h....1.", why: "the same business banking sequential growth (Q3 FY25 and Q1 FY27 wording)"}
+          - {label: domestic corporate portfolio grew sequentially, seen: "1h....1.", why: "the same domestic corporate sequential growth (Q3 FY25 and Q1 FY27 wording)"}
+          - {label: the retail loan portfolio grew by sequentially, seen: ".h1..1..", why: "the same retail sequential growth (Q1 and Q4 FY26 body text)"}
+          - {label: the business banking portfolio grew by sequentially, seen: ".h1..1..", why: "the same business banking sequential growth (Q1 and Q4 FY26 body text)"}
+          - {label: the rural portfolio declined by sequentially, seen: ".h1.....", why: "the same rural sequential growth, worded 'declined' when it fell (Q1 FY26)"}
+          - {label: the rural portfolio grew by sequentially, seen: ".h...1..", why: "the same rural sequential growth (Q4 FY26 body text)"}
+          - {label: the domestic corporate portfolio declined by sequentially, seen: ".h1.....", why: "the same domestic corporate sequential growth, worded 'declined' when it fell (Q1 FY26)"}
+          - {label: the domestic corporate portfolio grew by sequentially, seen: ".h...1..", why: "the same domestic corporate sequential growth (Q4 FY26 body text)"}
+          - {label: business banking portfolio sequential growth, seen: ".h.....1", why: "the same business banking sequential growth (Q2 FY27 wording)"}
+          - {label: domestic corporate portfolio sequential growth, seen: ".h.....1", why: "the same domestic corporate sequential growth (Q2 FY27 wording)"}
+          - {label: retail and rural loan portfolio sequential growth, seen: ".h.....1", why: "the combined retail-and-rural line that replaces the separate retail and rural lines in Q2 FY27; its own member, never merged with either"}
+        terms: [loan growth, grew, growth, sequentially]
+      - key: loan_share
+        name: Share of the total loan portfolio, by segment
+        measure: [percent]
+        unit: "%"
+        members:
+          retail: Retail
+          retail and rural: Retail and rural
+        aliases:
+          retail loan portfolio: retail
+        labels:
+          - {label: retail loan portfolio share of total loan portfolio, seen: ".h.11.1."}
+          - {label: retail loan portfolio comprised of the total loan portfolio, seen: "1h1.....", why: "the same retail share (Q3 FY25 and Q1 FY26 wording)"}
+          - {label: the retail loan portfolio comprised of the total loan portfolio, seen: ".h...1..", why: "the same retail share (Q4 FY26 body text)"}
+          - {label: retail and rural loan portfolio share of total loan portfolio, seen: ".h.....1", why: "the combined retail-and-rural share that replaces the retail share in Q2 FY27; its own member, never merged with retail"}
+        terms: [loan mix, share of the loan, of total loans]
+      - key: portfolio_share_incl_non_fund
+        name: Share of the total portfolio including non-fund outstanding, by segment
+        measure: [percent]
+        unit: "%"
+        members:
+          retail: Retail
+          retail and rural: Retail and rural
+        aliases:
+          retail portfolio: retail
+          retail including non fund outstanding: retail
+          retail portfolio including non fund outstanding: retail
+        labels:
+          - {label: retail portfolio share of total portfolio including non fund outstanding, seen: ".h.11.1."}
+          - {label: retail portfolio was of the total portfolio including non fund outstanding, seen: "1h1.....", why: "the same retail share including non-fund outstanding (Q3 FY25 and Q1 FY26 wording)"}
+          - {label: including non fund outstanding the retail portfolio was of the total portfolio, seen: ".h...1..", why: "the same retail share with its words reordered (Q4 FY26 body text)"}
+          - {label: retail and rural portfolio share of total portfolio including non fund outstanding, seen: ".h.....1", why: "the combined retail-and-rural share that replaces the retail share in Q2 FY27; its own member, never merged with retail"}
+        terms: [non-fund, including non-fund]
+      - key: domestic_loan_growth_yoy
+        name: Domestic loan growth, YoY
+        measure: [percent_change]
+        unit: "%"
+        member: ["", domestic, domestic advances]
+        labels:
+          - {label: domestic advances grew year on year, seen: ".h....1."}
+          - {label: domestic advances year on year growth, seen: ".h.....1", why: "the same domestic loan growth (Q2 FY27 wording)"}
+          - {label: the domestic advances grew by year on year, seen: ".h...1..", why: "the same domestic loan growth (Q4 FY26 body text, member 'domestic advances')"}
+          - {label: domestic loan portfolio grew by year on year, seen: ".h..1...", why: "the same domestic loan growth, worded 'domestic loan portfolio' (Q3 FY26)"}
+        terms: [domestic loans, domestic advances, domestic loan]
+      - key: domestic_loan_growth_qoq
+        name: Domestic loan growth, QoQ
+        measure: [percent_change]
+        unit: "%"
+        member: ["", domestic, domestic advances]
+        labels:
+          - {label: domestic advances grew sequentially, seen: ".h....1."}
+          - {label: domestic advances sequential growth, seen: ".h.....1", why: "the same domestic sequential growth (Q2 FY27 wording)"}
+          - {label: the domestic advances grew by sequentially, seen: ".h...1..", why: "the same domestic sequential growth (Q4 FY26 body text, member 'domestic advances')"}
+        terms: [domestic loans, domestic advances, domestic loan]
+      - key: fees_share_retail_rural_business_banking
+        name: Fees from retail, rural and business banking customers, share of total fees
+        measure: [percent]
+        unit: "%"
+        member: [retail rural and business banking customers]
+        labels:
+          - {label: fees from retail rural and business banking customers share of total fees, seen: ".h.11..1"}
+          - {label: fee income from retail rural and business banking customers share of total fees, seen: "1h......", why: "the same share, labelled 'fee income' (Q3 FY25)"}
+          - {label: fees from retail rural and business banking customers constituted about of total fees, seen: ".h1.....", why: "the same share in the body text ('constituted about … of total fees', Q1 FY26)"}
+          - {label: fees from retail rural and business banking customers constituted about of total fees in q, seen: ".h...1..", why: "the same share with the quarter named (Q4 FY26)"}
+        terms: [fees, fee income]
+      - key: branches
+        name: Branches
+        measure: [count]
+        unit: branches
+        labels:
+          - {label: branches, seen: ".h11..11"}
+          - {label: network of branches, seen: "1h......", why: "the same branch count ('network of … branches', Q3 FY25)"}
+          - {label: the bank had a network of branches, seen: ".h...1..", why: "the same branch count (Q4 FY26 body text)"}
+        terms: [branches, branch network]
+      - key: branches_added_quarter
+        name: Branches added in the quarter
+        measure: [count]
+        unit: branches
+        labels:
+          - {label: addition of branches during q, seen: "1h......"}
+          - {label: with the addition of branches during q, seen: ".h...1..", why: "the same quarterly addition (Q4 FY26 wording)"}
+          - {label: branches added during q, seen: ".h....1.", why: "the same quarterly addition (Q1 FY27 wording)"}
+        terms: [branches added, new branches, branch additions]
+      - key: atms
+        name: ATMs and cash recycling machines
+        measure: [count]
+        unit: machines
+        labels:
+          - {label: atms and cash recycling machines, seen: "1h11.111"}
+        terms: [atm, atms, cash recycling]
+      - key: nim
+        name: Net interest margin
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: net interest margin, seen: "1h111.11"}
+          - {label: net interest margin was in q, seen: ".h...1..", why: "the same quarter's margin in the body text ('was … in' the quarter, Q4 FY26)"}
+        terms: [margin, nim, net interest margin]
+      - key: gross_npa_ratio
+        name: Gross NPA ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: gross npa ratio, seen: "1h.1..11"}
+          - {label: the gross npa ratio was at june, seen: ".h1.....", why: "the same ratio in the body text, with its as-of date (Q1 FY26)"}
+          - {label: the gross npa ratio was at march, seen: ".h...1..", why: "the same ratio in the body text, with its as-of date (Q4 FY26)"}
+          - {label: of gross non performing customer assets net of write off to gross customer assets, seen: "1h.111.1", why: "the same ratio in the results statement's analytical ratios: the release's gross NPA ratio is on customer assets net of write-off, and the two lines agree in every quarter that has both"}
+          - {label: iii of gross non performing customer assets net of write off to gross customer assets, seen: ".h....1.", why: "the same analytical-ratio line, numbered 'iii' (Q1 FY27)"}
+        terms: [gross npa, npa ratio, asset quality]
+      - key: net_npa_ratio
+        name: Net NPA ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: net npa ratio, seen: "1h111111"}
+          - {label: the net npa ratio was at june, seen: ".h1.....", why: "the same ratio in the body text, with its as-of date (Q1 FY26)"}
+          - {label: the net npa ratio was at march, seen: ".h...1..", why: "the same ratio in the body text, with its as-of date (Q4 FY26)"}
+          - {label: of net non performing customer assets to net customer assets, seen: "1h.111.1", why: "the same ratio in the results statement's analytical ratios: the release's net NPA ratio is on net customer assets, and the two lines agree in every quarter that has both"}
+          - {label: iv of net non performing customer assets to net customer assets, seen: ".h....1.", why: "the same analytical-ratio line, numbered 'iv' (Q1 FY27)"}
+        terms: [net npa, npa ratio, asset quality]
+      - key: gross_npa_amount
+        name: Gross non-performing customer assets, net of write-off
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: gross non performing customer assets net of write off, seen: "1h.111.1"}
+        terms: [gross npa, gross npas, non-performing]
+      - key: net_npa_amount
+        name: Net non-performing customer assets
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: net non performing customer assets, seen: "1h.1.1.1"}
+          - {label: ii net non performing customer assets, seen: ".h....1.", why: "the same analytical-ratio line, numbered 'ii' (Q1 FY27)"}
+        terms: [net npa, net npas]
+      - key: gross_npa_to_advances
+        name: Gross NPAs to gross advances
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: percentage of gross non performing advances net of write off to gross advances, seen: ".h111..1"}
+          - {label: percentage of gross non performing advdnces net of write off to gross advances, seen: ".h...1..", why: "the same line, 'advances' misread in the text layer (Q4 FY26)"}
+          - {label: gross non performing advances net of write off to gross advances, seen: ".h....1.", why: "the same line without 'percentage of' (Q1 FY27)"}
+        terms: [gross npa, gross advances]
+      - key: net_npa_to_advances
+        name: Net NPAs to net advances
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: net non performing advances to net advances, seen: ".h111111"}
+        terms: [net npa, net advances]
+      - key: gross_npa_additions
+        name: Gross NPA additions
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: gross npa additions, seen: "1h11..11"}
+          - {label: the gross npa additions were crore us million in q, seen: ".h...1..", why: "the same quarter's additions in the body text (Q4 FY26)"}
+        terms: [slippage, slippages, npa additions]
+      - key: npa_recoveries_upgrades
+        name: Recoveries and upgrades of NPAs, excluding write-offs and sale
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: recoveries and upgrades of npas excluding write offs and sale, seen: "1h11..11"}
+          - {label: recoveries and upgrades of npas excluding write offs and sale were crore us million in q, seen: ".h...1..", why: "the same quarter's recoveries and upgrades in the body text (Q4 FY26)"}
+        terms: [recoveries, upgrades]
+      - key: net_npa_additions
+        name: Net additions to gross NPAs, excluding write-offs and sale
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: net additions to gross npas excluding write offs and sale, seen: "1h11..11"}
+          - {label: the net additions to gross npas excluding write offs and sale were crore us million in q, seen: ".h...1..", why: "the same quarter's net additions in the body text (Q4 FY26)"}
+        terms: [net additions, net slippage, net slippages]
+      - key: npa_written_off
+        name: Gross NPAs written off
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: gross npas written off, seen: ".h.1..11"}
+          - {label: written off gross npas, seen: "1h......", why: "the same quarter's write-offs with its words reordered (Q3 FY25)"}
+          - {label: the bank has written off gross npas amounting to, seen: ".h1.....", why: "the same quarter's write-offs in the body text (Q1 FY26)"}
+          - {label: the bank has written off gross npas amounting to crore us million in q, seen: ".h...1..", why: "the same quarter's write-offs in the body text (Q4 FY26)"}
+        terms: [written off, write-off, write-offs]
+      - key: contingency_provisions
+        name: Contingency provisions held
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: contingency provisions, seen: ".h11..11"}
+        terms: [contingency provision, contingency provisions]
+      - key: provisions_beyond_specific
+        name: Provisions other than specific provisions on NPAs
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: total provisions other than specific provisions on fund based outstanding to borrowers classified as non performing, seen: ".h11...."}
+          - {label: the bank holds total provisions amounting to crore us billion or of loans, seen: ".h...1..", why: "the same provision buffer (Q4 FY26 body text; the extracted label elides 'other than specific provisions')"}
+          - {label: total provisions other than specific provisions on fund based outstanding to non performing borrowers, seen: ".h....1.", why: "the same provision buffer (Q1 FY27 wording)"}
+          - {label: total provisions other than specific provisions on npa fund based outstanding, seen: ".h.....1", why: "the same provision buffer (Q2 FY27 wording)"}
+        terms: [provisions, provision buffer, buffer]
+      - key: provisions_beyond_specific_share
+        name: Provisions other than specific provisions on NPAs, share of loans
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: total provisions other than specific provisions as a share of loans, seen: ".h....11"}
+          - {label: total provisions other than specific provisions as share of loans, seen: ".h1.....", why: "the same share of loans (Q1 FY26 wording)"}
+          - {label: total provisions other than specific provisions on fund based outstanding to borrowers classified as non performing as of loans, seen: ".h.1....", why: "the same share of loans (Q2 FY26 wording)"}
+          - {label: the bank holds total provisions amounting to crore us billion or of loans, seen: ".h...1..", why: "the same share of loans (Q4 FY26 body text; the extracted label elides 'other than specific provisions')"}
+        terms: [provisions, of loans, buffer]
+      - key: bb_and_below_outstanding
+        name: Outstanding to performing corporate borrowers rated BB and below
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", performing corporate borrowers rated bb and below]
+        labels:
+          - {label: loan and non fund based outstanding to performing corporate borrowers rated bb and below, seen: "1h....11"}
+          - {label: the loan and non fund based outstanding to performing corporate borrowers rated bb and below, seen: ".h1.....", why: "the same outstanding in the body text (Q1 FY26)"}
+          - {label: the loan and non fund based outstanding to performing corporate borrowers rated bb and below was crore us million at march, seen: ".h...1..", why: "the same outstanding in the body text, with its as-of date (Q4 FY26)"}
+        terms: [bb and below, rated bb]
+      - key: under_resolution_outstanding
+        name: Fund-based outstanding to borrowers under resolution, excluding NPAs
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: total fund based outstanding to all borrowers under resolution excluding npas, seen: ".h11...."}
+          - {label: fund based outstanding to all borrowers under resolution excluding npas, seen: "1h....1.", why: "the same outstanding without 'total' (Q3 FY25 and Q1 FY27)"}
+          - {label: the total fund based outstanding to all borrowers under resolution declined to crore us million at march, seen: ".h...1..", why: "the same outstanding in the body text, with its as-of date (Q4 FY26)"}
+          - {label: total fund based outstanding to borrowers under resolution excluding npas, seen: ".h.....1", why: "the same outstanding (Q2 FY27 wording)"}
+        terms: [under resolution, restructured, restructuring]
+      - key: under_resolution_share
+        name: Fund-based outstanding to borrowers under resolution, share of total advances
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: fund based outstanding to all borrowers under resolution excluding npas share of total advances, seen: "1h......"}
+          - {label: total fund based outstanding to all borrowers under resolution share of total advances, seen: ".h1.....", why: "the same share of total advances (Q1 FY26 wording)"}
+          - {label: fund based outstanding to all borrowers under resolution excluding npas as of total advances, seen: ".h.1....", why: "the same share of total advances (Q2 FY26 wording)"}
+        terms: [under resolution, restructured]
+      - key: total_capital_adequacy
+        name: Total capital adequacy ratio
+        measure: [percent]
+        unit: "%"
+        member: ["", standalone, standalone basis]
+        labels:
+          - {label: total capital adequacy ratio, seen: "1h111.11"}
+          - {label: the bank s total capital adequacy ratio at march was, seen: ".h...1..", why: "the same standalone ratio in the body text, with its as-of date (Q4 FY26)"}
+        terms: [capital adequacy, capital ratio, crar]
+      - key: cet1
+        name: CET-1 ratio
+        measure: [percent]
+        unit: "%"
+        member: ["", standalone, standalone basis]
+        labels:
+          - {label: cet ratio, seen: "1h111.11"}
+        terms: [cet-1, cet 1, common equity]
+      - key: capital_adequacy_statement
+        name: Capital adequacy ratio, Basel III, as in the results statement
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: capital adequacy ratio basel iii, seen: "1h.111.1"}
+          - {label: ii capital adequacy ratio basel iii, seen: ".h....1.", why: "the same analytical-ratio line, numbered 'ii' (Q1 FY27)"}
+        terms: [capital adequacy, basel iii]
+      - key: roa
+        name: Return on assets, annualised
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: return on assets annualised, seen: "1h...1.."}
+        terms: [return on assets, roa]
+  sbin:
+    document_class: press_release
+    quarters: [Q3 FY25, Q4 FY25, Q1 FY26, Q2 FY26, Q3 FY26, Q4 FY26, Q1 FY27, Q2 FY27]
+    metrics:
+      - key: casa_ratio
+        name: CASA ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: casa ratio, seen: "11111111"}
+          - {label: casa ratio stands at as on st december, seen: "1...1...", why: "the same quarter-end ratio in the December-quarter highlights (figure and date in the label), equal to the table row in both releases"}
+        terms: [CASA ratio, CASA]
+      - key: domestic_casa
+        name: Domestic CASA deposits
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", domestic casa]
+        labels:
+          - {label: domestic casa, seen: "11111..1"}
+        terms: [CASA, current account, savings account]
+      - key: domestic_term_deposits
+        name: Domestic term deposits
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", domestic term deposits]
+        labels:
+          - {label: domestic term deposits, seen: "11111..1"}
+        terms: [term deposits, fixed deposits]
+      - key: casa_deposits_growth_yoy
+        name: CASA deposits growth, YoY
+        measure: [percent_change]
+        unit: "%"
+        member: ["", casa]
+        labels:
+          - {label: casa deposit, seen: ".11....."}
+        terms: [CASA, current account, savings account]
+      - key: domestic_corporate_advances
+        name: Domestic corporate advances
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", domestic corporate]
+        labels:
+          - {label: domestic corporate, seen: "11111..1"}
+        terms: [corporate advances, corporate loans, corporate book, corporate credit]
+      - key: domestic_retail_personal_advances
+        name: Domestic retail personal advances
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", domestic retail personal]
+        labels:
+          - {label: domestic retail personal, seen: "11111..1"}
+        terms: [retail personal, retail advances, retail loans]
+      - key: home_loans
+        name: Home loans (within domestic retail personal advances)
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", home loans]
+        labels:
+          - {label: of which home loans, seen: "11111..1"}
+        terms: [home loans, housing loans, mortgage]
+      - key: advances_growth_yoy
+        name: Advances growth, YoY, by segment
+        measure: [percent_change]
+        unit: "%"
+        members:
+          retail personal: Retail personal
+          sme: SME
+          agri: Agri
+          corporate: Corporate
+          foreign offices: Foreign offices
+        aliases:
+          agriculture: agri
+        labels:
+          - {label: retail personal advances, seen: ".11....."}
+          - {label: sme advances, seen: ".11.....", why: "the same segment growth list's SME line (member SME); with the member taken out the label reads 'advances'"}
+          - {label: agri advances, seen: ".11.....", why: "the same segment growth list's agri line (member Agri); with the member taken out the label reads 'advances'"}
+          - {label: corporate advances, seen: ".11.....", why: "the same segment growth list's corporate line (member Corporate); with the member taken out the label reads 'advances'"}
+          - {label: foreign offices advances, seen: ".11.....", why: "the same segment growth list's foreign offices line (member Foreign Offices); with the member taken out the label reads 'advances'"}
+          - {label: retail personal advances growth, seen: "...1...1", why: "the same YoY growth of retail personal advances, worded 'growth' once the list shrank to that line (checked against the year-ago table amounts, not the quarter-on-quarter move)"}
+          - {label: retail personal advances growth of, seen: "....1.1.", why: "the same YoY growth with its figure in the label (Q3 FY26, Q1 FY27), checked against the year-ago table amounts"}
+        terms: [advances growth, loan growth, credit growth]
+      - key: nim_domestic
+        name: Net interest margin, domestic
+        measure: [percent]
+        unit: "%"
+        member: ["", domestic]
+        labels:
+          - {label: nim domestic, seen: "111.1.1."}
+          - {label: domestic nim for q fy, seen: "...1.1..", why: "the same quarter's domestic NIM in the highlights, equal to the table row in both releases"}
+        terms: [net interest margin, NIM]
+      - key: nim_change_qoq
+        name: Net interest margin, change QoQ
+        measure: [bps]
+        unit: bps
+        members:
+          domestic: Domestic
+          whole bank: Whole bank
+        labels:
+          - {label: domestic nim improved by bps over q fy, seen: "......1."}
+          - {label: whole bank nim improved by bps over q fy, seen: "......1.", why: "the same change over the previous quarter for the whole bank (member Whole Bank), Q1 FY27 wording"}
+          - {label: domestic nim change qoq, seen: ".......1", why: "the same QoQ change in domestic NIM, Q2 FY27 wording; it matches the move in the NIM table row from the previous quarter"}
+          - {label: whole bank nim change qoq, seen: ".......1", why: "the same QoQ change for the whole bank, Q2 FY27 wording"}
+        terms: [net interest margin, NIM]
+      - key: crar
+        name: Capital adequacy ratio (CRAR)
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: car, seen: "11111..."}
+          - {label: capital adequacy ratio car, seen: ".11.....", why: "the same quarter-end ratio in the highlights, equal to the table's CAR in both releases"}
+          - {label: capital adequacy ratio car as at the end of q fy stands at, seen: "1...1...", why: "the same ratio with its quarter and figure in the label (December-quarter highlights), equal to the table's CAR"}
+          - {label: capital adequacy ratio car as at the end of q fy, seen: "...1....", why: "the same ratio with its quarter in the label (Q2 FY26), equal to the table's CAR"}
+          - {label: crar, seen: ".....111", why: "the same ratio renamed CRAR (capital to risk-weighted assets ratio, the regulatory name of the capital adequacy ratio) in the table from Q4 FY26"}
+          - {label: capital to risk weighted assets ratio crar, seen: "......11", why: "the same ratio under its new name in the highlights, equal to the table's CRAR in both releases"}
+          - {label: capital to risk weighted assets ratio crar as at the end of q fy, seen: ".....1..", why: "the same ratio with its quarter in the label (Q4 FY26), equal to the table's CRAR"}
+        terms: [capital adequacy, CRAR, capital to risk]
+      - key: cet1_ratio
+        name: CET1 ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: cet ratio, seen: "11111111"}
+        terms: [CET1, CET-1, common equity tier]
+      - key: tier1_ratio
+        name: Tier 1 ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: tier ratio, seen: "11111111"}
+        terms: [tier 1, tier-1]
+      - key: gnpa_amount
+        name: Gross NPAs
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: gnpa, seen: "11111111"}
+        terms: [gross npa, GNPA, gross non-performing]
+      - key: gnpa_ratio
+        name: Gross NPA ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: gnpa, seen: "1111111."}
+          - {label: gross npa ratio, seen: ".111.111", why: "the same ratio in the highlights, equal to the table's GNPA (%) in every release that has both"}
+          - {label: gross npa ratio at, seen: "1.......", why: "the same ratio with its figure in the label (Q3 FY25 highlights), equal to the table row"}
+        terms: [gross npa, GNPA, gross non-performing]
+      - key: gnpa_ratio_change_yoy
+        name: Gross NPA ratio, change YoY
+        measure: [bps]
+        unit: bps
+        labels:
+          - {label: gross npa ratio, seen: ".11....1"}
+        terms: [gross npa, GNPA]
+      - key: nnpa_amount
+        name: Net NPAs
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: nnpa, seen: "11111111"}
+        terms: [net npa, NNPA, net non-performing]
+      - key: nnpa_ratio
+        name: Net NPA ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: nnpa, seen: "1111111."}
+          - {label: net npa ratio, seen: ".111.111", why: "the same ratio in the highlights, equal to the table's NNPA (%) in every release that has both"}
+          - {label: net npa ratio at, seen: "1.......", why: "the same ratio with its figure in the label (Q3 FY25 highlights), equal to the table row"}
+        terms: [net npa, NNPA, net non-performing]
+      - key: nnpa_ratio_change_yoy
+        name: Net NPA ratio, change YoY
+        measure: [bps]
+        unit: bps
+        labels:
+          - {label: net npa ratio, seen: ".11....."}
+        terms: [net npa, NNPA]
+      - key: pcr_incl_auca
+        name: Provision coverage ratio, including AUCA
+        measure: [percent]
+        unit: "%"
+        member: ["", incl auca]
+        labels:
+          - {label: pcr with auca, seen: "11111111"}
+          - {label: pcr incl auca, seen: ".1.1.111", why: "the same ratio ('PCR (incl. AUCA)') in the highlights, equal to the table's 'with AUCA' figure in every release that has both"}
+          - {label: pcr incl auca stands at, seen: "1.......", why: "the same ratio with its figure in the label (Q3 FY25 highlights), equal to the table's 'with AUCA' row"}
+          - {label: provision coverage ratio pcr incl auca, seen: "..1.....", why: "the same ratio spelt out, 'incl. AUCA' read as its member (Q1 FY26), equal to the table's 'with AUCA' row"}
+          - {label: pcr incl auca increased by bps and stands at, seen: "....1...", why: "the same ratio in the Q3 FY26 highlights sentence, equal to the table's 'with AUCA' row"}
+        terms: [AUCA, provision coverage, PCR]
+      - key: pcr_incl_auca_change_yoy
+        name: Provision coverage ratio including AUCA, change YoY
+        measure: [bps]
+        unit: bps
+        member: ["", incl auca]
+        labels:
+          - {label: pcr incl auca, seen: ".1......"}
+          - {label: pcr incl auca improved by bps, seen: "...1....", why: "the same YoY change in the Q2 FY26 highlights (not the quarter-on-quarter move of the table row)"}
+          - {label: pcr incl auca increased by bps, seen: "....1...", why: "the same YoY change in the Q3 FY26 highlights, checked against the year-ago table figure"}
+        terms: [AUCA, provision coverage, PCR]
+      - key: pcr_excl_auca
+        name: Provision coverage ratio, excluding AUCA
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: pcr without auca, seen: "11111111"}
+          - {label: provision coverage ratio pcr, seen: ".111.111", why: "the highlights' plain 'Provision Coverage Ratio (PCR)', equal to the table's 'without AUCA' figure in every release that has both (never to the 'with AUCA' one)"}
+          - {label: provision coverage ratio pcr at, seen: "1.......", why: "the same ratio with its figure in the label (Q3 FY25 highlights), equal to the table's 'without AUCA' row"}
+        terms: [provision coverage, PCR]
+      - key: slippage_ratio
+        name: Slippage ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: slippage ratio, seen: "11111111"}
+          - {label: slippage ratio for q fy stands at, seen: "1...1...", why: "the same quarter's ratio in the December-quarter highlights, equal to the table row"}
+        terms: [slippage, slippages]
+      - key: credit_cost
+        name: Credit cost
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: credit cost, seen: "11111111"}
+          - {label: credit cost for q fy stands at, seen: "1...1...", why: "the same quarter's credit cost in the December-quarter highlights, equal to the table row"}
+        terms: [credit cost]
+      - key: yono_sb_accounts_share
+        name: Share of savings accounts opened digitally through YONO
+        measure: [percent]
+        unit: "%"
+        member: ["", sb accounts, sb accounts opened digitally, sb accounts opened digitally through yono]
+        labels:
+          - {label: sb accounts acquired digitally through yono, seen: ".11....."}
+          - {label: of sb accounts acquired digitally through yono, seen: "1.......", why: "the same share with its figure in the label (Q3 FY25 highlights)"}
+          - {label: sb accounts opened digitally through yono in q fy, seen: "...1....", why: "the same quarterly share of savings accounts, worded 'opened' rather than 'acquired', with its quarter in the label (Q2 FY26)"}
+          - {label: more than of sb accounts opened digitally through yono in q fy, seen: "....1...", why: "the same share stated as a floor ('more than'), with its quarter in the label (Q3 FY26)"}
+          - {label: more than of sb accounts opened digitally through yono, seen: "......1.", why: "the same share stated as a floor (Q1 FY27)"}
+          - {label: sb accounts opened digitally through yono, seen: "......1.", why: "the same share without the 'more than' (Q1 FY27), equal to the floor wording in that release"}
+        terms: [YONO, savings accounts, opened digitally]
+      - key: alternate_channels_share
+        name: Share of alternate channels in total transactions
+        measure: [percent]
+        unit: "%"
+        member: ["", alternate channels]
+        labels:
+          - {label: share of alternate channels in total transactions, seen: "..1...1."}
+        terms: [alternate channels, digital transactions]
+  axisbank:
+    document_class: press_release
+    quarters: [Q3 FY25, Q4 FY25, Q1 FY26, Q2 FY26, Q3 FY26, Q4 FY26, Q1 FY27, Q2 FY27]
+    metrics:
+      - key: car
+        name: Capital adequacy ratio (CAR)
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: capital adequacy ratio car, seen: "1h111111"}
+          - {label: overall capital adequacy ratio car, seen: "1h..1...", why: "the same ratio in the highlights; it matches the table's CAR in each quarter it appears"}
+          - {label: overall car stood at, seen: ".h1.....", why: "the same ratio (Q1 FY26 highlights wording); it matches the table's CAR"}
+          - {label: overall capital adequacy ratio car stood at, seen: ".h.1....", why: "the same ratio (Q2 FY26 highlights wording); it matches the table's CAR"}
+          - {label: capital adequacy ratio car stood at, seen: ".h...1..", why: "the same ratio (Q4 FY26 highlights wording); it matches the table's CAR"}
+        terms: [capital adequacy, CAR, capital ratio]
+      - key: cet1_ratio
+        name: CET1 ratio
+        measure: [percent]
+        unit: "%"
+        member: ["", cet]
+        labels:
+          - {label: cet ratio, seen: "1h111111"}
+          - {label: cet ratio at, seen: ".h11....", why: "the same ratio in the highlights ('CET1 ratio at …'); it matches the table's CET1 in each quarter, member 'CET1' taken out in Q4 FY26"}
+        terms: [CET1, CET 1, common equity tier]
+      - key: lcr_average
+        name: "Liquidity coverage ratio, quarterly average"
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: average lcr during q fy, seen: "1h1..11."}
+          - {label: average lcr during q fy was, seen: ".h..1..1", why: "the same quarter's average LCR, with 'was' in the sentence (Q3 FY26, Q2 FY27)"}
+        terms: [LCR, liquidity coverage]
+      - key: provision_cushion_over_car
+        name: Provision cushion over reported CAR
+        measure: [bps]
+        unit: "bps"
+        labels:
+          - {label: cushion over reported car, seen: "1h...11."}
+          - {label: cushion of bps over the reported car, seen: ".h1....1", why: "the same cushion, its figure inside the sentence (Q1 FY26, Q2 FY27)"}
+        terms: [cushion, over CAR, buffer provisions]
+      - key: nim
+        name: Net interest margin (NIM)
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: net interest margin nim, seen: "1h111111"}
+          - {label: net interest margin nim for q fy, seen: ".h..1111", why: "the same quarter's NIM in the highlights; it matches the table's NIM in each quarter it appears"}
+        terms: [NIM, net interest margin, margin]
+      - key: roa
+        name: "Return on assets, annualised"
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: return on average assets annualized, seen: "1h111111"}
+        terms: [ROA, return on assets]
+      - key: roe
+        name: "Return on equity, annualised"
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: return on equity annualized, seen: "1h1.1111"}
+        terms: [ROE, return on equity]
+      - key: gnpa_ratio
+        name: Gross NPA ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: gross npa as of gross customer assets, seen: "1h111111"}
+          - {label: gnpa, seen: "1h1..11.", why: "the same ratio in the highlights; it matches the table's gross NPA ratio in each quarter it appears"}
+          - {label: gnpa at, seen: ".h.111.1", why: "the same ratio ('GNPA at …'); it matches the table's gross NPA ratio"}
+        terms: [GNPA, gross NPA]
+      - key: nnpa_ratio
+        name: Net NPA ratio
+        measure: [percent]
+        unit: "%"
+        member: ["", net npa]
+        labels:
+          - {label: net npa as of net customer assets, seen: "1h111111"}
+          - {label: nnpa, seen: "1h1..11.", why: "the same ratio in the highlights; it matches the table's net NPA ratio in each quarter it appears"}
+          - {label: nnpa at, seen: ".h.11..1", why: "the same ratio ('NNPA at …'); it matches the table's net NPA ratio"}
+          - {label: net npa at, seen: ".h..11..", why: "the same ratio ('Net NPA at …', member 'net NPA' taken out in Q4 FY26); it matches the table"}
+          - {label: reported net npa, seen: ".h1.....", why: "the same ratio (Q1 FY26 wording, beside the technical-impact-adjusted one); it matches the table"}
+        terms: [NNPA, net NPA]
+      - key: pcr
+        name: Provision coverage ratio (specific)
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: provision coverage as a proportion of gross npas, seen: "1h111111"}
+          - {label: pcr, seen: "1h1.111.", why: "the same specific PCR in the highlights; it matches the table's provision coverage in each quarter it appears"}
+          - {label: pcr healthy at, seen: ".h.1...1", why: "the same PCR ('PCR healthy at …'); it matches the table"}
+          - {label: provision coverage ratio, seen: ".h.1....", why: "the same PCR (Q2 FY26 wording); it matches the table, unlike the coverage including standard and additional provisions"}
+        terms: [PCR, provision coverage]
+      - key: coverage_ratio_aggregate
+        name: "Coverage ratio including specific, standard and additional provisions"
+        measure: [percent]
+        unit: "%"
+        member: ["", aggregated basis]
+        labels:
+          - {label: coverage ratio, seen: "1h1....."}
+          - {label: coverage ratio aggregated basis, seen: ".h...11.", why: "the same aggregate coverage with 'aggregated basis' in the label instead of the member (Q4 FY26, Q1 FY27)"}
+          - {label: coverage ratio at, seen: ".h.1...1", why: "the same aggregate coverage ('coverage ratio at …'); it matches the 'including specific, standard, additional' coverage where both appear"}
+          - {label: provision coverage ratio including specific standard additional of gnpa, seen: ".h...11.", why: "the same aggregate coverage spelt out; it matches 'coverage ratio (aggregated basis)'"}
+          - {label: provision coverage ratio including specific standard additional stands at of gnpa, seen: ".h1..1..", why: "the same aggregate coverage (Q1 FY26 and Q4 FY26 wording); it matches 'coverage ratio (aggregated basis)'"}
+          - {label: provision coverage ratio including specific standard additional, seen: ".h.1....", why: "the same aggregate coverage (Q2 FY26 wording); it matches 'coverage ratio at'"}
+        terms: [coverage ratio, aggregate coverage, provision coverage]
+      - key: standard_asset_coverage
+        name: Standard asset coverage
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: standard asset coverage, seen: ".h11.11."}
+        terms: [standard asset, standard provisions]
+      - key: gross_slippage_ratio
+        name: Gross slippage ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: gross slippage ratio, seen: ".h1..11."}
+          - {label: gross slippage ratio at, seen: ".h.11..1", why: "the same quarter's ratio ('gross slippage ratio at …')"}
+          - {label: q fy gross slippage ratio, seen: "1h......", why: "the same ratio with the quarter stamped in front (Q3 FY25); it reads 'gross slippage ratio' once the stamp is dropped"}
+        terms: [slippage ratio, slippages]
+      - key: net_slippage_ratio
+        name: Net slippage ratio
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: net slippage ratio, seen: ".h1..11."}
+          - {label: net slippage ratio at, seen: ".h.11..1", why: "the same quarter's ratio ('net slippage ratio at …')"}
+          - {label: q fy net slippage ratio, seen: "1h......", why: "the same ratio with the quarter stamped in front (Q3 FY25)"}
+        terms: [net slippage, slippages]
+      - key: net_credit_cost
+        name: "Net credit cost, annualised"
+        measure: [percent]
+        unit: "%"
+        member: ["", net credit cost]
+        labels:
+          - {label: net credit cost, seen: "1h1..11."}
+          - {label: net credit cost at, seen: ".h.11..1", why: "the same ratio ('net credit cost at …', member 'net credit cost' taken out in Q4 FY26)"}
+          - {label: credit cost annualized for the quarter ended th june stood at, seen: ".h1.....", why: "the same annualised credit cost in the provisions paragraph (Q1 FY26); it matches the net credit cost"}
+          - {label: credit cost annualized, seen: ".h.1....", why: "the same annualised credit cost (Q2 FY26); it matches the net credit cost"}
+          - {label: credit cost annualized for the quarter ended st march, seen: ".h...1..", why: "the same annualised credit cost (Q4 FY26); it matches the net credit cost"}
+          - {label: credit cost annualized for the quarter ended th june, seen: ".h....1.", why: "the same annualised credit cost (Q1 FY27); it matches the net credit cost"}
+        terms: [credit cost]
+      - key: gnpa_change_qoq
+        name: "Gross NPA ratio, change QoQ"
+        measure: [bps]
+        unit: "bps"
+        labels:
+          - {label: gnpa down bps qoq, seen: ".h.11..1"}
+          - {label: gnpa down qoq, seen: ".h..1...", why: "the same signed quarterly change (Q3 FY26 wording)"}
+          - {label: gnpa qoq, seen: ".h...1..", why: "the same signed quarterly change (Q4 FY26 wording)"}
+        terms: [GNPA, gross NPA, basis points]
+      - key: nnpa_change_qoq
+        name: "Net NPA ratio, change QoQ"
+        measure: [bps]
+        unit: "bps"
+        labels:
+          - {label: nnpa down bps qoq, seen: ".h.11..1"}
+          - {label: net npa down qoq, seen: ".h..1...", why: "the same signed quarterly change (Q3 FY26 wording)"}
+          - {label: nnpa qoq, seen: ".h...1..", why: "the same signed quarterly change (Q4 FY26 wording)"}
+        terms: [NNPA, net NPA, basis points]
+      - key: net_credit_cost_change_qoq
+        name: "Net credit cost, change QoQ"
+        measure: [bps]
+        unit: "bps"
+        labels:
+          - {label: net credit cost down bps qoq, seen: ".h.1...1"}
+          - {label: net credit cost qoq, seen: ".h...1..", why: "the same signed quarterly change (Q4 FY26 wording)"}
+        terms: [credit cost, basis points]
+      - key: cost_of_funds_change_qoq
+        name: "Cost of funds, change QoQ"
+        measure: [bps]
+        unit: "bps"
+        labels:
+          - {label: cost of funds decreased by bps qoq, seen: ".h.11..."}
+          - {label: cost of funds qoq, seen: ".h...1..", why: "the same signed quarterly change (Q4 FY26 wording)"}
+          - {label: cost of funds decreased qoq, seen: ".h....1.", why: "the same signed quarterly change (Q1 FY27 wording)"}
+        terms: [cost of funds, funding cost]
+      - key: restructured_loans_outstanding
+        name: "Standard restructured loans (COVID 1 and 2), fund-based outstanding"
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", covid and covid]
+        labels:
+          - {label: fund based outstanding of standard restructured loans covid and covid, seen: ".h11...."}
+          - {label: covid and covid standard restructured loans outstanding, seen: "1h.1....", why: "the same outstanding, words reordered; it matches the 'fund based outstanding' line where both appear"}
+          - {label: fund based outstanding of standard restructured loans, seen: "1h......", why: "the same outstanding without 'COVID 1 & 2' in the label (Q3 FY25); it matches the COVID line in that quarter"}
+          - {label: fund based outstanding of standard restructured loans implemented under resolution framework for covid related stress covid and covid, seen: ".h..1.1.", why: "the same outstanding with the framework named (Q3 FY26, Q1 FY27)"}
+          - {label: standard restructured loans implemented under resolution framework for covid related stress covid and covid, seen: ".h..1...", why: "the same outstanding (Q3 FY26 second wording); it matches the line above"}
+          - {label: standard restructured loans under covid and covid resolution framework, seen: ".h...1..", why: "the same outstanding (Q4 FY26 wording)"}
+          - {label: standard restructured loans covid and covid fund based outstanding, seen: ".h....1.", why: "the same outstanding (Q1 FY27 second wording); it matches the line above"}
+          - {label: standard restructured loans implemented under resolution framework for covid related stress, seen: ".h.....1", why: "the same outstanding (Q2 FY27 wording)"}
+        terms: [restructured, restructuring]
+      - key: restructured_loans_share
+        name: "Standard restructured loans (COVID 1 and 2), share of gross customer assets"
+        measure: [percent]
+        unit: "%"
+        member: ["", covid and covid]
+        labels:
+          - {label: fund based outstanding of standard restructured loans as of gross customer assets, seen: "1h....1."}
+          - {label: covid and covid standard restructured loans as of gross customer assets, seen: "1h......", why: "the same share, words reordered (Q3 FY25); it matches the line above"}
+          - {label: fund based outstanding of standard restructured loans covid and covid as a share of gross customer assets, seen: ".h1.....", why: "the same share (Q1 FY26 wording)"}
+          - {label: covid and covid standard restructured loans as a share of gross customer assets, seen: ".h.1....", why: "the same share (Q2 FY26 wording); it matches the line below"}
+          - {label: fund based outstanding of standard restructured loans as a share of gross customer assets, seen: ".h.1....", why: "the same share (Q2 FY26 second wording)"}
+          - {label: fund based outstanding of standard restructured loans implemented under resolution framework for covid related stress covid and covid as of gross customer assets, seen: ".h..1...", why: "the same share with the framework named (Q3 FY26)"}
+          - {label: standard restructured loans as a share of gross customer assets, seen: ".h..1...", why: "the same share (Q3 FY26 second wording); it matches the line above"}
+          - {label: standard restructured loans under covid and covid resolution framework as share of gross customer assets, seen: ".h...1..", why: "the same share (Q4 FY26 wording)"}
+          - {label: standard restructured loans covid and covid share of gross customer assets, seen: ".h....1.", why: "the same share (Q1 FY27 second wording)"}
+          - {label: standard restructured loans implemented under resolution framework for covid related stress as share of gross customer assets, seen: ".h.....1", why: "the same share (Q2 FY27 wording)"}
+        terms: [restructured, restructuring]
+      - key: restructured_provision
+        name: Provision held on restructured loans
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: provision on restructured loans, seen: "1h111111"}
+        terms: [restructured, restructuring]
+      - key: npas_written_off
+        name: NPAs written off in the quarter
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: npas written off, seen: ".h.1111."}
+          - {label: npas written off in the quarter, seen: "1h.....1", why: "the same quarter's write-offs (Q3 FY25 and Q2 FY27 wording)"}
+          - {label: npas aggregating written off in the quarter, seen: ".h1.....", why: "the same quarter's write-offs (Q1 FY26 wording)"}
+        terms: [written off, write-off, write off]
+      - key: recoveries_written_off
+        name: Recoveries from written-off accounts
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: recoveries from written off accounts, seen: "1h...111"}
+        terms: [recoveries, written off]
+      - key: net_slippages
+        name: "Net slippages, adjusted for recoveries from the written-off pool, by segment"
+        measure: [amount]
+        unit: "₹ crore"
+        members:
+          "": Total
+          retail: Retail
+          cbg: Commercial banking (CBG)
+          wholesale: Wholesale
+        labels:
+          - {label: reported net slippages adjusted for recoveries from written off pool, seen: "1h...1.."}
+          - {label: reported net slippages in the quarter adjusted for recoveries from written off pool, seen: ".h1...1.", why: "the same total and segment split with 'in the quarter' (Q1 FY26, Q1 FY27)"}
+          - {label: net slippages retail, seen: "1h....1.", why: "the same table's retail line (Q3 FY25, Q1 FY27): the three segment lines add up to the reported total"}
+          - {label: net slippages cbg, seen: "1h....1.", why: "the same table's CBG line (Q3 FY25, Q1 FY27): the segment lines add up to the reported total"}
+          - {label: net slippages wholesale, seen: "1h....1.", why: "the same table's wholesale line (Q3 FY25, Q1 FY27): the segment lines add up to the reported total"}
+        terms: [slippage, slippages]
+      - key: gnpa_ratio_ex_ti
+        name: "Gross NPA ratio, adjusted for the technical impact"
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: gross npa ratio adjusted for technical impact, seen: ".h1111.."}
+        terms: [technical impact, GNPA]
+      - key: nnpa_ratio_ex_ti
+        name: "Net NPA ratio, adjusted for the technical impact"
+        measure: [percent]
+        unit: "%"
+        labels:
+          - {label: net npa ratio adjusted for technical impact, seen: ".h.111.."}
+          - {label: net npa ratio adjusted for technical change, seen: ".h1.....", why: "the same adjusted ratio, 'technical change' for 'technical impact' (Q1 FY26)"}
+        terms: [technical impact, NNPA]
+      - key: gross_slippages_ex_ti
+        name: "Gross slippages, adjusted for the technical impact"
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: gross slippages for the quarter adjusted for technical impact, seen: ".h111..."}
+          - {label: gross slippages adjusted for technical impact, seen: ".h...1..", why: "the same adjusted gross slippages (Q4 FY26 wording)"}
+        terms: [technical impact, slippages]
+      - key: net_slippages_ex_ti
+        name: "Net slippages, adjusted for the technical impact"
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: net slippages for the quarter adjusted for technical impact, seen: ".h111..."}
+          - {label: net slippages adjusted for technical impact, seen: ".h...1..", why: "the same total (Q4 FY26 wording, no member); it differs from the line also adjusted for written-off recoveries"}
+        terms: [technical impact, slippages]
+      - key: net_slippages_ex_recoveries_ti
+        name: "Net slippages, adjusted for written-off recoveries and the technical impact, by segment"
+        measure: [amount]
+        unit: "₹ crore"
+        members:
+          "": Total
+          retail: Retail
+          cbg: Commercial banking (CBG)
+          wbcg: Wholesale banking (WBCG)
+        labels:
+          - {label: net slippages in the quarter adjusted for recoveries from written off pool and technical impact, seen: ".h111..."}
+          - {label: net slippages adjusted for recoveries from written off pool and technical impact, seen: ".h...1..", why: "the same total and segment split without 'in the quarter' (Q4 FY26)"}
+        terms: [technical impact, slippages]
+      - key: gross_slippages_ti
+        name: Gross slippages from the technical impact
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: gross slippages on account of technical impact, seen: ".h..11.."}
+          - {label: gross slippages attributable to technical impact, seen: ".h1.....", why: "the same amount, 'attributable to' for 'on account of' (Q1 FY26)"}
+        terms: [technical impact]
+      - key: net_slippages_ti
+        name: Net slippages from the technical impact
+        measure: [amount]
+        unit: "₹ crore"
+        labels:
+          - {label: net slippages on account of technical impact, seen: ".h..11.."}
+          - {label: net slippages attributable to technical impact, seen: ".h1.....", why: "the same amount, 'attributable to' for 'on account of' (Q1 FY26)"}
+        terms: [technical impact]
+      - key: corporate_book_rated_a_minus
+        name: "Corporate book rated A- and above, share"
+        measure: [percent]
+        unit: "%"
+        member: [corporate book, corporate book rated a and above, rated a and above]
+        labels:
+          - {label: corporate book rated a and above, seen: "1h..11.."}
+          - {label: of corporate book is now rated a and above, seen: ".h1.....", why: "the same share (Q1 FY26 wording)"}
+          - {label: share of corporate book rated a and above, seen: ".h.1....", why: "the same share (Q2 FY26 wording)"}
+        terms: [rated, A- and above, corporate book]
+      - key: incremental_sanctions_a_minus
+        name: "Incremental corporate sanctions rated A- and above in the quarter, share"
+        measure: [percent]
+        unit: "%"
+        member: [corporates rated a and above, rated a and above, incremental sanctions to corporates rated a and above]
+        labels:
+          - {label: incremental sanctions in q fy to corporates rated a and above, seen: ".h...11."}
+          - {label: of incremental sanctions in q fy being to corporates rated a and above, seen: ".h1.....", why: "the same quarter's share (Q1 FY26 wording)"}
+          - {label: share of incremental sanctions in q fy to corporates rated a and above, seen: ".h.1....", why: "the same quarter's share (Q2 FY26 wording)"}
+        terms: [incremental sanctions, rated, A- and above]
+      - key: advances_by_segment
+        name: Advances by segment
+        measure: [amount]
+        unit: "₹ crore"
+        members:
+          retail: Retail
+          sme: SME
+          corporate: Corporate
+        aliases:
+          retail loans: retail
+          sme book: sme
+        labels:
+          - {label: retail, seen: "1h11.111"}
+          - {label: sme, seen: "1h11.111", why: "the same table's SME line (the label is the member's name)"}
+          - {label: corporate, seen: "1h11.111", why: "the same table's corporate line (the label is the member's name)"}
+          - {label: c retail, seen: ".h..1...", why: "the same table's retail line, lettered '(c)' (Q3 FY26)"}
+          - {label: b sme, seen: ".h..1...", why: "the same table's SME line, lettered '(b)' (Q3 FY26)"}
+          - {label: a corporate, seen: ".h..1...", why: "the same table's corporate line, lettered '(a)' (Q3 FY26)"}
+          - {label: retail loans, seen: ".h1.11.1", why: "the same retail advances in the highlights; it matches the table's retail line in each quarter it appears"}
+          - {label: sme book, seen: ".h1.11..", why: "the same SME advances in the highlights; it matches the table's SME line in each quarter it appears"}
+        terms: [retail loans, SME, corporate loans, advances]
+      - key: advances_growth_yoy_by_segment
+        name: "Advances growth by segment, YoY"
+        measure: [percent_change]
+        unit: "%"
+        members:
+          retail: Retail
+          sme: SME
+          corporate: Corporate
+        labels:
+          - {label: retail, seen: "1h11.1.1"}
+          - {label: sme, seen: "1h11.1.1", why: "the same table's SME growth (the label is the member's name)"}
+          - {label: corporate, seen: "1h11.1.1", why: "the same table's corporate growth (the label is the member's name)"}
+          - {label: c retail, seen: ".h..1...", why: "the same retail growth, lettered '(c)' (Q3 FY26)"}
+          - {label: b sme, seen: ".h..1...", why: "the same SME growth, lettered '(b)' (Q3 FY26)"}
+          - {label: a corporate, seen: ".h..1...", why: "the same corporate growth, lettered '(a)' (Q3 FY26)"}
+          - {label: growth, seen: ".h....1.", why: "the same table's '% Growth' column with the segment as member (Q1 FY27)"}
+        terms: [grew, growth, year on year, YoY]
+      - key: corporate_loans_growth_qoq
+        name: "Corporate loans growth, QoQ"
+        measure: [percent_change]
+        unit: "%"
+        member: [corporate, corporate loans, corporate loan book]
+        labels:
+          - {label: corporate loans up qoq, seen: ".h.1...1"}
+          - {label: qoq corporate loans up, seen: ".h..1...", why: "the same quarterly growth, words reordered (Q3 FY26)"}
+          - {label: corporate loan book growth qoq, seen: ".h..1...", why: "the same quarterly growth (Q3 FY26 second wording); it matches the line above"}
+          - {label: corporate loan book grew qoq, seen: ".h...11.", why: "the same quarterly growth (Q4 FY26, Q1 FY27 wording)"}
+          - {label: corporate loans qoq, seen: ".h....1.", why: "the same quarterly growth (Q1 FY27 second wording); it matches the line above"}
+        terms: [corporate loans, corporate book, sequential]
+      - key: sme_loans_growth_qoq
+        name: "SME loans growth, QoQ"
+        measure: [percent_change]
+        unit: "%"
+        member: [sme, sme book, sme loans]
+        labels:
+          - {label: sme book grew qoq, seen: ".h11.11."}
+          - {label: sme grew qoq, seen: "1h......", why: "the same quarterly growth (Q3 FY25 second wording); it matches the line above"}
+          - {label: sme loans up qoq, seen: ".h.1...1", why: "the same quarterly growth (Q1 FY26, Q2 FY26 and Q2 FY27 wording)"}
+          - {label: qoq sme loans up, seen: ".h..1...", why: "the same quarterly growth, words reordered (Q3 FY26)"}
+          - {label: sme book growth qoq, seen: ".h..1...", why: "the same quarterly growth (Q3 FY26 second wording)"}
+          - {label: sme loans qoq, seen: ".h....1.", why: "the same quarterly growth (Q1 FY27 second wording)"}
+        terms: [SME]
+      - key: mid_corporate_growth_qoq
+        name: "Mid-corporate loans growth, QoQ"
+        measure: [percent_change]
+        unit: "%"
+        member: [mid corporate book, mid corporate mc, mid corporate loans]
+        labels:
+          - {label: mid corporate book grew qoq, seen: "1h11..1."}
+          - {label: mid corporate mc book grew qoq, seen: "1h......", why: "the same quarterly growth with '(MC)' (Q3 FY25); it matches the line above"}
+          - {label: mid corporate mc up qoq, seen: ".h.1....", why: "the same quarterly growth (Q2 FY26 second wording)"}
+          - {label: mid corporate book growth qoq, seen: ".h..1...", why: "the same quarterly growth (Q3 FY26 wording)"}
+          - {label: qoq mid corporate mc up, seen: ".h..1...", why: "the same quarterly growth, words reordered (Q3 FY26)"}
+          - {label: mid corporate loans up qoq, seen: ".h.....1", why: "the same quarterly growth (Q2 FY27 wording)"}
+        terms: [mid corporate, mid-corporate, MC]
+      - key: sbb_growth_qoq
+        name: "Small business banking (SBB) loans growth, QoQ"
+        measure: [percent_change]
+        unit: "%"
+        member: [small business banking sbb, sbb, sbb book, small business banking]
+        labels:
+          - {label: small business banking sbb grew qoq, seen: "1h.1.111"}
+          - {label: sbb book grew qoq, seen: ".h.11.11", why: "the same quarterly growth; it matches the line above in each quarter both appear"}
+          - {label: small business banking loans grew qoq, seen: "1h......", why: "the same quarterly growth (Q3 FY25 second wording)"}
+          - {label: small business banking sbb growth qoq, seen: ".h..1...", why: "the same quarterly growth (Q3 FY26 wording)"}
+          - {label: sbb book qoq, seen: ".h...1..", why: "the same quarterly growth (Q4 FY26 second wording)"}
+        terms: [SBB, small business]
+      - key: retail_loans_growth_qoq
+        name: "Retail loans growth, QoQ"
+        measure: [percent_change]
+        unit: "%"
+        member: [retail loans, retail]
+        labels:
+          - {label: retail loans grew qoq, seen: "1h.1...1"}
+          - {label: retail loans qoq, seen: ".h...1..", why: "the same quarterly growth (Q4 FY26 wording)"}
+        terms: [retail loans, retail book]
+      - key: rural_loans_growth_qoq
+        name: "Rural loans growth, QoQ"
+        measure: [percent_change]
+        unit: "%"
+        member: [rural loan portfolio, rural, rural loans]
+        labels:
+          - {label: rural loan portfolio grew qoq, seen: "1h...1.."}
+          - {label: rural loan portfolio growth qoq, seen: ".h..1...", why: "the same quarterly growth (Q3 FY26 wording)"}
+          - {label: rural loans qoq, seen: ".h...1..", why: "the same quarterly growth (Q4 FY26 second wording); it matches the line above"}
+          - {label: rural loans grew qoq, seen: ".h.....1", why: "the same quarterly growth (Q2 FY27 wording)"}
+        terms: [rural]
+      - key: focus_segments_growth_qoq
+        name: "Focus segments growth, QoQ"
+        measure: [percent_change]
+        unit: "%"
+        member: [bank s focus segments, focus segments]
+        labels:
+          - {label: bank s focus segments grew by qoq, seen: ".h.1...1"}
+          - {label: bank s focus segments qoq, seen: ".h...1..", why: "the same quarterly growth (Q4 FY26 wording)"}
+          - {label: bank s focus segments grew qoq, seen: ".h....1.", why: "the same quarterly growth (Q1 FY27 wording)"}
+        terms: [focus segments]
+      - key: retail_share_of_advances
+        name: "Retail loans, share of net advances"
+        measure: [percent]
+        unit: "%"
+        member: [retail loans]
+        labels:
+          - {label: retail loans share of net advances, seen: "1h.11.1."}
+          - {label: retail loans accounted for of the net advances of the bank, seen: ".h1....1", why: "the same share (Q1 FY26, Q2 FY27 wording)"}
+          - {label: retail loans accounted for net advances, seen: ".h1.....", why: "the same share (Q1 FY26 second wording)"}
+          - {label: retail loans as share of net advances, seen: ".h...1..", why: "the same share (Q4 FY26 wording)"}
+          - {label: share of retail loans in net advances, seen: ".h...1..", why: "the same share (Q4 FY26 second wording)"}
+        terms: [retail share, retail loans]
+      - key: home_loans_share_of_retail
+        name: "Home loans, share of retail loans"
+        measure: [percent]
+        unit: "%"
+        member: [home loans]
+        labels:
+          - {label: home loans share of retail book, seen: "1h.1111."}
+          - {label: home loans comprising the retail book, seen: ".h1.....", why: "the same share (Q1 FY26 wording)"}
+          - {label: home loans comprising of the retail book, seen: ".h.....1", why: "the same share (Q2 FY27 wording)"}
+        terms: [home loans, mortgages]
+      - key: secured_retail_share
+        name: Secured share of retail loans
+        measure: [percent]
+        unit: "%"
+        member: [secured retail loans]
+        labels:
+          - {label: share of secured retail loans, seen: "1h.111.."}
+          - {label: the share of secured retail loans, seen: ".h1....1", why: "the same share (Q1 FY26, Q2 FY27 wording)"}
+          - {label: the share of secured retail loans was, seen: ".h1.....", why: "the same share (Q1 FY26 second wording)"}
+        terms: [secured]
+      - key: sbb_sme_mc_share
+        name: "SBB, SME and mid-corporate loans, share of total loans"
+        measure: [percent]
+        unit: "%"
+        member: [sbb sme mc]
+        labels:
+          - {label: sbb sme mc of total loans, seen: ".h.11.11"}
+          - {label: sbb sme mc share of total loans, seen: ".h...11.", why: "the same share (Q4 FY26, Q1 FY27 wording)"}
+          - {label: sbb sme mc mix of loans, seen: "1h......", why: "the same share, called the 'mix' (Q3 FY25)"}
+          - {label: sbb sme mc mix of total loans, seen: ".h1.....", why: "the same share (Q1 FY26 wording)"}
+          - {label: sbb sme mc mix, seen: ".h1.....", why: "the same share (Q1 FY26 table, unit '% of total loans'); it matches the line above"}
+          - {label: sbb sme mc at of total loans, seen: ".h..1...", why: "the same share (Q3 FY26 wording)"}
+          - {label: sbb sme mc at bn of total loans, seen: ".h...1..", why: "the same share, beside the amount (Q4 FY26)"}
+        terms: [SBB, SME, mid corporate, mix]
+      - key: sbb_sme_mc_advances
+        name: "SBB, SME and mid-corporate loans"
+        measure: [amount]
+        unit: "₹ billion"
+        member: [sbb sme mc]
+        labels:
+          - {label: sbb sme mc at bn, seen: ".h.1111."}
+          - {label: sbb sme mc mix at bn, seen: ".h1.....", why: "the same amount in ₹ bn (Q1 FY26 wording)"}
+          - {label: sbb sme mc loans, seen: ".h...1..", why: "the same amount (Q4 FY26 second wording)"}
+          - {label: sbb sme mc, seen: ".h....1.", why: "the same amount, the label reduced to the member (Q1 FY27)"}
+        terms: [SBB, SME, mid corporate]
+      - key: investment_book_share
+        name: "Investment book by category, share"
+        measure: [percent]
+        unit: "%"
+        members:
+          held to maturity htm: Held to maturity (HTM)
+          available for sale afs: Available for sale (AFS)
+          fair value through profit and loss fvtpl: Fair value through profit and loss (FVTPL)
+          subsidiaries and associate: Subsidiaries and associate
+        labels:
+          - {label: investments in held to maturity htm category, seen: ".h.1..1."}
+          - {label: investments in subsidiaries and associate, seen: ".h.1..1.", why: "the same table's subsidiaries line (the label names its member)"}
+          - {label: investments in available for sale afs category, seen: ".h.1....", why: "the same table's AFS line (Q2 FY26)"}
+          - {label: investments in fair value through profit and loss fvtpl category, seen: ".h.1....", why: "the same table's FVTPL line (Q2 FY26)"}
+          - {label: share of htm investments, seen: ".h..1...", why: "the same HTM share (Q3 FY26 wording)"}
+          - {label: share of afs investments, seen: ".h..1...", why: "the same AFS share (Q3 FY26 wording)"}
+          - {label: share of fvtpl investments, seen: ".h..1...", why: "the same FVTPL share (Q3 FY26 wording)"}
+          - {label: share of investments in subsidiaries and associate, seen: ".h..1...", why: "the same subsidiaries share (Q3 FY26 wording)"}
+          - {label: investments in available for sale afs, seen: ".h....1.", why: "the same AFS share without 'category' (Q1 FY27)"}
+          - {label: investments in fair value through profit and loss fvtpl, seen: ".h....1.", why: "the same FVTPL share without 'category' (Q1 FY27)"}
+        terms: [HTM, AFS, FVTPL, investment book]
+      - key: casa_deposits
+        name: "CASA deposits, period end"
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", casa]
+        labels:
+          - {label: casa deposits, seen: "1h1.1111"}
+        terms: [CASA]
+      - key: casa_deposits_qab
+        name: "CASA deposits, quarterly daily average"
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", casa]
+        labels:
+          - {label: casa deposits on a quarterly daily average basis qab, seen: "1h1.1111"}
+        terms: [CASA, QAB, average basis]
+      - key: savings_deposits
+        name: "Savings bank deposits, period end"
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", savings bank deposits]
+        labels:
+          - {label: savings bank deposits, seen: "1h1..111"}
+        terms: [savings, savings account, SA]
+      - key: current_account_deposits
+        name: "Current account deposits, period end"
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", current account deposits]
+        labels:
+          - {label: current account deposits, seen: "1h1..111"}
+        terms: [current account, CA]
+      - key: term_deposits
+        name: "Term deposits, period end"
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", term deposits]
+        labels:
+          - {label: term deposits, seen: "1h1.1111"}
+        terms: [term deposits, TD]
+      - key: casa_ratio
+        name: "CASA ratio, period end"
+        measure: [percent]
+        unit: "%"
+        member: ["", meb]
+        labels:
+          - {label: casa deposits as of total deposits, seen: "1h111111"}
+          - {label: share of casa deposits in total deposits, seen: "1h.1111.", why: "the same period-end ratio in the highlights; it matches the table in each quarter it appears"}
+          - {label: the share of casa deposits in total deposits, seen: ".h1.1..1", why: "the same period-end ratio; it matches the table"}
+          - {label: meb casa ratio, seen: ".h..11..", why: "the same ratio on a month-end basis (MEB), which is the period-end figure; it matches the table"}
+          - {label: casa ratio meb, seen: ".h....1.", why: "the same MEB ratio, words reordered (Q1 FY27); it matches the table"}
+        terms: [CASA ratio, CASA]
+      - key: casa_ratio_qab
+        name: "CASA ratio, quarterly average (QAB)"
+        measure: [percent]
+        unit: "%"
+        member: ["", qab]
+        labels:
+          - {label: casa deposits as of total deposits qab, seen: "1h111111"}
+          - {label: qab casa ratio, seen: ".h.1....", why: "the same average-basis ratio in the highlights (Q2 FY26); it matches the table's QAB line"}
+          - {label: casa ratio qab, seen: ".h....1.", why: "the same average-basis ratio (Q1 FY27); it matches the table's QAB line"}
+        terms: [CASA ratio, QAB, average basis]
+      - key: granular_fee_share
+        name: "Granular fees, share of total fees"
+        measure: [percent]
+        unit: "%"
+        member: ["", granular fee, granular fees]
+        labels:
+          - {label: granular fees at of total fees, seen: ".h.1.11."}
+          - {label: granular fee constituted of overall fees, seen: ".h.1...1", why: "the same share (Q2 FY26 and Q2 FY27 wording)"}
+          - {label: granular fees at total fees, seen: ".h..1...", why: "the same share (Q3 FY26 wording)"}
+        terms: [granular fees, granular]
+      - key: retail_fee_share
+        name: "Retail fees, share of total fee income"
+        measure: [percent]
+        unit: "%"
+        member: [retail fees, retail]
+        labels:
+          - {label: retail fees constituted of the bank s total fee income, seen: ".h1.1111"}
+          - {label: retail fees, seen: "1h......", why: "the same share (Q3 FY25, measure percent, member 'retail'), in line with the later quarters' share"}
+        terms: [retail fees, fee income]
+      - key: branches
+        name: Domestic branches and extension counters
+        measure: [count]
+        unit: "branches"
+        labels:
+          - {label: domestic branches and extension counters, seen: "1h11..11"}
+        terms: [branches, branch]
+      - key: atms
+        name: ATMs and cash recyclers
+        measure: [count]
+        unit: "count"
+        labels:
+          - {label: atms and cash recyclers, seen: "1h11111."}
+        terms: [ATMs, ATM]
+      - key: bcbos
+        name: Business correspondent banking outlets (BCBOs)
+        measure: [count]
+        unit: "count"
+        labels:
+          - {label: business correspondent banking outlets bcbos, seen: "1h111111"}
+        terms: [BCBO, business correspondent]
+      - key: centres_covered
+        name: Centres covered by branches and BCBOs
+        measure: [count]
+        unit: "centres"
+        labels:
+          - {label: centers with bcbos, seen: ".h...1.1"}
+          - {label: centres covered by bcbos, seen: "1h......", why: "the same centre count (Q3 FY25 wording); the centre figures form one series across all the quarters"}
+          - {label: centres with business correspondent banking outlets bcbos, seen: "1h......", why: "the same centre count (Q3 FY25 second wording); it matches the line above"}
+          - {label: centers with business correspondent banking outlets bcbos, seen: ".h..1...", why: "the same centre count (Q3 FY26 wording)"}
+          - {label: centres domestic branches and extension counters and bcbos, seen: ".h1.....", why: "the same centre count, naming both branches and BCBOs (Q1 FY26); one series with the 'with BCBOs' quarters"}
+          - {label: centres with presence domestic branches and bcbos, seen: ".h.1....", why: "the same centre count (Q2 FY26 wording)"}
+          - {label: centers with domestic branches and extension counters and bcbos, seen: ".h....1.", why: "the same centre count (Q1 FY27 wording)"}
+          - {label: centers with distribution network, seen: ".h....1.", why: "the same centre count (Q1 FY27 second wording); it matches the line above"}
+        terms: [centres, centers, distribution network]
+      - key: virtual_centres
+        name: Axis Virtual Centre locations
+        measure: [count]
+        unit: "centres"
+        member: ["", axis virtual centre]
+        labels:
+          - {label: axis virtual centre centers, seen: ".h..111."}
+          - {label: axis virtual centre centres, seen: "1h1.....", why: "the same count, British spelling (Q3 FY25, Q1 FY26)"}
+        terms: [virtual centre, Axis Virtual Centre]
+      - key: virtual_relationship_managers
+        name: Virtual relationship managers
+        measure: [people, count]
+        unit: "people"
+        member: ["", axis virtual centre]
+        labels:
+          - {label: virtual relationship managers, seen: ".h....11"}
+          - {label: virtual relationship managers axis virtual centre, seen: ".h....1.", why: "the same headcount with the centre's name in the label (Q1 FY27); it is also read as a count (Q2 FY27)"}
+        terms: [virtual relationship managers, VRM]
+      - key: digital_transaction_share
+        name: "Digital share of individual customers' financial transactions"
+        measure: [percent]
+        unit: "%"
+        member: ["", individual customers]
+        labels:
+          - {label: share of digital transactions in the bank s total financial transactions by individual customers, seen: ".h...111"}
+          - {label: share of digital transactions in total financial transactions by individual customers in q fy, seen: "1h.1....", why: "the same share with the quarter stamped (Q3 FY25, Q2 FY26)"}
+          - {label: share of digital transactions in the bank s total financial transactions by individual customers in q fy, seen: ".h1.....", why: "the same share with the quarter stamped (Q1 FY26)"}
+        terms: [digital transactions, digital]
+      - key: mobile_mau
+        name: Axis Mobile monthly active users
+        measure: [count, people]
+        unit: "million users"
+        member: ["", axis mobile]
+        labels:
+          - {label: monthly active users, seen: ".h.1..11"}
+          - {label: monthly active users of axis mobile, seen: "1h......", why: "the same app's MAU (Q3 FY25)"}
+          - {label: active users mau, seen: "1h......", why: "the same MAU (Q3 FY25 second wording); it matches the line above"}
+          - {label: mau, seen: ".h1.....", why: "the same MAU (Q1 FY26)"}
+          - {label: mn mau, seen: ".h.1....", why: "the same MAU (Q2 FY26); it matches 'monthly active users' there, read as people"}
+          - {label: monthly active users axis mobile, seen: ".h..1...", why: "the same MAU (Q3 FY26)"}
+          - {label: with mn mau, seen: ".h..1...", why: "the same MAU (Q3 FY26 second wording); it matches the line above"}
+          - {label: axis mobile app mau, seen: ".h...1..", why: "the same MAU (Q4 FY26)"}
+          - {label: axis mobile app monthly active users mau, seen: ".h....1.", why: "the same MAU (Q1 FY27); it matches 'monthly active users'"}
+          - {label: axis mobile app mau mn, seen: ".h.....1", why: "the same MAU (Q2 FY27); it matches 'monthly active users', read as people"}
+        terms: [monthly active users, MAU, Axis Mobile]
+      - key: non_axis_users_mobile_and_pay
+        name: Non-Axis Bank customers using Axis Mobile and Axis Pay
+        measure: [count, people]
+        unit: "million users"
+        member: ["", non axis bank customers]
+        labels:
+          - {label: non axis bank customers using axis mobile and axis pay apps, seen: "1h.11..."}
+          - {label: non axis bank customers open by axis bank and axis pay, seen: "1h......", why: "the same count (Q3 FY25 second wording); it matches the line above"}
+        terms: [non-Axis, Axis Pay, open by Axis]
+      - key: non_axis_users_mobile
+        name: Non-Axis Bank customers using Axis Mobile
+        measure: [count, people]
+        unit: "million users"
+        member: ["", non axis bank customers]
+        labels:
+          - {label: non axis bank customers using axis mobile, seen: ".h....11"}
+        terms: [non-Axis, Axis Mobile]
+      - key: whatsapp_customers
+        name: "WhatsApp banking customers on board, since launch"
+        measure: [count]
+        unit: "million customers"
+        member: ["", whatsapp banking]
+        labels:
+          - {label: whatsapp banking customers on board, seen: ".h..11.."}
+          - {label: customers on whatsapp banking, seen: "1h......", why: "the same cumulative count (Q3 FY25); it matches the line below"}
+          - {label: whatsapp banking customers on board since launch in, seen: "1h....1.", why: "the same cumulative count since launch (Q3 FY25, Q1 FY27)"}
+          - {label: customers on board on whatsapp banking, seen: ".h1.....", why: "the same count (Q1 FY26 wording)"}
+          - {label: customers on board, seen: ".h.1....", why: "the same count with WhatsApp banking as member (Q2 FY26)"}
+          - {label: over million customers on board, seen: ".h.....1", why: "the same count (Q2 FY27 wording); it matches the line below"}
+          - {label: whatsapp banking customers, seen: ".h.....1", why: "the same count (Q2 FY27 second wording)"}
+        terms: [WhatsApp]
+      - key: mf_sips_digital_share
+        name: "New mutual fund SIPs sourced digitally, share by volume"
+        measure: [percent]
+        unit: "%"
+        member: ["", new mutual fund sips, digital channels]
+        labels:
+          - {label: new mutual fund sips sourced by volume through digital channels in q fy, seen: ".h11...."}
+          - {label: new mutual fund sips sourced by volume through digital channels, seen: ".h..1...", why: "the same share without the quarter stamp (Q3 FY26)"}
+        terms: [SIP, mutual fund, digital]
+      - key: credit_cards_issued
+        name: New credit cards issued in the quarter
+        measure: [count]
+        unit: "million cards"
+        member: ["", credit cards, new credit cards]
+        labels:
+          - {label: new credit cards issued in q fy, seen: "1h.1..1."}
+          - {label: new credit cards issued during q fy, seen: ".h..1...", why: "the same quarter's issuance (Q3 FY26 wording)"}
+          - {label: the bank issued new credit cards in q fy, seen: ".h1.....", why: "the same quarter's issuance (Q1 FY26 wording)"}
+          - {label: new credit cards, seen: ".h.....1", why: "the same quarter's issuance (Q2 FY27 wording)"}
+        terms: [credit cards, cards issued, new cards]
+      - key: credit_cards_acquired
+        name: Credit cards acquired in the quarter (headline figure)
+        measure: [count]
+        unit: "million cards"
+        member: ["", cards]
+        labels:
+          - {label: acquired mn cards in q fy, seen: ".h.1.11."}
+          - {label: credit cards acquired in q fy, seen: ".h1.....", why: "the same quarter's acquisition (Q1 FY26 wording)"}
+          - {label: acquired cards in q fy, seen: ".h.....1", why: "the same quarter's acquisition (Q2 FY27 wording)"}
+        terms: [cards acquired, credit cards, acquisition]
+      - key: cards_in_force_share
+        name: "Credit cards in force, market share"
+        measure: [percent]
+        unit: "%"
+        member: ["", credit cards, credit card, cards in force]
+        labels:
+          - {label: market share of on the cards in force, seen: ".h..111."}
+          - {label: market share of cards in force, seen: ".h.1...1", why: "the same market share (Q2 FY26, Q2 FY27 wording)"}
+          - {label: credit card cif market share, seen: "1h......", why: "the same share, 'CIF' for cards in force (Q3 FY25)"}
+          - {label: cif market share, seen: ".h1.....", why: "the same share (Q1 FY26 wording)"}
+        terms: [cards in force, CIF, market share]
+      - key: merchant_terminal_share
+        name: Merchant acquiring terminal market share
+        measure: [percent]
+        unit: "%"
+        member: ["", merchant acquiring]
+        labels:
+          - {label: terminal market share of, seen: ".h111..1"}
+          - {label: terminal market share, seen: ".h.1....", why: "the same terminal share (Q2 FY26 second wording); it matches the line above"}
+          - {label: terminal market share merchant acquiring, seen: ".h..11..", why: "the same terminal share (Q3 FY26 and Q4 FY26 wording)"}
+          - {label: merchant acquiring terminal market share, seen: ".h....1.", why: "the same terminal share (Q1 FY27 wording)"}
+          - {label: market share merchant acquiring, seen: ".h....1.", why: "the same terminal share (Q1 FY27 second wording); it matches the line above"}
+        terms: [merchant acquiring, terminal, POS]
+      - key: upi_payer_psp_share
+        name: "UPI payer PSP market share, by volume"
+        measure: [percent]
+        unit: "%"
+        member: ["", upi payer psp]
+        labels:
+          - {label: market share by volume, seen: ".h.1...."}
+          - {label: upi payer psp with a market share of, seen: ".h.1.1..", why: "the headline share, which matches the by-volume share where both appear (Q2 FY26; equal to both in Q4 FY26)"}
+          - {label: market share of upi payer psp, seen: ".h..1...", why: "the headline share (Q3 FY26); it matches the by-volume share there"}
+          - {label: upi payer psp market share by volume, seen: ".h..1...", why: "the same by-volume share (Q3 FY26 wording)"}
+          - {label: market share by volume upi payer psp, seen: ".h....1.", why: "the same by-volume share (Q1 FY27 wording)"}
+          - {label: market leading position in upi payer psp market share, seen: ".h....1.", why: "the headline share (Q1 FY27); it matches the by-volume share there"}
+          - {label: upi payer psp space with a market share of, seen: ".h1.....", why: "the headline share (Q1 FY26), worded as in Q2 FY26 where it is the by-volume share"}
+          - {label: upi payer psp market share, seen: ".h.....1", why: "the headline share (Q2 FY27), worded as in the quarters where it is the by-volume share"}
+        terms: [UPI, payer PSP, market share]
+      - key: wealth_aum
+        name: Wealth management (Burgundy) AUM
+        measure: [amount]
+        unit: "₹ crore"
+        member: ["", wealth management, wealth management business]
+        labels:
+          - {label: assets under management aum, seen: ".h1..1.1"}
+        terms: [wealth, Burgundy, AUM]
+      - key: wealth_aum_growth_qoq
+        name: "Wealth management (Burgundy) AUM growth, QoQ"
+        measure: [percent_change]
+        unit: "%"
+        member: ["", wealth management, wealth management business, wealth management business burgundy, wealth management burgundy]
+        labels:
+          - {label: aum growth qoq, seen: ".h.1..11"}
+          - {label: aum grew qoq, seen: ".h1.....", why: "the same quarterly growth (Q1 FY26 wording)"}
+          - {label: assets under management aum growth qoq, seen: ".h..1...", why: "the same quarterly growth (Q3 FY26 wording)"}
+          - {label: assets under management aum grew qoq, seen: "1h......", why: "the same quarterly growth (Q3 FY25 wording); Burgundy Private's own growth has its own label there"}
+          - {label: assets under management aum, seen: ".h1.....", why: "the same quarterly growth (Q1 FY26, measure percent_change); it matches 'AUM grew QoQ' there"}
+        terms: [wealth, Burgundy, AUM]
+      - key: burgundy_private_aum
+        name: Burgundy Private AUM
+        measure: [amount]
+        unit: "₹ crore"
+        member: [burgundy private]
+        labels:
+          - {label: aum for burgundy private, seen: "1h1.11.."}
+          - {label: the aum for burgundy private, seen: ".h1.....", why: "the same AUM (Q1 FY26 second wording); it matches the line above"}
+          - {label: aum, seen: ".h...1..", why: "the same AUM with Burgundy Private as member (Q4 FY26); it matches the line above"}
+          - {label: assets under management aum, seen: ".h.....1", why: "the same AUM with Burgundy Private as member (Q2 FY27); the wealth business's AUM is a separate line"}
+        terms: [Burgundy Private, private banking]
+      - key: burgundy_private_families
+        name: Burgundy Private families covered
+        measure: [count]
+        unit: "families"
+        member: [burgundy private]
+        labels:
+          - {label: families covered, seen: ".h.1.111"}
+          - {label: families covered by burgundy private, seen: "1h..1...", why: "the same count (Q3 FY25, Q3 FY26 wording)"}
+          - {label: burgundy private covers families, seen: ".h1.....", why: "the same count (Q1 FY26 wording)"}
+          - {label: covers families, seen: ".h1.....", why: "the same count (Q1 FY26 second wording)"}
+          - {label: burgundy private families covered, seen: ".h...1..", why: "the same count (Q4 FY26 second wording)"}
+          - {label: families, seen: ".h.....1", why: "the same count (Q2 FY27 second wording)"}
+        terms: [families, Burgundy Private]
+      - key: amc_qaaum
+        name: Axis AMC quarterly average AUM
+        measure: [amount]
+        unit: "₹ crore"
+        member: [axis amc]
+        labels:
+          - {label: qaaum, seen: "1h1.1..."}
+          - {label: overall qaaum, seen: ".h1..1..", why: "the same QAAUM; it matches the line above in Q1 FY26"}
+          - {label: axis amc qaaum, seen: ".h.1....", why: "the same QAAUM with the subsidiary's name (Q2 FY26)"}
+        terms: [Axis AMC, QAAUM, mutual fund]
+      - key: axis_capital_ecm_deals
+        name: Axis Capital ECM transactions in the quarter
+        measure: [count]
+        unit: "count"
+        member: [axis capital, ecm]
+        labels:
+          - {label: ecm transactions completed during q fy, seen: ".h..11.1"}
+          - {label: ecm deals executed in q fy, seen: ".h1.....", why: "the same quarter's count (Q1 FY26); it matches the line below"}
+          - {label: ecm transactions, seen: ".h1.....", why: "the same count (Q1 FY26 second wording)"}
+          - {label: ecm transactions completed, seen: ".h1.....", why: "the same count (Q1 FY26 third wording)"}
+          - {label: executed ecm deals in q fy, seen: ".h.1...1", why: "the same count (Q2 FY26, Q2 FY27); it matches the line above in Q2 FY27"}
+          - {label: ecm deals executed q fy, seen: ".h....1.", why: "the same count with ECM as member (Q1 FY27)"}
+        terms: [Axis Capital, ECM, equity capital markets]
+      - key: axis_capital_non_ecm_deals
+        name: Axis Capital non-ECM transactions in the quarter
+        measure: [count]
+        unit: "count"
+        member: [axis capital, non ecm]
+        labels:
+          - {label: non ecm transactions completed during q fy, seen: ".h..11.1"}
+          - {label: executed non ecm deals in q fy, seen: ".h.1...1", why: "the same count (Q2 FY26, Q2 FY27); it matches the line above in Q2 FY27"}
+          - {label: non ecm deals executed q fy, seen: ".h....1.", why: "the same count with non-ECM as member (Q1 FY27)"}
+        terms: [Axis Capital, non-ECM]
+      - key: axis_finance_net_npa
+        name: Axis Finance net NPA ratio
+        measure: [percent]
+        unit: "%"
+        member: [axis finance]
+        labels:
+          - {label: net npa, seen: ".h1...11"}
+          - {label: axis finance net npa, seen: ".h.1....", why: "the same ratio with the subsidiary's name (Q2 FY26)"}
+          - {label: net npa of, seen: ".h.1....", why: "the same ratio (Q2 FY26 second wording)"}
+          - {label: axis finance net npa at, seen: ".h..1...", why: "the same ratio (Q3 FY26 wording)"}
+          - {label: stable asset quality metrics with net npa at, seen: ".h.....1", why: "the same ratio (Q2 FY27 second wording)"}
+        terms: [Axis Finance, net NPA]
+      - key: axis_finance_car
+        name: Axis Finance capital adequacy ratio
+        measure: [percent]
+        unit: "%"
+        member: [axis finance]
+        labels:
+          - {label: total capital adequacy ratio, seen: ".h1...11"}
+          - {label: axis finance capital adequacy ratio, seen: ".h.1....", why: "the same ratio with the subsidiary's name (Q2 FY26)"}
+        terms: [Axis Finance, capital adequacy]
+      - key: axis_finance_retail_msme_share
+        name: Axis Finance retail and MSME share of its book
+        measure: [percent]
+        unit: "%"
+        member: [axis finance]
+        labels:
+          - {label: share of retail msme in total book, seen: ".h..111."}
+          - {label: axis finance retail msme share of total book, seen: ".h.1....", why: "the same share with the subsidiary's name (Q2 FY26)"}
+          - {label: share of retail msme at of total book, seen: ".h.....1", why: "the same share (Q2 FY27 wording)"}
+          - {label: share of retail msme at total book, seen: ".h.....1", why: "the same share (Q2 FY27 second wording)"}
+        terms: [Axis Finance, retail, MSME]
+      - key: axis_finance_retail_share
+        name: Axis Finance retail share of its loans
+        measure: [percent]
+        unit: "%"
+        member: [axis finance]
+        labels:
+          - {label: retail book share of total loans, seen: "1h1....."}
+          - {label: retail b ook constituted of total loans, seen: ".h1.....", why: "the same share, 'book' split by a typo (Q1 FY26)"}
+        terms: [Axis Finance, retail]
+      - key: subsidiaries_roi
+        name: Return on investment in domestic subsidiaries
+        measure: [percent]
+        unit: "%"
+        member: [domestic subsidiaries]
+        labels:
+          - {label: return on investment in domestic subsidiaries, seen: "1h1...1."}
+          - {label: return on investment in domestic subsidiaries of, seen: ".h..1..1", why: "the same return, its figure inside the sentence (Q3 FY26, Q2 FY27)"}
+        terms: [subsidiaries, return on investment]
