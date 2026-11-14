@@ -36,6 +36,8 @@ Checks, B blocking, W warning (counts and ids only):
   its detail also gives each company's NSE windows (requests, leaves answered, rows, the largest reply, any leaf at a
   round count) and, for each quarter with no results day, the feed's filings in its window by stage (#512 part 4);
 - (B) `documents`: every company-quarter resolved to a read or a held document (none left silently unresolved);
+  `kept` counts read documents that stood as stored because their file couldn't be fetched or read this run (each file
+  is asked twice first; #512 part 4);
 - (W) `held`: the documents held, with the reason (not found, could not be cut, image bundle, unreadable), named;
 - (W) `extracted`: documents read, pages read (text and image), rows kept and filtered by reason, the AI cost;
 - (W) `empty`: read documents with no kept row, named (a quarter DD-05 must treat as missing, never as a drop);
@@ -76,6 +78,7 @@ READ_MAX_PAGES = 500                 # Infosys's results bundles run 186 to 380 
 IMAGE_MAX_PAGES = 40                  # an image document longer than this is held (would over-send images)
 NSE_HEADERS = {"Referer": dc.NSE_REFERER, "Accept": "application/json, text/plain, */*"}
 WHY_MAX = 120                         # characters of one NSE failure reason in the `feed` check
+UNFETCHED = ("fetch failed", "the filing is not a PDF", "the PDF could not be read")   # a file not had this run
 
 
 def _why(e: FetchError) -> str:
@@ -121,6 +124,7 @@ class DocPlan:
     values: list[Value] = field(default_factory=list)
     reused: bool = False               # unchanged since a previous run: values not re-extracted, only re-filtered
     refiltered: list[Value] = field(default_factory=list)   # a reused document's rows whose value or verdict changed
+    kept: bool = False                 # its file couldn't be fetched or read this run: the stored document stands as is
 
 
 @dataclass
@@ -428,6 +432,10 @@ class EquityKpiTables(Task):
             chosen = (ann, body, info, nums)
             break
         first = cands[0]
+        if chosen is None and why and all(r.startswith(UNFETCHED) for r in why):
+            kept = self._keep_stored(db, plan, cands)
+            if kept is not None:
+                return kept
         if chosen is None:
             plan.source_url, plan.filing_key, plan.exchange, plan.filed_at = (first.url, first.filing_key, first.exchange,
                                                                               first.disseminated)
@@ -462,8 +470,17 @@ class EquityKpiTables(Task):
         return plan
 
     def _fetch_pdf(self, ctx, ann) -> tuple[bytes | None, pdfs.PdfInfo | None, str | None]:
-        """One candidate's file, read and not stored (`keep=lambda _: False`): (body, info, None), or a reason it can't
-        be the document."""
+        """One candidate's file, read and not stored: (body, info, None), or a reason it can't be the document. A file
+        not had (`UNFETCHED`: a failed fetch, a body that isn't a PDF, a PDF that can't be read) is asked once more: NSE's
+        archive answered one file it holds that way in each of dev runs 9 and 11 (14 Nov 2026; TCS's and HDFC Bank's
+        Q2 FY27, each read in the other run)."""
+        out = self._fetch_pdf_once(ctx, ann)
+        if out[2] is not None and out[2].startswith(UNFETCHED):
+            out = self._fetch_pdf_once(ctx, ann)
+        return out
+
+    def _fetch_pdf_once(self, ctx, ann) -> tuple[bytes | None, pdfs.PdfInfo | None, str | None]:
+        """One try at a candidate's file, read and not stored (`keep=lambda _: False`)."""
         source = "bse" if ann.exchange == "BSE" else "nse"
         try:
             got = ctx.fetcher.get(ann.url, source=source, keep=lambda _: False, allow=(404,))
@@ -534,6 +551,27 @@ class EquityKpiTables(Task):
             """select 1 from equity.kpi_document where entity_id = %s and period_end = %s and document_class = %s
                 and status = 'read' and sha256 = %s and parser_version = %s""",
             (entity_id, pe, document_class, sha, kd.PARSER_VERSION)).fetchone())
+
+    def _keep_stored(self, db, plan: DocPlan, cands) -> DocPlan | None:
+        """A quarter whose candidates' files couldn't be fetched or read this run keeps its stored read document, when
+        that document is one of today's candidates (the same filing): the plan carries the stored rows as they are, and
+        the load leaves the document and its rows untouched. Dev run 11 (14 Nov 2026) replaced HDFC Bank's Q2 FY27,
+        read in run 9, with a hold over one failed download. None when there is no such document."""
+        row = db.execute(
+            """select filing_key, source_url, exchange, filed_at, pages_used, page_count, image_page_count, sha256, bytes
+                 from equity.kpi_document where entity_id = %s and period_end = %s and document_class = %s
+                  and status = 'read' and parser_version = %s""",
+            (plan.entity_id, plan.period_end, plan.document_class, kd.PARSER_VERSION)).fetchone()
+        if row is None or row[0] not in {a.filing_key for a in cands}:
+            return None
+        (plan.filing_key, plan.source_url, plan.exchange, plan.filed_at, pages, plan.page_count, plan.image_page_count,
+         plan.sha256, plan.bytes) = row
+        plan.pages_used = list(pages or [])
+        plan.status, plan.reused, plan.kept, plan.held_reason = "read", True, True, None
+        plan.values = [Value(n, fl.Row(label, member, measure, value, unit, page), value, status, reason)
+                       for n, label, member, measure, value, unit, page, status, reason
+                       in self._stored_rows(db, plan.entity_id, plan.period_end, plan.document_class)]
+        return plan
 
     @staticmethod
     def _stored_shape(db, entity_id: int, pe: date, document_class: str) -> tuple[list[int], int]:
@@ -639,7 +677,7 @@ class EquityKpiTables(Task):
                        "results_days": {slug[e]: n for e, n in sorted(h.results_days.items())}, **diag})),
             Check("documents", resolved == expected,
                   json.dumps({"expected": expected, "resolved": resolved, "read": len(read), "held": len(held),
-                              "reused": sum(1 for p in read if p.reused)})),
+                              "reused": sum(1 for p in read if p.reused), "kept": sum(1 for p in read if p.kept)})),
             Check("held", True, _names([f"{p.slug} {p.fiscal_label}: {p.held_reason}" for p in held]), blocking=False),
             Check("extracted", True, json.dumps({
                 "documents_read": len(read),

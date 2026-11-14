@@ -969,3 +969,91 @@ def test_a_failed_feed_check_still_gives_the_counts():
     detail = {c.name: c for c in task.checks(None, h, 1)}["feed"].detail
     assert detail.startswith("no results day found for tcs; nothing read or written; {")
     assert '"windows": {"tcs": {"requests": 0' in detail and '"tcs Q4 FY25": {"rows": 0' in detail
+
+
+# ----------------------------------------------------------------------------------- a file not had this run (#512 part 4)
+class _FlakyFetcher:
+    """NSE's archive as dev runs 9 and 11 met it: the first `fail` asks for a URL get a 404 page, the next the file."""
+    def __init__(self, bodies, fail=1):
+        self.bodies, self.fail, self.asked, self.db = bodies, fail, [], None
+
+    def get(self, url, *, source, keep=None, allow=()):
+        self.asked.append(url)
+        if self.asked.count(url) <= self.fail:
+            return _Got(b"<html>404</html>")
+        return _Got(self.bodies[url])
+
+
+def _icici_q2fy26():
+    day = datetime(2025, 10, 18, 14, 41, tzinfo=IST)
+    return [Ann("ICICI Bank Limited has submitted to the Exchange, the unaudited financial results", "a.pdf", day,
+                url="full", filing_key="k1", category="Outcome of Board Meeting")]
+
+
+def test_a_file_not_had_is_asked_once_more(monkeypatch):
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    monkeypatch.setattr(t.pdfs, "is_pdf_bytes", lambda b: b.startswith(b"%PDF"))
+    monkeypatch.setattr(task, "_read", lambda body: _info(["cover"] * 13 + ["News Release", "table", "Safe Harbor"]))
+    f = _FlakyFetcher({"full": b"%PDF-full"})
+    body, info, reason = task._fetch_pdf(SimpleNamespace(fetcher=f), _icici_q2fy26()[0])
+    assert f.asked == ["full", "full"] and reason is None and body == b"%PDF-full" and info.pages == 16
+    f = _FlakyFetcher({"full": b"%PDF-full"}, fail=2)                      # twice not had: held, asked no more
+    assert task._fetch_pdf(SimpleNamespace(fetcher=f), _icici_q2fy26()[0])[2] == "the filing is not a PDF"
+    assert f.asked == ["full", "full"]
+    monkeypatch.setattr(task, "_read", lambda body: _info(["cover", "letter"]))
+    f = _FlakyFetcher({"full": b"%PDF-full"}, fail=0)                      # a usable-or-not verdict isn't retried
+    assert task._fetch_pdf(SimpleNamespace(fetcher=f), _icici_q2fy26()[0])[2] is None and f.asked == ["full"]
+
+
+class _KeptDb:
+    """The stored read document (filing `k1`) and its rows, as `_keep_stored` asks for them."""
+    def __init__(self, filing_key="k1"):
+        self.filing_key = filing_key
+
+    def execute(self, sql, params):
+        if "from equity.kpi_document" in sql and "sha256, bytes" in sql:
+            row = (self.filing_key, "full", "NSE", datetime(2025, 10, 18, 14, 41, tzinfo=IST), [14, 15], 16, 0,
+                   b"\x01" * 32, 1234)
+            return SimpleNamespace(fetchone=lambda: row)
+        return SimpleNamespace(fetchall=lambda: [
+            (1, "CASA ratio", None, "percent", Decimal("38.5"), "%", 14, fl.KEPT, None),
+            (2, "Net profit growth", None, "percent_change", Decimal(12), "%", 14, fl.FILTERED, fl.STATEMENT_TOTAL)])
+
+
+def test_a_quarter_whose_file_is_not_had_keeps_its_stored_document(monkeypatch):
+    """Dev run 11 (14 Nov 2026): one failed download replaced HDFC Bank's Q2 FY27, read in run 9, with a hold. Now the
+    stored document of the same filing stands, its rows untouched, and the `documents` check counts it as kept."""
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    monkeypatch.setattr(t.pdfs, "is_pdf_bytes", lambda b: b.startswith(b"%PDF"))
+    monkeypatch.setattr(task, "_extract", lambda *a, **k: pytest.fail("a kept document is never re-asked"))
+    rules = dc.load_rules()
+    f = _FlakyFetcher({"full": b"%PDF-full"}, fail=2)
+    plan = task._one(SimpleNamespace(fetcher=f), _KeptDb(), _Co(5, "icicibank"), rules["icicibank"], "Q2 FY26",
+                     _icici_q2fy26(), None, None, Decimal(25), Decimal(0), t.Harvest())
+    assert plan.status == "read" and plan.kept and plan.reused and plan.held_reason is None
+    assert plan.filing_key == "k1" and plan.pages_used == [14, 15] and plan.sha256 == b"\x01" * 32
+    assert [(v.row_no, v.filter_status) for v in plan.values] == [(1, fl.KEPT), (2, fl.FILTERED)]
+    assert task._rewrite_filters(None, plan) == 0                           # the load writes nothing for it
+    h = t.Harvest(plans=[plan], companies=[])
+    checks = {c.name: c for c in task.checks(None, h, 1)}
+    assert '"kept": 1' in checks["documents"].detail and "1 of 1 read documents" in checks["empty"].detail
+
+    other = task._one(SimpleNamespace(fetcher=_FlakyFetcher({"full": b"%PDF-full"}, fail=2)), _KeptDb("k-other"),
+                      _Co(5, "icicibank"), rules["icicibank"], "Q2 FY26", _icici_q2fy26(), None, None, Decimal(25),
+                      Decimal(0), t.Harvest())
+    assert other.status == "held" and not other.kept                        # a different filing is never kept
+    assert other.held_reason == "results day 18 Oct 2025: no usable filing (1 tried: the filing is not a PDF)"
+
+
+def test_a_file_that_is_not_the_document_is_never_kept(monkeypatch):
+    """Only a file not had keeps the stored document: a file read and found too short is held as before."""
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    monkeypatch.setattr(t.pdfs, "is_pdf_bytes", lambda b: True)
+    monkeypatch.setattr(task, "_read", lambda body: _info(["cover", "letter"]))
+    plan = task._one(SimpleNamespace(fetcher=_DocFetcher({"full": b"%PDF"})), _KeptDb(), _Co(5, "icicibank"),
+                     dc.load_rules()["icicibank"], "Q2 FY26", _icici_q2fy26(), None, None, Decimal(25), Decimal(0),
+                     t.Harvest())
+    assert plan.status == "held" and not plan.kept and "fewer than 10" in plan.held_reason
