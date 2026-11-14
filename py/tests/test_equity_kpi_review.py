@@ -99,6 +99,24 @@ def test_a_verdict_drops_the_flag_only_on_yes_and_keeps_the_value_only_on_yes():
     assert kc.Verdict("no", "yes", "no").value_ok and not kc.Verdict("no", "unsure", "no").value_ok
 
 
+def test_a_dropped_flag_is_withdrawn_when_the_check_removed_its_first_absence():
+    pad = {f"z{i}": kf.Reported(Decimal(1), "x", 3, (1,)) for i in range(9)}
+    labels = ["Q3 FY25", "Q4 FY25", "Q1 FY26", "Q2 FY26", "Q3 FY26", "Q4 FY26"]
+    a = kf.Reported(Decimal(5), "%", 3, (1,))
+    docs = [_doc(lab, {**pad, **({"a": a} if i < 4 else {})}) for i, lab in enumerate(labels)]
+    g = kf.grid(docs, {**{k: "count" for k in pad}, "a": "%"}, "press_release")
+    missing, dropped = g.flags
+    assert (missing.kind, dropped.kind) == ("missing", "dropped") and dropped.escalates is missing
+    assert missing.escalates is None
+    keep, present = kc.Verdict("no", "yes", "no"), kc.Verdict("yes", "yes", "no")
+    assert kc.outcome(dropped, {id(missing): present, id(dropped): keep}) == kc.WITHDRAWN
+    assert kc.outcome(dropped, {id(missing): kc.Verdict("no", "yes", "yes"), id(dropped): None}) == kc.WITHDRAWN
+    assert kc.outcome(dropped, {id(missing): keep, id(dropped): keep}) == kc.KEEP
+    assert kc.outcome(dropped, {id(missing): None, id(dropped): None}) == kc.UNCHECKED
+    assert kc.outcome(dropped, {id(missing): present, id(dropped): present}) == kc.DROP_PRESENT
+    assert kc.outcome(missing, {id(missing): present}) == kc.DROP_PRESENT
+
+
 # ----------------------------------------------------------------------------------- rule 4: the unit and the measure kind
 def test_rule4_a_share_and_a_growth_rate_are_not_the_same_unit():
     tcs = kdict.load()["tcs"]

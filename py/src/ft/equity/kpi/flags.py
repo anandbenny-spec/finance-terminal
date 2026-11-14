@@ -88,6 +88,7 @@ class Flag:
     last_reported: Reported
     renamed_to: list[str] = field(default_factory=list)   # rule 4: the new metrics with the same unit
     note: str | None = None                         # rule 5
+    escalates: Flag | None = None                   # rule 6: the "missing" flag a "dropped" one escalates
 
     @property
     def last_value(self) -> Decimal | None:
@@ -164,7 +165,7 @@ def grid(docs: list[Doc], units: dict[str, object], document_class: str, breaks:
                     open_missing = f if f.kind == MISSING else None
             elif open_missing is not None:                             # the second absence: rule 6
                 flags.append(Flag(key, DROPPED, d, open_missing.previous, open_missing.last, open_missing.last_reported,
-                                  note=_note(breaks, open_missing.last.period_end, d.period_end)))
+                                  note=_note(breaks, open_missing.last.period_end, d.period_end), escalates=open_missing))
                 open_missing = None
             prior = d
     flags.sort(key=lambda f: (f.current.period_end, f.key))

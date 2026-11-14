@@ -16,6 +16,10 @@ rests on, with three questions (structured output):
 "unsure" or no answer keeps the flag for the judge (DD-07), who reads both documents. Sonnet's answers are never shown;
 they only remove flags or hold back a value.
 
+A "dropped" flag (rule 6: the second absence) whose "missing" flag the check removed is withdrawn too: if the metric was
+there at the first absence, or that release said why, "dropped" would be untrue, and the flag's last value and quarter
+(carried from the first absence) would be wrong, so it is held back rather than re-labelled (CLAUDE.md §1).
+
 **What Sonnet reads** (kept small: the check runs inside the pilot's $5):
 - for each flag, the previous document's page that held the last value: an excerpt of up to `EXCERPT_CHARS` around the
   line that names it (the whole page if shorter; the page image for an image document);
@@ -48,6 +52,7 @@ KEEP = "keep"
 DROP_PRESENT = "present"        # the current document states it
 DROP_REASON = "reason_in_release"   # the current document says why, which can't be quoted
 UNCHECKED = "unchecked"         # not asked (no pages this run, the cap, AI unavailable) or no usable answer
+WITHDRAWN = "escalation_withdrawn"   # a "dropped" flag whose first absence the check removed (module doc)
 
 
 @dataclass(frozen=True)
@@ -204,6 +209,19 @@ def request(company: str, document_class: str, group: list[Item], current: dict[
                if prev is not None else " (its page isn't shown: answer previous_value \"unsure\").")
             + (f" New in {quarter}, with the same unit: {'; '.join(it.renamed_to)}." if it.renamed_to else ""))
     return Request(TASK, prompt, tuple(sources), "\n".join(lines), schema=schema)
+
+
+def outcome(flag: kf.Flag, verdicts: dict[int, Verdict | None]) -> str:
+    """A flag's outcome from the check's verdicts (by `id(flag)`): its own verdict's, or UNCHECKED; and a "dropped" flag
+    whose first absence was removed is WITHDRAWN (module doc)."""
+    v = verdicts.get(id(flag))
+    own = v.outcome if v is not None else UNCHECKED
+    if own == KEEP or own == UNCHECKED:
+        first = flag.escalates
+        fv = verdicts.get(id(first)) if first is not None else None
+        if fv is not None and fv.outcome in (DROP_PRESENT, DROP_REASON):
+            return WITHDRAWN
+    return own
 
 
 def parse(answer: dict, n: int) -> dict[int, Verdict]:
