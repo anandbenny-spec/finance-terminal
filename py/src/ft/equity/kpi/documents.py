@@ -148,23 +148,23 @@ def quarters(slug: str) -> list[str]:
     return list(reversed(out))
 
 
-def feed_windows(slug: str, start: date, end: date) -> list[tuple[date, date]]:
-    """The announcement windows the task asks NSE for, one per pilot quarter, oldest first: the day after the quarter end
-    to FEED_DAYS after it (the results-day window and the candidates' day after), clipped to [start, end]; a quarter
-    wholly outside is skipped.
+def quarter_window(fiscal_label: str, start: date, end: date) -> tuple[date, date] | None:
+    """A quarter's own announcement window: the day after its quarter end to FEED_DAYS after it (the results-day
+    window and the candidates' day after), clipped to [start, end]; None when it lies wholly outside."""
+    pe = period_end(fiscal_label)
+    a, b = max(pe + timedelta(days=1), start), min(pe + timedelta(days=FEED_DAYS), end)
+    return (a, b) if a <= b else None
 
-    #512 part 4 (14 Nov 2026): dev run 9, the first through `nseindia.in`, asked NSE for 365-day windows and came back
-    without the April 2025 results filings of six of the seven companies (each quarter "no results filing found"), though
-    dev run 2 (13 Nov, before NSE's move) read HCLTech's and Infosys's Q4 FY25 documents from the same windows, and the
-    run's request count leaves no room for the window splits a capped reply would have caused. A quarter's own window is
-    all the selection reads, so the task asks for that and nothing longer."""
-    out = []
-    for label in quarters(slug):
-        pe = period_end(label)
-        a, b = max(pe + timedelta(days=1), start), min(pe + timedelta(days=FEED_DAYS), end)
-        if a <= b:
-            out.append((a, b))
-    return out
+
+def feed_windows(slug: str, start: date, end: date) -> list[tuple[date, date]]:
+    """Every pilot quarter's own window (`quarter_window`) for a company, oldest first, quarters wholly outside
+    [start, end] skipped.
+
+    #512 part 4 (14 Nov 2026): dev run 9 asked NSE for 365-day windows and came back without six companies' April 2025
+    results filings; dev run 10 asked only these windows, and NSE's new host (`nseindia.in`) answered every historical
+    one with HTTP 200 and no JSON. So the task asks the long windows first and a quarter's own window only for a quarter
+    the long ones left without a results day (`EquityKpiTables.discover`)."""
+    return [w for label in quarters(slug) if (w := quarter_window(label, start, end)) is not None]
 
 
 def previous_four(slug: str, fiscal_label: str) -> list[str]:
