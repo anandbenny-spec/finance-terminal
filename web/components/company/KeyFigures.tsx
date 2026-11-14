@@ -2,7 +2,8 @@
 // betas, each exactly as `api.company_metrics` stores it, with the stored label (derived, annualised, bottom-up, …) and
 // its as-of date. A figure that is held back says "Held" and why; one that doesn't apply says "N/A" and why (told apart by
 // the view's `state`, never by parsing the reason); a figure with no stored row says it is not available. EV figures
-// don't apply to a lender or an insurer (Brief §6.3).
+// don't apply to a lender or an insurer (Brief §6.3). A US company's page passes `dateOf` (US-06b, #564): a figure from a
+// statement period is dated by its filed end (components/company/us/filedDates.ts), or says its date isn't available.
 import type { ReactNode } from "react";
 import { Panel } from "@/components/data/Panel";
 import { Qualifier } from "@/components/data/Qualifier";
@@ -36,14 +37,20 @@ const SPECS: Spec[] = [
 
 const NOT_FOR_LENDERS = "Not meaningful for a lender or an insurer.";
 
-function statOf(spec: Spec, rows: readonly CompanyMetricRow[], company: CompanyRow) {
+/** A figure's date as shown: the stored one, or the one `dateOf` gives (a US company's filed end; null when none matches). */
+export type MetricDateOf = (row: CompanyMetricRow) => string | null;
+
+const NO_DATE = <span title={NOT_AVAILABLE_LABEL}>Date not available</span>;
+
+function statOf(spec: Spec, rows: readonly CompanyMetricRow[], company: CompanyRow, dateOf?: MetricDateOf) {
   const row = pickMetric(rows, spec.key, STAT_PERIODS[spec.key]);
   const market = company.market;
   let value: string = NOT_AVAILABLE;
   let context: ReactNode = <span title={NOT_AVAILABLE_LABEL}>{NOT_AVAILABLE_LABEL}</span>;
   let asOf: ReactNode = undefined;
   if (row) {
-    asOf = `As of ${formatDate(row.period_end)}`;
+    const end = dateOf ? dateOf(row) : row.period_end;
+    asOf = end ? `As of ${formatDate(end)}` : NO_DATE;
     if (row.state === "value" && row.value !== null) {
       value = spec.format(row.value, market);
       context = row.label_kind ? <Qualifier>{row.label_kind}</Qualifier> : undefined;
@@ -61,8 +68,18 @@ function statOf(spec: Spec, rows: readonly CompanyMetricRow[], company: CompanyR
   return { value, context, asOf };
 }
 
-export function KeyFigures({ company, metrics, footer }: { company: CompanyRow; metrics: readonly CompanyMetricRow[]; footer: ReactNode }) {
-  const stats = SPECS.map((spec) => ({ spec, ...statOf(spec, metrics, company) }));
+export function KeyFigures({
+  company,
+  metrics,
+  footer,
+  dateOf,
+}: {
+  company: CompanyRow;
+  metrics: readonly CompanyMetricRow[];
+  footer: ReactNode;
+  dateOf?: MetricDateOf;
+}) {
+  const stats = SPECS.map((spec) => ({ spec, ...statOf(spec, metrics, company, dateOf) }));
   const fillers = (4 - (stats.length % 4)) % 4; // the grid's last row stays whole: a blank cell, not a gap in the divider colour
   return (
     <Panel

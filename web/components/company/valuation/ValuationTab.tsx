@@ -5,11 +5,13 @@
 // scenario value. Server-rendered; the two client pieces are the tables and the selects.
 // A US company (US-06, #405; Spec 02A.1 §5.4, §7): the same tab in dollars, its inputs' sources the US slice's own (SEC EDGAR
 // filings, Yahoo Finance prices, Damodaran's US betas and implied ERP, the 10-year Treasury yield via FRED); no IMF panel for India.
+// Its statement-based assumptions are dated by their filed period ends (US-06b, #564; components/company/us/filedDates.ts).
 import { TabError } from "@/components/company/TabError";
 import type { ReactNode } from "react";
 import { AssumptionsTable } from "@/components/company/valuation/AssumptionsTable";
 import { ImfTable } from "@/components/company/valuation/ImfTable";
 import { ScenarioControls } from "@/components/company/valuation/ScenarioControls";
+import { filedDates, withFiledDates } from "@/components/company/us/filedDates";
 import { Gated } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
 import { Qualifier } from "@/components/data/Qualifier";
@@ -134,7 +136,7 @@ export function ValuationTab({ data, freshness }: { data: Ok; freshness: TaskFre
         <Gated policies={valuation.policies} field={GATE[kind]} heldBackNote={HELD} showLabel={false}>
           {run ? (
             <AssumptionsTable
-              rows={assumptionRows(run, company.market)}
+              rows={us ? withFiledDates(assumptionRows(run, company.market), filedDates(valuation.filed ?? [])) : assumptionRows(run, company.market)}
               currency={company.currency}
               market={company.market}
               caption={`${company.name}: each input to the ${lender ? "implied return on equity" : "reverse DCF"}, with its value, date and source`}
