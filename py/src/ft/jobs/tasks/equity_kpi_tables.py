@@ -12,6 +12,8 @@ file or its text. A document already read with the same SHA-256 and parser versi
 
 **Which filing** (#512's fix round, 14 Nov 2026; `ft/equity/kpi/documents.py`): the quarter's results day first, then
 that day's candidates in the curated rule's order; the first with enough pages whose cut finds its heading is read.
+NSE is asked one window per quarter, the quarter end's next day to 76 days after it (`kd.feed_windows`; #512 part 4:
+dev run 9's 365-day windows came back without six companies' April 2025 results filings).
 
 Run logs print counts and ids only, never a page's text (CLAUDE.md §4).
 
@@ -30,6 +32,8 @@ Checks, B blocking, W warning (counts and ids only):
 - (B) `feed`: every company's announcements came from NSE and at least one of its quarters has a results day, checked
   before any file is read or AI is asked; a failure reads and writes nothing, so the last good rows stand, and names
   why NSE didn't answer (the client's reason without the URL, e.g. a redirect to an unlisted host, with its count);
+  its detail also gives each company's NSE windows (requests, leaves answered, rows, the largest reply, any leaf at a
+  round count) and, for each quarter with no results day, the feed's filings in its window by stage (#512 part 4);
 - (B) `documents`: every company-quarter resolved to a read or a held document (none left silently unresolved);
 - (W) `held`: the documents held, with the reason (not found, could not be cut, image bundle, unreadable), named;
 - (W) `extracted`: documents read, pages read (text and image), rows kept and filtered by reason, the AI cost;
@@ -64,8 +68,9 @@ from ft.jobs.tasks import register
 TASK = "kpi_tables"
 KEY = "equity.kpi_tables"
 SHOWN = 12
-RUN_LIMIT_USD = Decimal("3.99")     # what is left of the pilot's $5 (pre-approval 2) after DA-10's $0.3864 and dev run 2's
-                                     # $0.6196 (13 Nov 2026; #512): no single run can take the pilot past $5 (card's stop)
+RUN_LIMIT_USD = Decimal("3.17")     # what is left of the pilot's $5 (pre-approval 2) after DA-10's $0.3864, dev run 2's
+                                     # $0.6196 (13 Nov 2026) and dev run 9's $0.8178 (14 Nov 2026; #512), rounded down: no
+                                     # single run can take the pilot past $5 (card's stop; was $3.99 before run 9)
 READ_MAX_PAGES = 500                 # Infosys's results bundles run 186 to 380 pages (DA-10 K3); pdfs.read_pdf stops at 200
 IMAGE_MAX_PAGES = 40                  # an image document longer than this is held (would over-send images)
 NSE_HEADERS = {"Referer": dc.NSE_REFERER, "Accept": "application/json, text/plain, */*"}
@@ -127,6 +132,8 @@ class Harvest:
     feed: dict[int, str] = field(default_factory=dict)        # entity_id → 'nse' (every NSE window answered) | 'bse' | 'none'
     results_days: dict[int, int] = field(default_factory=dict)  # entity_id → quarters with a results day found
     preflight: str | None = None       # why nothing was read or written (the feed check failed before any AI call)
+    windows: dict[str, dict] = field(default_factory=dict)     # slug → the NSE windows' counts (`feed` check, #512 part 4)
+    no_day: dict[str, dict] = field(default_factory=dict)      # 'tcs Q4 FY25' → why no results day, as counts
 
 
 @register
@@ -138,6 +145,7 @@ class EquityKpiTables(Task):
         self.claude: Client | None = None
         self.feed: dict[int, str] = {}
         self.nse_errors: Counter = Counter()   # why NSE didn't answer: the client's reason (no URL) → requests
+        self.windows: dict[int, list[dc.WindowLog]] = {}   # entity_id → every NSE window asked (the `feed` check's counts)
 
     # ------------------------------------------------------------------ scheduling (hand-run only before 18 Nov)
     def due(self, db, workflow: str, now=None) -> Due:
@@ -218,9 +226,10 @@ class EquityKpiTables(Task):
                 errors["homepage: " + _why(e)] += 1
 
     def discover(self, ctx: Context, companies: list[dc.Company], start: date, end: date) -> dict[int, list[kd.Filing]]:
-        """Every announcement of each company over [start, end], as `kd.Filing`s with NSE's category (`desc`, which
-        the shared discovery doesn't keep; the results-day rule reads it). NSE first, BSE as the fallback when NSE fails
-        (the call-transcripts rule); nothing is stored."""
+        """Every announcement of each company in its quarters' windows inside [start, end] (`kd.feed_windows`: one
+        window per pilot quarter, #512 part 4), as `kd.Filing`s with NSE's category (`desc`, which the shared discovery
+        doesn't keep; the results-day rule reads it). NSE first, BSE as the fallback when NSE fails (the call-transcripts
+        rule); nothing is stored. Every window's log is kept in `self.windows` for the `feed` check's counts."""
         index = dc.CompanyIndex(companies)
         nse, bse = self._nse(ctx), self._bse(ctx)
         self._warm(ctx, self.nse_errors)
@@ -229,17 +238,21 @@ class EquityKpiTables(Task):
             found: list[dc.Announcement] = []
             category: dict[tuple[str, str], str | None] = {}
             ok = True
+            rows: list[dict] = []
             for sym in [co.symbol, *sorted(co.symbols - {co.symbol})]:
-                rows, logs, sym_ok, _refused = dc.nse_symbol(nse, sym, start, end)
-                ok &= sym_ok
-                for x in logs:                            # a 200 that isn't a row list raises nothing: count it here
-                    if not x.superseded and not x.answered and x.status == 200:
-                        self.nse_errors["HTTP 200 without a row list"] += 1
-                for r in rows:
-                    a = dc.norm_nse(r)
-                    if a is not None:
-                        found.append(self._join(a, index, co))
-                        category[(a.exchange, a.filing_key)] = str(r.get("desc") or "").strip() or None
+                for lo, hi in kd.feed_windows(co.slug, start, end):   # one window per quarter (#512 part 4)
+                    got, logs, sym_ok, _refused = dc.nse_symbol(nse, sym, lo, hi)
+                    ok &= sym_ok
+                    rows += got
+                    self.windows.setdefault(co.entity_id, []).extend(logs)
+                    for x in logs:                        # a 200 that isn't a row list raises nothing: count it here
+                        if not x.superseded and not x.answered and x.status == 200:
+                            self.nse_errors["HTTP 200 without a row list"] += 1
+            for r in dc.dedupe_rows(rows):
+                a = dc.norm_nse(r)
+                if a is not None:
+                    found.append(self._join(a, index, co))
+                    category[(a.exchange, a.filing_key)] = str(r.get("desc") or "").strip() or None
             self.feed[co.entity_id] = "nse" if ok and found else "none"
             if (not ok or not found) and co.bse_code:
                 self.feed[co.entity_id] = "bse"
@@ -288,7 +301,7 @@ class EquityKpiTables(Task):
         except AIUnavailable as e:
             h.unavailable = e.reason
             return h                                      # nothing to read without AI (#197)
-        self.feed, self.nse_errors = {}, Counter()
+        self.feed, self.nse_errors, self.windows = {}, Counter(), {}
         anns = self.discover(ctx, h.companies, start, end)
         h.preflight = self._preflight(h, anns, rules)
         for co in h.companies:
@@ -323,6 +336,14 @@ class EquityKpiTables(Task):
                     1 for label in kd.quarters(co.slug)
                     if kd.results_day(anns.get(co.entity_id, []), rules[co.slug].for_quarter(label), label) is not None)
         slug = {co.entity_id: co.slug for co in h.companies}
+        for co in h.companies:
+            if co.slug not in rules:
+                continue
+            h.windows[co.slug] = self._window_counts(self.windows.get(co.entity_id, []))
+            for label in kd.quarters(co.slug):
+                q = rules[co.slug].for_quarter(label)
+                if kd.results_day(anns.get(co.entity_id, []), q, label) is None:
+                    h.no_day[f"{co.slug} {label}"] = kd.results_day_counts(anns.get(co.entity_id, []), q, label)
         not_nse = sorted(slug[e] for e, src in h.feed.items() if src != "nse")
         no_days = sorted(slug[e] for e in h.feed if not h.results_days.get(e))
         problems = []
@@ -333,6 +354,18 @@ class EquityKpiTables(Task):
         if no_days:
             problems.append("no results day found for " + ", ".join(no_days))
         return "; ".join(problems) or None
+
+    @staticmethod
+    def _window_counts(logs: list[dc.WindowLog]) -> dict:
+        """One company's NSE windows as counts and dates (the `feed` check; no row content, CLAUDE.md §4): the requests
+        made, the leaf windows (the replies kept: a split window's halves replace it) and how many answered, the rows
+        they held, the largest reply, and each answered leaf whose row count is a round number a capped reply would
+        give (`discovery.SUSPECT_COUNTS`: kept, since a split stops at 31 days, but named so a cap shows)."""
+        leaves = [x for x in logs if not x.superseded]
+        return {"requests": len(logs), "leaves": len(leaves), "answered": sum(1 for x in leaves if x.answered),
+                "rows": sum(x.rows for x in leaves), "largest": max((x.rows for x in leaves), default=0),
+                "round": [f"{x.start}..{x.end} depth {x.depth}: {x.rows}" for x in leaves
+                          if x.answered and x.rows in dc.SUSPECT_COUNTS]}
 
     def _one(self, ctx, db, co, rule: kd.Rule, label: str, anns, prompt, schema, budget, spent_before, h: Harvest) -> DocPlan:
         pe = kd.period_end(label)
@@ -561,11 +594,12 @@ class EquityKpiTables(Task):
         filtered = Counter(v.filter_reason for p in read for v in p.values if v.filter_status == fl.FILTERED)
         empty = [p for p in read if not any(v.filter_status == fl.KEPT for v in p.values)]
         slug = {c.entity_id: c.slug for c in h.companies}
+        diag = {"windows": dict(sorted(h.windows.items())), "no_results_day": h.no_day}   # counts and dates only
         checks = [
             Check("feed", h.preflight is None,
-                  (h.preflight + "; nothing read or written") if h.preflight else json.dumps(
+                  (h.preflight + "; nothing read or written; " + json.dumps(diag)) if h.preflight else json.dumps(
                       {"nse": sum(1 for v in h.feed.values() if v == "nse"), "companies": len(h.feed),
-                       "results_days": {slug[e]: n for e, n in sorted(h.results_days.items())}})),
+                       "results_days": {slug[e]: n for e, n in sorted(h.results_days.items())}, **diag})),
             Check("documents", resolved == expected,
                   json.dumps({"expected": expected, "resolved": resolved, "read": len(read), "held": len(held),
                               "reused": sum(1 for p in read if p.reused)})),

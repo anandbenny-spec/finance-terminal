@@ -34,6 +34,7 @@ WINDOW_LAST = "Q2 FY27"
 TCS_FIRST = "Q2 FY25"
 RESULTS_DAY_MAX_DAYS = 75            # the results day falls within this many days of the quarter end (SEBI: 45, Q4 60)
 CANDIDATE_DAYS = 1                   # the pilot document is filed on the results day or the day after
+FEED_DAYS = RESULTS_DAY_MAX_DAYS + CANDIDATE_DAYS   # a quarter's announcement window: all that the selection reads
 MAX_CANDIDATES = 4                   # filings tried per quarter, in the rule's order of preference
 _LABEL = re.compile(r"Q([1-4])\s*FY\s*(\d{2})", re.IGNORECASE)
 
@@ -147,6 +148,25 @@ def quarters(slug: str) -> list[str]:
     return list(reversed(out))
 
 
+def feed_windows(slug: str, start: date, end: date) -> list[tuple[date, date]]:
+    """The announcement windows the task asks NSE for, one per pilot quarter, oldest first: the day after the quarter end
+    to FEED_DAYS after it (the results-day window and the candidates' day after), clipped to [start, end]; a quarter
+    wholly outside is skipped.
+
+    #512 part 4 (14 Nov 2026): dev run 9, the first through `nseindia.in`, asked NSE for 365-day windows and came back
+    without the April 2025 results filings of six of the seven companies (each quarter "no results filing found"), though
+    dev run 2 (13 Nov, before NSE's move) read HCLTech's and Infosys's Q4 FY25 documents from the same windows, and the
+    run's request count leaves no room for the window splits a capped reply would have caused. A quarter's own window is
+    all the selection reads, so the task asks for that and nothing longer."""
+    out = []
+    for label in quarters(slug):
+        pe = period_end(label)
+        a, b = max(pe + timedelta(days=1), start), min(pe + timedelta(days=FEED_DAYS), end)
+        if a <= b:
+            out.append((a, b))
+    return out
+
+
 def previous_four(slug: str, fiscal_label: str) -> list[str]:
     """The four quarters before `fiscal_label` for this company, within the window (oldest first); fewer at the window
     start."""
@@ -193,6 +213,29 @@ def results_day(filings, rule: Rule, fiscal_label: str) -> date | None:
     lo, hi = pe + timedelta(days=1), pe + timedelta(days=RESULTS_DAY_MAX_DAYS)
     days = [_day(f) for f in filings if lo <= _day(f) <= hi and is_results_filing(f, rule)]
     return min(days) if days else None
+
+
+def results_day_counts(filings, rule: Rule, fiscal_label: str) -> dict[str, int]:
+    """Why a quarter has no results day, as counts only (the `feed` check; CLAUDE.md §4): the feed's filings inside the
+    results-day window (`rows`), those naming results (`named`), those also an outcome, submission or approval
+    (`outcome`), and how many of those are rejected (`rejected`). `rows` 0 means the feed held nothing for the window;
+    `outcome` above `rejected` can't happen when there is no results day."""
+    q = rule.for_quarter(fiscal_label)
+    pe = period_end(fiscal_label)
+    lo, hi = pe + timedelta(days=1), pe + timedelta(days=RESULTS_DAY_MAX_DAYS)
+    inside = [f for f in filings if lo <= _day(f) <= hi]
+    out = {"rows": len(inside), "named": 0, "outcome": 0, "rejected": 0}
+    if q.shared is None:
+        return out
+    for f in inside:
+        text = f"{f.subject or ''} {getattr(f, 'category', None) or ''}"
+        if not q.shared.results_names.search(text):
+            continue
+        out["named"] += 1
+        if q.shared.results_kind.search(text):
+            out["outcome"] += 1
+            out["rejected"] += rejected(f, q)
+    return out
 
 
 def candidates(filings, rule: Rule, fiscal_label: str) -> tuple[date | None, list]:
