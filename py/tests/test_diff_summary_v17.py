@@ -425,6 +425,20 @@ def test_a_v17_target_gets_three_replies_and_every_other_target_two():
     assert t._max_attempts(doc, doc.request(load_prompt("doc_summary", "v1"))) == 2
 
 
+def test_a_second_replys_note_says_which_answer_it_was_so_a_repeated_mistake_still_gets_its_third_reply():
+    # CI on 3188aea: a reply that repeated its mistakes left the note the first had left, so the third reply was the second's
+    # input again and was never sent (never twice); the target stayed "retried" with no fallback.
+    from ft.ai.batch import BatchSteps, Call
+    t = ai_batch.AiBatch()
+    w = Work("statement_diff_summary", NEW, OLD, D.segments)
+    first, second = Call("a", w.request(V17), 1), Call("b", w.request(V17, note="x."), 2)
+    assert t._retry_note(first, "bullet 1 had a problem.") == "bullet 1 had a problem."
+    note = t._retry_note(second, "bullet 1 had a problem.")
+    assert note == "this was answer 2, and it still couldn't be published: bullet 1 had a problem."
+    assert w.request(V17, note=note).input_sha256 != w.request(V17, note="bullet 1 had a problem.").input_sha256
+    assert BatchSteps._retry_note(t, second, "same.") == "same."                 # every other task: unchanged
+
+
 def test_the_fallbacks_model_says_no_model_wrote_it():
     assert ai_batch.FALLBACK_MODEL == "none: the changed sentences, quoted by code"
     assert Checked("statement_diff_summary", [], [], Counter()).verify is None

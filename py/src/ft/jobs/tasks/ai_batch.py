@@ -692,6 +692,13 @@ class AiBatch(BatchSteps, Task):
             return DIFF_ATTEMPTS
         return super()._max_attempts(w, req)
 
+    def _retry_note(self, call: Call, note: str) -> str:
+        """A second or later reply's note says which answer it was: a reply that repeats its mistakes would otherwise leave
+        the note the reply before it left, and its retry would be that retry's input again, never sent (never twice)."""
+        if call.attempt < 2:
+            return note
+        return f"this was answer {call.attempt}, and it still couldn't be published: " + note
+
     def _verify_prompt(self):
         return self._pinned_prompt("statement_diff_summary", summaries.VERIFY_VERSION)
 
@@ -841,7 +848,7 @@ class AiBatch(BatchSteps, Task):
                 if call.failed is None:
                     call.checked = w.check(req, call.reply)
                 last = attempt >= self._max_attempts(w, req)
-                retry_note = None if call.ok or call.held or last else call.note()
+                retry_note = None if call.ok or call.held or last else self._retry_note(call, call.note())
                 with db.transaction():                          # the reply is stored before anything else happens
                     self._store(db, w, call, ctx.task_run_id, retry_note)
                 if call.ok:

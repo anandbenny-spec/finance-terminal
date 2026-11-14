@@ -274,6 +274,13 @@ class BatchSteps:
         """How many times a document's length a request of this task can hold (the open batches' worst case)."""
         return 1
 
+    def _retry_note(self, call: Call, note: str) -> str:
+        """The note a rejected reply leaves for the next attempt: `note` (the problems), unless the task marks it. A task
+        that allows a third attempt marks a second reply's note (policy.ai_batch, #445), or a reply that repeats its
+        mistakes would leave the same note, its retry would be the same input as the one before, and it would never be
+        sent (never twice)."""
+        return note
+
     def _max_attempts(self, w: Target, req: Request) -> int:
         """How many replies a target may get, each retry with the note its last rejected reply left: 2 (the first reply
         and one retry) unless the task says otherwise for this request (#445: policy.ai_batch's statement_diff_summary
@@ -734,7 +741,7 @@ class BatchSteps:
         spend = f.spend + reply.cost_usd            # after the check: a task's check may bill a request of its own (#445's
                                                     # second model, policy.ai_batch v17 on), which it adds to f.spend
         last = attempt >= self._max_attempts(w, req)
-        retry_note = None if call.ok or call.held or last else call.note()
+        retry_note = None if call.ok or call.held or last else self._retry_note(call, call.note())
         try:
             with db.transaction():
                 if not self._pending(db, cid):
@@ -748,7 +755,7 @@ class BatchSteps:
             if db.closed or db.broken:
                 raise
             why = f"the reply couldn't be stored ({type(e).__name__})"
-            note = None if last else why + "."
+            note = None if last else self._retry_note(call, why + ".")
             if self._store_bare(db, cid, reply, ctx.task_run_id, spend, ("retried: " if note else "rejected: ") + why,
                                 {"attempt": attempt, "unstorable": type(e).__name__}, retry_note=note):
                 f.batch.results["unstorable"] += 1
