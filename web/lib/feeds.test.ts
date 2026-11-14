@@ -43,13 +43,17 @@ describe("module 2's surfaces (2A-26, #132)", () => {
   });
 
   // 2B-19 (#182) adds the card's one preview surface, `calls`, until 2B-22 moves it into FEEDS; DD-02 (#410) adds `segmentChanges`
-  // until its task has a freshness row on production. Nothing else may sit there, and no preview task counts in the status bar.
+  // until its task has a freshness row on production; DD-06 (#514) adds `kpiChanges`, the KPI-table pilot's hand-run task.
+  // Nothing else may sit there, and no preview task counts in the status bar.
   // US-06 (#405) adds the US slice's four page surfaces: unpublished until Anand's flip, and out of the status bar's count until
   // production's runs (US-07) have left a freshness row for each us.* task.
   it("holds only the Earnings calls, segment-changes and US slice previews in PREVIEW_FEEDS, out of the status bar's count", () => {
-    expect(Object.keys(PREVIEW_FEEDS)).toEqual(["calls", "segmentChanges", "usScreener", "usScreenerImplied", "usCompany", "usValuation"]);
+    expect(Object.keys(PREVIEW_FEEDS)).toEqual(["calls", "segmentChanges", "kpiChanges", "usScreener", "usScreenerImplied", "usCompany", "usValuation"]);
     for (const task of Object.values(PREVIEW_FEEDS).flat()) expect(liveTasks()).not.toContain(task);
     expect(PREVIEW_FEEDS.segmentChanges).toEqual(["equity.segment_changes"]);
+    // DD-06 (#514): the KPI-table pilot's panel, fed by its one hand-run task.
+    expect(PREVIEW_FEEDS.kpiChanges).toEqual(["equity.kpi_tables"]);
+    expect(taskWorkflows().get("equity.kpi_tables")).toBeDefined();
   });
 
   it("feeds the US pages from the US tasks only, each a task in tasks.yaml, never one of India's", () => {
