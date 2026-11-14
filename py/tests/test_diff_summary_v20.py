@@ -30,10 +30,12 @@ def _pair(old: str, new: str):
 def test_v20_and_v21_are_v19s_text_with_v19s_schema_and_v21_is_current():
     v19, v20 = load_prompt("statement_diff_summary", "v19"), load_prompt("statement_diff_summary", "v20")
     v21 = load_prompt("statement_diff_summary", "v21")             # round 18's revision of the fallback
-    assert v21.text == v20.text == v19.text and v20.version == "v20" and "<!--" not in v20.text
+    v22 = load_prompt("statement_diff_summary", "v22")             # round 19's
+    assert v22.text == v21.text == v20.text == v19.text and v20.version == "v20" and "<!--" not in v20.text
     assert load_schema("statement_diff_summary", "v21") == load_schema("statement_diff_summary", "v19")
+    assert load_schema("statement_diff_summary", "v22") == load_schema("statement_diff_summary", "v19")
     assert load_schema("statement_diff_summary", "v20") == load_schema("statement_diff_summary", "v19")
-    assert PROMPT_VERSION["statement_diff_summary"] == "v21" and summaries.DIFF_OPEN_END_FROM == 20   # v21: round 18
+    assert PROMPT_VERSION["statement_diff_summary"] == "v22" and summaries.DIFF_OPEN_END_FROM == 20   # v22: round 19
     assert summaries.DIFF_MODEL_OF["v20"] == summaries.DIFF_MODEL_OF["v19"]
     assert summaries.DIFF_EFFORT_OF["v20"] == summaries.DIFF_EFFORT_OF["v19"]
 
@@ -230,3 +232,60 @@ def test_up_to_three_consecutive_new_sentences_are_one_change_quoted_together():
     alone = [t for t in texts if "closely monitor" in t]
     assert alone and alone[0].endswith("The previous FOMC statement doesn't have this sentence.")
     assert any("Job gains have picked up" in t for t in texts) and len(bullets) == 4
+
+
+# ---------------------------------------------------------------------------------------------- round 19 (v22)
+def test_the_committees_own_vote_is_the_decision_and_other_central_banks_policy_rates_never_are():
+    # Round 18: mpc-2026-10-07's fallback (3522) led with "higher global policy rates" and left out its rate hike.
+    assert kind("2. After a detailed assessment of the evolving macroeconomic and financial developments and the outlook, the "
+                "MPC voted unanimously to increase the policy repo rate under the liquidity adjustment facility (LAF) by 25 bps "
+                "to 5.50 per cent with immediate effect.") == "decision"
+    assert kind("13. Considering all these factors, the MPC voted to keep the policy rate unchanged.") == "decision"
+    assert kind("All members of the MPC – Dr. Shashanka Bhide and Shri Shaktikanta Das – unanimously voted for keeping the "
+                "policy repo rate unchanged.") == "decision"
+    assert kind("The Fed commentary thereafter along with rate tightening by major systemically important central banks have "
+                "reinforced expectations of higher global policy rates. Persistent inflation has prompted several central "
+                "banks to raise rates.") != "decision"
+    # Guidance naming the target range isn't a second decision; a member's vote for another cut is a dissent.
+    assert kind("The Committee anticipates that ongoing increases in the target range will be appropriate in order to attain "
+                "a stance of monetary policy that is sufficiently restrictive.") == "stance"
+    assert kind('The previous FOMC statement said: "In support of these goals, the Committee decided to raise the target '
+                'range for the federal funds rate to 4-1/2 to 4-3/4 percent."') == "decision"
+    assert kind('The previous MPC resolution said: "keep the policy repo rate under the liquidity adjustment facility (LAF) '
+                'unchanged at 6.5 per cent."') == "decision"
+    assert kind("Shri Saugata Bhattacharya voted for a 25 bps cut in repo rate.") == "dissent"
+
+
+RBI_2026_OLD = ("2. After a detailed assessment of the evolving macroeconomic and financial developments and the outlook, the MPC "
+                "voted unanimously to keep the policy repo rate under the liquidity adjustment facility (LAF) unchanged at 5.25 "
+                "per cent. Persistent inflation has prompted several central banks to raise rates while others remain vigilant. "
+                "The MPC also decided to continue with the neutral stance. 9. CPI inflation for 2026-27 is projected to be 5.0 "
+                "per cent. 13. Considering all these factors, the MPC voted to keep the policy rate unchanged.")
+RBI_2026_NEW = ("2. After a detailed assessment of the evolving macroeconomic and financial developments and the outlook, the MPC "
+                "voted unanimously to increase the policy repo rate under the liquidity adjustment facility (LAF) by 25 bps to "
+                "5.50 per cent with immediate effect. The Fed commentary thereafter along with rate tightening by major "
+                "systemically important central banks have reinforced expectations of higher global policy rates. The MPC also "
+                "decided to change the stance to calibrated tightening. 9. CPI inflation is projected to be 5.2 per cent for "
+                "2026-27. 14. Considering all these factors, the MPC unanimously voted to increase the policy repo rate by 25 "
+                "basis points to 5.50 per cent.")
+
+
+def test_the_fallback_leads_with_the_committees_vote_shows_the_decision_once_and_leaves_out_other_central_banks():
+    bullets = fallback_bullets(*_pair(RBI_2026_OLD, RBI_2026_NEW), [])
+    texts = [b.text for b in bullets]
+    assert "voted unanimously to increase the policy repo rate" in texts[0]
+    assert sum("increase the policy repo rate" in t for t in texts) == 1               # the decision once
+    assert any("change the stance to calibrated tightening" in t for t in texts)
+    assert "global policy rates" not in texts[0] and kind(texts[0]) == "decision"   # never the decision (3522)
+
+
+def test_a_run_of_consecutive_new_sentences_stops_at_a_paragraph_number():
+    old = "The MPC decided to keep the policy repo rate unchanged at 6.50 per cent."
+    new = ("The MPC decided to keep the policy repo rate unchanged at 6.50 per cent. Real GDP growth for Q1:2024-25 is "
+           "projected at 6.6 per cent. 9. The headline inflation is likely to witness a sharp spike in July.")
+    a = Doc(1, "mpc_resolution", "MPC resolution", "a", "RBI", date(2023, 6, 8), old)
+    b = Doc(2, "mpc_resolution", "MPC resolution", "b", "RBI", date(2023, 8, 10), new)
+    s1, s2 = new.index("Real GDP"), new.index("9. The headline")
+    segments = {"pairs": [{"kind": "added", "new": [[s1, new.index(" 9. The")]]}, {"kind": "added", "new": [[s2, len(new)]]}]}
+    bullets = fallback_bullets(segments, a, b, [])
+    assert len(bullets) == 2 and all("doesn't have this sentence." in x.text for x in bullets)
