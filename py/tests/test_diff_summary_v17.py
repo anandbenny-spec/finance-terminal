@@ -25,6 +25,7 @@ from test_ai_summaries import NEW, OLD, reply
 from ft.ai import summaries
 from ft.ai.client import HAIKU, SONNET, load_prompt, load_schema
 from ft.ai.summaries import (
+    FALLBACK_KINDS,
     Checked,
     Doc,
     added_problem,
@@ -110,7 +111,7 @@ def test_v17_is_v16_plus_three_rules_with_v16s_schema_on_sonnet_and_v18_and_v19_
     assert summaries.DIFF_VERIFY_FROM == 17 and summaries.DIFF_FIT_FROM == 16
     v18 = load_prompt("statement_diff_summary", "v18")             # v17's text, marking the checks' revision before the judge
     v19 = load_prompt("statement_diff_summary", "v19")             # and again, marking the third run's revision
-    assert v18.text == V17.text == v19.text and PROMPT_VERSION["statement_diff_summary"] == "v19"
+    assert v18.text == V17.text == v19.text and PROMPT_VERSION["statement_diff_summary"] == "v20"   # v20: round 17
     assert load_schema("statement_diff_summary", "v19") == load_schema("statement_diff_summary", "v17")
     assert load_schema("statement_diff_summary", "v18") == load_schema("statement_diff_summary", "v17")
     assert summaries.diff_summary_request(NEW, OLD, D.segments, v18).model_id == SONNET
@@ -346,10 +347,16 @@ def test_the_fallback_quotes_whole_changed_sentences_labelled_previous_or_new_wi
         assert long_run_problem(b.text, [FOMC_A, FOMC_B]) is None and "added" not in own and "adds" not in own
 
 
-def test_the_fallback_follows_the_rejected_replys_quotes_first():
+def test_the_fallback_puts_the_decision_first_then_follows_the_rejected_replys_quotes():
+    # Round 17: the decision leads. Before, any sentence naming the target range shared the decision's weight, so this quoted
+    # dissent came first; it now leads the dissents, and the reply's quotes still decide within a kind and fill the slots left.
     miran = "Voting against this action was Stephen I. Miran"
     bullets = fallback_bullets(D.segments, OLD, NEW, [("new", miran)])
-    assert miran in bullets[0].text and "The previous FOMC statement doesn't have this sentence." in bullets[0].text
+    assert bullets[0].text.startswith('The previous FOMC statement said: "In support of its goals, the Committee decided to '
+                                      'maintain the target range')
+    dissents = [b for b in bullets if summaries._kind(b.text) == FALLBACK_KINDS.index("dissent")]
+    assert miran in dissents[0].text and "The previous FOMC statement doesn't have this sentence." in dissents[0].text
+    assert [summaries._kind(b.text) for b in bullets] == sorted(summaries._kind(b.text) for b in bullets)   # kind order
 
 
 def test_the_fallback_leaves_out_a_change_only_in_dates_and_shows_a_reworded_sentence_as_one_change():

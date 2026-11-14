@@ -48,6 +48,8 @@ passages they cite.
   reads each bullet against its cited sentences and both statements (`verify_request`, `apply_verdicts`; `policy.ai_batch`
   sends it). A target whose two replies are rejected gets an output built by code from the changed sentences
   (`fallback_bullets`).
+- From v20 on (#445, round 17; Anand's decision of 14 Nov 2026, about 22:19 IST; `DIFF_OPEN_END_FROM`): also no quotation that
+  ends on a word such as "a", "the" or "to" in the middle of a phrase, even where the bullet goes on in its own words.
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
 (`policy.ai_batch`). The database checks the published output's citations again at commit (Architecture 01 §1.4).
@@ -69,7 +71,7 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
 DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
-                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
 # (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
 # two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12); v14: v13 plus two rules, with one
 # more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14); v16: v15's
@@ -79,7 +81,7 @@ DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11":
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
 DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium",
-                  "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium"}
+                  "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium", "v20": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -163,6 +165,12 @@ VERIFY_VERSION = "verify2"
 VERIFY_MODEL = HAIKU
 VERIFY_EFFORT = "medium"
 VERIFY_MAX_TOKENS = 16_000            # thinking and one verdict per bullet; a stop at the limit is a failed check, not a pass
+# From v20 (#445, round 17; Anand's decision of 14 Nov 2026, about 22:19 IST, after round 16's third dev run; a tightening):
+# v19's text, and `cut_quote_problem` also fails a quotation ending on an open word (`_OPEN_END`: "a", "the", "to" …) where its
+# passage goes on, even when the bullet goes on after it in its own words: mpc-2026-10-07's 3449 quoted "action ahead can only
+# be a" and went on "hike or a pause", the statement's "rate hike or a pause" with a word left out, which the run-on check
+# (`runs_on_problem`: the passage's next words, word for word) let through. Round 15's judge failed that shape (3376).
+DIFF_OPEN_END_FROM = 20
 
 
 def diff_json(version: str) -> bool:
@@ -891,18 +899,20 @@ def check_diff_json(answer, sources: tuple[Source, ...], changed: dict[int, list
     checks, from v13 (`DIFF_WHOLE_FROM`) the same-claim and cut-quotation checks, from v14 (`DIFF_SIDES_FROM`) the wider
     same-claim check and the previous-document check, from v15 (`DIFF_FP_FIX_FROM`) those checks without two false
     positives, from v16 (`DIFF_FIT_FROM`) the grammar-fit and run-on checks, and the neighbour check where `sentences` (each
-    document's sentences, from the redline: `sentence_spans`) is given; an earlier version, or none, is checked as it ran
-    (none: as v11 was)."""
+    document's sentences, from the redline: `sentence_spans`) is given, from v17 (`DIFF_VERIFY_FROM`) v17's checks, and from v20
+    (`DIFF_OPEN_END_FROM`) the cut-quotation check on a quotation the bullet goes on from; an earlier version, or none, is
+    checked as it ran (none: as v11 was)."""
     task, mapping = "statement_diff_summary", Counter()
     number = int(version.lstrip("v")) if version is not None else 0
     strict, whole, sides = number >= DIFF_STRICT_FROM, number >= DIFF_WHOLE_FROM, number >= DIFF_SIDES_FROM
     fixed, fit, runs = number >= DIFF_FP_FIX_FROM, number >= DIFF_FIT_FROM, number >= DIFF_VERIFY_FROM
+    open_end = number >= DIFF_OPEN_END_FROM
     rows = answer.get("bullets") if isinstance(answer, dict) else None
     if not isinstance(rows, list):
         return Checked(task, [], ["the reply isn't the schema's JSON ({bullets: [...]})"], mapping)
     copies: Counter = Counter()
     bullets = [_diff_json_bullet(raw, sources, changed, mapping, strict=strict, whole=whole, sides=sides, fixed=fixed,
-                                 fit=fit, sentences=sentences, runs=runs, copies=copies)
+                                 fit=fit, sentences=sentences, runs=runs, copies=copies, open_end=open_end)
                for raw in rows]
     problems = []
     lo, hi = BULLETS[task]
@@ -914,7 +924,7 @@ def check_diff_json(answer, sources: tuple[Source, ...], changed: dict[int, list
 def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[tuple[int, int]]], mapping: Counter, *,
                       strict: bool = False, whole: bool = False, sides: bool = False, fixed: bool = False,
                       fit: bool = False, sentences: dict[int, list[tuple[int, int]]] | None = None, runs: bool = False,
-                      copies: Counter | None = None) -> Bullet:
+                      copies: Counter | None = None, open_end: bool = False) -> Bullet:
     if not isinstance(raw, dict) or not isinstance(raw.get("text"), str) or not isinstance(raw.get("quotes"), list):
         b = Bullet("")
         b.problem = "isn't the schema's object"
@@ -955,7 +965,7 @@ def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[
     if b.problem is None and strict:
         b.problem = side_by_side_problem(text) or unquoted_copy_problem(text, [src.text for src in sources])
     if b.problem is None and whole:
-        b.problem = same_problem(text, again=sides) or cut_quote_problem(text, passages, subject_ok=fixed)
+        b.problem = same_problem(text, again=sides) or cut_quote_problem(text, passages, subject_ok=fixed, open_end=open_end)
     if b.problem is None and sides and not any(q["document"] == "previous" for q in quotes):
         b.problem = previous_problem(text, whole_text=fixed)
     if b.problem is None and fit:
@@ -1035,6 +1045,10 @@ _ABOUT_PREVIOUS = re.compile(
 _OPEN_END = frozenset({"a", "an", "the", "of", "to", "in", "into", "for", "by", "with", "on", "at", "from", "as", "than",
                        "and", "or", "but", "nor", "that", "which", "its", "their", "is", "are", "was", "were", "be", "been",
                        "will", "would", "shall", "should", "can", "could", "may", "might", "has", "have", "had"})
+# From v20 (`DIFF_OPEN_END_FROM`): a quotation right after one of these names the words it quotes ("dropped the words "the extent
+# and timing of" from …", 2578), so its open end isn't a cut phrase. Measured on dev's 322 stored v11 to v19 bullets with
+# citations: v20's check fails 3 more (2544, 3394 and 3449, each a quotation stopping mid-phrase before the bullet's words).
+_NAMES_WORDS = re.compile(r"\b(?:words?|phrase|phrasing|wording|expression)\s*$", re.IGNORECASE)
 # From v15 (`DIFF_FP_FIX_FROM`): a quotation opening its sentence may stop right before one of these, its sentence's verb.
 _VERB_NEXT = frozenset({"is", "are", "was", "were", "has", "have", "had", "will", "would", "shall", "should", "can", "could",
                         "may", "might", "must", "do", "does", "did"})
@@ -1072,24 +1086,29 @@ def previous_problem(text: str, *, whole_text: bool = False) -> str | None:
     return None
 
 
-def cut_quote_problem(text: str, passages: list[str], *, subject_ok: bool = False) -> str | None:
+def cut_quote_problem(text: str, passages: list[str], *, subject_ok: bool = False, open_end: bool = False) -> str | None:
     """Why a bullet ends a quotation in the middle of a phrase (see `DIFF_WHOLE_FROM`), or None. Only a quotation the bullet
     doesn't go on from: after its closing mark comes punctuation or the bullet's end, not a word. It is found in the cited
     passages (each a whole changed sentence) as `quote_problem` finds it, case aside; it fails only when every place it is
     found is cut: the passage goes on with a word, and the quotation either starts where the passage's sentence starts or
     ends on a word such as "the" or "to" (`_OPEN_END`). With `subject_ok` (v15 on, `DIFF_FP_FIX_FROM`), a quotation that
-    starts its sentence and stops right before the sentence's verb (`_VERB_NEXT`) isn't cut."""
+    starts its sentence and stops right before the sentence's verb (`_VERB_NEXT`) isn't cut. With `open_end` (v20 on,
+    `DIFF_OPEN_END_FROM`), a quotation the bullet goes on from also fails when it ends on such a word and the passage goes
+    on with a word wherever it is found."""
     t = match_form(text)
     if t.count('"') % 2:
         return None
     hays = [match_form(p) for p in passages]
     for m in re.finditer(r'"([^"]*)"', t):
-        if _WORD.match(t[m.end():].lstrip()[:1] or " "):
+        goes_on = bool(_WORD.match(t[m.end():].lstrip()[:1] or " "))
+        if goes_on and not open_end:
             continue                                       # the bullet goes on from it in its own words
         q = m.group(1).strip().rstrip(_INNER_END).strip()
         if not _WORD.search(q):
             continue
         last = _WORD.findall(q)[-1].casefold()
+        if goes_on and (last not in _OPEN_END or _NAMES_WORDS.search(t[:m.start()])):
+            continue                                       # v20: only on an open end, and not where it names words it quotes
         head = r"(?<!\w)" if re.match(r"\w", q) else ""
         tail = r"(?!\w)" if re.search(r"\w$", q) else ""
         cut = []
@@ -1104,6 +1123,9 @@ def cut_quote_problem(text: str, passages: list[str], *, subject_ok: bool = Fals
                 cut.append(bool(_WORD.match(rest[:1] or " ")) and (starts or last in _OPEN_END))
         if cut and all(cut):
             shown = q if len(q) <= 80 else "…" + q[-79:]
+            if goes_on:
+                return (f'a quotation that ends on "{last}", in the middle of a phrase, and goes on in the bullet\'s own words: '
+                        f'"{shown}" (quote the phrase to its end, or say it in your own words)')
             if last in _OPEN_END:
                 return f'a quotation that ends on "{last}", in the middle of a phrase: "{shown}"'
             return f'a quotation cut in the middle of a sentence it starts: "{shown}" stops before its end'
@@ -1576,8 +1598,16 @@ def apply_verdicts(c: Checked, answer) -> None:
 # ---------------------------------------------------------------------------------------------- the fallback (v17 on)
 # A target whose replies are all rejected gets bullets built by code from the redline's changed sentences, each quoted whole
 # and labelled previous or new, with no word of a model's, at most five:
-# - the policy decision's change first (the policy rate or the target range; `_PRIORITY`'s top weight), then what the rejected
-#   reply's quotes pointed at, in its order, then the rest by what they are about (`_PRIORITY`), then by position;
+# - one change of each of the first FALLBACK_FIRST_KINDS kinds (`_kind`), in this order: the policy decision (the policy rate
+#   or the target range with a verb of deciding, such as decided, raise, cut, keep, maintain or unchanged; never a vote, a
+#   dissent, the reverse repo rate or a market rate traded against the repo rate), the stance or guidance, a dissent, the
+#   projections, inflation, the economy (growth, jobs, activity), the balance sheet, then the corridor rates (reverse repo, SDF,
+#   MSF, Bank Rate); within a kind, a change whose new sentence is itself of that kind first, then what the rejected reply's quotes
+#   pointed at, in its order, then by position. Then the slots
+#   left go to what the rejected reply quoted, in its order, then by kind (votes, then the rest last), then by position. The
+#   bullets read in kind order, the decision first (#445, round 17: in round 16's third dev run any sentence holding "repo
+#   rate" ranked with the decision, so mpc-2019-02-07's fallback quoted two call-rate sentences and left out the stance
+#   change, the dissent and the projections that v1 had);
 # - a change only in dates, a paragraph number or a connective is left out (`_trivial`): dates are month names, years, and day
 #   numbers near a month name, so a rate, a projection or a count that changed is never a date;
 # - a change shown twice in the redline (an RBI resolution says its decision in two paragraphs) is shown once, by its words,
@@ -1585,8 +1615,9 @@ def apply_verdicts(c: Checked, answer) -> None:
 # - two sentences the redline pairs as one change but that share few words (`_same_topic`: fewer than PAIR_MIN_SHARED of the
 #   shorter side's content words, names aside) are shown as two, one the previous document had and one the new one has, never side by
 #   side as if one replaced the other; and an added and a removed sentence sharing a distinctive pair of words (`_pairs`, in
-#   at most ADDED_MAX_SENTENCES sentences of the previous document) are shown as one change, so a reworded sentence is never
-#   called added.
+#   at most ADDED_MAX_SENTENCES sentences of the previous document), or of the same kind (`_kind`) and topic (`_same_topic`;
+#   round 17: mpc-2020-12-04's reworded decision and GDP sentences were shown as two bullets each), are shown as one change,
+#   the removed sentence sharing the most content words, so a reworded sentence is never called added.
 # The citations are the quoted sentences.
 _MONTH_WORD = re.compile(r"^(?:january|february|march|april|may|june|july|august|september|october|november|december"
                          r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$", re.IGNORECASE)
@@ -1594,18 +1625,41 @@ _YEAR_WORD = re.compile(r"^(?:19|20)\d\d(?:-\d\d)?$")
 _DAY_WORD = re.compile(r"^\d{1,2}(?:st|nd|rd|th)?$", re.IGNORECASE)
 DAY_NEAR_MONTH = 3                    # a day number this many words or fewer from a month name ("4 to 6 October", "May 2 and 4")
 PAIR_MIN_SHARED = 0.3
-_PRIORITY = ((re.compile(r"target range|repo rate|federal funds rate|bank rate|reverse repo|standing deposit|marginal standing",
-                         re.IGNORECASE), 5),
-             (re.compile(r"against|dissent|preferred|instead|were of the view", re.IGNORECASE), 4),
-             (re.compile(r"stance|accommodat|withdrawal|neutral|appropriate|guided by|prepared to|expects|anticipates"
-                         r"|will continue|future", re.IGNORECASE), 4),
-             (re.compile(r"projected|projection|inflation|growth|gdp|employment|labor|labour|unemployment", re.IGNORECASE), 3),
-             (re.compile(r"securities|holdings|purchases|balance sheet|treasury|mortgage", re.IGNORECASE), 3),
-             (re.compile(r"\bvot", re.IGNORECASE), 2))
+# The fallback's kinds of change, in order (see above). Matched on both sides' words, case aside.
+FALLBACK_KINDS = ("decision", "stance", "dissent", "projections", "inflation", "economy", "balance sheet", "corridor", "votes",
+                  "other")
+FALLBACK_FIRST_KINDS = 8              # decision to corridor: one of each before any second of a kind
+_K_RATE = re.compile(r"target range|federal funds rate|(?<!reverse )repo rate|policy rate", re.IGNORECASE)
+_K_DECIDE = re.compile(r"\b(?:decid\w*|rais\w*|lower\w*|reduc\w*|increas\w*|cut|cuts|hike\w*|keep\w*|kept|maintain\w*"
+                       r"|unchanged|leav\w*|left|retain\w*|hold|holding)\b", re.IGNORECASE)
+_K_MARKET = re.compile(r"\btraded\b|\bon an average\b|\bWACR\b|\bcall rate|\bmoney market|\bovernight|\bfinancial markets",
+                       re.IGNORECASE)
+_K_VOTE = re.compile(r"\bvot", re.IGNORECASE)
+_K_DISSENT = re.compile(r"\bvot\w* against\b|\bdissent|\bpreferred\b|\bwere of the view\b|\bexpressed reservations\b"
+                        r"|\bvoted to (?:keep|reduc|rais|increas|lower|cut|hike|maintain|retain|change|leave|hold)", re.IGNORECASE)
+_K_STANCE = re.compile(r"stance|withdrawal of accommodation|appropriate|guided by|prepared to|expects|anticipates"
+                       r"|will continue|future|patient|vigil|disinflationary", re.IGNORECASE)
+_K_PROJECTIONS = re.compile(r"projected|projection|path of|revised (?:up|down)", re.IGNORECASE)
+_K_INFLATION = re.compile(r"inflation|price pressures|prices", re.IGNORECASE)
+_K_ECONOMY = re.compile(r"growth|gdp|employment|labor|labour|unemployment|activity|spending|investment|outlook|uncertain",
+                        re.IGNORECASE)
+_K_BALANCE = re.compile(r"securities|holdings|purchases|balance sheet|treasury|mortgage", re.IGNORECASE)
+_K_CORRIDOR = re.compile(r"reverse repo|standing deposit|\bSDF\b|marginal standing|\bMSF\b|bank rate", re.IGNORECASE)
 
 
-def _priority(text: str) -> int:
-    return max((w for p, w in _PRIORITY if p.search(text)), default=1)
+def _kind(text: str) -> int:
+    """The fallback's kind of a change (an index into FALLBACK_KINDS) from its two sides' words."""
+    if _K_MARKET.search(text):
+        return FALLBACK_KINDS.index("other")              # the call rate against the repo rate is no decision
+    if _K_DISSENT.search(text):
+        return FALLBACK_KINDS.index("dissent")
+    if _K_RATE.search(text) and _K_DECIDE.search(text) and not _K_VOTE.search(text):
+        return FALLBACK_KINDS.index("decision")
+    for name, pattern in (("stance", _K_STANCE), ("projections", _K_PROJECTIONS), ("inflation", _K_INFLATION),
+                          ("economy", _K_ECONOMY), ("balance sheet", _K_BALANCE), ("corridor", _K_CORRIDOR), ("votes", _K_VOTE)):
+        if pattern.search(text):
+            return FALLBACK_KINDS.index(name)
+    return FALLBACK_KINDS.index("other")
 
 
 def _undated(text: str) -> list[str]:
@@ -1691,13 +1745,21 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
     removed = [p for p in pairs if p[0] and not p[1]]
     for p in [p for p in pairs if p[1] and not p[0]]:  # an added sentence that rewords a removed one: one change
         mine = set().union(*(_pairs(new.text[s:e]) for s, e in p[1]))
+        added = words(p[1], new.text)
+        best, best_shared = None, -1.0
         for r in removed:
             theirs = set().union(*(_pairs(old.text[s:e]) for s, e in r[0]))
-            if any(sum(x in _pairs(old.text[a:b]) for a, b in every_old) <= ADDED_MAX_SENTENCES for x in mine & theirs):
-                r[1] = p[1]
-                pairs.remove(p)
-                removed.remove(r)
-                break
+            gone = words(r[0], old.text)
+            if (any(sum(x in _pairs(old.text[a:b]) for a, b in every_old) <= ADDED_MAX_SENTENCES for x in mine & theirs)
+                    or (_same_topic(gone, added) and _kind(gone) == _kind(added))):    # round 17: same kind and topic too
+                a, b = _content(gone), _content(added)
+                shared = len(a & b) / max(1, min(len(a), len(b)))
+                if shared > best_shared:
+                    best, best_shared = r, shared
+        if best is not None:
+            best[1] = p[1]
+            pairs.remove(p)
+            removed.remove(best)
     seen: set[tuple[str, str]] = set()
     unique = []
     for p in pairs:                                     # a change the redline shows twice, once
@@ -1713,20 +1775,40 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
                 return k
         return len(prefer)
 
-    def key(p):
-        level = _priority(words(p[0], old.text) + " " + words(p[1], new.text))
-        return (level < 5, first_preferred(p), -level, min([s for s, _ in p[1]] or [10 ** 9]),
-                min([s for s, _ in p[0]] or [10 ** 9]))
+    kind = {id(p): _kind(words(p[0], old.text) + " " + words(p[1], new.text)) for p in unique}
+    preferred = {id(p): first_preferred(p) for p in unique}
+
+    def where(p) -> tuple[int, int]:
+        return min([s for s, _ in p[1]] or [10 ** 9]), min([s for s, _ in p[0]] or [10 ** 9])
+
+    chosen: list = []
+    used: set[tuple[int, int, int]] = set()
+
+    def take(p) -> bool:
+        nonlocal used
+        mine = {(old.document_id, *x) for x in p[0]} | {(new.document_id, *x) for x in p[1]}
+        if mine & used or any(c is p for c in chosen):
+            return False                               # a sentence another bullet already quotes
+        used |= mine
+        chosen.append(p)
+        return True
+
+    # Within a kind, a change whose new side is itself of that kind first: the new sentence says it (round 17: mpc-2019-02-07's
+    # old "consistent with the stance of calibrated tightening" was paired with a new sentence without the stance, while the
+    # added "decided to change the monetary policy stance from calibrated tightening to neutral" was left out).
+    says = {id(p): 0 if p[1] and _kind(words(p[1], new.text)) == kind[id(p)] else 1 for p in unique}
+    by_kind = sorted(unique, key=lambda p: (kind[id(p)], says[id(p)], preferred[id(p)], where(p)))
+    for k in range(FALLBACK_FIRST_KINDS):              # one of each kind first
+        for p in by_kind:
+            if len(chosen) < hi and kind[id(p)] == k and take(p):
+                break
+    for p in sorted(unique, key=lambda p: (preferred[id(p)], kind[id(p)], where(p))):
+        if len(chosen) == hi:
+            break
+        take(p)
 
     out: list[Bullet] = []
-    used: set[tuple[int, int, int]] = set()
-    for o, n in sorted(unique, key=key):
-        mine = {(old.document_id, *x) for x in o} | {(new.document_id, *x) for x in n}
-        if mine & used:
-            continue                                   # a sentence another bullet already quotes
-        if len(out) == hi:
-            break
-        used |= mine
+    for o, n in sorted(chosen, key=lambda p: (kind[id(p)], preferred[id(p)], where(p))):
         b = Bullet("")
         said = []
         if o:
