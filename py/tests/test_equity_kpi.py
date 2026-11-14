@@ -827,16 +827,22 @@ def test_results_day_counts_say_why_a_quarter_has_none():
 
 
 class _Feed:
-    """NSE's announcements as a fake fetch: answers each window with the rows filed inside it, and records the windows."""
+    """NSE's announcements as a fake fetch, as NSE's new host answered on 14 Nov 2026: a window longer than `short` days
+    answers without the rows in `lost` (dev run 9's missing April 2025 filings); a short window answers with every row
+    filed inside it, or with `short_answer` (dev run 10's HTTP 200 without JSON) when given. Records the windows asked."""
 
-    def __init__(self, rows):
-        self.rows, self.asked = rows, []
+    def __init__(self, rows, lost=(), short=76, short_answer=None):
+        self.rows, self.lost, self.short, self.short_answer, self.asked = rows, set(lost), short, short_answer, []
 
     def __call__(self, symbol, a, b):
         from ft.equity.calls import discovery as calls
         self.asked.append((a, b))
+        is_short = (b - a).days < self.short
+        if is_short and self.short_answer is not None:
+            return self.short_answer
         inside = [r for r in self.rows
-                  if a <= datetime.strptime(r["an_dt"], "%d-%b-%Y %H:%M:%S").date() <= b]
+                  if a <= datetime.strptime(r["an_dt"], "%d-%b-%Y %H:%M:%S").date() <= b
+                  and (is_short or r["seq_id"] not in self.lost)]
         return calls.Answer(200, inside)
 
 
@@ -845,36 +851,98 @@ def _nse_row(seq, when, text, desc):
             "sm_isin": "INE467B01029", "attchmntFile": f"https://nsearchives.nseindia.com/corporate/{seq}.pdf"}
 
 
-def test_discover_asks_one_window_per_quarter_and_finds_the_april_results_day(monkeypatch):
+def _tcs_feed(**kw):
+    return _Feed([
+        _nse_row("1", "09-Jan-2025 15:30:00", "Tata Consultancy Services Limited has submitted to the Exchange, the "
+                 "financial results for the period ended December 31, 2024.", "Outcome of Board Meeting"),
+        _nse_row("2", "10-Apr-2025 15:30:00", "Tata Consultancy Services Limited has submitted to the Exchange, the "
+                 "financial results for the period ended March 31, 2025.", "Outcome of Board Meeting"),
+        _nse_row("3", "10-Apr-2025 16:00:00", "Press Release", "Press Release"),
+        _nse_row("4", "20-Mar-2025 10:00:00", "Trading window closure", "Trading Window"),   # in no quarter's window
+    ], lost={"2", "3"}, **kw)
+
+
+def test_discover_asks_the_long_windows_then_a_short_one_for_a_quarter_without_a_results_day(monkeypatch):
+    """Dev run 9 (14 Nov 2026): the 365-day windows answered without the April 2025 results filings. Dev run 10: short
+    windows alone got no JSON. Now the long windows come first, and only a quarter they leave without a results day
+    (here Q4 FY25) has its own window asked; its rows fill the gap when NSE answers it."""
     from datetime import date
 
     from ft.equity.calls import discovery as calls
     from ft.jobs.tasks import equity_kpi_tables as t
     task = t.EquityKpiTables()
-    feed = _Feed([
-        _nse_row("1", "10-Apr-2025 15:30:00", "Tata Consultancy Services Limited has submitted to the Exchange, the "
-                 "financial results for the period ended March 31, 2025.", "Outcome of Board Meeting"),
-        _nse_row("2", "10-Apr-2025 16:00:00", "Press Release", "Press Release"),
-        _nse_row("3", "20-Mar-2025 10:00:00", "Trading window closure", "Trading Window"),   # in no quarter's window
-    ])
+    feed = _tcs_feed()
     monkeypatch.setattr(task, "_nse", lambda ctx: feed)
     monkeypatch.setattr(task, "_warm", lambda ctx, errors=None: None)
     co = calls.Company(1, "tcs", "TCS", "INE467B01029", None)
-    anns = task.discover(SimpleNamespace(fetcher=None), [co], date(2024, 10, 1), date(2026, 11, 14))
-    assert feed.asked == dc.feed_windows("tcs", date(2024, 10, 1), date(2026, 11, 14))     # 9 windows, no 365-day one
-    assert task.feed == {1: "nse"} and sorted(a.filing_key for a in anns[1]) == ["1", "2"]
+    anns = task.discover(SimpleNamespace(fetcher=None), [co], date(2025, 1, 1), date(2025, 6, 30))
+    assert feed.asked == [(date(2025, 1, 1), date(2025, 6, 30)),                  # the long window (one here)
+                          (date(2025, 4, 1), date(2025, 6, 15))]                  # Q4 FY25's own window, nothing else
+    assert dc.quarter_window("Q4 FY25", date(2025, 1, 1), date(2025, 6, 30)) == feed.asked[1]
+    assert task.feed == {1: "nse"} and sorted(a.filing_key for a in anns[1]) == ["1", "2", "3", "4"]
     rd, cands = dc.candidates(anns[1], dc.load_rules()["tcs"], "Q4 FY25")
-    assert rd == date(2025, 4, 10) and [c.filing_key for c in cands] == ["2"]
+    assert rd == date(2025, 4, 10) and [c.filing_key for c in cands] == ["3"]
 
     h = t.Harvest(companies=[co])
     assert task._preflight(h, anns, dc.load_rules()) is None
-    assert h.windows["tcs"] == {"requests": 9, "leaves": 9, "answered": 9, "rows": 2, "largest": 2, "round": []}
-    assert set(h.no_day) == {f"tcs {q}" for q in dc.quarters("tcs") if q != "Q4 FY25"}
+    assert h.windows["tcs"] == {"requests": 1, "leaves": 1, "answered": 1, "rows": 2, "largest": 2, "round": [],
+                                "retried": {"requests": 1, "leaves": 1, "answered": 1, "rows": 2, "largest": 2,
+                                            "round": []}}
+    assert set(h.no_day) == {f"tcs {q}" for q in dc.quarters("tcs") if q not in ("Q3 FY25", "Q4 FY25")}
     assert h.no_day["tcs Q1 FY26"] == {"rows": 0, "named": 0, "outcome": 0, "rejected": 0}
     checks = {c.name: c for c in task.checks(None, h, 1)}
-    assert checks["feed"].passed and '"requests": 9' in checks["feed"].detail
+    assert checks["feed"].passed and '"retried": {"requests": 1' in checks["feed"].detail
     assert '"tcs Q1 FY26": {"rows": 0' in checks["feed"].detail
     assert "Tata" not in checks["feed"].detail and "Press" not in checks["feed"].detail      # counts only (CLAUDE.md §4)
+
+
+def test_a_short_window_without_json_never_fails_the_feed(monkeypatch):
+    """Dev run 10's answer to every short historical window (HTTP 200, no JSON): the supplement adds nothing, the feed
+    still counts as NSE's (its long windows answered), and the quarter stays held."""
+    from datetime import date
+
+    from ft.equity.calls import discovery as calls
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    feed = _tcs_feed(short_answer=calls.Answer("not JSON"))
+    monkeypatch.setattr(task, "_nse", lambda ctx: feed)
+    monkeypatch.setattr(task, "_warm", lambda ctx, errors=None: None)
+    co = calls.Company(1, "tcs", "TCS", "INE467B01029", None)
+    anns = task.discover(SimpleNamespace(fetcher=None), [co], date(2025, 1, 1), date(2025, 6, 30))
+    assert len(feed.asked) == 2 and task.feed == {1: "nse"}                    # a failed short window isn't split
+    assert dc.results_day(anns[1], dc.load_rules()["tcs"], "Q4 FY25") is None
+    h = t.Harvest(companies=[co])
+    assert task._preflight(h, anns, dc.load_rules()) is None                   # Q3 FY25's results day: the feed passes
+    assert h.windows["tcs"]["retried"] == {"requests": 1, "leaves": 1, "answered": 0, "rows": 0, "largest": 0,
+                                           "round": []}
+    assert h.no_day["tcs Q4 FY25"] == {"rows": 0, "named": 0, "outcome": 0, "rejected": 0}   # NSE sent nothing for it
+
+
+def test_a_long_window_feed_that_fails_asks_no_short_window(monkeypatch):
+    from datetime import date
+
+    from ft.equity.calls import discovery as calls
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    asked = []
+    monkeypatch.setattr(task, "_nse", lambda ctx: lambda s, a, b: asked.append((a, b)) or calls.Answer("not JSON"))
+    monkeypatch.setattr(task, "_warm", lambda ctx, errors=None: None)
+    co = calls.Company(1, "tcs", "TCS", "INE467B01029", None)
+    task.discover(SimpleNamespace(fetcher=None), [co], date(2025, 1, 1), date(2025, 6, 30))
+    assert len(asked) == 3 and task.feed == {1: "none"} and not task.retried   # the failed window and its halves only
+
+
+def test_an_nse_reply_without_json_is_counted_by_its_reason():
+    from ft.jobs.tasks import equity_kpi_tables as t
+
+    class _Html:
+        def get(self, url, **kw):
+            return SimpleNamespace(body=b"<html>Access</html>")
+    task = t.EquityKpiTables()
+    ans = task._get_json(SimpleNamespace(fetcher=_Html()), "https://www.nseindia.com/api/x", "nse", {}, {}, warm=True)
+    assert ans.status == "not JSON" and dict(task.nse_errors) == {"HTTP 200, not JSON": 1}
+    task._get_json(SimpleNamespace(fetcher=_Html()), "https://api.bseindia.com/x", "bse", {}, {}, warm=False)
+    assert sum(task.nse_errors.values()) == 1                             # BSE's replies aren't NSE's
 
 
 def test_window_counts_name_a_leaf_at_a_round_count():

@@ -12,8 +12,9 @@ file or its text. A document already read with the same SHA-256 and parser versi
 
 **Which filing** (#512's fix round, 14 Nov 2026; `ft/equity/kpi/documents.py`): the quarter's results day first, then
 that day's candidates in the curated rule's order; the first with enough pages whose cut finds its heading is read.
-NSE is asked one window per quarter, the quarter end's next day to 76 days after it (`kd.feed_windows`; #512 part 4:
-dev run 9's 365-day windows came back without six companies' April 2025 results filings).
+NSE is asked the shared discovery's 365-day windows; a quarter still without a results day then has its own 76-day
+window asked once more (`kd.quarter_window`; #512 part 4: dev run 9's long windows came back without six companies'
+April 2025 results filings, and dev run 10's per-quarter windows got HTTP 200 without JSON from NSE's new host).
 
 Run logs print counts and ids only, never a page's text (CLAUDE.md §4).
 
@@ -146,6 +147,7 @@ class EquityKpiTables(Task):
         self.feed: dict[int, str] = {}
         self.nse_errors: Counter = Counter()   # why NSE didn't answer: the client's reason (no URL) → requests
         self.windows: dict[int, list[dc.WindowLog]] = {}   # entity_id → every NSE window asked (the `feed` check's counts)
+        self.retried: dict[int, list[dc.WindowLog]] = {}   # entity_id → the supplementary per-quarter windows asked
 
     # ------------------------------------------------------------------ scheduling (hand-run only before 18 Nov)
     def due(self, db, workflow: str, now=None) -> Due:
@@ -193,6 +195,8 @@ class EquityKpiTables(Task):
                     continue
                 return dc.Answer(e.status if e.status is not None else "network error")
             except ValueError:
+                if source == "nse":                       # dev run 10 (14 Nov 2026): every short historical window
+                    self.nse_errors["HTTP 200, not JSON"] += 1   # answered so, and the check couldn't say why
                 return dc.Answer("not JSON")
         return dc.Answer("failed")                                       # pragma: no cover
 
@@ -226,33 +230,43 @@ class EquityKpiTables(Task):
                 errors["homepage: " + _why(e)] += 1
 
     def discover(self, ctx: Context, companies: list[dc.Company], start: date, end: date) -> dict[int, list[kd.Filing]]:
-        """Every announcement of each company in its quarters' windows inside [start, end] (`kd.feed_windows`: one
-        window per pilot quarter, #512 part 4), as `kd.Filing`s with NSE's category (`desc`, which the shared discovery
-        doesn't keep; the results-day rule reads it). NSE first, BSE as the fallback when NSE fails (the call-transcripts
-        rule); nothing is stored. Every window's log is kept in `self.windows` for the `feed` check's counts."""
+        """Every announcement of each company over [start, end], as `kd.Filing`s with NSE's category (`desc`, which
+        the shared discovery doesn't keep; the results-day rule reads it). NSE first, BSE as the fallback when NSE fails
+        (the call-transcripts rule); nothing is stored.
+
+        NSE is asked the shared discovery's windows (365 days or fewer). Then, once those answered, each pilot quarter
+        still without a results day has its own window (`kd.quarter_window`, 76 days) asked once more, and any rows
+        it returns are added; that supplement never fails the feed (#512 part 4, 14 Nov 2026: dev run 9's 365-day
+        windows answered without six companies' April 2025 results filings; dev run 10 asked only per-quarter windows,
+        and NSE's new host answered every historical one with HTTP 200 and no JSON). Every window's log is kept for the
+        `feed` check's counts: `self.windows` (the feed) and `self.retried` (the supplement)."""
         index = dc.CompanyIndex(companies)
         nse, bse = self._nse(ctx), self._bse(ctx)
+        rules = kd.load_rules()
         self._warm(ctx, self.nse_errors)
         out: dict[int, list[kd.Filing]] = {c.entity_id: [] for c in companies}
         for co in companies:
-            found: list[dc.Announcement] = []
-            category: dict[tuple[str, str], str | None] = {}
+            symbols = [co.symbol, *sorted(co.symbols - {co.symbol})]
             ok = True
             rows: list[dict] = []
-            for sym in [co.symbol, *sorted(co.symbols - {co.symbol})]:
-                for lo, hi in kd.feed_windows(co.slug, start, end):   # one window per quarter (#512 part 4)
-                    got, logs, sym_ok, _refused = dc.nse_symbol(nse, sym, lo, hi)
-                    ok &= sym_ok
-                    rows += got
-                    self.windows.setdefault(co.entity_id, []).extend(logs)
-                    for x in logs:                        # a 200 that isn't a row list raises nothing: count it here
-                        if not x.superseded and not x.answered and x.status == 200:
-                            self.nse_errors["HTTP 200 without a row list"] += 1
-            for r in dc.dedupe_rows(rows):
-                a = dc.norm_nse(r)
-                if a is not None:
-                    found.append(self._join(a, index, co))
-                    category[(a.exchange, a.filing_key)] = str(r.get("desc") or "").strip() or None
+            for sym in symbols:
+                got, logs, sym_ok, _refused = dc.nse_symbol(nse, sym, start, end)
+                ok &= sym_ok
+                rows += got
+                self._log(self.windows, co.entity_id, logs)
+            found, category = self._nse_filings(rows, index, co)
+            if ok and found and co.slug in rules:
+                have = self._as_filings(found, category)
+                for label in kd.quarters(co.slug):
+                    w = kd.quarter_window(label, start, end)
+                    q = rules[co.slug].for_quarter(label)
+                    if w is None or kd.results_day(have, q, label) is not None:
+                        continue
+                    for sym in symbols:                   # depth 1: a failed window isn't split again (dev run 10's
+                        got, logs = dc.nse_window(nse, sym, *w, depth=1)   # no-JSON answers would only multiply)
+                        rows += got
+                        self._log(self.retried, co.entity_id, logs)
+                found, category = self._nse_filings(rows, index, co)
             self.feed[co.entity_id] = "nse" if ok and found else "none"
             if (not ok or not found) and co.bse_code:
                 self.feed[co.entity_id] = "bse"
@@ -263,9 +277,30 @@ class EquityKpiTables(Task):
                         found.append(self._join(a, index, co))
                         category[(a.exchange, a.filing_key)] = (str(r.get("SUBCATNAME") or r.get("CATEGORYNAME") or "")
                                                                 .strip() or None)
-            out[co.entity_id] = [kd.Filing(a.exchange, a.filing_key, a.disseminated, a.subject, a.file_name, a.url,
-                                           category.get((a.exchange, a.filing_key))) for a in dc.dedupe(found)]
+            out[co.entity_id] = self._as_filings(dc.dedupe(found), category)
         return out
+
+    def _log(self, into: dict[int, list[dc.WindowLog]], entity_id: int, logs: list[dc.WindowLog]) -> None:
+        into.setdefault(entity_id, []).extend(logs)
+        for x in logs:                                    # a 200 that isn't a row list raises nothing: count it here
+            if not x.superseded and not x.answered and x.status == 200:
+                self.nse_errors["HTTP 200 without a row list"] += 1
+
+    def _nse_filings(self, rows: list[dict], index: dc.CompanyIndex, co: dc.Company
+                     ) -> tuple[list[dc.Announcement], dict[tuple[str, str], str | None]]:
+        found: list[dc.Announcement] = []
+        category: dict[tuple[str, str], str | None] = {}
+        for r in dc.dedupe_rows(rows):
+            a = dc.norm_nse(r)
+            if a is not None:
+                found.append(self._join(a, index, co))
+                category[(a.exchange, a.filing_key)] = str(r.get("desc") or "").strip() or None
+        return found, category
+
+    @staticmethod
+    def _as_filings(found: list[dc.Announcement], category: dict[tuple[str, str], str | None]) -> list[kd.Filing]:
+        return [kd.Filing(a.exchange, a.filing_key, a.disseminated, a.subject, a.file_name, a.url,
+                          category.get((a.exchange, a.filing_key))) for a in found]
 
     @staticmethod
     def _join(a: dc.Announcement, index: dc.CompanyIndex, asked: dc.Company) -> dc.Announcement:
@@ -301,7 +336,7 @@ class EquityKpiTables(Task):
         except AIUnavailable as e:
             h.unavailable = e.reason
             return h                                      # nothing to read without AI (#197)
-        self.feed, self.nse_errors, self.windows = {}, Counter(), {}
+        self.feed, self.nse_errors, self.windows, self.retried = {}, Counter(), {}, {}
         anns = self.discover(ctx, h.companies, start, end)
         h.preflight = self._preflight(h, anns, rules)
         for co in h.companies:
@@ -340,6 +375,8 @@ class EquityKpiTables(Task):
             if co.slug not in rules:
                 continue
             h.windows[co.slug] = self._window_counts(self.windows.get(co.entity_id, []))
+            if self.retried.get(co.entity_id):
+                h.windows[co.slug]["retried"] = self._window_counts(self.retried[co.entity_id])
             for label in kd.quarters(co.slug):
                 q = rules[co.slug].for_quarter(label)
                 if kd.results_day(anns.get(co.entity_id, []), q, label) is None:
