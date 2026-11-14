@@ -121,7 +121,9 @@ reply is rejected, an output built by code from the changed sentences (`summarie
 labelled previous or new, model `FALLBACK_MODEL`, no cost) is published in the same transaction, superseding the older output,
 so no target stays on an older version; its citations are the quoted sentences. A v17-on target gets three replies, not two
 (`_max_attempts`), before it is rejected. v18 is v17's text, marking the revision of these checks before the judge (a third
-reply, the second model's third question, the fallback's fixes; round 16's second dev run).
+reply, the second model's third question, the fallback's fixes; round 16's second dev run); v19 is v17's text again, marking
+the third run's (Anand, 14 Nov 2026, about 18:20 IST): the "adds" check skips the documents' everyday words, and the fallback
+skips changes of a connective or a paragraph number and never quotes a sentence twice.
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -197,7 +199,7 @@ from ft.policy import rbi_resolution
 # v15 (Anand's pick of 13 Nov 2026, before 17:36 IST, after round 13): v14's text, with two false positives fixed
 # (summaries.DIFF_FP_FIX_FROM). v16 (Anand's decision of 14 Nov 2026, about 00:38 IST, after the judge failed round 14): v15's
 # text, with the grammar-fit, run-on and neighbour checks (summaries.DIFF_FIT_FROM).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v18", "stance_extraction": "v2",
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v19", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)

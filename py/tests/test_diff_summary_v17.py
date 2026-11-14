@@ -96,7 +96,7 @@ def check_rbi(version, *rows):
     return check(version, *rows, req=REQ_RBI, changed=CH_RBI, sentences=SE_RBI)
 
 
-def test_v17_is_v16_plus_three_rules_with_v16s_schema_on_sonnet_and_v18_is_its_text_and_current():
+def test_v17_is_v16_plus_three_rules_with_v16s_schema_on_sonnet_and_v18_and_v19_are_its_text():
     assert "<!--" not in V17.text and V17.text != V16.text
     gone = 'Name members in plain words ("Lisa D. Cook and Beth M. Hammack")'
     assert gone in V16.text and gone not in V17.text
@@ -109,7 +109,9 @@ def test_v17_is_v16_plus_three_rules_with_v16s_schema_on_sonnet_and_v18_is_its_t
     assert (REQ.spec.route, REQ.model_id, REQ.spec.effort) == ("json", SONNET, "medium")
     assert summaries.DIFF_VERIFY_FROM == 17 and summaries.DIFF_FIT_FROM == 16
     v18 = load_prompt("statement_diff_summary", "v18")             # v17's text, marking the checks' revision before the judge
-    assert v18.text == V17.text and PROMPT_VERSION["statement_diff_summary"] == "v18"
+    v19 = load_prompt("statement_diff_summary", "v19")             # and again, marking the third run's revision
+    assert v18.text == V17.text == v19.text and PROMPT_VERSION["statement_diff_summary"] == "v19"
+    assert load_schema("statement_diff_summary", "v19") == load_schema("statement_diff_summary", "v17")
     assert load_schema("statement_diff_summary", "v18") == load_schema("statement_diff_summary", "v17")
     assert summaries.diff_summary_request(NEW, OLD, D.segments, v18).model_id == SONNET
 
@@ -414,6 +416,31 @@ def test_units_are_never_the_distinctive_pair_that_makes_an_addition_a_rewording
     changed = dict(zip((1, 2), summaries.changed_spans(segs), strict=True))
     sentences = dict(zip((1, 2), sentence_spans(segs), strict=True))
     assert added_problem(text, [], {1: old, 2: new}, 1, changed, sentences) is None
+
+
+def test_the_documents_everyday_words_are_never_the_pair_that_makes_an_addition_a_rewording():
+    # Round 16's second dev run: "target range", "neutral stance", "policy rate" and "inflation outlook" rejected 8 replies.
+    old = "The MPC also decided to retain the neutral stance to respond appropriately. Growth held up."
+    new = "The MPC also decided to change the stance to calibrated tightening from the neutral stance. Growth held up."
+    text = 'The new resolution now says the MPC decided "to change the stance to calibrated tightening from the neutral stance".'
+    segs, _, _ = _pair(old, new)
+    changed = dict(zip((1, 2), summaries.changed_spans(segs), strict=True))
+    sentences = dict(zip((1, 2), sentence_spans(segs), strict=True))
+    assert added_problem(text, [], {1: old, 2: new}, 1, changed, sentences) is None
+    assert summaries._pairs("the target range for the federal funds rate and the policy rate") == set()
+    assert ("actively", "disinflationary") in summaries._pairs("policy needs to remain actively disinflationary")
+
+
+def test_the_fallback_skips_a_change_of_a_connective_and_quotes_no_sentence_twice():
+    old = ("The SDF rate remains unchanged at 6.25 per cent. The MPC decided to keep the repo rate at 6.50 per cent. "
+           "The MPC decided to retain the neutral stance. The MPC also decided to retain the neutral stance to respond.")
+    new = ("Consequently, the SDF rate remains unchanged at 6.25 per cent. The MPC decided to raise the repo rate to 6.75 "
+           "per cent. The MPC decided to change the stance to calibrated tightening.")
+    bullets = fallback_bullets(*_pair(old, new), [])
+    assert not any("SDF" in b.text for b in bullets)
+    quoted = [x for b in bullets for x in b.citations if x.document_id == 2]
+    assert len(quoted) == len(set(quoted))
+    assert summaries._trivial("8. The rate is 5 per cent.", "9. Consequently, the rate is 5 per cent.")
 
 
 def test_a_v17_target_gets_three_replies_and_every_other_target_two():

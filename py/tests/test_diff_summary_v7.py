@@ -97,7 +97,7 @@ def test_v7_is_v6_plus_a_paragraph_on_coverage_and_four_rules_and_v6_is_left_as_
 
 
 def test_v7_runs_on_sonnet_with_the_tasks_settings_and_every_earlier_version_on_haiku():
-    assert REQ.model_id == SONNET and summaries.DIFF_MODEL_OF == {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET, "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET}
+    assert REQ.model_id == SONNET and summaries.DIFF_MODEL_OF == {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET, "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET}
     assert (REQ.spec.route, REQ.spec.effort, REQ.spec.max_tokens) == ("citations", "low", 8_000)
     for version in ("v1", "v2", "v3", "v4", "v5", "v6"):
         req = summaries.diff_summary_request(NEW, OLD, D.segments, load_prompt("statement_diff_summary", version))
@@ -319,7 +319,7 @@ def test_v10_is_v9_plus_the_carrier_rule_on_sonnet_at_effort_medium():
     req = summaries.diff_summary_request(NEW, OLD, D.segments, v10)
     assert (req.model_id, req.spec.effort, req.spec.route) == (SONNET, "medium", "citations")
     assert summaries.diff_summary_request(NEW, OLD, D.segments, v9).spec.effort == "low"     # v9 ran at the task's
-    assert summaries.DIFF_EFFORT_OF == {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium", "v16": "medium", "v17": "medium", "v18": "medium"} and ai_batch.ENDS_FROM == 10
+    assert summaries.DIFF_EFFORT_OF == {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium", "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium"} and ai_batch.ENDS_FROM == 10
 
 
 @pytest.mark.parametrize("text, ok", [

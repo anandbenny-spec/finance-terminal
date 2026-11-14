@@ -69,16 +69,17 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
 DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
-                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
 # (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
 # two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12); v14: v13 plus two rules, with one
 # more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14); v16: v15's
 # text, with three more checks (round 15); v17: v16 plus three rules, with four more checks, a second model's check and a
-# fallback built by code (round 16); v18: v17's text, marking those checks' revision before the judge (round 16's second run).
+# fallback built by code (round 16); v18: v17's text, marking those checks' revision before the judge (round 16's second run); v19: v17's
+# text again, marking the third run's (a narrower "adds" check, the fallback's trivial changes and repeated sentences).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
 DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium",
-                  "v16": "medium", "v17": "medium", "v18": "medium"}
+                  "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -1465,11 +1466,18 @@ _FUNCTION = frozenset({"that", "this", "these", "those", "which", "will", "would
                        "basis", "points", "point", "cent", "percent", "percentage", "bps"})   # units aren't a phrase
 
 
+_GENERIC = frozenset({"federal", "funds", "repo", "monetary", "economic", "financial", "conditions", "risks"})
+
+
 def _pairs(text: str) -> set[tuple[str, str]]:
-    """`text`'s distinctive pairs of words (see above), lower case only: a capitalised word is a name or opens a sentence."""
+    """`text`'s distinctive pairs of words (see above), lower case only: a capitalised word is a name or opens a sentence.
+    A word of the documents' everyday vocabulary (the topics `_NEIGHBOUR_OWN` names, such as "target", "stance", "policy",
+    "inflation", and `_GENERIC`) is never one: round 16's second dev run read "target range", "neutral stance" and "policy
+    rate" as rewordings."""
     raw = _WORD.findall(match_form(text))
     words = [w.casefold() for w in raw]
-    ok = [len(w) >= 4 and w.isalpha() and r[0].islower() and w not in _FUNCTION for w, r in zip(words, raw, strict=True)]
+    ok = [len(w) >= 4 and w.isalpha() and r[0].islower() and w not in _FUNCTION and w not in _GENERIC and not _own_word(w)
+          for w, r in zip(words, raw, strict=True)]
     return {(words[i], words[i + 1]) for i in range(len(words) - 1) if ok[i] and ok[i + 1]}
 
 
@@ -1570,9 +1578,10 @@ def apply_verdicts(c: Checked, answer) -> None:
 # and labelled previous or new, with no word of a model's, at most five:
 # - the policy decision's change first (the policy rate or the target range; `_PRIORITY`'s top weight), then what the rejected
 #   reply's quotes pointed at, in its order, then the rest by what they are about (`_PRIORITY`), then by position;
-# - a change only in dates is left out: its two sides differ only in month names, years, and day numbers near a month name
-#   (`_dates_only`; a rate, a projection or a count that changed is never a date);
-# - a change shown twice in the redline (an RBI resolution says its decision in two paragraphs) is shown once, by its words;
+# - a change only in dates, a paragraph number or a connective is left out (`_trivial`): dates are month names, years, and day
+#   numbers near a month name, so a rate, a projection or a count that changed is never a date;
+# - a change shown twice in the redline (an RBI resolution says its decision in two paragraphs) is shown once, by its words,
+#   and no sentence is quoted by two bullets;
 # - two sentences the redline pairs as one change but that share few words (`_same_topic`: fewer than PAIR_MIN_SHARED of the
 #   shorter side's content words, names aside) are shown as two, one the previous document had and one the new one has, never side by
 #   side as if one replaced the other; and an added and a removed sentence sharing a distinctive pair of words (`_pairs`, in
@@ -1587,7 +1596,7 @@ DAY_NEAR_MONTH = 3                    # a day number this many words or fewer fr
 PAIR_MIN_SHARED = 0.3
 _PRIORITY = ((re.compile(r"target range|repo rate|federal funds rate|bank rate|reverse repo|standing deposit|marginal standing",
                          re.IGNORECASE), 5),
-             (re.compile(r"against|dissent|preferred|instead", re.IGNORECASE), 4),
+             (re.compile(r"against|dissent|preferred|instead|were of the view", re.IGNORECASE), 4),
              (re.compile(r"stance|accommodat|withdrawal|neutral|appropriate|guided by|prepared to|expects|anticipates"
                          r"|will continue|future", re.IGNORECASE), 4),
              (re.compile(r"projected|projection|inflation|growth|gdp|employment|labor|labour|unemployment", re.IGNORECASE), 3),
@@ -1614,6 +1623,23 @@ def _undated(text: str) -> list[str]:
 
 def _dates_only(old_text: str, new_text: str) -> bool:
     return _undated(old_text) == _undated(new_text)
+
+
+_CONNECTIVE = frozenset({"consequently", "accordingly", "also", "further", "furthermore", "however", "hence", "thus",
+                         "moreover", "therefore", "meanwhile", "overall"})
+
+
+def _gist(text: str) -> list[str]:
+    """`text`'s words without dates, connectives ("Consequently, …") or an opening paragraph number ("8. …")."""
+    words = _undated(text)
+    if words and re.fullmatch(r"\d{1,2}", words[0]):
+        words = words[1:]
+    return [w for w in words if w not in _CONNECTIVE]
+
+
+def _trivial(old_text: str, new_text: str) -> bool:
+    """A change only in dates, a paragraph number or a connective: no bullet of the fallback's."""
+    return _gist(old_text) == _gist(new_text)
 
 
 def _content(text: str) -> set[str]:
@@ -1654,8 +1680,8 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
         o = [tuple(x) for x in p.get("old", [])] if kind != "added" else []
         n = [tuple(x) for x in p.get("new", [])] if kind != "removed" else []
         if o and n:
-            if _dates_only(words(o, old.text), words(n, new.text)):
-                continue                                   # a change only in dates
+            if _trivial(words(o, old.text), words(n, new.text)):
+                continue                                   # a change only in dates, a paragraph number or a connective
             if not _same_topic(words(o, old.text), words(n, new.text)):
                 pairs += [[o, []], [[], n]]                # paired by position, not by what they say: two
                 continue
@@ -1693,7 +1719,14 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
                 min([s for s, _ in p[0]] or [10 ** 9]))
 
     out: list[Bullet] = []
-    for o, n in sorted(unique, key=key)[:hi]:
+    used: set[tuple[int, int, int]] = set()
+    for o, n in sorted(unique, key=key):
+        mine = {(old.document_id, *x) for x in o} | {(new.document_id, *x) for x in n}
+        if mine & used:
+            continue                                   # a sentence another bullet already quotes
+        if len(out) == hi:
+            break
+        used |= mine
         b = Bullet("")
         said = []
         if o:
