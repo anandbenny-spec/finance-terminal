@@ -126,7 +126,9 @@ the third run's (Anand, 14 Nov 2026, about 18:20 IST): the "adds" check skips th
 skips changes of a connective or a paragraph number and never quotes a sentence twice; v20 is v19's text again, marking round 17's
 (Anand, 14 Nov 2026, about 22:19 IST): a quotation ending on "a", "the" or "to" mid-phrase fails even where the bullet goes on in
 its own words (`summaries.DIFF_OPEN_END_FROM`), and the fallback takes one change of each kind first, the decision being the
-rate with a verb of deciding (`summaries._kind`).
+rate with a verb of deciding (`summaries._kind`); v21 is v20's text again, marking round 18's (Anand, 14 Nov 2026, about 23:45
+IST): the fallback gives growth projections their own slot and quotes up to three consecutive added (or removed) sentences as
+one change.
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -202,7 +204,7 @@ from ft.policy import rbi_resolution
 # v15 (Anand's pick of 13 Nov 2026, before 17:36 IST, after round 13): v14's text, with two false positives fixed
 # (summaries.DIFF_FP_FIX_FROM). v16 (Anand's decision of 14 Nov 2026, about 00:38 IST, after the judge failed round 14): v15's
 # text, with the grammar-fit, run-on and neighbour checks (summaries.DIFF_FIT_FROM).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v20", "stance_extraction": "v2",
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v21", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)

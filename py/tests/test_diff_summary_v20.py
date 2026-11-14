@@ -27,11 +27,13 @@ def _pair(old: str, new: str):
     return diff_texts(old, new).segments, a, b
 
 
-def test_v20_is_v19s_text_with_v19s_schema_and_is_current():
+def test_v20_and_v21_are_v19s_text_with_v19s_schema_and_v21_is_current():
     v19, v20 = load_prompt("statement_diff_summary", "v19"), load_prompt("statement_diff_summary", "v20")
-    assert v20.text == v19.text and v20.version == "v20" and "<!--" not in v20.text
+    v21 = load_prompt("statement_diff_summary", "v21")             # round 18's revision of the fallback
+    assert v21.text == v20.text == v19.text and v20.version == "v20" and "<!--" not in v20.text
+    assert load_schema("statement_diff_summary", "v21") == load_schema("statement_diff_summary", "v19")
     assert load_schema("statement_diff_summary", "v20") == load_schema("statement_diff_summary", "v19")
-    assert PROMPT_VERSION["statement_diff_summary"] == "v20" and summaries.DIFF_OPEN_END_FROM == 20
+    assert PROMPT_VERSION["statement_diff_summary"] == "v21" and summaries.DIFF_OPEN_END_FROM == 20   # v21: round 18
     assert summaries.DIFF_MODEL_OF["v20"] == summaries.DIFF_MODEL_OF["v19"]
     assert summaries.DIFF_EFFORT_OF["v20"] == summaries.DIFF_EFFORT_OF["v19"]
 
@@ -174,3 +176,57 @@ def test_a_quotation_that_names_the_words_it_quotes_is_no_cut_phrase():
     assert cut_quote_problem(text, [passage], subject_ok=True, open_end=True) is None
     cut = 'The guidance now weighs "the extent and timing of" adjustments to the target range.'
     assert cut_quote_problem(cut, [passage], subject_ok=True, open_end=True) is not None
+
+
+# ---------------------------------------------------------------------------------------------- round 18 (v21)
+def test_growth_projections_are_their_own_kind_beside_the_inflation_projections():
+    assert kind("Taking into consideration these factors, real GDP growth for 2019-20 is revised downwards from 6.1 per cent "
+                "to 5.0 per cent.") == "growth projections"
+    assert kind("Taking into consideration these factors, the CPI inflation projection is revised upwards to 6.5 per cent for "
+                "Q4:2019-20.") == "projections"
+    assert kind("Real GDP growth for 2025-26 is projected at 6.5 per cent.") == "growth projections"
+
+
+def test_the_fallback_keeps_both_projections_before_the_inflation_reading_and_activity():
+    # Round 17: mpc-2020-02-06's fallback (3493) left out the GDP projection revision that v1 (404) had.
+    old = ("Accordingly, the MPC decided to keep the policy repo rate unchanged and continue with the accommodative stance as "
+           "long as it is necessary to revive growth. However, given the evolving growth-inflation dynamics, the MPC felt it "
+           "appropriate to take a pause at this juncture. Taking into consideration these factors, the CPI inflation projection "
+           "is revised upwards to 5.1-4.7 per cent for H2:2019-20. Retail inflation increased sharply to 4.6 per cent in "
+           "October. Taking into consideration these factors, real GDP growth for 2019-20 is revised downwards from 6.1 per cent "
+           "to 5.0 per cent. Service sector activity generally remained weak in October.")
+    new = ("Accordingly, the MPC decided to keep the policy repo rate unchanged and persevere with the accommodative stance as "
+           "long as necessary to revive growth. Given the evolving growth-inflation dynamics, the MPC felt it appropriate to "
+           "maintain status quo. Taking into consideration these factors, the CPI inflation projection is revised upwards to "
+           "6.5 per cent for Q4:2019-20. Retail inflation surged from 4.6 per cent in October to 7.4 per cent in December. "
+           "Taking into consideration these factors, real GDP growth for 2020-21 is projected at 6.0 per cent. Some "
+           "high-frequency indicators point to a lift in the momentum of economic activity.")
+    bullets = fallback_bullets(*_pair(old, new), [])
+    texts = [b.text for b in bullets]
+    assert len(bullets) == 5 and "persevere" in texts[0]
+    assert any("CPI inflation projection" in t for t in texts) and any("real GDP growth for 2020-21" in t for t in texts)
+    assert not any("momentum of economic activity" in t for t in texts)       # the fifth kind waits for a sixth slot
+
+
+def test_up_to_three_consecutive_new_sentences_are_one_change_quoted_together():
+    # Round 17: fomc-2023-03-22's fallback (3490) gave its three new banking sentences three of its five bullets.
+    old = "The Committee decided to raise the target range to 4-1/2 to 4-3/4 percent. Job gains have been robust."
+    banking = ("The U.S. banking system is sound and resilient. Recent developments are likely to result in tighter credit "
+               "conditions. The extent of these effects is uncertain. The Committee will closely monitor incoming information.")
+    new = f"The Committee decided to raise the target range to 4-3/4 to 5 percent. {banking} Job gains have picked up."
+    a = Doc(1, "fomc_statement", "FOMC statement", "a", "Fed", date(2023, 2, 1), old)
+    b = Doc(2, "fomc_statement", "FOMC statement", "b", "Fed", date(2023, 3, 22), new)
+    starts = [new.index(x) for x in ("The U.S. banking", "Recent developments", "The extent", "The Committee will")]
+    ends = [new.index(x) + len(x) for x in ("resilient.", "credit conditions.", "is uncertain.", "incoming information.")]
+    segments = {"pairs": [{"kind": "changed", "old": [[0, old.index(" Job")]], "new": [[0, new.index(" The U.S.")]]}]
+                + [{"kind": "added", "new": [[s, e]]} for s, e in zip(starts, ends, strict=True)]
+                + [{"kind": "changed", "old": [[old.index("Job"), len(old)]], "new": [[new.index("Job"), len(new)]]}]}
+    bullets = fallback_bullets(segments, a, b, [])
+    texts = [x.text for x in bullets]
+    together = [t for t in texts if "banking system is sound" in t]
+    assert len(together) == 1 and "The extent of these effects is uncertain." in together[0]
+    assert together[0].endswith("The previous FOMC statement doesn't have these sentences.")
+    assert "closely monitor" not in together[0]                                  # at most three in one change
+    alone = [t for t in texts if "closely monitor" in t]
+    assert alone and alone[0].endswith("The previous FOMC statement doesn't have this sentence.")
+    assert any("Job gains have picked up" in t for t in texts) and len(bullets) == 4
