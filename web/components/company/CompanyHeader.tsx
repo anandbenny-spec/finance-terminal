@@ -49,8 +49,9 @@ export function CompanyHeader({ company, day, indexNames }: { company: CompanyRo
           )}
           <Item label="Peer group">
             {company.peer_group_label ? (
-              <span>
-                {company.peer_group_label} <Qualifier>{company.peer_group_label_kind ?? "curated"}</Qualifier>
+              <span className="inline-flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                <span className="min-w-0 break-words">{company.peer_group_label}</span>
+                <Qualifier>{company.peer_group_label_kind ?? "curated"}</Qualifier>
               </span>
             ) : (
               absent
