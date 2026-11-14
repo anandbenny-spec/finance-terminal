@@ -88,7 +88,7 @@ def candidates(text: str, turns: Sequence[Turn], role: str, terms: Sequence[str]
     """The candidate sentences of one role (module doc). Empty when the metric has no terms."""
     pats = [_term(t) for t in terms if t]
     members = [_word(m) for m in member_terms if m]
-    if not pats:
+    if not pats or role not in ROLES:                # only management and analyst turns offer candidates
         return []
     found: list[tuple[int, int, int]] = []          # (score, start, end)
     for t in turns:

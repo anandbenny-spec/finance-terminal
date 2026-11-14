@@ -2,8 +2,10 @@
 (TCS, Infosys, HCLTech; HDFC Bank, ICICI Bank, SBI, Axis Bank) over Q3 FY25 to Q2 FY27 (TCS from Q2 FY25), it finds the
 results press release, fact sheet or data sheet in the announcements feed (the discovery `equity.call_transcripts` uses),
 reads it, extracts the KPI metrics each page states through `ft/ai/client.py` (Haiku 5.5), and writes `equity.kpi_document`
-(metadata only) and `equity.kpi_value` (the kept and filtered rows). It writes no flags (DD-05) and shows nothing (the
-field policy `equity.kpi_changes` stays hidden until DD-07's judge).
+(metadata only) and `equity.kpi_value` (the kept and filtered rows). DD-05 (#513) maps each kept row to its curated key,
+builds each company's grid under Plan 05 §1.3's rules, checks each flag with Sonnet and finds its transcript quotes (the
+flag review), and writes the flags to `equity.kpi_change`. Nothing shows (the field policy `equity.kpi_changes` stays
+hidden, and each flag needs DD-07's judge).
 
 **Nothing is stored** (Plan 05 D7, #287): the file is fetched with `keep=lambda _: False`, so the fetcher returns the
 body without a raw file or an `ops.http_cache` row; the task keeps the URL, the pages, the SHA-256 and the size, never the
@@ -20,10 +22,15 @@ Run logs print counts and ids only, never a page's text (CLAUDE.md §4).
 
 **Hand-run only, no schedule before 18 Nov** (card): `due()` refuses the daily, weekly and watch workflows, so the
 Sunday weekly never runs it; a `backfill` with `--task equity.kpi_tables` on dev is how the dev run and, later, the
-one production run (DD-06) are started. Not `refresh`: its job stops at 30 minutes, and the run's few hundred
-page calls go one after another (DA-10's 384 took about 50 minutes); `backfill` allows 240. A run that stops on
-its cap still resolves every remaining quarter as held, so what it read loads and a re-run picks up the rest
-(read documents with an unchanged SHA-256 are not extracted again).
+one production run (DD-06) are started. Not `refresh` for a first extraction: its job stops at 30 minutes, and the
+run's few hundred page calls go one after another (DA-10's 384 took about 50 minutes); `backfill` allows 240. A run
+that stops on its cap still resolves every remaining quarter as held, so what it read loads and a re-run picks up the
+rest (read documents with an unchanged SHA-256 are not extracted again).
+
+**The flag review** (DD-05 part 2) runs in the mode `config/equity/kpi_review.yaml` names (`review_mode`): `price` (the
+default) builds and prices every Sonnet and Haiku request and sends none, and writes no flag (it leaves the stored flags
+unless it replaces a document they rest on); `all` sends them and writes the flags. So an AI run's dry run is a backfill
+in `price`, and the run that sends is a backfill after a reviewed change of that line to `all`.
 
 **AI** inside the pilot's $5 from the $25 pool (pre-approval 2, 11 Nov 2026; $4.61 left after DA-10): every call is priced
 before it is sent and stopped at the run cap or the `ai_monthly_budget_usd` switch; the run's cost goes on `ops.task_run.ai_cost_usd`. Without a
@@ -42,6 +49,9 @@ Checks, B blocking, W warning (counts and ids only):
 - (W) `extracted`: documents read, pages read (text and image), rows kept and filtered by reason, the AI cost;
 - (W) `empty`: read documents with no kept row, named (a quarter DD-05 must treat as missing, never as a drop);
 - (W) `budget`: whether the run stopped on the run cap or the monthly switch (passing when it didn't);
+- (W) `dictionary`, `flags`: kept rows mapped to a curated key; the candidate flags before and after the rules (DD-05);
+- (W) `review`: the flag review's counts by outcome and company, the quotes, the cost or the price run's estimate, and
+  why it stopped sending, if it did; (W, passes) `ai_answers`: the answers used, so no input is sent twice (DD-05);
 - (W) `ai_unavailable` (always passes): set when no key or credits, so the run skipped.
 """
 from __future__ import annotations
@@ -50,12 +60,13 @@ import hashlib
 import json
 import os
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from ft.ai import batch
-from ft.ai.client import AIUnavailable, CallError, Client, Failed, TooLong, cost_usd, load_prompt, load_schema
+from ft.ai.client import AIUnavailable, CallError, Client, Failed, Request, TooLong, cost_usd, load_prompt, load_schema
 from ft.equity.calls import discovery as dc
 from ft.equity.calls import pdfs
 from ft.equity.calls.turns import ROLE_HOLD_SHARE
@@ -83,8 +94,10 @@ RUN_LIMIT_USD = Decimal("3.14")     # what is left of the pilot's $5 (pre-approv
 CHECK_LIMIT_USD = Decimal("0.60")   # the Sonnet check of a run's flags (#513 part 2: about $2.5 stays for DD-06's production
                                      # run, its extraction about $0.85 and its own review)
 QUOTE_LIMIT_USD = Decimal("0.10")   # Haiku's picks of the transcript quotes
-CHECK_MODES = ("price", "all")      # KPI_CHECK (the backfill's `kpi_check` input): price sends nothing and writes no flag
+CHECK_MODES = ("price", "all")      # config/equity/kpi_review.yaml's `mode` (KPI_CHECK overrides): price sends nothing
+REVIEW_FILE = kdict.PATH.parent / "kpi_review.yaml"
 CENTRAL_OUTPUT = {kc.TASK: 1_200, kq.TASK: 500}   # output tokens a request is priced at (central; the cap uses max_tokens)
+WAVE = 4                            # review requests sent at once (a refresh stops at 30 minutes)
 READ_MAX_PAGES = 500                 # Infosys's results bundles run 186 to 380 pages (DA-10 K3); pdfs.read_pdf stops at 200
 IMAGE_MAX_PAGES = 40                  # an image document longer than this is held (would over-send images)
 NSE_HEADERS = {"Referer": dc.NSE_REFERER, "Accept": "application/json, text/plain, */*"}
@@ -214,6 +227,20 @@ class Harvest:
     grids: dict[str, kf.Grid] = field(default_factory=dict)    # slug → the grid and its flags (DD-05, #513)
     plan_of: dict[tuple[str, str], DocPlan] = field(default_factory=dict)   # (slug, fiscal label) → its plan
     review: Review | None = None      # the Sonnet check and the quotes (DD-05 part 2)
+
+
+def review_mode() -> str:
+    """The flag review's mode: the environment's KPI_CHECK if set (tests, a local run), else `kpi_review.yaml`'s `mode`;
+    anything but `all` is `price` (nothing sent)."""
+    import yaml
+    mode = os.environ.get("KPI_CHECK")
+    if mode is None:
+        try:
+            mode = (yaml.safe_load(REVIEW_FILE.read_text()) or {}).get("mode")
+        except (OSError, yaml.YAMLError, AttributeError):
+            mode = None
+    mode = str(mode or "price").strip().lower()
+    return mode if mode in CHECK_MODES else "price"
 
 
 def evidence(x: FlagRow) -> bytes:
@@ -486,14 +513,13 @@ class EquityKpiTables(Task):
     def _review(self, db, h: Harvest, budget: Decimal, month_spend: Decimal) -> Review:
         """Each flag the rules left, checked by Sonnet against the pages it rests on (`ft.equity.kpi.check`), then, for
         the flags that stand, "reason stated" and "an analyst asked" from the same quarter's stored transcript
-        (`ft.equity.kpi.quotes`). `KPI_CHECK` (the backfill's `kpi_check` input) is `price` (the default: every request is
-        built and priced, nothing is sent and no flag is written) or `all`.
+        (`ft.equity.kpi.quotes`). `review_mode()` is `price` (the default: every request is built and priced, nothing is
+        sent and no flag is written) or `all`.
 
         An answer the last successful run got for the same input (its `ai_answers` check) is used again, never sent again
         (CLAUDE.md §6). Every request is priced before it is sent and stopped at CHECK_LIMIT_USD, QUOTE_LIMIT_USD, the
         run's cap or the monthly switch; a flag left unchecked stands for the judge with its last value held back."""
-        mode = (os.environ.get("KPI_CHECK") or "price").strip().lower()
-        r = Review(mode if mode in CHECK_MODES else "price")
+        r = Review(review_mode())
         if not h.grids:
             return r
         memo = self._memo(db) if db is not None else {}
@@ -524,18 +550,19 @@ class EquityKpiTables(Task):
                     f, metric, printed, member, self._previous_page(last, f.last_reported.page, printed, f.last_value),
                     kc.pick_pages(f, metric, pages_of[k]), [words.metrics[x].label for x in f.renamed_to]))
         # 1. the Sonnet check, one current document's flags at a time
+        checks: list[tuple[Request, list[kc.Item]]] = []
         for (slug, label), items in by_doc.items():
             plan = h.plan_of[(slug, label)]
             for group in kc.groups(items):
                 current = self._render(plan, pages_of[(slug, label)], {p for it in group for p in it.pages})
-                req = kc.request(slug, plan.document_class, group, current, cprompt, cschema)
-                answer = self._ask(req, r, kc.TASK, memo, CHECK_LIMIT_USD, r.check_cost, spent, budget, month_spend)
-                if answer is None:
-                    continue
-                for n, v in kc.parse(answer, len(group)).items():
-                    verdicts[id(group[n - 1].flag)] = v
+                checks.append((kc.request(slug, plan.document_class, group, current, cprompt, cschema), group))
+        for (_req, group), answer in zip(checks, self._ask_all([q for q, _ in checks], kc.TASK, CHECK_LIMIT_USD, r, memo,
+                                                                spent, budget, month_spend)):
+            for n, v in kc.parse(answer, len(group)).items() if answer is not None else ():
+                verdicts[id(group[n - 1].flag)] = v
         # 2. the quotes, for each flag that stands
         transcripts: dict[tuple[int, str], tuple | None] = {}
+        stand: list[tuple[str, kf.Flag, kdict.Metric, kc.Verdict | None, tuple | None, tuple | None]] = []
         for slug, f, metric in flags:
             v = verdicts[id(f)]
             outcome = v.outcome if v is not None else kc.UNCHECKED
@@ -545,64 +572,93 @@ class EquityKpiTables(Task):
                 r.k6[f.key] = f"{f.kind}, {outcome}"
             if outcome in (kc.DROP_PRESENT, kc.DROP_REASON):
                 continue
-            eid = entity[slug]
-            key = (eid, f.current.fiscal_label)
+            key = (entity[slug], f.current.fiscal_label)
             if key not in transcripts:
-                transcripts[key] = self._transcript(db, eid, f.current.fiscal_label) if db is not None else None
-            reason, asked = self._quotes(transcripts[key], slug, f, metric, r, memo, qprompt, qschema, spent, budget,
-                                         month_spend)
+                transcripts[key] = self._transcript(db, *key) if db is not None else None
+            tr = transcripts[key]
+            stand.append((slug, f, metric, v, tr, self._quote_request(tr, slug, f, metric, r, qprompt, qschema)))
+        asks = [x[5] for x in stand if x[5] is not None]
+        answers = iter(self._ask_all([q for q, _, _ in asks], kq.TASK, QUOTE_LIMIT_USD, r, memo, spent, budget,
+                                     month_spend))
+        for slug, f, metric, v, tr, ask in stand:
+            reason = asked = None
+            if ask is not None:
+                answer = next(answers)
+                if answer is not None:
+                    reason, asked = self._verify_quotes(tr, ask, answer, r)
             if r.mode != "all":
                 continue
             ok = v is not None and v.value_ok and f.last_value is not None
             r.value_held += 0 if ok else 1
-            r.rows.append(FlagRow(eid, slug, f, metric, f.last_value if ok else None,
+            r.rows.append(FlagRow(entity[slug], slug, f, metric, f.last_value if ok else None,
                                   f.last_reported.unit if ok else None, reason, asked))
         if r.mode == "price":
             r.answers = memo                                 # a price run keeps the last run's answers for the next
         return r
 
-    def _ask(self, req, r: Review, task: str, memo: dict, limit: Decimal, task_cost: Decimal, spent, budget: Decimal,
-             month_spend: Decimal) -> dict | None:
-        """One request's answer: the last run's for the same input, else (mode `all`) sent within the caps; in mode
-        `price` it is priced and not sent. Returns the reply's JSON, or None."""
-        key = req.input_sha256.hex()
-        if key in memo:
-            r.reused[task] += 1
-            r.answers[key] = memo[key]
-            return memo[key]
-        worst = self._worst_case(req)
-        if r.mode == "price":
-            est = r.estimate.setdefault(task, {"requests": 0, "central": Decimal(0), "worst": Decimal(0)})
-            est["requests"] += 1
-            est["central"] += self._central(req, task)
-            est["worst"] += worst
-            return None
-        if r.stopped.get("all") or r.stopped.get(task):
-            return None
-        why = ("budget" if month_spend + spent() + worst > budget else "run_cap" if spent() + worst > RUN_LIMIT_USD
-               else f"{task.split('_')[1]}_cap" if task_cost + worst > limit else None)
-        if why:
-            r.stopped["all" if why in ("budget", "run_cap") else task] = why
-            return None
+    def _ask_all(self, reqs: list[Request], task: str, limit: Decimal, r: Review, memo: dict, spent, budget: Decimal,
+                 month_spend: Decimal) -> list[dict | None]:
+        """Each request's answer (its reply's JSON), or None: the last run's answer for the same input; else, in mode
+        `price`, priced and not sent; else sent, WAVE at a time in parallel (the review must fit a refresh's 30
+        minutes), a wave only as large as the caps allow at each request's worst case (the input estimate and the
+        whole `max_tokens`): the task's own cap, the run's and the monthly switch."""
+        out: list[dict | None] = [None] * len(reqs)
+        todo: list[int] = []
+        for i, req in enumerate(reqs):
+            key = req.input_sha256.hex()
+            if key in memo:
+                r.reused[task] += 1
+                r.answers[key] = out[i] = memo[key]
+            elif r.mode == "price":
+                est = r.estimate.setdefault(task, {"requests": 0, "central": Decimal(0), "worst": Decimal(0)})
+                est["requests"] += 1
+                est["central"] += self._central(req, task)
+                est["worst"] += self._worst_case(req)
+            else:
+                todo.append(i)
+        while todo and not (r.stopped.get("all") or r.stopped.get(task)):
+            wave: list[int] = []
+            worst = Decimal(0)
+            for i in todo[:WAVE]:
+                w = self._worst_case(reqs[i])
+                task_cost = r.check_cost if task == kc.TASK else r.quote_cost
+                why = ("budget" if month_spend + spent() + worst + w > budget
+                       else "run_cap" if spent() + worst + w > RUN_LIMIT_USD
+                       else f"{task.split('_')[1]}_cap" if task_cost + worst + w > limit else None)
+                if why:
+                    if not wave:                              # not even one more fits: stop sending this task
+                        r.stopped["all" if why in ("budget", "run_cap") else task] = why
+                    break
+                wave.append(i)
+                worst += w
+            if not wave:
+                break
+            todo = todo[len(wave):]
+            with ThreadPoolExecutor(max_workers=len(wave)) as pool:
+                results = list(pool.map(lambda i: self._send(reqs[i]), wave))
+            for i, (answer, cost, sent, unavailable) in zip(wave, results):
+                self._add_cost(r, task, cost)
+                r.sent[task] += sent
+                if unavailable:
+                    r.stopped["all"] = "unavailable"
+                if answer is not None:
+                    r.answers[reqs[i].input_sha256.hex()] = out[i] = answer
+        return out
+
+    def _send(self, req: Request) -> tuple[dict | None, Decimal, int, bool]:
+        """One request sent: (its reply's JSON or None, its cost, 1 if billed, True if AI is unavailable)."""
         try:
             reply = self._claude().send(req)
         except Failed as e:
-            self._add_cost(r, task, e.reply.cost_usd)
-            r.sent[task] += 1
-            return None
+            return None, e.reply.cost_usd, 1, False
         except AIUnavailable:
-            r.stopped["all"] = "unavailable"
-            return None
+            return None, Decimal(0), 0, True
         except (CallError, TooLong):
-            return None
-        r.sent[task] += 1
-        self._add_cost(r, task, reply.cost_usd)
+            return None, Decimal(0), 0, False
         try:
-            answer = reply.json()
+            return reply.json(), reply.cost_usd, 1, False
         except (ValueError, json.JSONDecodeError):
-            return None
-        r.answers[key] = answer
-        return answer
+            return None, reply.cost_usd, 1, False
 
     @staticmethod
     def _add_cost(r: Review, task: str, cost: Decimal) -> None:
@@ -684,13 +740,15 @@ class EquityKpiTables(Task):
                                order by pdf_page""", (doc,)).fetchall()
         return doc, text, turns, [tuple(p) for p in pages], share
 
-    def _quotes(self, tr, slug: str, f: kf.Flag, metric: kdict.Metric, r: Review, memo: dict, prompt, schema, spent,
-                budget: Decimal, month_spend: Decimal) -> tuple[kq.Quote | None, kq.Quote | None]:
-        """One flag's "reason stated" and "an analyst asked" quotes, verified, or None for each."""
+    @staticmethod
+    def _quote_request(tr, slug: str, f: kf.Flag, metric: kdict.Metric, r: Review, prompt, schema
+                       ) -> tuple[Request, list[kq.Candidate], list[kq.Candidate]] | None:
+        """One flag's Haiku request for its quotes, with its candidates; None when no call is stored or no sentence
+        names the metric (both answers are then "no")."""
         if tr is None:
             r.calls["none_stored"] += 1
-            return None, None
-        doc, text, turns, pages, share = tr
+            return None
+        doc, text, turns, _pages, share = tr
         r.calls["searched"] += 1
         if share is not None and Decimal(str(share)) > Decimal(str(ROLE_HOLD_SHARE)):
             r.calls["role_held_known_turns_only"] += 1
@@ -698,11 +756,14 @@ class EquityKpiTables(Task):
         asked = kq.candidates(text, turns, "analyst", metric.terms, metric.member_terms)
         if not reason and not asked:
             r.calls["no_candidate"] += 1
-            return None, None
-        req = kq.request(slug, f.current.fiscal_label, metric.label, f.kind, reason, asked, prompt, schema, doc)
-        answer = self._ask(req, r, kq.TASK, memo, QUOTE_LIMIT_USD, r.quote_cost, spent, budget, month_spend)
-        if answer is None:
-            return None, None
+            return None
+        return kq.request(slug, f.current.fiscal_label, metric.label, f.kind, reason, asked, prompt, schema, doc), reason, asked
+
+    @staticmethod
+    def _verify_quotes(tr, ask, answer: dict, r: Review) -> tuple[kq.Quote | None, kq.Quote | None]:
+        """Haiku's picks as verified quotes into the stored transcript (`quotes.verify`), or None for each."""
+        doc, text, _turns, pages, _share = tr
+        _req, reason, asked = ask
         rc, ac = kq.parse(answer, reason, asked)
         rq, aq = kq.verify(text, rc, doc, pages), kq.verify(text, ac, doc, pages)
         for name, c, q in (("reason", rc, rq), ("asked", ac, aq)):
@@ -975,13 +1036,21 @@ class EquityKpiTables(Task):
         n = 0
         if h.preflight:
             return 0                                      # nothing was read: the last good rows stand
-        # The pilot companies' flags go first (DD-05 part 2): `kpi_change.current_document_id` references a document
-        # without a cascade, and a re-read quarter's document is replaced below. A run that writes flags rewrites them
-        # all; a price run that replaces no document leaves them as they are.
+        # The flags go first (DD-05 part 2): `kpi_change.current_document_id` references a document without a cascade,
+        # and a quarter this run re-reads has its document replaced below. A run that writes flags rewrites all of the
+        # pilot companies'; a price run removes only the flags resting on a document it replaces (current or previous).
         ids = sorted({p.entity_id for p in h.plans})
         write_flags = h.review is not None and h.review.mode == "all"
-        if ids and (write_flags or any(not p.reused for p in h.plans)):
+        replaced = [p for p in h.plans if not p.reused]
+        if ids and write_flags:
             tx.execute("delete from equity.kpi_change where entity_id = any(%s)", (ids,))
+        elif replaced:
+            tx.execute(
+                """delete from equity.kpi_change c using equity.kpi_document d
+                    where d.entity_id = c.entity_id and (d.id = c.current_document_id or d.id = any(c.previous_documents))
+                      and (d.entity_id, d.period_end, d.document_class) in
+                          (select * from unnest(%s::int[], %s::date[], %s::text[]))""",
+                ([p.entity_id for p in replaced], [p.period_end for p in replaced], [p.document_class for p in replaced]))
         for plan in h.plans:
             n += self._rewrite_filters(tx, plan) if plan.reused else self._write(tx, plan)
             if plan.reused and plan.status == "read":
