@@ -20,14 +20,31 @@ Decided by Claude (standing delegation, 1 Nov 2026): words before the first labe
 neither the turn words nor the unknown share; `earnings_call.words` stays the figure 2B-07 wrote (set here only when
 null). A participants list is read from the text before the first label, under a header ("Management:", "Analysts:" …),
 and only for names that carry an honorific, which is how the Indian filings write them.
+
+**Generic labels written inline (job 2B-09b, #542; Spec 02B.1 C3).** Some transcripts label a turn with a role instead of a
+name: "Management:" (NTPC, SBI Life and others), "Analyst:", "Participant:", and now and then a "Moderator:" that the text
+layer ran into the line before. The speaker reader (`text.call_speakers`) never takes those words, because the same words
+head a participants list, and a label it took would start a new paragraph and change the canonical text. So they are read
+here, on the canonical text, which they never change: each one opens a turn at its own offset (a turn is a range of
+characters; one that starts inside a paragraph cuts that paragraph for the chunker only, `Analysis.doc`). One is read when:
+- it lies in the call: from the first moderator turn on (the first turn when there is none), so a participants list
+  ("Management: Mr. X – CEO") before the call stays where it is;
+- it isn't part of a named turn's own label ("Mr. X - New Asset Management:"), and doesn't repeat the label just before it;
+- it starts a paragraph (after bullets), or follows the end of a sentence (. ? ! or an ellipsis); or, in a call that writes
+  that label so at least `GENERIC_STYLE` times, any space before it, unless the word before it is an article or a
+  preposition ("from the Management:").
+Its role is the word's: `management`, `analyst` (an analyst or a participant asks), `moderator`. It is a role, not a person:
+it never merges with a named speaker, and no other rule changes its role. A call without such a label keeps its turns,
+roles, blocks and chunks exactly.
 """
 from __future__ import annotations
 
+import bisect
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 
-from ft.engines.document.text import Extracted, words
+from ft.engines.document.text import Block, Extracted, words
 
 ROLE_HOLD_SHARE = 0.10
 SECTION_NAMES = {"opening": "Opening remarks", "qa": "Q&A", "closing": "Closing remarks"}
@@ -64,6 +81,13 @@ _WELCOME_NAME = re.compile(
     r"(?:Mr|Ms|Mrs|Dr|Shri|Smt|Sh)\.?\s+(?P<name>[A-Za-z.'\u2019\-]+(?:\s+[A-Za-z.'\u2019\-]+){0,3}?)"
     r"(?=\s*[,\u2013\u2014(\-]\s*(?P<role>[^.;:\n]{0,70}))", re.IGNORECASE)     # a lookahead: names don't eat each other
 LIST_WINDOW = 1500
+
+# Generic labels: the word as written (capitalised, as the transcripts write a label) -> its key and its role (#542).
+GENERIC_ROLES = {"Management": "management", "Analyst": "analyst", "Participant": "analyst", "Moderator": "moderator"}
+GENERIC_STYLE = 3                         # a call that writes a label this often after a sentence uses it as its labels
+_GENERIC = re.compile(r"(?<!\S)(?P<w>Management|Analyst|Participant|Moderator) *:")
+_BULLETS_ONLY = re.compile(r"[\s\-\u2212\u2013\u2014\u2022\u00b7*\u25cf\u25aa]*")      # text._CALL_BULLET's set
+_NOT_BEFORE_A_LABEL = {"the", "our", "their", "its", "your", "from", "of", "to", "with", "by", "and", "for", "a", "an"}
 
 
 def name_key(label: str) -> str:
@@ -107,6 +131,9 @@ class Analysis:
     unknown_words: int = 0
     unknown_speakers: list[str] = field(default_factory=list)
     both_roles: list[str] = field(default_factory=list)
+    # The text with the blocks `marks` count: the canonical text's own blocks, each cut where a turn opens inside it (an
+    # inline label, #542). The text is the same string; only the block list differs, and only for a call with such a turn.
+    doc: Extracted | None = None
 
     @property
     def unknown_share(self) -> float:
@@ -163,6 +190,95 @@ def _drop_spurious(turns: list[Turn]) -> list[Turn]:
         return turns
     return [Turn(n, t.char_start, t.char_end, t.speaker, t.key, t.block_start, t.block_end, t.words)
             for n, t in enumerate(turns[first:])]
+
+
+GENERIC_KEYS = {w.lower(): r for w, r in GENERIC_ROLES.items()}
+
+
+@dataclass(frozen=True)
+class InlineLabel:
+    """A generic label that opens a turn (#542): where the turn starts (the label, or its paragraph's start when only
+    bullets come before it), one past the label's colon, and the word as written."""
+    at: int
+    end: int
+    word: str
+
+
+def _label_end(text: str, ex: Extracted, t: Turn) -> int:
+    """One past the colon of a named turn's own label (the first colon in its first 120 characters, as `split_turns` reads
+    it), or the turn's start when it has none."""
+    colon = text[t.char_start:ex.blocks[t.block_start].end][:120].find(":")
+    return t.char_start + colon + 1 if colon >= 0 else t.char_start
+
+
+def inline_labels(ex: Extracted, named: list[Turn]) -> list[InlineLabel]:
+    """The generic labels that open turns, in order, by the rules in this module's docstring (#542)."""
+    if not named:
+        return []
+    text = ex.text
+    start = next((t.char_start for t in named if t.key in MODERATORS), named[0].char_start)
+    block_starts = [b.start for b in ex.blocks]
+    named_starts = [t.char_start for t in named]
+    found = []                        # (match, the turn's start, after a sentence or at a paragraph, the word before)
+    for m in _GENERIC.finditer(text, start):
+        b = ex.blocks[bisect.bisect_right(block_starts, m.start()) - 1]
+        t = named[bisect.bisect_right(named_starts, m.start()) - 1]
+        own = _label_end(text, ex, t)
+        if m.start() < own:
+            continue                                  # part of a named label ("Mr. X - Acme Asset Management:")
+        prefix = text[max(b.start, own):m.start()]
+        at_block = _BULLETS_ONLY.fullmatch(text[b.start:m.start()]) is not None
+        tail = prefix.rstrip().rstrip("\"')]")
+        strict = at_block or tail.endswith((".", "?", "!", "\u2026"))
+        before = re.sub(r"[^\w]", "", tail.split()[-1]).lower() if tail.split() else ""
+        found.append((m, b.start if at_block else m.start(), strict, before))
+    style = Counter(m.group("w") for m, _, strict, _ in found if strict)
+    out: list[InlineLabel] = []
+    taken = set(named_starts)
+    for m, at, strict, before in found:
+        if not strict and (style[m.group("w")] < GENERIC_STYLE or before in _NOT_BEFORE_A_LABEL):
+            continue
+        if at in taken:
+            continue                                  # a turn already opens there
+        t = named[bisect.bisect_right(named_starts, m.start()) - 1]
+        prev = out[-1].end if out and out[-1].at >= t.char_start else _label_end(text, ex, t)
+        if not text[prev:m.start()].strip():
+            continue                                  # the same label again, with nothing said in between
+        out.append(InlineLabel(at, m.end(), m.group("w")))
+        taken.add(at)
+    return out
+
+
+def with_inline_labels(ex: Extracted, named: list[Turn], labels: list[InlineLabel]) -> tuple[list[Turn], Extracted]:
+    """The turns with the generic labels' turns added, and the text's blocks cut at the turns that open inside a paragraph
+    (each piece ends on text: the spaces before a cut belong to no piece, as the blank line between paragraphs). With no
+    such label: the named turns and `ex` itself, unchanged."""
+    if not labels:
+        return named, ex
+    text = ex.text
+    block_starts = {b.start for b in ex.blocks}
+    inner = sorted({lab.at for lab in labels if lab.at not in block_starts})
+    pieces: list[Block] = []
+    for b in ex.blocks:
+        s = b.start
+        for c in inner[bisect.bisect_right(inner, b.start):bisect.bisect_left(inner, b.end)]:
+            e = c
+            while e > s and text[e - 1].isspace():
+                e -= 1
+            pieces.append(Block(s, e, b.kind, b.level))
+            s = c
+        pieces.append(Block(s, b.end, b.kind, b.level))
+    doc = Extracted(text, tuple(pieces), ex.extractor_version)
+    starts = sorted([(t.char_start, t.speaker, t.key) for t in named]
+                    + [(lab.at, lab.word, lab.word.lower()) for lab in labels])
+    piece_starts = [p.start for p in pieces]
+    out = []
+    for n, (s, speaker, key) in enumerate(starts):
+        e = starts[n + 1][0] if n + 1 < len(starts) else len(text)
+        bi = bisect.bisect_left(piece_starts, s)
+        bj = bisect.bisect_left(piece_starts, e) if n + 1 < len(starts) else len(pieces)
+        out.append(Turn(n, s, e, speaker, key, bi, bj, len(words(text[s:e]))))
+    return out, doc
 
 
 def participants(preamble: str) -> tuple[list[str], list[str]]:
@@ -226,7 +342,8 @@ def analyse(ex: Extracted, labels: list) -> Analysis:
     """Turns, sections, roles and the chunker's marks for a call's canonical text and block labels."""
     if len(labels) != len(ex.blocks):
         raise ValueError("one speaker label (or None) per block of the text")
-    turns = split_turns(ex, labels)
+    named = split_turns(ex, labels)
+    turns, doc = with_inline_labels(ex, named, inline_labels(ex, named))
     text = ex.text
     is_mod = [t.key in MODERATORS for t in turns]
     # sections ----------------------------------------------------------------------------------------------------
@@ -271,6 +388,9 @@ def analyse(ex: Extracted, labels: list) -> Analysis:
         if key in MODERATORS:
             role_of[key] = "moderator"
             continue
+        if key in GENERIC_KEYS:
+            role_of[key] = GENERIC_KEYS[key]          # a generic label names a role, not a person (#542)
+            continue
         is_analyst = any(same_person(key, n) for n in intro + listed_analysts)
         is_mgmt = (any(same_person(key, n) for n in listed_mgmt)
                    or (qa_start is not None and any(section[i] == "opening" for i in idxs))
@@ -280,7 +400,7 @@ def analyse(ex: Extracted, labels: list) -> Analysis:
         role_of[key] = "analyst" if is_analyst and not is_mgmt else "management" if is_mgmt and not is_analyst else "unknown"
     final = [Turn(t.turn_no, t.char_start, t.char_end, t.speaker, t.key, t.block_start, t.block_end, t.words,
                   section[i], role_of[t.key]) for i, t in enumerate(turns)]
-    marks: list[tuple[bool, str | None, str | None]] = [(False, None, None)] * len(ex.blocks)
+    marks: list[tuple[bool, str | None, str | None]] = [(False, None, None)] * len(doc.blocks)
     marks = list(marks)
     for t in final:
         for bi in range(t.block_start, t.block_end):
@@ -289,7 +409,7 @@ def analyse(ex: Extracted, labels: list) -> Analysis:
     unknown = sum(t.words for t in final if t.role == "unknown")
     names = sorted({t.speaker for t in final if t.role == "unknown"})
     check_turns(text, final)
-    return Analysis(final, marks, qa_start is not None, closing_start is not None, total, unknown, names, both)
+    return Analysis(final, marks, qa_start is not None, closing_start is not None, total, unknown, names, both, doc)
 
 
 def check_turns(text: str, turns: list[Turn]) -> None:
