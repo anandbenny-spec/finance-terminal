@@ -87,10 +87,11 @@ from ft.jobs.tasks import register
 TASK = "kpi_tables"
 KEY = "equity.kpi_tables"
 SHOWN = 12
-RUN_LIMIT_USD = Decimal("3.14")     # what is left of the pilot's $5 (pre-approval 2) after the $1.8519 spent by dev run 13
-                                     # (DA-10's $0.3864, dev runs 2 to 13; #513, 14 Nov 2026), rounded down: no single run,
-                                     # extraction and the flag review together, can take the pilot past $5 (card's stop;
-                                     # was $3.17 before #513 part 2, $3.99 before run 9)
+RUN_LIMIT_USD = Decimal("2.52")     # what is left of the pilot's $5 (pre-approval 2) after the $2.4733 spent by dev run 15
+                                     # (DA-10's $0.3864, dev runs 2 to 13's $1.4655, dev run 15's review $0.6214; #513, 14 Nov
+                                     # 2026), rounded down: DD-06's one production run (#514), extraction and the flag review
+                                     # together, can't take the pilot past $5 (card's stop; was $3.14 before DD-06, $3.17
+                                     # before #513 part 2, $3.99 before run 9)
 CHECK_LIMIT_USD = Decimal("0.75")   # the Sonnet check of a run's flags: the dry run of 14 Nov 2026 (ops.task_run 266, dev)
                                      # priced its 25 requests at $0.5643 central, and a wave is admitted at its worst case
                                      # (about $0.06 a request), so $0.60 would have left the last ones unasked. DD-06's

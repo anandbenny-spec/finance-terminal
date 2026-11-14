@@ -515,6 +515,22 @@ export function formatStatedValue(value: Num, unit: string | null | undefined): 
   return `${body} (unit as spoken)`;
 }
 
+/**
+ * A metric's value as a company's results release printed it (the KPI-table pilot, DD-06, #514): the decimals the stored value
+ * carries (at most four, nothing rounded or padded) and the unit as printed after it. Grouping by the figure's currency: US for a
+ * dollar unit ("US$ mn"), Indian otherwise. `12.5, "%"` → `12.5%`; `614795, "people"` → `6,14,795 people`; `1234.5, "US$ mn"` →
+ * `1,234.5 US$ mn`; no unit → the number alone. The value is AI-extracted, so the panel says so.
+ */
+export function formatPrintedValue(value: Num, unit: string | null | undefined): string {
+  if (isMissing(value)) return NOT_AVAILABLE;
+  const decimals = Math.min(4, (String(Math.abs(value)).split(".")[1] ?? "").length);
+  const printed = (unit ?? "").replace(/\s+/g, " ").trim();
+  const body = digits(value, { decimals, locale: /\$|\bUSD\b/i.test(printed) ? "en-US" : "en-IN" });
+  if (printed === "") return body;
+  if (printed === "%") return `${body}%`;
+  return `${body} ${printed}`;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The value chain card (VC-06, #191; Spec 02B §12.4, §12.7). A BRSR share arrives in percent, exact; a change is said in words.
 
