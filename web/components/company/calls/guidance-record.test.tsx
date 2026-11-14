@@ -97,6 +97,41 @@ describe("the rows", () => {
     expect(t).toMatch(/Capex .* No/);
   });
 
+  // #532 part 2: the scorer stores §5.10's reason keys, and a visitor never sees a key (CLAUDE.md §4).
+  it("writes every stored not-scored reason key in words, and never shows a key", () => {
+    const keys = ["no_filed_figure", "currency", "undated", "vague_figure", "scope", "structural_break", "definition", "filed_figures_unavailable", "duplicate"];
+    for (const reason of keys) {
+      const fromScorer = outcomeText(g({ outcome: "not_scored", relation: null, actual: null, reason }));
+      const fromExtraction = outcomeText(g({ outcome: "not_scored", relation: null, actual: null, reason: null, not_scored_reason: reason }));
+      expect(fromScorer).toMatch(/^Not scored: [a-z]/);
+      expect(fromScorer).not.toBe(`Not scored: ${reason}`);
+      expect(fromScorer).not.toContain("_");
+      expect(fromExtraction).toBe(fromScorer);
+      expect(bannedCallWordsIn(fromScorer)).toEqual([]);
+    }
+    expect(outcomeText(g({ outcome: "not_scored", relation: null, actual: null, reason: "no_filed_figure" }))).toBe("Not scored: no filed figure to compare with");
+    expect(outcomeText(g({ outcome: "not_scored", relation: null, actual: null, reason: "definition" }))).toBe(
+      "Not scored: the company's own definition of this figure couldn't be matched to the filed lines",
+    );
+    // A key the map doesn't know, or no reason at all: plain "Not scored", never the key.
+    expect(outcomeText(g({ outcome: "not_scored", relation: null, actual: null, reason: "some_new_key" }))).toBe("Not scored");
+    expect(outcomeText(g({ outcome: "not_scored", relation: null, actual: null, reason: "toString" }))).toBe("Not scored");
+    expect(outcomeText(g({ outcome: "not_scored", relation: null, actual: null, reason: null, not_scored_reason: null }))).toBe("Not scored");
+  });
+
+  it("shows a stored key's words on the page, not the key, with the hit rate held", () => {
+    const rows = [
+      g({ outcome: "not_scored", relation: null, actual: null, counted: null, is_first: null, revision: null, reason: "no_filed_figure", metric: "other", metric_label: "Other" }),
+      g({ outcome: "not_scored", relation: null, actual: null, counted: null, is_first: null, revision: null, reason: "scope", metric: "revenue", metric_label: "Revenue", scope_text: "domestic business" }),
+    ];
+    const policies = SHOWN.map((p) => (p.field_key === "equity.guidance_hit_rate" ? { ...p, status: "hidden" as const } : p));
+    const out = html(tab({ rows, rate: null }, policies));
+    const panel = text(out.slice(out.indexOf("panel-guidance-record")));
+    expect(panel).toContain("Not scored: no filed figure to compare with");
+    expect(panel).toContain("Not scored: about a segment, subsidiary or region, not the whole company");
+    expect(panel).not.toMatch(/no_filed_figure|\bscope\b/);
+  });
+
   it("uses no colour for an outcome and no Delta", () => {
     const out = html(tab({ rows: [missed, g()] }));
     const panel = out.slice(out.indexOf("panel-guidance-record"));
