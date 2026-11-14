@@ -50,7 +50,7 @@ CHANGED = dict(zip((OLD.document_id, NEW.document_id), summaries.changed_spans(D
 SENTENCES = dict(zip((OLD.document_id, NEW.document_id), sentence_spans(D.segments), strict=True))
 V16 = load_prompt("statement_diff_summary", "v16")
 V17 = load_prompt("statement_diff_summary", "v17")
-VERIFY = load_prompt("statement_diff_summary", "verify1")
+VERIFY = load_prompt("statement_diff_summary", "verify2")
 REQ = summaries.diff_summary_request(NEW, OLD, D.segments, V17)
 
 # An RBI pair shaped like mpc-2023-12-08 (3375) and mpc-2020-10-09 (3383): a sentence reworded, and one that refers back.
@@ -96,7 +96,7 @@ def check_rbi(version, *rows):
     return check(version, *rows, req=REQ_RBI, changed=CH_RBI, sentences=SE_RBI)
 
 
-def test_v17_is_v16_plus_three_rules_with_v16s_schema_on_sonnet_and_is_current():
+def test_v17_is_v16_plus_three_rules_with_v16s_schema_on_sonnet_and_v18_is_its_text_and_current():
     assert "<!--" not in V17.text and V17.text != V16.text
     gone = 'Name members in plain words ("Lisa D. Cook and Beth M. Hammack")'
     assert gone in V16.text and gone not in V17.text
@@ -107,8 +107,11 @@ def test_v17_is_v16_plus_three_rules_with_v16s_schema_on_sonnet_and_is_current()
         line for line in V16.text.splitlines() if line.startswith("- Name members")}
     assert load_schema("statement_diff_summary", "v17") == load_schema("statement_diff_summary", "v16")
     assert (REQ.spec.route, REQ.model_id, REQ.spec.effort) == ("json", SONNET, "medium")
-    assert PROMPT_VERSION["statement_diff_summary"] == "v17" and summaries.DIFF_VERIFY_FROM == 17
-    assert summaries.DIFF_FIT_FROM == 16
+    assert summaries.DIFF_VERIFY_FROM == 17 and summaries.DIFF_FIT_FROM == 16
+    v18 = load_prompt("statement_diff_summary", "v18")             # v17's text, marking the checks' revision before the judge
+    assert v18.text == V17.text and PROMPT_VERSION["statement_diff_summary"] == "v18"
+    assert load_schema("statement_diff_summary", "v18") == load_schema("statement_diff_summary", "v17")
+    assert summaries.diff_summary_request(NEW, OLD, D.segments, v18).model_id == SONNET
 
 
 def test_the_run_gate_reads_words_as_the_packs_measure_does():
@@ -233,8 +236,8 @@ def test_the_second_models_request_is_haiku_on_the_json_route_with_each_bullet_a
     v = verify_request(REQ, c, VERIFY)
     assert (v.task, v.model_id, v.spec.route, v.spec.effort, v.spec.max_tokens) == (
         "statement_diff_summary", HAIKU, "json", "medium", 16_000)
-    assert v.prompt.version == summaries.VERIFY_VERSION == "verify1" and _vnum(v.prompt.version) < 0   # never pins a target
-    assert v.schema == load_schema("statement_diff_summary", "verify1") and next(iter(v.schema["properties"])) == "verdicts"
+    assert v.prompt.version == summaries.VERIFY_VERSION == "verify2" and _vnum(v.prompt.version) < 0   # never pins a target
+    assert v.schema == load_schema("statement_diff_summary", "verify2") and next(iter(v.schema["properties"])) == "verdicts"
     assert v.sources == REQ.sources and v.input_sha256 != REQ.input_sha256
     assert re.findall(r"^Bullet (\d+): ", v.instruction, flags=re.MULTILINE) == ["1", "2"]
     for b in c.bullets:
@@ -244,6 +247,7 @@ def test_the_second_models_request_is_haiku_on_the_json_route_with_each_bullet_a
     assert "Answer for each of the 2 bullets, in order" in v.instruction
     for rule in ("supported: is everything the bullet says stated in its cited sentences?",
                  "changes_true: is every claim of change true against both documents?",
+                 "reads_well: does the bullet read as correct, plain English?",
                  "\"Added\" or \"new\" is false if the previous statement already said the same thing"):
         assert rule in VERIFY.text
 
@@ -265,6 +269,19 @@ def test_an_objection_drops_its_bullet_with_the_reason_and_the_retry_reads_it():
     assert c.bullets[1].problem == "a second model's check found: The previous statement also said lower."
     assert reasons.categorise("rejected", "; ".join(c.reasons())) == ("citation", True)
     assert "a second model's check found: The previous statement also said lower." in retry_note(c)
+
+
+def test_a_bullet_that_doesnt_read_as_plain_english_is_dropped_and_verify1s_answers_have_no_such_question():
+    c = _two_ok()
+    apply_verdicts(c, {"verdicts": [
+        {"bullet": 1, "supported": True, "changes_true": True, "reads_well": False,
+         "objection": 'It says the crisis "was said to "poses" risks", which isn\'t English.'},
+        {"bullet": 2, "supported": True, "changes_true": True, "reads_well": True, "objection": ""}]})
+    assert c.bullets[0].problem.startswith("a second model's check found: It says the crisis") and c.bullets[1].problem is None
+    c = _two_ok()
+    apply_verdicts(c, {"verdicts": [{"bullet": i, "supported": True, "changes_true": True, "objection": ""} for i in (1, 2)]})
+    assert c.ok
+    assert "reads_well" in load_schema("statement_diff_summary", "verify2")["properties"]["verdicts"]["items"]["required"]
 
 
 def test_a_missing_verdict_or_an_answer_that_isnt_the_schemas_fails():
@@ -345,6 +362,67 @@ def test_the_fallback_leaves_out_a_change_only_in_dates_and_shows_a_reworded_sen
     assert bullets[0].text.startswith('The previous MPC resolution said: "Hence, monetary policy needs to remain actively '
                                       'disinflationary." The new MPC resolution says: "Monetary policy must continue')
     assert "doesn't have this sentence" not in bullets[0].text
+
+
+def _pair(old: str, new: str):
+    a = Doc(1, "mpc_resolution", "MPC resolution", "a", "RBI", date(2022, 5, 4), old)
+    b = Doc(2, "mpc_resolution", "MPC resolution", "b", "RBI", date(2022, 6, 8), new)
+    return diff_texts(old, new).segments, a, b
+
+
+def test_a_changed_rate_or_projection_is_never_read_as_a_change_of_dates():
+    # Round 16's first dev run: mpc-2022-06-08's fallback left out the 50 bp hike, its numbers read as day numbers.
+    old = ("Increase the policy repo rate by 40 basis points to 4.40 per cent with immediate effect. "
+           "Inflation is projected at 5.7 per cent in 2022-23. The MPC met on May 2 and 4, 2022.")
+    new = ("Increase the policy repo rate by 50 basis points to 4.90 per cent with immediate effect. "
+           "Inflation is projected at 6.7 per cent in 2022-23. The MPC met on June 6 and 8, 2022.")
+    bullets = fallback_bullets(*_pair(old, new), [])
+    assert len(bullets) == 2 and "4.90 per cent" in bullets[0].text and "6.7 per cent" in bullets[1].text
+    assert not any("met on" in b.text for b in bullets)
+    assert summaries._dates_only("The MPC met on May 2 and 4, 2022.", "The MPC met on June 6 and 8, 2022.")
+    assert not summaries._dates_only("by 40 basis points to 4.40 per cent", "by 50 basis points to 4.90 per cent")
+
+
+def test_a_change_the_redline_shows_twice_is_shown_once_and_the_decision_comes_first():
+    stance_old = "The MPC also decided to remain accommodative while focusing on withdrawal of accommodation."
+    stance_new = "The MPC also decided to remain focused on withdrawal of accommodation."
+    old = (f"{stance_old} Growth is expected to hold up. Keep the policy repo rate unchanged at 4.00 per cent. "
+           f"{stance_old}")
+    new = (f"{stance_new} Growth is expected to hold up. Increase the policy repo rate by 40 basis points to 4.40 per cent. "
+           f"{stance_new}")
+    bullets = fallback_bullets(*_pair(old, new), [("new", stance_new)])
+    assert [b.text.count("withdrawal") for b in bullets].count(2) == 1               # the stance once, not twice
+    assert "4.40 per cent" in bullets[0].text                                      # the decision first, before the reply's
+
+
+def test_two_sentences_the_redline_pairs_but_that_share_few_words_are_shown_apart():
+    old = ("Dr. Ashima Goyal and Shri Shaktikanta Das voted to keep the policy repo rate unchanged at 6.50 per cent. "
+           "Growth is expected to hold up.")
+    new = ("The MPC members Dr. Ashima Goyal and Shri Shaktikanta Das attended the meeting. "
+           "Growth is expected to hold up.")
+    bullets = fallback_bullets(*_pair(old, new), [])
+    texts = sorted(b.text for b in bullets)
+    assert len(bullets) == 2 and all("doesn't have this sentence" in t for t in texts)
+    assert not any("said:" in t and "says:" in t for t in texts)
+
+
+def test_units_are_never_the_distinctive_pair_that_makes_an_addition_a_rewording():
+    old = "The increase implies a direct impact of about 36 basis points on headline inflation."
+    new = "It turned out to be lower by 30 basis points than projected."
+    text = f'The new resolution adds that it "{new[:-1]}".'
+    segs, _, _ = _pair(old, new)
+    changed = dict(zip((1, 2), summaries.changed_spans(segs), strict=True))
+    sentences = dict(zip((1, 2), sentence_spans(segs), strict=True))
+    assert added_problem(text, [], {1: old, 2: new}, 1, changed, sentences) is None
+
+
+def test_a_v17_target_gets_three_replies_and_every_other_target_two():
+    t = ai_batch.AiBatch()
+    w = Work("statement_diff_summary", NEW, OLD, D.segments)
+    assert t._max_attempts(w, w.request(V17)) == 3 == ai_batch.DIFF_ATTEMPTS
+    assert t._max_attempts(w, w.request(V16)) == 2
+    doc = Work("doc_summary", NEW)
+    assert t._max_attempts(doc, doc.request(load_prompt("doc_summary", "v1"))) == 2
 
 
 def test_the_fallbacks_model_says_no_model_wrote_it():

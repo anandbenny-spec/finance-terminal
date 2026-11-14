@@ -66,7 +66,8 @@ class Skip(Exception):
 
 @dataclass(frozen=True)
 class Step:
-    """What a target needs next: attempt 1, or attempt 2 with the note the stored first reply left."""
+    """What a target needs next: attempt 1, or a retry (attempt 2, or 3 where the task allows it) with the note the stored
+    reply before it left."""
     attempt: int
     note: str | None = None
 
@@ -273,6 +274,12 @@ class BatchSteps:
         """How many times a document's length a request of this task can hold (the open batches' worst case)."""
         return 1
 
+    def _max_attempts(self, w: Target, req: Request) -> int:
+        """How many replies a target may get, each retry with the note its last rejected reply left: 2 (the first reply
+        and one retry) unless the task says otherwise for this request (#445: policy.ai_batch's statement_diff_summary
+        from v17, 3)."""
+        return 2
+
     def _entry(self, db, cid: str, doc_id: int | None, prompts, index: dict):
         """(target, request, attempt) for a stored custom_id, from its document's targets as they are now; None if
         the request no longer matches any of them (stale)."""
@@ -319,7 +326,8 @@ class BatchSteps:
         return status == "pending" and batch is None
 
     def _next_step(self, db, w: Target, prompt) -> Plan:
-        """What the target needs next, from its requests so far."""
+        """What the target needs next, from its requests so far: each retry is built from the note the reply before it left,
+        up to `_max_attempts`."""
         req = w.request(prompt)
         cid = self.custom_id(req, w.document_id)
         row = self._request_row(db, cid)
@@ -329,18 +337,22 @@ class BatchSteps:
         status, batch, reason, content = row[:4]
         if batch is not None and status == "pending":
             return Plan(w, None, "in a batch", built, in_batch=req)
-        if status == "rejected" and reason.startswith("retried:") and (content or {}).get("retry_note"):
+        attempt, limit = 1, self._max_attempts(w, req)
+        while (attempt < limit and status == "rejected" and reason.startswith("retried:")
+               and (content or {}).get("retry_note")):
             note = content["retry_note"]
             req2 = w.request(prompt, note=note)
             cid2 = self.custom_id(req2, w.document_id)
             row2 = self._request_row(db, cid2)
-            built.append((cid2, req2, 2))
+            attempt += 1
+            built.append((cid2, req2, attempt))
             if self._sendable(row2):
-                return Plan(w, Step(2, note), "the retry wasn't answered yet", built)
+                return Plan(w, Step(attempt, note), "the retry wasn't answered yet", built)
             if row2[1] is not None and row2[0] == "pending":
                 return Plan(w, None, "the retry is in a batch", built, in_batch=req2)
-            return self._held_plan(Plan(w, None, f"attempt 2 {row2[0]}", built), row2)
-        return self._held_plan(Plan(w, None, f"attempt 1 {status}", built), row)
+            row = row2
+            status, batch, reason, content = row[:4]
+        return self._held_plan(Plan(w, None, f"attempt {attempt} {status}", built), row)
 
     @staticmethod
     def _held_plan(p: Plan, row) -> Plan:
@@ -494,8 +506,9 @@ class BatchSteps:
                 f.outcome(w, "too_long", str(e))
                 continue
             items.append((w, step, req, cid, self._worst_case(req, batch=True)))
-        new = sum((Decimal(3 - s.attempt) * wc for w, s, _, _, wc in items if w.target not in f.batch.counted),
-                  Decimal(0))                               # a retry each, at worst, counted once per target
+        new = sum((Decimal(self._max_attempts(w, r) + 1 - s.attempt) * wc for w, s, r, _, wc in items
+                   if w.target not in f.batch.counted),
+                  Decimal(0))                               # its retries, at worst, counted once per target
         if f.run_estimate + new > self.run_limit():
             f.run_estimate += new
             f.stopped = "run_estimate"
@@ -720,7 +733,8 @@ class BatchSteps:
                                                     # run: the batch stays 'ended' and the next run reads it again)
         spend = f.spend + reply.cost_usd            # after the check: a task's check may bill a request of its own (#445's
                                                     # second model, policy.ai_batch v17 on), which it adds to f.spend
-        retry_note = None if call.ok or call.held or attempt == 2 else call.note()
+        last = attempt >= self._max_attempts(w, req)
+        retry_note = None if call.ok or call.held or last else call.note()
         try:
             with db.transaction():
                 if not self._pending(db, cid):
@@ -734,7 +748,7 @@ class BatchSteps:
             if db.closed or db.broken:
                 raise
             why = f"the reply couldn't be stored ({type(e).__name__})"
-            note = None if attempt == 2 else why + "."
+            note = None if last else why + "."
             if self._store_bare(db, cid, reply, ctx.task_run_id, spend, ("retried: " if note else "rejected: ") + why,
                                 {"attempt": attempt, "unstorable": type(e).__name__}, retry_note=note):
                 f.batch.results["unstorable"] += 1
@@ -743,7 +757,7 @@ class BatchSteps:
             return
         f.spend = spend
         reason = "; ".join(call.reasons())
-        o = f.outcome(w, "published" if call.ok else "held" if call.held else "rejected" if attempt == 2
+        o = f.outcome(w, "published" if call.ok else "held" if call.held else "rejected" if last
                       else "retrying", reason)
         o.calls.append(call)
 

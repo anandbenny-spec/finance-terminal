@@ -69,16 +69,16 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
 DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
-                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
 # (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
 # two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12); v14: v13 plus two rules, with one
 # more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14); v16: v15's
 # text, with three more checks (round 15); v17: v16 plus three rules, with four more checks, a second model's check and a
-# fallback built by code (round 16).
+# fallback built by code (round 16); v18: v17's text, marking those checks' revision before the judge (round 16's second run).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
 DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium",
-                  "v16": "medium", "v17": "medium"}
+                  "v16": "medium", "v17": "medium", "v18": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -148,13 +148,17 @@ DIFF_FIT_FROM = 16
 #   sentence before the cited one; and a claim about who voted for the action that quotes no voting-for sentence
 #   (`vote_for_problem`: fomc-2025-12-10's 3384, a close call);
 # - then a second model, Haiku 5.5 (the generator is Sonnet 5.5), reads each bullet with only its cited sentences and the two
-#   statements, and answers two questions: is every claim in the cited sentences, and is every "added", "removed" or "changed"
-#   true against the other statement? A "no" drops the bullet with the objection (`verify_request`, `apply_verdicts`;
+#   statements, and answers three questions: is every claim in the cited sentences, is every "added", "removed" or "changed"
+#   true against the other statement, and does it read as plain English, its quotations fitting its grammar (verify2 on)? A
+#   "no" drops the bullet with the objection (`verify_request`, `apply_verdicts`;
 #   `policy.ai_batch` sends it through the wrapper as its own request, never twice).
 # A target whose two replies are rejected gets an output built by code from the changed sentences, each quoted in full and
 # labelled previous or new (`fallback_bullets`; `policy.ai_batch`), so no target is left on an older version.
 DIFF_VERIFY_FROM = 17
-VERIFY_VERSION = "verify1"            # the second model's prompt: config/prompts/statement_diff_summary/verify1.md (and schema)
+# The second model's prompt: config/prompts/statement_diff_summary/<VERIFY_VERSION>.md and its schema. verify1 ran in round 16's
+# first dev run; verify2 adds a third question, whether each bullet reads as plain English (Anand's decision of 14 Nov 2026,
+# about 17:05 IST, to fix and re-run before the judge).
+VERIFY_VERSION = "verify2"
 VERIFY_MODEL = HAIKU
 VERIFY_EFFORT = "medium"
 VERIFY_MAX_TOKENS = 16_000            # thinking and one verdict per bullet; a stop at the limit is a failed check, not a pass
@@ -1457,12 +1461,15 @@ _FUNCTION = frozenset({"that", "this", "these", "those", "which", "will", "would
                        "with", "from", "into", "onto", "than", "then", "there", "here", "also", "been", "being", "were",
                        "have", "has", "having", "their", "they", "them", "what", "when", "where", "while", "over", "under",
                        "about", "after", "before", "since", "until", "upon", "within", "without", "such", "some", "more",
-                       "most", "much", "many", "other", "only", "each", "both", "further", "very"})
+                       "most", "much", "many", "other", "only", "each", "both", "further", "very",
+                       "basis", "points", "point", "cent", "percent", "percentage", "bps"})   # units aren't a phrase
 
 
 def _pairs(text: str) -> set[tuple[str, str]]:
-    words = [w.casefold() for w in _WORD.findall(match_form(text))]
-    ok = [len(w) >= 4 and w.isalpha() and w not in _FUNCTION for w in words]
+    """`text`'s distinctive pairs of words (see above), lower case only: a capitalised word is a name or opens a sentence."""
+    raw = _WORD.findall(match_form(text))
+    words = [w.casefold() for w in raw]
+    ok = [len(w) >= 4 and w.isalpha() and r[0].islower() and w not in _FUNCTION for w, r in zip(words, raw, strict=True)]
     return {(words[i], words[i + 1]) for i in range(len(words) - 1) if ok[i] and ok[i + 1]}
 
 
@@ -1519,7 +1526,7 @@ def vote_for_problem(text: str, passages: list[str]) -> str | None:
 def verify_request(req: Request, c: Checked, prompt: Prompt) -> Request:
     """The second model's request about a reply's bullets (`c`, all of which passed the checks above): the two documents as
     the generator had them (`req.sources`), then each bullet with only the sentences it cites, by document. The json route,
-    `prompt`'s schema (`verify1.schema.json`); Haiku 5.5 at effort medium (`VERIFY_*`)."""
+    `prompt`'s schema (`verify2.schema.json; verify1.schema.json before`); Haiku 5.5 at effort medium (`VERIFY_*`)."""
     old, new = req.sources[0], req.sources[1]
     lines: list[str] = []
     for i, b in enumerate(c.bullets, 1):
@@ -1537,8 +1544,8 @@ def verify_request(req: Request, c: Checked, prompt: Prompt) -> Request:
 
 
 def apply_verdicts(c: Checked, answer) -> None:
-    """The second model's answer (`answer`: its JSON) on `c`'s bullets: a bullet it doesn't find supported, or whose claims
-    of change it doesn't find true, is dropped with its objection; one it gives no verdict for is dropped too. An answer
+    """The second model's answer (`answer`: its JSON) on `c`'s bullets: a bullet it doesn't find supported, whose claims of
+    change it doesn't find true, or that it doesn't find reads well (verify2 on), is dropped with its objection; one it gives no verdict for is dropped too. An answer
     that isn't the schema's fails the reply."""
     rows = answer.get("verdicts") if isinstance(answer, dict) else None
     if not isinstance(rows, list):
@@ -1552,22 +1559,34 @@ def apply_verdicts(c: Checked, answer) -> None:
         r = by.get(i)
         if r is None:
             b.problem = "the second model's check gave no answer for it"
-        elif not (r.get("supported") is True and r.get("changes_true") is True):
+        elif not (r.get("supported") is True and r.get("changes_true") is True
+                  and r.get("reads_well", True) is True):        # verify1's answers have no reads_well
             why = " ".join(str(r.get("objection") or "").split())
             b.problem = "a second model's check found: " + ((why[:300] + "…") if len(why) > 300 else why or "no reason given")
 
 
 # ---------------------------------------------------------------------------------------------- the fallback (v17 on)
-# A target whose two replies are rejected gets bullets built by code from the redline's changed sentences, each quoted whole
-# and labelled previous or new, with no word of a model's: what the reply's quotes pointed at first, in its order, then the rest
-# by what they are about (`_PRIORITY`), at most five. A change only in dates is left out. An added and a removed sentence that
-# share a distinctive pair of words (`_pairs`, at most ADDED_MAX_SENTENCES sentences of the previous document) are shown as one
-# change, so a reworded sentence is never called added. The citations are the quoted sentences.
-_MONTHS = ("january|february|march|april|may|june|july|august|september|october|november|december"
-           "|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec")
-_DATE_WORD = re.compile(rf"^(?:{_MONTHS}|\d{{1,2}}(?:st|nd|rd|th)?|(?:19|20)\d\d(?:-\d\d)?|q[1-4])$", re.IGNORECASE)
-_PRIORITY = ((re.compile(r"target range|repo rate|federal funds rate|decided|decides|standing deposit|marginal standing"
-                         r"|bank rate|reverse repo", re.IGNORECASE), 5),
+# A target whose replies are all rejected gets bullets built by code from the redline's changed sentences, each quoted whole
+# and labelled previous or new, with no word of a model's, at most five:
+# - the policy decision's change first (the policy rate or the target range; `_PRIORITY`'s top weight), then what the rejected
+#   reply's quotes pointed at, in its order, then the rest by what they are about (`_PRIORITY`), then by position;
+# - a change only in dates is left out: its two sides differ only in month names, years, and day numbers near a month name
+#   (`_dates_only`; a rate, a projection or a count that changed is never a date);
+# - a change shown twice in the redline (an RBI resolution says its decision in two paragraphs) is shown once, by its words;
+# - two sentences the redline pairs as one change but that share few words (`_same_topic`: fewer than PAIR_MIN_SHARED of the
+#   shorter side's content words, names aside) are shown as two, one the previous document had and one the new one has, never side by
+#   side as if one replaced the other; and an added and a removed sentence sharing a distinctive pair of words (`_pairs`, in
+#   at most ADDED_MAX_SENTENCES sentences of the previous document) are shown as one change, so a reworded sentence is never
+#   called added.
+# The citations are the quoted sentences.
+_MONTH_WORD = re.compile(r"^(?:january|february|march|april|may|june|july|august|september|october|november|december"
+                         r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$", re.IGNORECASE)
+_YEAR_WORD = re.compile(r"^(?:19|20)\d\d(?:-\d\d)?$")
+_DAY_WORD = re.compile(r"^\d{1,2}(?:st|nd|rd|th)?$", re.IGNORECASE)
+DAY_NEAR_MONTH = 3                    # a day number this many words or fewer from a month name ("4 to 6 October", "May 2 and 4")
+PAIR_MIN_SHARED = 0.3
+_PRIORITY = ((re.compile(r"target range|repo rate|federal funds rate|bank rate|reverse repo|standing deposit|marginal standing",
+                         re.IGNORECASE), 5),
              (re.compile(r"against|dissent|preferred|instead", re.IGNORECASE), 4),
              (re.compile(r"stance|accommodat|withdrawal|neutral|appropriate|guided by|prepared to|expects|anticipates"
                          r"|will continue|future", re.IGNORECASE), 4),
@@ -1578,6 +1597,35 @@ _PRIORITY = ((re.compile(r"target range|repo rate|federal funds rate|decided|dec
 
 def _priority(text: str) -> int:
     return max((w for p, w in _PRIORITY if p.search(text)), default=1)
+
+
+def _undated(text: str) -> list[str]:
+    """`text`'s words (ft.eval.diff_quotes', so "4.90" is one word), lower-cased, without its dates: month names, years, and a
+    day number within DAY_NEAR_MONTH words of a month name."""
+    words = [w.lower() for w in _RUN_WORD.findall(match_form(text))]
+    out = []
+    for i, w in enumerate(words):
+        near = any(_MONTH_WORD.match(x) for x in words[max(0, i - DAY_NEAR_MONTH):i + DAY_NEAR_MONTH + 1])
+        if _MONTH_WORD.match(w) or _YEAR_WORD.match(w) or (_DAY_WORD.match(w) and near):
+            continue
+        out.append(w)
+    return out
+
+
+def _dates_only(old_text: str, new_text: str) -> bool:
+    return _undated(old_text) == _undated(new_text)
+
+
+def _content(text: str) -> set[str]:
+    """A sentence's content words: four letters or more, letters only, not a function word, and not capitalised (names, and
+    a sentence's first word, say little about what it is about)."""
+    return {w for w in _WORD.findall(match_form(text))
+            if len(w) >= 4 and w.isalpha() and w[0].islower() and w not in _FUNCTION}
+
+
+def _same_topic(old_text: str, new_text: str) -> bool:
+    a, b = _content(old_text), _content(new_text)
+    return bool(a and b) and len(a & b) >= PAIR_MIN_SHARED * min(len(a), len(b))
 
 
 def _side(text: str, spans: list[tuple[int, int]]) -> tuple[str, list[tuple[int, int]]]:
@@ -1595,21 +1643,24 @@ def _side(text: str, spans: list[tuple[int, int]]) -> tuple[str, list[tuple[int,
 
 def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], hi: int = 5) -> list[Bullet]:
     """The fallback's bullets (see above): `prefer` holds a rejected reply's quotes as (document, text), in its order."""
-    pairs = []
+    def words(spans: list[tuple[int, int]], text: str) -> str:
+        return " ".join(text[s:e] for s, e in spans)
+
+    pairs: list[list] = []
     for p in segments.get("pairs", []):
         kind = p.get("kind")
         if kind not in ("changed", "added", "removed"):
             continue
         o = [tuple(x) for x in p.get("old", [])] if kind != "added" else []
         n = [tuple(x) for x in p.get("new", [])] if kind != "removed" else []
-        if not o and not n:
-            continue
         if o and n:
-            ow = [w.casefold() for w in _WORD.findall(" ".join(old.text[s:e] for s, e in o)) if not _DATE_WORD.match(w)]
-            nw = [w.casefold() for w in _WORD.findall(" ".join(new.text[s:e] for s, e in n)) if not _DATE_WORD.match(w)]
-            if ow == nw:
+            if _dates_only(words(o, old.text), words(n, new.text)):
                 continue                                   # a change only in dates
-        pairs.append([o, n])
+            if not _same_topic(words(o, old.text), words(n, new.text)):
+                pairs += [[o, []], [[], n]]                # paired by position, not by what they say: two
+                continue
+        if o or n:
+            pairs.append([o, n])
     every_old = [(s, e) for p in segments.get("pairs", []) for s, e in (tuple(x) for x in p.get("old", []))]
     removed = [p for p in pairs if p[0] and not p[1]]
     for p in [p for p in pairs if p[1] and not p[0]]:  # an added sentence that rewords a removed one: one change
@@ -1621,6 +1672,13 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
                 pairs.remove(p)
                 removed.remove(r)
                 break
+    seen: set[tuple[str, str]] = set()
+    unique = []
+    for p in pairs:                                     # a change the redline shows twice, once
+        k = (" ".join(_undated(words(p[0], old.text))), " ".join(_undated(words(p[1], new.text))))
+        if k not in seen:
+            seen.add(k)
+            unique.append(p)
 
     def first_preferred(p) -> int:
         for k, (doc, q) in enumerate(prefer):
@@ -1629,15 +1687,13 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
                 return k
         return len(prefer)
 
-    def start(p) -> int:
-        return min([s for s, _ in p[1]] or [10 ** 9])
-
     def key(p):
-        words = " ".join(old.text[s:e] for s, e in p[0]) + " " + " ".join(new.text[s:e] for s, e in p[1])
-        return (first_preferred(p), -_priority(words), start(p), min([s for s, _ in p[0]] or [10 ** 9]))
+        level = _priority(words(p[0], old.text) + " " + words(p[1], new.text))
+        return (level < 5, first_preferred(p), -level, min([s for s, _ in p[1]] or [10 ** 9]),
+                min([s for s, _ in p[0]] or [10 ** 9]))
 
     out: list[Bullet] = []
-    for o, n in sorted(pairs, key=key)[:hi]:
+    for o, n in sorted(unique, key=key)[:hi]:
         b = Bullet("")
         said = []
         if o:

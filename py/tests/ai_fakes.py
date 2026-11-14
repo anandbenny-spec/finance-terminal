@@ -201,7 +201,7 @@ class FakeClaude:
         else:
             text = body["messages"][0]["content"][-1]["text"]
             n = len(re.findall(r"^Bullet \d+: ", text, flags=re.MULTILINE))
-            got = {"verdicts": [{"bullet": i, "supported": True, "changes_true": True, "objection": ""}
+            got = {"verdicts": [{"bullet": i, "supported": True, "changes_true": True, "reads_well": True, "objection": ""}
                                 for i in range(1, n + 1)]}
         text = got if isinstance(got, str) else json.dumps(got)
         return message([{"type": "text", "text": text}], input_tokens=self.verify_usage[0], output_tokens=self.verify_usage[1],

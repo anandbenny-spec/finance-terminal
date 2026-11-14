@@ -111,14 +111,17 @@ outside quotation marks (code first takes such a run into a quotation where a ci
 previous statement already had, on a claim resting on the sentence a quoted one refers back to, and on a claim about who voted
 for the action without its voting sentence. **The second model** (v17 on): a reply whose bullets all pass is checked by Haiku
 5.5 (`summaries.verify_request`; the generator is Sonnet 5.5), in real time, through the wrapper, as its own ops.ai_request row
-under this task (prompt version `verify1`, with no document, so it never pins a target), while the reply is checked: a bullet it objects to is
+under this task (prompt version `verify2`, earlier `verify1`, with no document, so it never pins a target), while the reply is
+checked: a bullet it objects to is
 dropped with the objection, so the reply is retried or rejected as for any check. Its cost goes on the run's spend at once and
 its answer in the reply's output (`content.verify`); a request already answered isn't sent again (its answer is read back from
 that output), and one that can't be sent or answered fails the reply ("not checked by a second model"). Each request's worst
 case, for the budget and the $5 run estimate, includes its second model's. **The fallback** (v17 on): when a target's second
 reply is rejected, an output built by code from the changed sentences (`summaries.fallback_bullets`: each quoted whole and
 labelled previous or new, model `FALLBACK_MODEL`, no cost) is published in the same transaction, superseding the older output,
-so no target stays on an older version; its citations are the quoted sentences.
+so no target stays on an older version; its citations are the quoted sentences. A v17-on target gets three replies, not two
+(`_max_attempts`), before it is rejected. v18 is v17's text, marking the revision of these checks before the judge (a third
+reply, the second model's third question, the fallback's fixes; round 16's second dev run).
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -194,7 +197,7 @@ from ft.policy import rbi_resolution
 # v15 (Anand's pick of 13 Nov 2026, before 17:36 IST, after round 13): v14's text, with two false positives fixed
 # (summaries.DIFF_FP_FIX_FROM). v16 (Anand's decision of 14 Nov 2026, about 00:38 IST, after the judge failed round 14): v15's
 # text, with the grammar-fit, run-on and neighbour checks (summaries.DIFF_FIT_FROM).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v17", "stance_extraction": "v2",
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v18", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
@@ -209,6 +212,7 @@ _SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 REALTIME_DOC_TYPES = ("fomc_statement", "mpc_resolution", "rbi_governor_statement")
 EXTRACTION_DOC_TYPE = "mpc_resolution"   # the stance and projection fallback run on MPC resolutions only (Spec 01 D2)
 EMBED_MODEL_KEY = "voyage-4@512"
+DIFF_ATTEMPTS = 3                     # statement_diff_summary from v17: the first reply and two retries (`_max_attempts`)
 VERIFY_EXTRA_TOKENS = 3_000           # the second model's input beyond the generator's: the bullets and their cited sentences
 RUN_LIMIT_USD = batch.RUN_LIMIT_USD   # CLAUDE.md §7: an AI run estimated above $5 is Anand's call (read at call time)
 INTEGRITY_LIMIT = Decimal("0.10")     # citation_integrity: rejections stay under 10% (Architecture 03 §1.9)
@@ -680,6 +684,14 @@ class AiBatch(BatchSteps, Task):
 
     # ------------------------------------------------------------------ real time (watch, on a decision day)
     # ------------------------------------------------------------------ the second model (statement_diff_summary v17 on)
+    def _max_attempts(self, w: Work, req: Request) -> int:
+        """A v17-on diff summary gets a third reply (#445, round 16: Anand's decision of 14 Nov 2026, about 17:05 IST, to fix
+        and re-run): its checks and the second model's are stricter, and a target whose replies all fail gets the
+        fallback. Every other target, and an earlier version's, gets two."""
+        if w.task == RERUN_TASK and _vnum(req.prompt.version) >= summaries.DIFF_VERIFY_FROM:
+            return DIFF_ATTEMPTS
+        return super()._max_attempts(w, req)
+
     def _verify_prompt(self):
         return self._pinned_prompt("statement_diff_summary", summaries.VERIFY_VERSION)
 
@@ -771,8 +783,9 @@ class AiBatch(BatchSteps, Task):
     def _send(self, ctx: Context, f: Fetched, todo: list[tuple[Work, Step]], prompts) -> None:
         db = ctx.fetcher.db
         claude = self._claude()
-        f.run_estimate = sum((Decimal(3 - s.attempt) * self._worst_case(w.request(prompts[w.task], note=s.note))
-                              for w, s in todo), Decimal(0))     # a retry each, at worst
+        f.run_estimate = sum((Decimal(self._max_attempts(w, r) + 1 - s.attempt) * self._worst_case(r)
+                              for w, s in todo for r in (w.request(prompts[w.task], note=s.note),)),
+                             Decimal(0))                          # its retries, at worst
         if f.run_estimate > RUN_LIMIT_USD:
             f.stopped = "run_estimate"
             for w, _ in todo:
@@ -827,7 +840,8 @@ class AiBatch(BatchSteps, Task):
                            (f.spend.quantize(Decimal("0.0001")), ctx.task_run_id))
                 if call.failed is None:
                     call.checked = w.check(req, call.reply)
-                retry_note = None if call.ok or call.held or attempt == 2 else call.note()
+                last = attempt >= self._max_attempts(w, req)
+                retry_note = None if call.ok or call.held or last else call.note()
                 with db.transaction():                          # the reply is stored before anything else happens
                     self._store(db, w, call, ctx.task_run_id, retry_note)
                 if call.ok:
@@ -837,12 +851,12 @@ class AiBatch(BatchSteps, Task):
                 if call.held:
                     o.status = "held"
                     break
-                if attempt == 2:
+                if last:
                     o.status = "rejected"
                     if call.fallback_id is not None:
                         o.reason += f"; the fallback built from the changed sentences is published (output {call.fallback_id})"
                     break
-                attempt, note = 2, retry_note
+                attempt, note = attempt + 1, retry_note
             if o.status == "errored" or f.stopped:
                 # The API refused or the money ran out: the rest wait for the next run.
                 for w2, _ in todo[i + 1:]:
@@ -909,8 +923,8 @@ class AiBatch(BatchSteps, Task):
                 and not call.checked.verify.get("reused"):
             tx.execute("update ops.ai_request set ai_output_id = %s where custom_id = %s",
                        (out_id, call.checked.verify["custom_id"]))     # the second model's answer is in this output
-        if (status == "rejected" and not retry_note and call.attempt == 2 and w.task == RERUN_TASK
-                and _vnum(req.prompt.version) >= summaries.DIFF_VERIFY_FROM):
+        if (status == "rejected" and not retry_note and call.attempt >= self._max_attempts(w, req)
+                and w.task == RERUN_TASK and _vnum(req.prompt.version) >= summaries.DIFF_VERIFY_FROM):
             self._store_fallback(tx, w, call, out_id, task_run_id)
 
     def _store_fallback(self, tx, w: Work, call: Call, rejected_id: int, task_run_id: int) -> int | None:
