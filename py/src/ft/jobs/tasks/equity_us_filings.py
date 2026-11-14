@@ -47,6 +47,10 @@ Checks, B blocking, W warning:
 - (W) `gaps`: for each operating company, the lines a valuation reads (GAP_WORDS) that are empty in its latest
   3 fiscal years, 8 quarters and their balance sheets (the first year's opening one too), with the us-gaap tags that filing files for the period whose
   names suggest the line (tag names only, never a value): where to look before a tag joins a chain (#455);
+- (W) `revenue_alternatives`: a company and the periods where another tag of the revenue chain, filed in the same
+  filing for the same period, is more than 0.5% above the stored revenue (the income statement's total is stored: US-08's
+  fail, #558), and each company whose latest fiscal year files more than one revenue tag, with how each compares;
+  tickers, tags and dates only;
 - (W) `loaded`: what the run registered (always passing).
 """
 from __future__ import annotations
@@ -446,6 +450,7 @@ class UsFilings(Task):
                          else "no filing's row lacks a figure an earlier filing's row for its period has", blocking=False))
 
         out.append(self._gaps(ok))
+        out.append(self._revenue_alternatives(ok))
 
         r = self.result
         out.append(Check("loaded", True, f"{r.get('registered', 0)} filings registered, {r.get('rebuilt', 0)} rebuilt; "
@@ -577,6 +582,43 @@ class UsFilings(Task):
         return Check("gaps", not found, _names(found, 40) if found else
                      "every operating company's valuation lines are filed for its latest years and quarters",
                      blocking=False)
+
+    @staticmethod
+    def _revenue_alternatives(ok: list[Company]) -> Check:
+        """US-08's fail (#558): wherever a stored row's revenue is a filed tag, the other tags of the revenue chain the
+        same filing files for the same period (start and end). A company and its periods are named where one is more
+        than 0.5% above the stored figure (the statement's total may not be the one stored). The detail also lists each
+        company whose latest fiscal year files more than one, with how each compares (above, equal or below). Tickers,
+        tags and dates only, never values (`CLAUDE.md` §4)."""
+        above, latest = [], []
+        for x in ok:
+            if x.stmts is None or "revenue" not in x.stmts.cfg.columns:
+                continue
+            found: dict[tuple[str, str], list[str]] = defaultdict(list)     # (stored, above) -> periods
+            for b in sorted(x.built, key=lambda b: (b.period_end, b.filing.filed)):
+                for r in b.rows:
+                    for tag, how in x.stmts.alternatives(b.filing, "revenue", r) or []:
+                        period = f"{r.period_start.isoformat()} to {r.period_end.isoformat()}"
+                        if how == "above" and period not in found[(r.tags["revenue"], tag)]:
+                            found[(r.tags["revenue"], tag)].append(period)
+            for (stored, tag), periods in sorted(found.items()):
+                above.append(f"{x.c.ticker} {tag} above the stored {stored} at " + ", ".join(periods[-4:])
+                             + (f" and {len(periods) - 4} more" if len(periods) > 4 else "")
+                             + f" ({len(periods)} period{'s' if len(periods) > 1 else ''})")
+            years = [b for b in x.built if b.filing.annual and any(r.period_kind == "year" for r in b.rows)]
+            if years:
+                b = max(years, key=lambda b: (b.period_end, b.filing.filed))
+                r = next(r for r in b.rows if r.period_kind == "year")
+                alts = x.stmts.alternatives(b.filing, "revenue", r)
+                if alts:
+                    latest.append(f"{x.c.ticker} {r.period_end.isoformat()}: {r.tags['revenue']} stored, "
+                                  + ", ".join(f"{t} {how}" for t, how in alts))
+        listed = ("latest fiscal years filing more than one revenue tag: " + _names(latest, 40)) if latest else \
+            "no company's latest fiscal year files more than one revenue tag"
+        return Check("revenue_alternatives", not above,
+                     ("another revenue tag filed for the period is more than 0.5% above the stored one: "
+                      + _names(above, 40) + "; " + listed) if above else
+                     "no revenue tag filed beside the stored one is more than 0.5% above it; " + listed, blocking=False)
 
     @staticmethod
     def _why(x: Company, kind: str, end) -> str:
