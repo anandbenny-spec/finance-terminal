@@ -528,8 +528,9 @@ def test_the_web_job_follows_the_secrets_job_and_runs_only_when_it_says_so():
     step = _web_step()
     assert "${{" not in step["run"]                                              # inputs reach the script through env
     assert set(step["env"]) == {"EVENT", "BASE_SHA", "BEFORE_SHA", "HEAD_SHA", "WEB_READS"}
-    # what the web job reads: web/, the labelling set its tests read, vercel.json and ci.yml itself
+    # what the web job reads: web/, the labelling set and the guidance map its tests read, vercel.json and ci.yml itself
     assert re.search(r"labelling_items\.json", (WORKFLOWS.parent.parent / "web/lib/labelling/labelling.test.ts").read_text())
+    assert re.search(r"guidance_metrics\.yaml", (WORKFLOWS.parent.parent / "web/components/company/calls/guidance-record.test.tsx").read_text())
 
 
 def _git(cwd, *args):
@@ -572,6 +573,8 @@ def _ask(tmp_path, event, changed, *, base="parent"):
     (["web/app/page.tsx"], "true"),
     (["py/src/ft/jobs/due.py", "web/lib/x.ts"], "true"),
     (["py/config/eval/sets/labelling_items.json"], "true"),
+    (["py/config/equity/guidance_metrics.yaml"], "true"),             # #532: web's tests pin the actual's units to it
+    (["py/config/equity/companies.yaml", "py/config/equity/guidance_metrics.yaml.bak"], "false"),
     (["vercel.json"], "true"),
     ([".github/workflows/ci.yml"], "true"),
 ])

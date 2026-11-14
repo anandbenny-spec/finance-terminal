@@ -2,11 +2,12 @@
 // held back while its fields are hidden, "Too few scored targets" below 5, the rate with n and the window from 5, pending and
 // not-scored rows in their own group, outcomes in words (no colour), the quote chip and page link, the left-out line for 0, 1
 // and 12 statements, the banned-words scan and the exact-count read. Test rows, not real figures.
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CompanyView } from "@/components/company/CompanyView";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { guidanceFiguresOpen, guidanceGroups, guidanceHitRateOpen, hitRate, outcomeText, unattributedAll, unattributedLine } from "@/lib/equity/guidance";
+import { ACTUAL_UNIT, actualText, guidanceFiguresOpen, guidanceGroups, guidanceHitRateOpen, hitRate, outcomeText, unattributedAll, unattributedLine } from "@/lib/equity/guidance";
 import type { CallGuidanceRow, GuidanceHitRateRow } from "@/lib/queries/api";
 import { readGuidanceRecord, type CallsTabData, type GuidanceRecordData } from "@/lib/queries/calls";
 import { bannedCallWordsIn } from "@/tests/banned-words";
@@ -72,7 +73,7 @@ describe("the panel's states", () => {
 describe("the rows", () => {
   const pending = g({ outcome: "pending", relation: null, actual: null, counted: false, metric: "revenue", metric_label: "Revenue", period_text: "FY28", target_end: "2028-03-31" });
   const notScored = g({ outcome: "not_scored", relation: null, actual: null, counted: false, reason: "no filed figure for the period", metric: "capex", metric_label: "Capex", target_end: "2027-03-31" });
-  const missed = g({ outcome: "missed", relation: "below", actual: 24.5, metric: "margin_b", metric_label: "Operating margin", target_end: "2026-03-31", revision: "raised", is_first: false });
+  const missed = g({ outcome: "missed", relation: "below", actual: 24.5, metric: "ebitda_margin", metric_label: "Operating margin", target_end: "2026-03-31", revision: "raised", is_first: false });
 
   it("lists scored rows first and pending and not-scored rows after, in their own table", () => {
     const groups = guidanceGroups([pending, notScored, missed, g()], [], []);
@@ -117,6 +118,45 @@ describe("the rows", () => {
     expect(outcomeText(g({ outcome: "not_scored", relation: null, actual: null, reason: "some_new_key" }))).toBe("Not scored");
     expect(outcomeText(g({ outcome: "not_scored", relation: null, actual: null, reason: "toString" }))).toBe("Not scored");
     expect(outcomeText(g({ outcome: "not_scored", relation: null, actual: null, reason: null, not_scored_reason: null }))).toBe("Not scored");
+  });
+
+  // #532 part 2: the live check of 14 Nov 2026 found a direction target's actual shown as "28,162.59 (unit as spoken)", since a
+  // direction statement has no unit and the actual took the statement's. The actual is in its metric's map unit.
+  it("keeps the actual's units the same as py/config/equity/guidance_metrics.yaml's map, metric for metric", () => {
+    const yaml = readFileSync(new URL("../../../../py/config/equity/guidance_metrics.yaml", import.meta.url), "utf8");
+    const lines = yaml.slice(yaml.indexOf("\nlines:"), yaml.indexOf("\ncolumns:"));
+    const fromYaml = Object.fromEntries([...lines.matchAll(/^ {2}([a-z0-9_]+):\s*\{[^}]*\bunit:\s*(inr|pct)\b/gm)].map((m) => [m[1], m[2]]));
+    expect(Object.keys(fromYaml).length).toBeGreaterThanOrEqual(14);
+    expect({ ...ACTUAL_UNIT }).toEqual(fromYaml);
+  });
+
+  it("writes a direction target's actual in its metric's unit, never \"unit as spoken\"", () => {
+    const direction = (over: Partial<CallGuidanceRow>) =>
+      g({ kind: "direction", value: null, low: null, high: null, unit: null, direction: "increase", comparison: "previous_period", ...over });
+    const revenue = direction({ metric: "revenue", metric_label: "Revenue", actual: 28162.59, relation: "moved_as_said" });
+    const margin = direction({ metric: "ebit_margin", metric_label: "EBIT margin", actual: 24.195474, outcome: "missed", relation: "moved_against" });
+    expect(actualText(revenue)).toBe("₹28,162.59 cr");
+    expect(actualText(margin)).toBe("24.1955%");
+    // a metric outside the map (none is ever scored) shows no actual rather than a guessed unit
+    expect(actualText(direction({ metric: "other", actual: 5 }))).toBe("—");
+    const out = html(tab({ rows: [revenue, margin] }));
+    const t = text(out.slice(out.indexOf("panel-guidance-record")));
+    expect(t).toContain("₹28,162.59 cr");
+    expect(t).toContain("24.1955%");
+    expect(t).toContain("Missed (moved the other way)");
+    expect(t).not.toContain("unit as spoken");
+  });
+
+  it("says a point target's relation against its figure, and a range's against the range", () => {
+    const point = (relation: CallGuidanceRow["relation"], outcome: CallGuidanceRow["outcome"]) => g({ kind: "point", value: 26, low: null, high: null, relation, outcome });
+    expect(outcomeText(point("within", "delivered"))).toBe("Delivered (within tolerance of the figure)");
+    expect(outcomeText(point("below", "missed"))).toBe("Missed (below the figure)");
+    expect(outcomeText(point("above", "delivered"))).toBe("Delivered (above the figure)");
+    expect(outcomeText(g())).toBe("Delivered (within the range)");
+    expect(outcomeText(g({ kind: "floor", relation: "at_or_past" }))).toBe("Delivered (at or past the figure)");
+    for (const words of [outcomeText(point("within", "delivered")), outcomeText(point("below", "missed"))]) expect(bannedCallWordsIn(words)).toEqual([]);
+    // a relation the maps don't know is never shown as a key
+    expect(outcomeText(g({ relation: "sideways" as unknown as CallGuidanceRow["relation"] }))).toBe("Delivered");
   });
 
   it("shows a stored key's words on the page, not the key, with the hit rate held", () => {
@@ -240,7 +280,7 @@ describe("outcomes shown, hit rate held back (#532)", () => {
   const withoutKey = SHOWN.filter((p) => p.field_key !== "equity.guidance_hit_rate");
   const keyHidden = SHOWN.map((p) => (p.field_key === "equity.guidance_hit_rate" ? { ...p, status: "hidden" as const } : p));
   const gated = (over: Partial<CallGuidanceRow> = {}) => g({ is_first: null, revision: null, counted: null, first_call_slug: null, first_stated_on: null, ...over });
-  const missed = gated({ outcome: "missed", relation: "below", actual: 24.5, metric: "margin_b", metric_label: "Operating margin", target_end: "2026-03-31" });
+  const missed = gated({ outcome: "missed", relation: "below", actual: 24.5, metric: "ebitda_margin", metric_label: "Operating margin", target_end: "2026-03-31" });
   const pending = gated({ outcome: "pending", relation: null, actual: null, metric: "revenue", metric_label: "Revenue", period_text: "FY28", target_end: "2028-03-31" });
   const panelOf = (out: string) => out.slice(out.indexOf("panel-guidance-record"));
   const held = (policies = withoutKey) => html(tab({ rows: [gated(), missed, pending], rate: null }, policies));
