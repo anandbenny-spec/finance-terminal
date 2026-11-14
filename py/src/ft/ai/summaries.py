@@ -41,6 +41,13 @@ passages they cite.
 - From v16 on (#445, round 15; Anand's decision of 14 Nov 2026, about 00:38 IST; `DIFF_FIT_FROM`): also no quotation set where
   its grammar can't fit, no quotation the bullet's own words run on from with the statement's next words, and no claim
   resting on a sentence next to a quoted one that the bullet doesn't quote.
+- From v17 on (#445, round 16; Anand's decision of 14 Nov 2026, 14:48 IST; `DIFF_VERIFY_FROM`): also no run of five or more of a
+  statement's words outside quotation marks (code first moves a quotation's mark over such a run, or quotes it, where the words
+  are a cited passage's), no "adds" for words the previous statement already had, no claim resting on the sentence a quoted one
+  refers back to, and no claim about who voted for the action without its voting sentence; then a second model (Haiku 5.5)
+  reads each bullet against its cited sentences and both statements (`verify_request`, `apply_verdicts`; `policy.ai_batch`
+  sends it). A target whose two replies are rejected gets an output built by code from the changed sentences
+  (`fallback_bullets`).
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
 (`policy.ai_batch`). The database checks the published output's citations again at commit (Architecture 01 §1.4).
@@ -54,7 +61,7 @@ from datetime import date
 from itertools import pairwise
 
 from ft.ai.citations import map_api_citation
-from ft.ai.client import SONNET, Prompt, Reply, Request, Source, TextPart, load_schema
+from ft.ai.client import HAIKU, SONNET, Prompt, Reply, Request, Source, TextPart, load_schema
 
 BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # The model of a statement_diff_summary prompt version that doesn't run on the task's (Haiku 5.5). v7 is Sonnet 5.5's (#445,
@@ -62,15 +69,16 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
 DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
-                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
 # (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
 # two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12); v14: v13 plus two rules, with one
 # more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14); v16: v15's
-# text, with three more checks (round 15).
+# text, with three more checks (round 15); v17: v16 plus three rules, with four more checks, a second model's check and a
+# fallback built by code (round 16).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
 DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium",
-                  "v16": "medium"}
+                  "v16": "medium", "v17": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -123,6 +131,33 @@ DIFF_FP_FIX_FROM = 15
 # Measured on dev's stored v11 to v15 outputs (61 outputs, 247 bullets): the three catch those three bullets, and flag 2 of
 # the 85 bullets the round 11 and round 14 judges passed (both a quotation followed by five of the statement's next words).
 DIFF_FIT_FROM = 16
+# From v17 (#445, round 16; Anand's decision of 14 Nov 2026, 14:48 IST, after the judge failed round 15 on three bullets the
+# pattern checks let through, about 7% of 41, and one target left on v1; built to the strictest reading of Part 2, so the next
+# judge's reading can't decide the round; tightenings):
+# - no run of RUN_MIN_WORDS or more of a statement's words outside quotation marks, names, figure labels and lead-ins included
+#   (`long_run_problem`): the pack's own stretch measure (`ft.eval.diff_quotes`), as a gate at 0, counted against both whole
+#   statements. Before the checks, code moves a quotation's mark over such a run where the run touches the quotation and the
+#   two together are words of a cited passage, or puts the run in quotation marks where it is a cited passage's words on its own
+#   (`settle_runs`), with no model call: fomc-2026-10-28's 3376 ended a quotation at "…determine the policy stance appropriate"
+#   and went on in the statement's words;
+# - "adds", "new sentence" and the like for words the previous statement already had in a changed sentence, unless the bullet
+#   quotes that sentence too (`added_problem`): mpc-2023-12-08's 3375 said the new statement "adds" that policy "must continue
+#   to be actively disinflationary", which the previous one had said in shorter words;
+# - a claim resting on the sentence before a quoted one that opens by referring back ("Accordingly, they …"), however common
+#   its words (`neighbour_problem`'s `refers_back`): mpc-2020-10-09's 3383 called inflation pressures "supply shocks", from the
+#   sentence before the cited one; and a claim about who voted for the action that quotes no voting-for sentence
+#   (`vote_for_problem`: fomc-2025-12-10's 3384, a close call);
+# - then a second model, Haiku 5.5 (the generator is Sonnet 5.5), reads each bullet with only its cited sentences and the two
+#   statements, and answers two questions: is every claim in the cited sentences, and is every "added", "removed" or "changed"
+#   true against the other statement? A "no" drops the bullet with the objection (`verify_request`, `apply_verdicts`;
+#   `policy.ai_batch` sends it through the wrapper as its own request, never twice).
+# A target whose two replies are rejected gets an output built by code from the changed sentences, each quoted in full and
+# labelled previous or new (`fallback_bullets`; `policy.ai_batch`), so no target is left on an older version.
+DIFF_VERIFY_FROM = 17
+VERIFY_VERSION = "verify1"            # the second model's prompt: config/prompts/statement_diff_summary/verify1.md (and schema)
+VERIFY_MODEL = HAIKU
+VERIFY_EFFORT = "medium"
+VERIFY_MAX_TOKENS = 16_000            # thinking and one verdict per bullet; a stop at the limit is a failed check, not a pass
 
 
 def diff_json(version: str) -> bool:
@@ -170,6 +205,7 @@ class Checked:
     problems: list[str]               # reply-level: the count, no bullets
     mapping: Counter                  # citations by how they mapped: offsets, search, failed, wrong_place, ...
     copies: Counter = field(default_factory=Counter)   # statement_diff_summary: copied blocks 'removed' or 'quoted' (#445)
+    verify: dict | None = None        # statement_diff_summary from v17: the second model's check (request, cost, answer)
 
     @property
     def kept(self) -> list[Bullet]:
@@ -394,8 +430,13 @@ REASON_PHRASES: dict[str, tuple[str, ...]] = {
                r"the reply isn't the schema's JSON", r"isn't the schema's object", r"\d+ quotes, not 1 to \d+",
                r"copies a statement's words without quotation marks", r"two quotations side by side",
                r"a quotation cut in the middle of", r"a quotation that ends on ",
-               r"a quotation that doesn't fit the grammar of its sentence", r"the statement's next words after a quotation"),
+               r"a quotation that doesn't fit the grammar of its sentence", r"the statement's next words after a quotation",
+               r"a run of a statement's words outside quotation marks"),
 }
+REASON_PHRASES["citation"] += (r"claims words were added that the previous statement already had",
+                               r"a claim resting on the sentence a quoted one refers back to",
+                               r"a claim about who voted for the action", r"a second model's check found",
+                               r"the second model's check gave no answer")
 
 
 def verify_bullet(body: str, cites: list, sources: tuple[Source, ...], mapping: Counter, *,
@@ -850,23 +891,25 @@ def check_diff_json(answer, sources: tuple[Source, ...], changed: dict[int, list
     task, mapping = "statement_diff_summary", Counter()
     number = int(version.lstrip("v")) if version is not None else 0
     strict, whole, sides = number >= DIFF_STRICT_FROM, number >= DIFF_WHOLE_FROM, number >= DIFF_SIDES_FROM
-    fixed, fit = number >= DIFF_FP_FIX_FROM, number >= DIFF_FIT_FROM
+    fixed, fit, runs = number >= DIFF_FP_FIX_FROM, number >= DIFF_FIT_FROM, number >= DIFF_VERIFY_FROM
     rows = answer.get("bullets") if isinstance(answer, dict) else None
     if not isinstance(rows, list):
         return Checked(task, [], ["the reply isn't the schema's JSON ({bullets: [...]})"], mapping)
+    copies: Counter = Counter()
     bullets = [_diff_json_bullet(raw, sources, changed, mapping, strict=strict, whole=whole, sides=sides, fixed=fixed,
-                                 fit=fit, sentences=sentences)
+                                 fit=fit, sentences=sentences, runs=runs, copies=copies)
                for raw in rows]
     problems = []
     lo, hi = BULLETS[task]
     if not lo <= len(bullets) <= hi:
         problems.append(f"{len(bullets)} bullets, not {lo} to {hi}")
-    return Checked(task, bullets, problems, mapping)
+    return Checked(task, bullets, problems, mapping, copies)
 
 
 def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[tuple[int, int]]], mapping: Counter, *,
                       strict: bool = False, whole: bool = False, sides: bool = False, fixed: bool = False,
-                      fit: bool = False, sentences: dict[int, list[tuple[int, int]]] | None = None) -> Bullet:
+                      fit: bool = False, sentences: dict[int, list[tuple[int, int]]] | None = None, runs: bool = False,
+                      copies: Counter | None = None) -> Bullet:
     if not isinstance(raw, dict) or not isinstance(raw.get("text"), str) or not isinstance(raw.get("quotes"), list):
         b = Bullet("")
         b.problem = "isn't the schema's object"
@@ -895,6 +938,11 @@ def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[
             if cited not in b.citations:
                 b.citations.append(cited)
                 passages.append(src.text[s:e])
+    if runs:                                    # v17: a run of a statement's words joins a quotation, or becomes one
+        text, n = settle_runs(text, passages, [src.text for src in sources])
+        b.text = text
+        if copies is not None and n:
+            copies["quoted"] += n
     if extra := unsupported_figures(text, passages):
         b.problem = "numbers not in its cited passages: " + ", ".join(extra)
     else:
@@ -910,7 +958,13 @@ def _diff_json_bullet(raw, sources: tuple[Source, ...], changed: dict[int, list[
         if b.problem is None and sentences is not None:
             texts = {src.document_id: src.text for src in sources}
             b.problem = neighbour_problem(text, [(c.document_id, c.start, c.end) for c in b.citations], texts, sentences,
-                                          changed)
+                                          changed, refers_back=runs)
+    if b.problem is None and runs:
+        cited = [(c.document_id, c.start, c.end) for c in b.citations]
+        texts = {src.document_id: src.text for src in sources}
+        b.problem = (long_run_problem(text, [src.text for src in sources])
+                     or added_problem(text, cited, texts, sources[0].document_id, changed, sentences)
+                     or vote_for_problem(text, passages))
     return b
 
 
@@ -1218,10 +1272,12 @@ def _own_word(w: str) -> bool:
 
 def neighbour_problem(text: str, cited: list[tuple[int, int, int]], texts: dict[int, str],
                       sentences: dict[int, list[tuple[int, int]]],
-                      changed: dict[int, list[tuple[int, int]]]) -> str | None:
+                      changed: dict[int, list[tuple[int, int]]], *, refers_back: bool = False) -> str | None:
     """Why a bullet's own words rest on a sentence next to its quotes that it doesn't quote (see above), or None. `cited`:
     the bullet's citations as (document id, start, end); `texts`: each document's text; `sentences` and `changed`: each
-    document's sentences and changed sentences (spans into its text)."""
+    document's sentences and changed sentences (spans into its text). With `refers_back` (v17 on, `DIFF_VERIFY_FROM`), the
+    sentence before a cited one that opens by referring back (`_REFERS_BACK`: "Accordingly, they …") counts however common
+    its words are in the document: the cited sentence leans on it."""
     t = match_form(text)
     if t.count('"') % 2:
         return None
@@ -1233,6 +1289,7 @@ def neighbour_problem(text: str, cited: list[tuple[int, int, int]], texts: dict[
     quoted = {w for d, s, e in cited for w in words_of(d, s, e)}
     spans_cited = set(cited)
     beside: list[tuple[int, int, int]] = []
+    leaned_on: set[tuple[int, int, int]] = set()   # the sentence a cited one refers back to (`refers_back`)
     for d, s, e in cited:
         spans = sentences.get(d, [])
         if d not in texts or (s, e) not in spans:
@@ -1241,6 +1298,8 @@ def neighbour_problem(text: str, cited: list[tuple[int, int, int]], texts: dict[
         for j in (i - 1, i + 1):
             if 0 <= j < len(spans) and (d, *spans[j]) not in spans_cited and (d, *spans[j]) not in beside:
                 beside.append((d, *spans[j]))
+        if refers_back and i > 0 and (d, *spans[i - 1]) not in spans_cited and _REFERS_BACK.match(texts[d][s:e]):
+            leaned_on.add((d, *spans[i - 1]))
     if not beside:
         return None
     for raw in _WORD.findall(own):
@@ -1250,14 +1309,352 @@ def neighbour_problem(text: str, cited: list[tuple[int, int, int]], texts: dict[
         for d, s, e in beside:
             if not any(_stem_match(w, x) for x in words_of(d, s, e)):
                 continue
-            if sum(any(_stem_match(w, x) for x in words_of(d, a, b)) for a, b in sentences[d]) > NEIGHBOUR_MAX_SENTENCES:
+            leaned = (d, s, e) in leaned_on
+            if not leaned and sum(any(_stem_match(w, x) for x in words_of(d, a, b))
+                                  for a, b in sentences[d]) > NEIGHBOUR_MAX_SENTENCES:
                 continue
             sentence = " ".join(texts[d][s:e].split())
             shown = sentence if len(sentence) <= 80 else sentence[:79] + "…"
             fix = ("quote that sentence too, or leave the claim out" if (s, e) in changed.get(d, [])
                    else "that sentence didn't change, so it can't be quoted: leave the claim out")
+            if leaned:
+                return (f'a claim resting on the sentence a quoted one refers back to: "{raw}" is from "{shown}", not from the '
+                        f"quoted sentence ({fix})")
             return f'a claim resting on a sentence next to its quotes that it doesn\'t quote: "{raw}" is from "{shown}" ({fix})'
     return None
+
+
+# ---------------------------------------------------------------------------------------------- v17's checks (`DIFF_VERIFY_FROM`)
+# `_REFERS_BACK`: a sentence that opens by referring back to the one before it: "Accordingly, they …", "These …", "Taking
+# into account all these factors, …" (an RBI paragraph number may come first).
+_REFERS_BACK = re.compile(
+    r"^\W*(?:\d{1,2}\.\s*)?(?:"
+    r"(?:(?:accordingly|hence|thus|therefore|consequently|however|moreover|further(?:more)?|in\s+addition|as\s+a\s+result"
+    r"|at\s+the\s+same\s+time|nonetheless|nevertheless|overall|on\s+balance)\s*,?\s+)?"
+    r"(?:they|these|this|those|it|its|their|such|both|the\s+latter|the\s+former)\b"
+    r"|(?:accordingly|hence|thus|therefore|consequently)\b"
+    r"|(?:in\s+view\s+of|in\s+light\s+of|against|given|taking\s+into\s+(?:account|consideration))\s+(?:all\s+)?"
+    r"(?:this|these|those|the\s+above)\b)",
+    re.IGNORECASE)
+
+RUN_MIN_WORDS = 5                     # the judge's pack counts stretches from five words (ft.eval.diff_quotes.MIN_WORDS)
+_RUN_WORD = re.compile(r"\w+(?:[-'/.,%]\w+)*")    # ft.eval.diff_quotes' words (a test keeps the two the same)
+
+
+def _run_words(text: str) -> tuple[str, list[tuple[str, int, int, bool]]]:
+    """`text` in `match_form`, and each of its words as ft.eval.diff_quotes reads them: (lower-cased, start, end, inside
+    double quotation marks)."""
+    t = match_form(text)
+    marks = [m.start() for m in re.finditer('"', t)]
+    return t, [(m.group(0).lower(), m.start(), m.end(), sum(1 for at in marks if at < m.start()) % 2 == 1)
+               for m in _RUN_WORD.finditer(t)]
+
+
+def _word_line(text: str) -> str:
+    return " " + " ".join(w.lower() for w in _RUN_WORD.findall(match_form(text))) + " "
+
+
+def long_runs(text: str, documents: list[str], min_words: int = RUN_MIN_WORDS) -> list[tuple[int, int]]:
+    """The runs of `min_words` or more words of `text` outside quotation marks that are words of one of `documents` in the
+    same order, as (start, end) in `match_form(text)`: longest first from the left, never overlapping (the pack's measure,
+    `ft.eval.diff_quotes.unquoted_copies`, read against whole documents)."""
+    _, words = _run_words(text)
+    hays = [_word_line(d) for d in documents]
+
+    def copied(i: int, j: int) -> bool:
+        run = " " + " ".join(w[0] for w in words[i:j]) + " "
+        return any(run in h for h in hays)
+
+    found, i = [], 0
+    while i < len(words):
+        if words[i][3]:
+            i += 1
+            continue
+        j = i
+        while j < len(words) and not words[j][3] and copied(i, j + 1):
+            j += 1
+        if j - i >= min_words:
+            found.append((words[i][1], words[j - 1][2]))
+            i = j
+        else:
+            i += 1
+    return found
+
+
+def long_run_problem(text: str, documents: list[str]) -> str | None:
+    """Why a bullet has a run of a statement's words outside quotation marks (see `DIFF_VERIFY_FROM`), or None."""
+    t = match_form(text)
+    if t.count('"') % 2:
+        return None                                       # `quote_problem` has already failed it
+    for s, e in long_runs(text, documents):
+        shown = t[s:e] if e - s <= 80 else t[s:s + 79] + "…"
+        return (f'a run of a statement\'s words outside quotation marks: "{shown}" (put them inside the quotation, names '
+                "and figure labels too, or say it in your own words)")
+    return None
+
+
+def _in_passages(words: str, passages: list[str]) -> bool:
+    """Whether `words` (in `match_form`) are a stretch of one of `passages`, case aside, from a word's start to a word's end."""
+    q = words.strip()
+    if not _WORD.search(q):
+        return False
+    head = r"(?<!\w)" if re.match(r"\w", q) else ""
+    tail = r"(?!\w)" if re.search(r"\w$", q) else ""
+    pattern = re.compile(head + re.escape(q.casefold()) + tail)
+    return any(pattern.search(match_form(p).casefold()) for p in passages)
+
+
+def settle_runs(text: str, passages: list[str], documents: list[str]) -> tuple[str, int]:
+    """A bullet's text with each run of a statement's words outside quotation marks (`long_runs`) taken into quotation marks
+    where it can be, with no word added or removed, and how many were: a run that touches a quotation (nothing but spaces
+    between) joins it when the two are one stretch of a cited passage; any other run gets its own marks when it is a stretch
+    of a cited passage. A run neither fits stays as it is, and `long_run_problem` fails it. The checks then read the result."""
+    n = 0
+    for _ in range(2 * DIFF_MAX_QUOTES + 4):
+        t = match_form(text)
+        if t.count('"') % 2:
+            break
+        done = False
+        for s, e in long_runs(text, documents):
+            pre = t[:s].rstrip(" ")
+            gap = len(pre)
+            if pre.endswith('"') and pre.count('"') % 2 == 0:        # a closing mark right before the run
+                opening = pre.rfind('"', 0, gap - 1)
+                if _in_passages(t[opening + 1:gap - 1] + t[gap:e], passages):
+                    text = text[:gap - 1] + text[gap:e] + text[gap - 1] + text[e:]
+                    done = True
+            if not done:
+                rest = t[e:]
+                at = e + len(rest) - len(rest.lstrip(" "))
+                if t[at:at + 1] == '"' and t[:at].count('"') % 2 == 0:  # an opening mark right after the run
+                    closing = t.find('"', at + 1)
+                    if closing > at and _in_passages(t[s:at] + t[at + 1:closing], passages):
+                        text = text[:s] + text[at] + text[s:at] + text[at + 1:]
+                        done = True
+            if not done and _in_passages(t[s:e], passages):
+                text = text[:s] + '"' + text[s:e] + '"' + text[e:]
+                done = True
+            if done:
+                n += 1
+                break
+        if not done:
+            break
+    return text, n
+
+
+# `added_problem`: a bullet whose own words say something was added ("adds", "a new sentence", "now says" …) while a stretch it
+# quotes shares a distinctive pair of words with one of the previous document's changed sentences that it doesn't quote: the
+# previous statement already said it, so it was reworded (mpc-2023-12-08's 3375: "actively disinflationary"). A pair is two
+# words of four letters or more, letters only and not function words, side by side, found in at most ADDED_MAX_SENTENCES
+# sentences of the previous document.
+ADDED_MAX_SENTENCES = 2
+_ADDS = re.compile(
+    r"\b(?:adds?|added|adding|introduc(?:e|es|ed|ing)|inserts?|inserted|newly|for\s+the\s+first\s+time"
+    r"|(?:a|an)\s+(?:new|additional|further)\s+(?:sentence|line|clause|phrase|passage|reference|mention|paragraph|point)"
+    r"|now\s+(?:also\s+)?(?:says|states|notes|adds|includes|mentions|refers|describes|expects|sees|cites|warns|stresses))\b",
+    re.IGNORECASE)
+_FUNCTION = frozenset({"that", "this", "these", "those", "which", "will", "would", "shall", "should", "could", "might", "must",
+                       "with", "from", "into", "onto", "than", "then", "there", "here", "also", "been", "being", "were",
+                       "have", "has", "having", "their", "they", "them", "what", "when", "where", "while", "over", "under",
+                       "about", "after", "before", "since", "until", "upon", "within", "without", "such", "some", "more",
+                       "most", "much", "many", "other", "only", "each", "both", "further", "very"})
+
+
+def _pairs(text: str) -> set[tuple[str, str]]:
+    words = [w.casefold() for w in _WORD.findall(match_form(text))]
+    ok = [len(w) >= 4 and w.isalpha() and w not in _FUNCTION for w in words]
+    return {(words[i], words[i + 1]) for i in range(len(words) - 1) if ok[i] and ok[i + 1]}
+
+
+def added_problem(text: str, cited: list[tuple[int, int, int]], texts: dict[int, str], previous_id: int,
+                  changed: dict[int, list[tuple[int, int]]],
+                  sentences: dict[int, list[tuple[int, int]]] | None) -> str | None:
+    """Why a bullet says words were added that the previous document's changed sentences already had (see above), or None.
+    `cited`: the bullet's citations as (document id, start, end); `previous_id`: document 1's id."""
+    t = match_form(text)
+    if t.count('"') % 2 or previous_id not in texts:
+        return None
+    own = " ".join(_QUOTED.split(t)[::2])
+    if not _ADDS.search(own):
+        return None
+    quoted = set().union(*(_pairs(q) for q in _QUOTED.findall(t))) if _QUOTED.search(t) else set()
+    if not quoted:
+        return None
+    old = texts[previous_id]
+    every = (sentences or {}).get(previous_id) or changed.get(previous_id, [])
+    cited_old = {(s, e) for d, s, e in cited if d == previous_id}
+    for s, e in changed.get(previous_id, []):
+        if (s, e) in cited_old:
+            continue
+        for pair in sorted(quoted & _pairs(old[s:e])):
+            if sum(pair in _pairs(old[a:b]) for a, b in every) > ADDED_MAX_SENTENCES:
+                continue
+            sentence = " ".join(old[s:e].split())
+            shown = sentence if len(sentence) <= 100 else sentence[:99] + "…"
+            return (f'claims words were added that the previous statement already had: "{" ".join(pair)}" is in its '
+                    f'"{shown}" (say it was reworded, and quote that sentence too)')
+    return None
+
+
+# `vote_for_problem`: own words about who voted for the action ("voting for", "voted in favour", "among those voting") with no
+# cited sentence that lists the votes for it (fomc-2025-12-10's 3384: "…is no longer among those voting for the action",
+# citing only the voting-against sentences).
+_VOTE_FOR = re.compile(r"\bvot(?:e|es|ed|ing)\s+(?:for|in\s+favou?r)\b|\bamong\s+those\s+voting\b", re.IGNORECASE)
+_VOTE_FOR_CITED = re.compile(r"\bvot(?:e|es|ed|ing)\s+(?:for|in\s+favou?r)\b", re.IGNORECASE)
+
+
+def vote_for_problem(text: str, passages: list[str]) -> str | None:
+    """Why a bullet's own words say who voted for the action without a cited sentence listing those votes, or None."""
+    t = match_form(text)
+    if t.count('"') % 2:
+        return None
+    own = " ".join(_QUOTED.split(t)[::2])
+    if (m := _VOTE_FOR.search(own)) and not any(_VOTE_FOR_CITED.search(match_form(p)) for p in passages):
+        return (f'a claim about who voted for the action that quotes no sentence listing those votes: "{m.group(0)}" (quote '
+                "that sentence too, or leave the claim out)")
+    return None
+
+
+# ---------------------------------------------------------------------------------------------- the second model (v17 on)
+def verify_request(req: Request, c: Checked, prompt: Prompt) -> Request:
+    """The second model's request about a reply's bullets (`c`, all of which passed the checks above): the two documents as
+    the generator had them (`req.sources`), then each bullet with only the sentences it cites, by document. The json route,
+    `prompt`'s schema (`verify1.schema.json`); Haiku 5.5 at effort medium (`VERIFY_*`)."""
+    old, new = req.sources[0], req.sources[1]
+    lines: list[str] = []
+    for i, b in enumerate(c.bullets, 1):
+        lines += [f"Bullet {i}: {b.text}", "Its cited sentences:"]
+        for x in b.citations:
+            src, which = (old, "Document 1 (previous)") if x.document_id == old.document_id else (new, "Document 2 (new)")
+            lines.append(f'- {which}: "{" ".join(src.text[x.start:x.end].split())}"')
+        lines.append("")
+    instruction = ("Document 1 is the previous statement and document 2 is the new one. Check these bullets about what "
+                   "changed between them, each shown with the sentences it cites:\n\n" + "\n".join(lines)
+                   + f"\nAnswer for each of the {len(c.bullets)} bullets, in order, as the schema's JSON.")
+    return Request("statement_diff_summary", prompt, (old, new), instruction, model=VERIFY_MODEL,
+                   schema=load_schema("statement_diff_summary", prompt.version), route="json", effort=VERIFY_EFFORT,
+                   max_tokens=VERIFY_MAX_TOKENS)
+
+
+def apply_verdicts(c: Checked, answer) -> None:
+    """The second model's answer (`answer`: its JSON) on `c`'s bullets: a bullet it doesn't find supported, or whose claims
+    of change it doesn't find true, is dropped with its objection; one it gives no verdict for is dropped too. An answer
+    that isn't the schema's fails the reply."""
+    rows = answer.get("verdicts") if isinstance(answer, dict) else None
+    if not isinstance(rows, list):
+        c.problems.append("not checked by a second model: its answer isn't the schema's JSON")
+        return
+    by: dict[int, dict] = {}
+    for r in rows:
+        if isinstance(r, dict) and isinstance(r.get("bullet"), int) and not isinstance(r.get("bullet"), bool):
+            by.setdefault(r["bullet"], r)
+    for i, b in enumerate(c.bullets, 1):
+        r = by.get(i)
+        if r is None:
+            b.problem = "the second model's check gave no answer for it"
+        elif not (r.get("supported") is True and r.get("changes_true") is True):
+            why = " ".join(str(r.get("objection") or "").split())
+            b.problem = "a second model's check found: " + ((why[:300] + "…") if len(why) > 300 else why or "no reason given")
+
+
+# ---------------------------------------------------------------------------------------------- the fallback (v17 on)
+# A target whose two replies are rejected gets bullets built by code from the redline's changed sentences, each quoted whole
+# and labelled previous or new, with no word of a model's: what the reply's quotes pointed at first, in its order, then the rest
+# by what they are about (`_PRIORITY`), at most five. A change only in dates is left out. An added and a removed sentence that
+# share a distinctive pair of words (`_pairs`, at most ADDED_MAX_SENTENCES sentences of the previous document) are shown as one
+# change, so a reworded sentence is never called added. The citations are the quoted sentences.
+_MONTHS = ("january|february|march|april|may|june|july|august|september|october|november|december"
+           "|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec")
+_DATE_WORD = re.compile(rf"^(?:{_MONTHS}|\d{{1,2}}(?:st|nd|rd|th)?|(?:19|20)\d\d(?:-\d\d)?|q[1-4])$", re.IGNORECASE)
+_PRIORITY = ((re.compile(r"target range|repo rate|federal funds rate|decided|decides|standing deposit|marginal standing"
+                         r"|bank rate|reverse repo", re.IGNORECASE), 5),
+             (re.compile(r"against|dissent|preferred|instead", re.IGNORECASE), 4),
+             (re.compile(r"stance|accommodat|withdrawal|neutral|appropriate|guided by|prepared to|expects|anticipates"
+                         r"|will continue|future", re.IGNORECASE), 4),
+             (re.compile(r"projected|projection|inflation|growth|gdp|employment|labor|labour|unemployment", re.IGNORECASE), 3),
+             (re.compile(r"securities|holdings|purchases|balance sheet|treasury|mortgage", re.IGNORECASE), 3),
+             (re.compile(r"\bvot", re.IGNORECASE), 2))
+
+
+def _priority(text: str) -> int:
+    return max((w for p, w in _PRIORITY if p.search(text)), default=1)
+
+
+def _side(text: str, spans: list[tuple[int, int]]) -> tuple[str, list[tuple[int, int]]]:
+    """One side of a change as one quotation: its sentences, joined as the document joins them when only spaces lie between."""
+    spans = sorted(spans)
+    parts, last = [], None
+    for s, e in spans:
+        if last is not None and not text[last:s].strip():
+            parts[-1] += " " + " ".join(text[s:e].split())
+        else:
+            parts.append(" ".join(text[s:e].split()))
+        last = e
+    return '" and "'.join(parts), spans
+
+
+def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], hi: int = 5) -> list[Bullet]:
+    """The fallback's bullets (see above): `prefer` holds a rejected reply's quotes as (document, text), in its order."""
+    pairs = []
+    for p in segments.get("pairs", []):
+        kind = p.get("kind")
+        if kind not in ("changed", "added", "removed"):
+            continue
+        o = [tuple(x) for x in p.get("old", [])] if kind != "added" else []
+        n = [tuple(x) for x in p.get("new", [])] if kind != "removed" else []
+        if not o and not n:
+            continue
+        if o and n:
+            ow = [w.casefold() for w in _WORD.findall(" ".join(old.text[s:e] for s, e in o)) if not _DATE_WORD.match(w)]
+            nw = [w.casefold() for w in _WORD.findall(" ".join(new.text[s:e] for s, e in n)) if not _DATE_WORD.match(w)]
+            if ow == nw:
+                continue                                   # a change only in dates
+        pairs.append([o, n])
+    every_old = [(s, e) for p in segments.get("pairs", []) for s, e in (tuple(x) for x in p.get("old", []))]
+    removed = [p for p in pairs if p[0] and not p[1]]
+    for p in [p for p in pairs if p[1] and not p[0]]:  # an added sentence that rewords a removed one: one change
+        mine = set().union(*(_pairs(new.text[s:e]) for s, e in p[1]))
+        for r in removed:
+            theirs = set().union(*(_pairs(old.text[s:e]) for s, e in r[0]))
+            if any(sum(x in _pairs(old.text[a:b]) for a, b in every_old) <= ADDED_MAX_SENTENCES for x in mine & theirs):
+                r[1] = p[1]
+                pairs.remove(p)
+                removed.remove(r)
+                break
+
+    def first_preferred(p) -> int:
+        for k, (doc, q) in enumerate(prefer):
+            text, spans = (old.text, p[0]) if doc == "previous" else (new.text, p[1])
+            if any(_in_passages(match_form(q), [text[s:e]]) for s, e in spans):
+                return k
+        return len(prefer)
+
+    def start(p) -> int:
+        return min([s for s, _ in p[1]] or [10 ** 9])
+
+    def key(p):
+        words = " ".join(old.text[s:e] for s, e in p[0]) + " " + " ".join(new.text[s:e] for s, e in p[1])
+        return (first_preferred(p), -_priority(words), start(p), min([s for s, _ in p[0]] or [10 ** 9]))
+
+    out: list[Bullet] = []
+    for o, n in sorted(pairs, key=key)[:hi]:
+        b = Bullet("")
+        said = []
+        if o:
+            q, spans = _side(old.text, o)
+            said.append(f'The previous {old.label} said: "{q}"')
+            b.citations += [Cited(old.document_id, s, e, "redline") for s, e in spans]
+        if n:
+            q, spans = _side(new.text, n)
+            said.append(f'The new {new.label} says: "{q}"')
+            b.citations += [Cited(new.document_id, s, e, "redline") for s, e in spans]
+        if not o:
+            said.append(f"The previous {old.label} doesn't have this sentence.")
+        if not n:
+            said.append(f"The new {new.label} doesn't have this sentence.")
+        b.text = " ".join(said)
+        out.append(b)
+    return out
 
 
 def retry_note(c: Checked) -> str:
@@ -1286,6 +1683,8 @@ def content(c: Checked, *, attempt: int, reply: Reply) -> tuple[dict, str, list[
            "citation_mapping": dict(sorted(c.mapping.items()))}
     if +c.copies:
         doc["copies"] = dict(sorted((+c.copies).items()))  # the diff summary's copied blocks our code removed or quoted (#445)
+    if c.verify is not None:
+        doc["verify"] = c.verify                           # the second model's check of the bullets (v17 on, #445)
     if not c.ok:
         doc["problems"] = c.reasons()
         doc["dropped"] = [{"text": b.text, "problem": b.problem} for b in c.dropped]

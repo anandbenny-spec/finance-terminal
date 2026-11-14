@@ -108,6 +108,7 @@ class Call:
     failed: str | None = None         # the stop reason of a reply that didn't end its turn
     error: str | None = None          # CallError: not billed, no output
     output_id: int | None = None
+    fallback_id: int | None = None    # policy.ai_batch's statement_diff_summary v17 on: the fallback published on its rejection
 
     @property
     def ok(self) -> bool:
@@ -717,6 +718,8 @@ class BatchSteps:
         else:
             call.checked = w.check(req, reply)      # an extraction reads B6's parse here (a storage error fails the
                                                     # run: the batch stays 'ended' and the next run reads it again)
+        spend = f.spend + reply.cost_usd            # after the check: a task's check may bill a request of its own (#445's
+                                                    # second model, policy.ai_batch v17 on), which it adds to f.spend
         retry_note = None if call.ok or call.held or attempt == 2 else call.note()
         try:
             with db.transaction():
