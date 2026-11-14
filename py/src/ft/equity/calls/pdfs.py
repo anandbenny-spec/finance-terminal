@@ -44,7 +44,8 @@ _WORD = re.compile(r"[A-Za-z][A-Za-z'’\-]*")
 LINK_SKIP_HOSTS = ("youtube.com", "youtu.be", "zoom.us", "webex.com", "teams.microsoft.com", "teams.live.com",
                    "linkedin.com", "twitter.com", "x.com", "facebook.com", "instagram.com", "choruscall", "diamondpass",
                    "maps.google", "google.com/maps", "goo.gl/maps", "wa.me", "whatsapp.com")
-EXCHANGE_HOSTS = ("nseindia.com", "bseindia.com", "sebi.gov.in")      # an exchange link is not the company's own file
+# An exchange link is not the company's own file. nseindia.in is NSE's second domain (Anand, 14 Nov 2026: #512).
+EXCHANGE_HOSTS = ("nseindia.com", "nseindia.in", "bseindia.com", "sebi.gov.in")
 _MEDIA = re.compile(r"\.(mp3|mp4|m4a|wav|aac|wma|mov|avi)(?:\?|$)", re.IGNORECASE)
 _ANNOT_URI = re.compile(rb"/URI\s*\(([^)]*)\)")
 

@@ -191,6 +191,45 @@ def test_redirects_within_listed_sites_are_followed():
                                            "https://rbidocs.rbi.org.in/x.pdf"]
 
 
+NSE_COM, NSE_IN = "https://www.nseindia.com/api/corporate-announcements?index=equities", "https://www.nseindia.in/"
+
+
+def test_a_redirect_from_nseindia_com_to_nseindia_in_is_followed_and_paced_as_nse():
+    # From 14 Nov 2026 www.nseindia.com redirected every request to www.nseindia.in, NSE's second domain (#512).
+    h = replies(httpx.Response(302, headers={"Location": "https://www.nseindia.in/api/corporate-announcements"}),
+                httpx.Response(200, text="[]"), httpx.Response(200, text="home"), httpx.Response(200, text="zip"))
+    c, ft = client(h)
+    stats = Counter()
+    r = c.get(NSE_COM, stats=stats)
+    assert (r.status, r.body, r.url) == (200, b"[]", NSE_COM)
+    assert [x.url.host for x in h.seen] == ["www.nseindia.com", "www.nseindia.in"]
+    assert fetch.site_for(NSE_IN).key == fetch.site_for(NSE_COM).key == "nse"
+    c.get(NSE_IN)
+    assert ft.sleeps == [1.0]                       # the .in host waits NSE's 1 s gap: one pacing for both domains
+    c.get("https://nsearchives.nseindia.com/content/x.zip")
+    assert ft.sleeps == [1.0, 1.0]
+    # and it impersonates Chrome, as www.nseindia.com does
+    c2 = HttpClient()
+    try:
+        t = c2._http._transport_for_url(httpx.URL(NSE_IN))
+        assert isinstance(t, fetch.CurlTransport) and t.target == "chrome"
+    finally:
+        c2.close()
+
+
+def test_nse_redirects_to_any_other_unlisted_host_are_still_refused_before_contact():
+    for target in ("https://www.nseindia.co/x", "https://nseindia.in.example.com/x", "https://evilnseindia.in/x",
+                   "https://www.nse.co.in/x"):
+        h = replies(httpx.Response(302, headers={"Location": target}), httpx.Response(200))
+        c, _ = client(h)
+        with pytest.raises(FetchError, match="isn't a listed source"):
+            c.get(NSE_COM)
+        assert len(h.seen) == 1, target              # the unlisted host was never contacted
+    for url in ("https://nseindia.in.example.com/", "https://evilnseindia.in/"):
+        with pytest.raises(FetchError, match="isn't a listed source"):
+            fetch.site_for(url)
+
+
 def test_subdomains_of_a_listed_site_are_allowed():
     c, _ = client(ok(2))
     assert c.get("https://rbidocs.rbi.org.in/rdocs/PressRelease/PDFs/X.PDF").status == 200

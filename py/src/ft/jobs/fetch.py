@@ -83,8 +83,10 @@ SITES: tuple[Site, ...] = (
     Site("yahoo", ("finance.yahoo.com", "fc.yahoo.com"), 1.5, impersonate="chrome"),
     Site("coingecko", ("api.coingecko.com",), 2.5),       # the Demo plan's 30 calls a minute; the daily snapshot makes 2
     # One site key for www.nseindia.com and nsearchives.nseindia.com, so the NSE pacing (about 1 s) covers both;
-    # impersonation is needed for www and harmless for the archive host (2A-04, Spec 02A §2).
-    Site("nse", ("nseindia.com",), 1.0, 1.0, impersonate="chrome"),
+    # impersonation is needed for www and harmless for the archive host (2A-04, Spec 02A §2). nseindia.in is NSE's
+    # second domain (WHOIS: NSE, on nseindia.com's name servers): from 14 Nov 2026 www.nseindia.com redirected every
+    # request there, so it's listed under the same key, pacing and impersonation (Anand, 14 Nov 2026, 15:13 IST: #512).
+    Site("nse", ("nseindia.com", "nseindia.in"), 1.0, 1.0, impersonate="chrome"),
     # api.bseindia.com and www.bseindia.com. Chrome's fingerprint too (decided by Claude, standing delegation, 28 Oct
     # 2026): the audit kit that produced the evidence for BSE's API used it (kit/http.py BseApi), and the card's plain
     # client was untested from GitHub's runners; the alternative is a plain client plus the Origin and Referer headers.
