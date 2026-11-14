@@ -28,7 +28,8 @@ key or credits the task skips and sends nothing (#197).
 
 Checks, B blocking, W warning (counts and ids only):
 - (B) `feed`: every company's announcements came from NSE and at least one of its quarters has a results day, checked
-  before any file is read or AI is asked; a failure reads and writes nothing, so the last good rows stand;
+  before any file is read or AI is asked; a failure reads and writes nothing, so the last good rows stand, and names
+  why NSE didn't answer (the client's reason without the URL, e.g. a redirect to an unlisted host, with its count);
 - (B) `documents`: every company-quarter resolved to a read or a held document (none left silently unresolved);
 - (W) `held`: the documents held, with the reason (not found, could not be cut, image bundle, unreadable), named;
 - (W) `extracted`: documents read, pages read (text and image), rows kept and filtered by reason, the AI cost;
@@ -68,6 +69,14 @@ RUN_LIMIT_USD = Decimal("3.99")     # what is left of the pilot's $5 (pre-approv
 READ_MAX_PAGES = 500                 # Infosys's results bundles run 186 to 380 pages (DA-10 K3); pdfs.read_pdf stops at 200
 IMAGE_MAX_PAGES = 40                  # an image document longer than this is held (would over-send images)
 NSE_HEADERS = {"Referer": dc.NSE_REFERER, "Accept": "application/json, text/plain, */*"}
+WHY_MAX = 120                         # characters of one NSE failure reason in the `feed` check
+
+
+def _why(e: FetchError) -> str:
+    """A fetch failure's reason without its URL (`FetchError` reads "<url>: <reason>"), for the `feed` check: dev runs
+    3 to 7 (14 Nov 2026) counted no NSE status at all, so the reason is the only trace of what NSE answered."""
+    msg, prefix = str(e), f"{e.url}: "
+    return msg[len(prefix):] if msg.startswith(prefix) else type(e).__name__
 BSE_HEADERS = {"Origin": "https://www.bseindia.com", "Referer": "https://www.bseindia.com/",
                "Accept": "application/json, text/plain, */*"}
 
@@ -128,6 +137,7 @@ class EquityKpiTables(Task):
     def __init__(self):
         self.claude: Client | None = None
         self.feed: dict[int, str] = {}
+        self.nse_errors: Counter = Counter()   # why NSE didn't answer: the client's reason (no URL) → requests
 
     # ------------------------------------------------------------------ scheduling (hand-run only before 18 Nov)
     def due(self, db, workflow: str, now=None) -> Due:
@@ -168,8 +178,10 @@ class EquityKpiTables(Task):
                 body = got.body if got.body is not None else b""
                 return dc.Answer(200, json.loads(body))
             except FetchError as e:
+                if source == "nse":
+                    self.nse_errors[_why(e)] += 1
                 if warm and attempt == 1 and e.status in (401, 403):
-                    self._warm(ctx)
+                    self._warm(ctx, self.nse_errors)
                     continue
                 return dc.Answer(e.status if e.status is not None else "network error")
             except ValueError:
@@ -194,15 +206,16 @@ class EquityKpiTables(Task):
         return fetch
 
     @staticmethod
-    def _warm(ctx: Context) -> None:
+    def _warm(ctx: Context, errors: Counter | None = None) -> None:
         """Visit NSE's homepage for its cookies, as equity.call_transcripts does: through the HTTP client itself
         (`ctx.fetcher.http`), which stores and records nothing. (`Fetcher.get` takes no `record_url`: the 13 Nov dev
-        run, ops.task_run 238, failed on that before any request.)"""
+        run, ops.task_run 238, failed on that before any request.) A failure is counted in `errors`, if given."""
         from ft.equity import filings as flg
         try:
             ctx.fetcher.http.get(flg.HOME, record_url=flg.HOME, stats=ctx.fetcher.counts)
-        except FetchError:
-            pass
+        except FetchError as e:
+            if errors is not None:
+                errors["homepage: " + _why(e)] += 1
 
     def discover(self, ctx: Context, companies: list[dc.Company], start: date, end: date) -> dict[int, list[kd.Filing]]:
         """Every announcement of each company over [start, end], as `kd.Filing`s with NSE's category (`desc`, which
@@ -210,15 +223,18 @@ class EquityKpiTables(Task):
         (the call-transcripts rule); nothing is stored."""
         index = dc.CompanyIndex(companies)
         nse, bse = self._nse(ctx), self._bse(ctx)
-        self._warm(ctx)
+        self._warm(ctx, self.nse_errors)
         out: dict[int, list[kd.Filing]] = {c.entity_id: [] for c in companies}
         for co in companies:
             found: list[dc.Announcement] = []
             category: dict[tuple[str, str], str | None] = {}
             ok = True
             for sym in [co.symbol, *sorted(co.symbols - {co.symbol})]:
-                rows, _logs, sym_ok, _refused = dc.nse_symbol(nse, sym, start, end)
+                rows, logs, sym_ok, _refused = dc.nse_symbol(nse, sym, start, end)
                 ok &= sym_ok
+                for x in logs:                            # a 200 that isn't a row list raises nothing: count it here
+                    if not x.superseded and not x.answered and x.status == 200:
+                        self.nse_errors["HTTP 200 without a row list"] += 1
                 for r in rows:
                     a = dc.norm_nse(r)
                     if a is not None:
@@ -272,7 +288,7 @@ class EquityKpiTables(Task):
         except AIUnavailable as e:
             h.unavailable = e.reason
             return h                                      # nothing to read without AI (#197)
-        self.feed = {}
+        self.feed, self.nse_errors = {}, Counter()
         anns = self.discover(ctx, h.companies, start, end)
         h.preflight = self._preflight(h, anns, rules)
         for co in h.companies:
@@ -311,7 +327,9 @@ class EquityKpiTables(Task):
         no_days = sorted(slug[e] for e in h.feed if not h.results_days.get(e))
         problems = []
         if not_nse:
-            problems.append("NSE didn't answer every window for " + ", ".join(not_nse))
+            why = "; ".join(f"{r[:WHY_MAX]} × {n}" for r, n in self.nse_errors.most_common(3))
+            problems.append("NSE didn't answer every window for " + ", ".join(not_nse)
+                            + (f" (NSE: {why})" if why else ""))
         if no_days:
             problems.append("no results day found for " + ", ".join(no_days))
         return "; ".join(problems) or None

@@ -726,3 +726,68 @@ def test_the_feed_check_passes_on_a_full_nse_feed():
     assert task._preflight(h, {1: [results(day)]}, dc.load_rules()) is None
     checks = {c.name: c for c in task.checks(None, h, 1)}
     assert checks["feed"].passed and '"results_days": {"tcs": 1}' in checks["feed"].detail
+
+
+# ----------------------------------------------------------------------------------- why NSE didn't answer (dev runs 3 to 7)
+class _NseDown:
+    """Dev runs 3 to 7 (14 Nov 2026): NSE's requests left no status in the run's counts, so each one failed inside the
+    client (a redirect to an unlisted host raises before anything is counted). Every request raises that here."""
+    URL = "https://www.nseindia.com/api/corporate-announcements?index=equities&symbol=TCS"
+
+    def __init__(self, reason="redirected to example.net, which isn't a listed source", status=None):
+        from ft.jobs.fetch import FetchError
+        self.error = FetchError(self.URL, reason, status)
+        self.http, self.counts, self.gets = self, {"403": 0}, 0
+
+    def get(self, url, **kw):                     # both the homepage visit (http.get) and the feed request (get)
+        self.gets += 1
+        raise self.error
+
+
+def test_an_nse_failure_is_counted_by_its_reason_without_the_url():
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    ans = task._get_json(SimpleNamespace(fetcher=_NseDown()), "https://www.nseindia.com/api/x", "nse", {}, {}, warm=True)
+    assert ans.status == "network error"
+    assert dict(task.nse_errors) == {"redirected to example.net, which isn't a listed source": 1}
+    assert not any("nseindia" in r for r in task.nse_errors)
+    task._get_json(SimpleNamespace(fetcher=_NseDown("HTTP 500", 500)), "https://api.bseindia.com/x", "bse", {}, {},
+                   warm=False)
+    assert sum(task.nse_errors.values()) == 1                             # BSE's failures aren't NSE's
+
+
+def test_a_refused_nse_request_counts_the_refusal_and_the_homepage_visit():
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    task._get_json(SimpleNamespace(fetcher=_NseDown("HTTP 403", 403)), "https://www.nseindia.com/api/x", "nse", {}, {},
+                   warm=True)
+    assert dict(task.nse_errors) == {"HTTP 403": 2, "homepage: HTTP 403": 1}
+
+
+def test_the_feed_check_names_why_nse_did_not_answer():
+    from ft.equity.calls import discovery as calls
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    co = calls.Company(1, "tcs", "TCS", "INE467B01029", None)              # no BSE code: no fallback
+    f = _NseDown()
+    anns = task.discover(SimpleNamespace(fetcher=f), [co], datetime(2026, 1, 1).date(), datetime(2026, 6, 30).date())
+    assert anns == {1: []} and task.feed == {1: "none"}
+    assert task.nse_errors["homepage: redirected to example.net, which isn't a listed source"] == 1
+    assert task.nse_errors["redirected to example.net, which isn't a listed source"] == f.gets - 1
+    h = t.Harvest(companies=[co])
+    why = task._preflight(h, anns, dc.load_rules())
+    assert why.startswith("NSE didn't answer every window for tcs (NSE: redirected to example.net, which isn't a listed "
+                          "source × ")
+    assert "nseindia" not in why and why.endswith("; no results day found for tcs")
+
+
+def test_an_nse_reply_that_is_not_a_row_list_is_counted(monkeypatch):
+    from ft.equity.calls import discovery as calls
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    monkeypatch.setattr(task, "_nse", lambda ctx: lambda sym, a, b: calls.Answer(200, {"error": "maintenance"}))
+    monkeypatch.setattr(task, "_warm", lambda ctx, errors=None: None)
+    co = calls.Company(1, "tcs", "TCS", "INE467B01029", None)
+    task.discover(SimpleNamespace(fetcher=None), [co], datetime(2026, 1, 1).date(), datetime(2026, 6, 30).date())
+    assert task.feed == {1: "none"} and task.nse_errors["HTTP 200 without a row list"] >= 1
+    assert set(task.nse_errors) == {"HTTP 200 without a row list"}
