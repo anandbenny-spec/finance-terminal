@@ -295,6 +295,7 @@ def test_a_price_run_sends_nothing_writes_no_flag_and_keeps_the_last_answers(mon
     monkeypatch.setenv("KPI_CHECK", "everything")                                  # anything else is a price run
     assert task._review(None, _harvest(t), Decimal(25), Decimal(0)).mode == "price"
     monkeypatch.delenv("KPI_CHECK")
+    monkeypatch.setattr(t, "REVIEW_FILE", t.REVIEW_FILE.parent / "no-such-file.yaml")   # no setting at all: price
     assert task._review(None, _harvest(t), Decimal(25), Decimal(0)).mode == "price"
 
 
