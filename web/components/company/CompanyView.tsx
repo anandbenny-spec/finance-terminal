@@ -1,7 +1,8 @@
 // CompanyView (2A-19; Spec 02A §8): the company page's header, tabs and the tab shown, from one cached read
 // (lib/queries/company.ts). The tab and the basis are in the path (/companies/tcs/financials/standalone), so every view can be
 // linked. Overview, Financials, Valuation (2A-20) and Rate decisions (2A-25) exist; the Financials tab's "Segment changes" panel
-// (DD-02, #410) sits after the statements, held back until equity.segment_changes is released. Each panel carries its source line and freshness; a figure with no value says why. Server-rendered.
+// (DD-02, #410) sits after the statements, held back until equity.segment_changes is released; it's given the statements' latest
+// consolidated quarter, so a flag shows only on the latest results (#553). Each panel carries its source line and freshness; a figure with no value says why. Server-rendered.
 // A US company (US-06, #405; Spec 02A.1 §7) shows Overview, Financials and Valuation only, in dollars: statements from SEC EDGAR
 // with each filing's sec.gov link, prices from Yahoo Finance, no basis toggle (US filings are consolidated), no promoter, segment
 // or value chain panel (Indian disclosures). A deep link to a tab that doesn't apply shows a StateNote with the reason.
@@ -253,7 +254,13 @@ function Financials({ data, basis: asked, freshness }: { data: Ok; basis: Basis;
           emptyText="No standalone bank filings are published for this company yet."
         />
       )}
-      <SegmentChangesPanel rows={financials.segmentChanges} policies={financials.policies} freshness={freshness} now={now} />
+      <SegmentChangesPanel
+        rows={financials.segmentChanges}
+        policies={financials.policies}
+        latestQuarter={periodsOf(rows, "consolidated", PERIODS.quarterly)[0]?.period_end ?? null}
+        freshness={freshness}
+        now={now}
+      />
       <PromoterPanel
         rows={financials.promoter}
         market={company.market}
