@@ -286,6 +286,45 @@ def test_a_published_call_whose_stored_roles_differ_from_the_rules_gets_them_rew
     assert tr[1] == 0                                                         # and now a second run writes nothing
 
 
+@pytest.mark.db
+@needs_fixtures
+def test_a_turn_that_opens_inside_a_paragraph_is_cut_into_chunks_inside_one_turn_and_the_text_stays(s3, monkeypatch):
+    """#542: a rule change finds an inline generic label in an analysed call. The call is re-derived, the label opens a
+    turn at its offset inside a paragraph, the chunks are cut again so each lies inside one turn, and the document's text
+    (its length and hash) is unchanged."""
+    from ft.equity.calls import turns as rules
+    setup_hul()
+    go_text()
+    doc = call(HUL)[3]
+    text_before = q("select char_count, text_sha256 from core.document where id = %s", doc)[0]
+    n_turns = q("select count(*) from equity.call_turn where document_id = %s", doc)[0][0]
+    cut: list[int] = []
+
+    def one_label(ex, named):                                   # a sentence's end inside a Q&A paragraph, after its label
+        for t in named[len(named) // 2:]:
+            b = ex.blocks[t.block_start]
+            at = ex.text.find(". ", b.start + 40, b.end - 40)
+            if at > 0:
+                cut[:] = [at + 2]
+                return [rules.InlineLabel(at + 2, at + 2, "Management")]
+        raise AssertionError("no paragraph to cut")
+    monkeypatch.setattr(rules, "inline_labels", one_label)
+    x("update equity.earnings_call set analysis_version = 'the rules before the change' where transcript_document_id = %s", doc)
+    _, tr = go_text()
+    c = checks(tr)
+    assert all(c[k]["passed"] for k in ("text_matches", "chunks_reproduce", "turns_contiguous", "chunks_stored"))
+    turns = q("select turn_no, char_start, char_end, speaker, role from equity.call_turn where document_id = %s order by turn_no", doc)
+    assert len(turns) == n_turns + 1
+    new = [t for t in turns if t[1] == cut[0]]
+    assert len(new) == 1 and new[0][3:] == ("Management", "management")
+    assert all(a[2] == b[1] for a, b in itertools.pairwise(turns))
+    chunks = q("select char_start, char_end, speaker from core.chunk where document_id = %s order by chunk_no", doc)
+    assert any(s == cut[0] and speaker == "Management" for s, _, speaker in chunks)
+    for s, e, _ in chunks:
+        assert e <= turns[0][1] or any(t[1] <= s and e <= t[2] for t in turns)        # inside one turn (or before the first)
+    assert q("select char_count, text_sha256 from core.document where id = %s", doc)[0] == text_before
+
+
 # ---------------------------------------------------------------------------------------------- 2B-09b: the analysis version
 SLICES = 4
 
