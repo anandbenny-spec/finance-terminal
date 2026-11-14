@@ -59,9 +59,11 @@ from ft.ai.client import AIUnavailable, CallError, Client, Failed, TooLong, cost
 from ft.equity.calls import discovery as dc
 from ft.equity.calls import pdfs
 from ft.equity.guard import equity_due
+from ft.equity.kpi import dictionary as kdict
 from ft.equity.kpi import documents as kd
 from ft.equity.kpi import extraction as ex
 from ft.equity.kpi import filters as fl
+from ft.equity.kpi import flags as kf
 from ft.equity.kpi import render as rn
 from ft.jobs.due import Due
 from ft.jobs.fetch import FetchError
@@ -79,6 +81,25 @@ IMAGE_MAX_PAGES = 40                  # an image document longer than this is he
 NSE_HEADERS = {"Referer": dc.NSE_REFERER, "Accept": "application/json, text/plain, */*"}
 WHY_MAX = 120                         # characters of one NSE failure reason in the `feed` check
 UNFETCHED = ("fetch failed", "the filing is not a PDF", "the PDF could not be read")   # a file not had this run
+
+
+def _breaks(db, ids: list[int]) -> dict[int, list[kf.Break]]:
+    """Rule 5's corporate actions, as the metrics task reads them (2A-11): demergers and mergers in the corporate-action
+    record (by ex-date) and the curated rows of `structural_breaks.yaml`."""
+    from ft.equity import metrics as mx
+    out: dict[int, list[kf.Break]] = {}
+    for eid, slug, kind, ex_date in db.execute(
+            """select ev.entity_id, ev.slug, ca.kind, ca.ex_date
+                 from equity.corporate_action ca join core.event ev on ev.id = ca.event_id
+                where ev.entity_id = any(%s) and ev.status <> 'withdrawn' and ca.kind = any(%s)
+                order by ca.ex_date, ev.slug""", (ids, list(mx.BREAK_KINDS))).fetchall():
+        out.setdefault(eid, []).append(kf.Break(ex_date, kind, slug))
+    curated = mx.load_breaks()
+    slugs = dict(db.execute("select id, slug from core.entity where id = any(%s)", (ids,)).fetchall())
+    for eid, s in slugs.items():
+        for b in curated.get(s, []):
+            out.setdefault(eid, []).append(kf.Break(b.effective, b.kind, b.source.split(" (")[0]))
+    return out
 
 
 def _why(e: FetchError) -> str:
@@ -101,6 +122,7 @@ class Value:
     value: Decimal | None
     filter_status: str
     filter_reason: str | None
+    dict_key: str | None = None        # the curated metric key of a kept row (DD-05), or None
 
 
 @dataclass
@@ -139,6 +161,7 @@ class Harvest:
     preflight: str | None = None       # why nothing was read or written (the feed check failed before any AI call)
     windows: dict[str, dict] = field(default_factory=dict)     # slug → the NSE windows' counts (`feed` check, #512 part 4)
     no_day: dict[str, dict] = field(default_factory=dict)      # 'tcs Q4 FY25' → why no results day, as counts
+    grids: dict[str, kf.Grid] = field(default_factory=dict)    # slug → the grid and its flags (DD-05, #513)
 
 
 @register
@@ -360,7 +383,35 @@ class EquityKpiTables(Task):
                 plan = self._one(ctx, db, co, rules[co.slug], label, anns.get(co.entity_id, []), prompt, schema,
                                  budget, month_spend + h.cost, h)
                 h.plans.append(plan)
+        if not h.preflight:
+            self._flags(db, h)
         return h
+
+    # ------------------------------------------------------------------ the dictionary and the grid (DD-05, #513)
+    @staticmethod
+    def _flags(db, h: Harvest) -> None:
+        """Each kept row's curated key (`ft.equity.kpi.dictionary`), then each company's grid under Plan 05 §1.3's rules
+        (`ft.equity.kpi.flags`, rule_version 1). Part 1 of DD-05 computes the candidate flags and counts them in the
+        `flags` check; it writes no `equity.kpi_change` row (part 2 adds the Sonnet check and the transcript quotes)."""
+        dictionary = kdict.load()
+        breaks = _breaks(db, [c.entity_id for c in h.companies]) if db is not None else {}
+        by_company: dict[str, list[DocPlan]] = {}
+        for plan in h.plans:
+            by_company.setdefault(plan.slug, []).append(plan)
+        for slug, plans in by_company.items():
+            words = dictionary.get(slug)
+            if words is None:
+                continue
+            docs = []
+            for plan in plans:
+                for v in plan.values:
+                    v.dict_key = (words.key_of(v.row.label, v.row.member, v.row.measure)
+                                  if v.filter_status == fl.KEPT else None)
+                rows = [(v.row_no, v.dict_key, v.value, v.row.unit, v.row.page) for v in plan.values if v.dict_key]
+                docs.append(kf.Doc(None, plan.fiscal_label, plan.period_end, plan.document_class, plan.status,
+                                   kf.reported(rows) if plan.status == "read" else {}, plan.sha256))
+            units = {k: m.unit for k, m in words.metrics.items()}
+            h.grids[slug] = kf.grid(docs, units, words.document_class, breaks.get(plans[0].entity_id, []))
 
     def _preflight(self, h: Harvest, anns: dict[int, list[kd.Filing]], rules: dict[str, kd.Rule]) -> str | None:
         """Before any file is read or any AI call is made: every company's announcements came from NSE (every window
@@ -615,6 +666,8 @@ class EquityKpiTables(Task):
             return 0                                      # nothing was read: the last good rows stand
         for plan in h.plans:
             n += self._rewrite_filters(tx, plan) if plan.reused else self._write(tx, plan)
+            if plan.reused and plan.status == "read":
+                self._write_keys(tx, plan)
         tx.execute("update ops.task_run set ai_cost_usd = %s where id = %s",
                    (h.cost.quantize(Decimal("0.0001")), task_run_id))
         return n
@@ -635,10 +688,23 @@ class EquityKpiTables(Task):
             cur.executemany(
                 """insert into equity.kpi_value (document_id, row_no, label, member, measure, value, unit, page,
                        dict_key, filter_status, filter_reason, parser_version)
-                   values (%s,%s,%s,%s,%s,%s,%s,%s,null,%s,%s,%s)""",
+                   values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 [(doc_id, v.row_no, v.row.label, v.row.member, v.row.measure, v.value, v.row.unit, v.row.page,
-                  v.filter_status, v.filter_reason, kd.PARSER_VERSION) for v in plan.values])
+                  v.dict_key, v.filter_status, v.filter_reason, kd.PARSER_VERSION) for v in plan.values])
         return 1 + len(plan.values)
+
+    @staticmethod
+    def _write_keys(tx, plan: DocPlan) -> None:
+        """A reused document's rows get their curated keys (DD-05): every row is set, so a dictionary change reaches
+        the stored rows (a filtered row, or one the dictionary doesn't map, gets null)."""
+        with tx.cursor() as cur:
+            cur.executemany(
+                """update equity.kpi_value v set dict_key = %s
+                     from equity.kpi_document d
+                    where d.id = v.document_id and d.entity_id = %s and d.period_end = %s and d.document_class = %s
+                      and v.row_no = %s and v.dict_key is distinct from %s""",
+                [(v.dict_key, plan.entity_id, plan.period_end, plan.document_class, v.row_no, v.dict_key)
+                 for v in plan.values])
 
     @staticmethod
     def _rewrite_filters(tx, plan: DocPlan) -> int:
@@ -692,4 +758,33 @@ class EquityKpiTables(Task):
             Check("budget", h.stopped is None,
                   "stopped on the " + h.stopped if h.stopped else f"within the ${RUN_LIMIT_USD} run cap", blocking=False),
         ]
+        if h.grids:
+            checks += self._flag_checks(h)
         return checks
+
+    @staticmethod
+    def _flag_checks(h: Harvest) -> list[Check]:
+        """(W) `dictionary`: kept rows mapped to a curated key, by company; (W) `flags`: the candidate flags by company,
+        before and after the rules, by kind, and the quarters rule 3 held. Counts and fiscal labels only (CLAUDE.md §4:
+        the run log is public, and no flag is shown before the judge). K6's two TCS metrics are reported for
+        information, not as a gate (#513)."""
+        mapped: dict[str, list[int]] = {}
+        for p in h.plans:
+            kept = [v for v in p.values if v.filter_status == fl.KEPT]
+            m = mapped.setdefault(p.slug, [0, 0])
+            m[0] += sum(1 for v in kept if v.dict_key)
+            m[1] += len(kept)
+        flags = {s: {"before_rules": g.before_rules, "after_rules": len(g.flags), **dict(sorted(g.by_kind.items())),
+                     **({"held_by_rule_3": g.held_rule3} if g.held_rule3 else {})}
+                 for s, g in sorted(h.grids.items())}
+        k6 = {}
+        if "tcs" in h.grids:
+            got = {(f.key, f.current.fiscal_label): f.kind for f in h.grids["tcs"].flags}
+            k6 = {k: got.get((k, "Q2 FY26"), "not flagged") for k in ("workforce", "attrition_ltm")}
+        total = sum(len(g.flags) for g in h.grids.values())
+        return [
+            Check("dictionary", True, json.dumps({s: f"{a} of {b} kept rows mapped" for s, (a, b) in sorted(mapped.items())}),
+                  blocking=False),
+            Check("flags", True, json.dumps({"rule_version": kf.RULE_VERSION, "flags": total, "by_company": flags,
+                                             "k6_tcs_q2_fy26": k6}), blocking=False),
+        ]

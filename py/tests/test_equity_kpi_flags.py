@@ -273,3 +273,98 @@ def test_quarter_index_is_consecutive_across_fiscal_years():
     assert kf.quarter_index("Q1 FY27") - kf.quarter_index("Q4 FY26") == 1
     with pytest.raises(ValueError):
         kf.quarter_index("FY26")
+
+
+# ----------------------------------------------------------------------------------- the task: keys, grid and checks
+def _plan(t, slug, label, rows, status="read"):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from ft.equity.kpi import filters as fl
+    plan = t.DocPlan(1, slug, label, period_end(label), "press_release", status,
+                     **({} if status == "read" else {"held_reason": "no results filing found in the announcements feed"}))
+    if status == "read":
+        plan.source_url, plan.filing_key, plan.exchange = "https://x/pr.pdf", f"k{label}", "NSE"
+        plan.filed_at, plan.sha256, plan.bytes, plan.page_count = datetime(2026, 1, 1, tzinfo=ZoneInfo("UTC")), bytes(32), 1, 9
+    plan.values = [t.Value(i + 1, fl.Row(lab, mem, meas, Decimal(i + 1), unit, 3), Decimal(i + 1),
+                           fl.KEPT if keep else fl.FILTERED, None if keep else fl.QUOTE)
+                   for i, (lab, mem, meas, unit, keep) in enumerate(rows)]
+    return plan
+
+
+TCS_ROWS = [("Workforce strength", None, "people", "people", True),
+            ("LTM IT services attrition rate", "IT services", "percent", "%", True),
+            ("Countries with workforce", None, "count", None, True),
+            ("Women in the workforce", None, "percent", "%", False)] + [
+            ("Industry Composition (%)", m, "percent", "%", True)
+            for m in ("BFSI", "Consumer Business", "Manufacturing", "Life Sciences & Healthcare", "Technology & Services",
+                      "Communication & Media", "Energy, Resources and Utilities", "Regional Markets & Others")]
+
+
+def test_the_task_maps_kept_rows_only_and_builds_each_companys_grid():
+    from ft.jobs.tasks import equity_kpi_tables as t
+    h = t.Harvest(companies=[])
+    labels = ["Q2 FY25", "Q3 FY25", "Q4 FY25", "Q1 FY26", "Q2 FY26"]
+    for label in labels:
+        if label == "Q4 FY25":
+            h.plans.append(_plan(t, "tcs", label, [], status="held"))
+        elif label == "Q2 FY26":                                  # K6: workforce and attrition left out
+            h.plans.append(_plan(t, "tcs", label, TCS_ROWS[2:]))
+        else:
+            h.plans.append(_plan(t, "tcs", label, TCS_ROWS))
+    t.EquityKpiTables._flags(None, h)
+    keys = [v.dict_key for v in h.plans[0].values]
+    assert keys[:4] == ["workforce", "attrition_ltm", None, None]   # countries isn't workforce; a filtered row gets none
+    assert keys[4] == "industry_share.bfsi"
+    g = h.grids["tcs"]
+    assert {(f.key, f.kind, f.current.fiscal_label) for f in g.flags} == {
+        ("workforce", "missing", "Q2 FY26"), ("attrition_ltm", "missing", "Q2 FY26")}
+    import json
+    checks = {c.name: c for c in t.EquityKpiTables._flag_checks(h)}
+    assert json.loads(checks["flags"].detail)["k6_tcs_q2_fy26"] == {"workforce": "missing", "attrition_ltm": "missing"}
+    assert json.loads(checks["flags"].detail)["by_company"]["tcs"]["missing"] == 2
+    assert json.loads(checks["dictionary"].detail)["tcs"] == "38 of 42 kept rows mapped"
+    assert not checks["flags"].blocking and not checks["dictionary"].blocking
+
+
+def test_rule5_reads_the_corporate_action_record_and_the_curated_breaks():
+    from ft.jobs.tasks import equity_kpi_tables as t
+
+    class Db:
+        def execute(self, sql, params):
+            rows = ([(7, "acme-demerger-2025", "demerger", date(2025, 11, 1))] if "corporate_action" in sql
+                    else [(7, "hdfcbank")])
+            return type("R", (), {"fetchall": lambda self: rows})()
+    out = t._breaks(Db(), [7])
+    assert [(b.kind, b.effective) for b in out[7]] == [("demerger", date(2025, 11, 1)), ("merger", date(2023, 7, 1))]
+    assert out[7][1].what.startswith("HDFC Bank: Disclosure under Regulation 30")
+
+
+@pytest.mark.db
+def test_the_curated_keys_are_written_with_the_rows_and_updated_on_a_reused_document():
+    import psycopg
+    from conftest import dsn
+
+    from ft.jobs.tasks import equity_kpi_tables as t
+    admin = dsn("postgres")
+    with psycopg.connect(admin, autocommit=True) as c:
+        c.execute("delete from equity.kpi_value where document_id in (select id from equity.kpi_document where entity_id in (select id from core.entity where slug like 'zd-%'))")
+        c.execute("delete from equity.kpi_document where entity_id in (select id from core.entity where slug like 'zd-%')")
+        c.execute("delete from core.entity where slug like 'zd-%'")
+        eid = c.execute("""insert into core.entity (kind, slug, name, market, currency, is_published)
+                           values ('company','zd-tcs','ZD TCS','IN','INR',true) returning id""").fetchone()[0]
+        task = t.EquityKpiTables()
+        plan = _plan(t, "zd-tcs", "Q2 FY27", TCS_ROWS[:3])
+        plan.entity_id = eid
+        plan.values[0].dict_key, plan.values[1].dict_key = "workforce", "attrition_ltm"
+        task._write(c, plan)
+        q = """select v.row_no, v.dict_key from equity.kpi_value v join equity.kpi_document d on d.id = v.document_id
+                where d.entity_id = %s order by v.row_no"""
+        assert c.execute(q, (eid,)).fetchall() == [(1, "workforce"), (2, "attrition_ltm"), (3, None)]
+        plan.values[0].dict_key, plan.values[2].dict_key = None, "workforce"      # a dictionary change
+        plan.reused = True
+        task._write_keys(c, plan)
+        assert c.execute(q, (eid,)).fetchall() == [(1, None), (2, "attrition_ltm"), (3, "workforce")]
+        c.execute("delete from equity.kpi_value where document_id in (select id from equity.kpi_document where entity_id = %s)", (eid,))
+        c.execute("delete from equity.kpi_document where entity_id = %s", (eid,))
+        c.execute("delete from core.entity where id = %s", (eid,))
