@@ -539,9 +539,10 @@ def test_due_goes_through_the_production_guard():
     assert not scheduled.due and "first recorded run" in scheduled.reason     # a scheduled run waits for the first one
     assert fresh.due(db, "backfill").due                                      # a backfill is how the first run happens
     assert fresh.requires == "equity.earnings_call"
-    # once it has succeeded, the task's own rule decides (this module's KEY has run above)
+    # once it has succeeded, the task's own rule decides (this module's KEY has run above, by backfill). Since #386 a
+    # manual run never stands in for the scheduled one, so the rule finds the weekly due
     ran = task([], FakeClaude()).due(db, "weekly")
-    assert not ran.due and ran.reason.startswith("last success") and "every 6 days" in ran.reason
+    assert ran.due and ran.reason == "never succeeded in a scheduled run"
 
 
 # ---------------------------------------------------------------------------------------------- the extraction (2B-13, #176)
