@@ -1,0 +1,257 @@
+# The command bar's retrieval set `retrieval` (Spec 07 §6, N3; Architecture 03 §1.9; job K-02, #581). Written before any gate
+# run. K-10 (#587) runs the test split through `cmdbar-gates.yml`; K-06 tunes on the dev split only (Spec 07 N5).
+# Pass (fixed in Spec 07 §6): recall within the top 8 of at least 0.85 on the test split (a hit is any returned chunk
+# overlapping the item's span), with mean reciprocal rank reported. Retrieval runs as the route does:
+# semantic.search_chunks(question embedding, question text, banks => '{fed,rbi}', doc_types => the seven policy types, k => 8).
+#
+# Fed and RBI policy documents only (Spec 07 N3): no earnings-call item. The seven types: fomc_statement, fomc_minutes,
+# fomc_presconf_transcript, mpc_resolution, mpc_minutes, rbi_governor_statement, rbi_presconf_transcript.
+#
+# Each item:
+#   id                    unique across the file
+#   split                 test or dev
+#   question              as a visitor would type it
+#   bank                  fed or rbi (the document's entity slug)
+#   doc_type              one of the seven
+#   event_slug            the meeting the document belongs to; with doc_type it names one published document
+#   char_start, char_end  the expected passage in that document's text: Unicode code points, end exclusive (core.chunk's
+#                         offsets). The span covers the words that answer the question, so any chunk holding them counts
+#   notes                 what the passage says, in our words (no text from the document)
+#
+# The spans were found on dev's published documents on 16 Nov 2026 (read-only connector) and point into the current version
+# of each document; a document's text is fixed once chunked (CLAUDE.md §3), so a new version is a new document and its item
+# is re-pointed by a later change to this file. The document is named by meeting and type rather than by core.document's
+# external_key, which for RBI's documents is a path on RBI's site (CLAUDE.md §1: never link to RBI's pages); the pair is unique
+# among published documents (checked on dev). No document text is stored here: only the questions, which are ours.
+
+items:
+  # ---------------------------------------------------------------- test: the Fed (statements, minutes, press conferences)
+  - id: ret-t01
+    split: test
+    question: Why did the FOMC lower interest rates in July 2019?
+    bank: fed
+    doc_type: fomc_statement
+    event_slug: fomc-2019-07-31
+    char_start: 814
+    char_end: 833
+    notes: The statement names global developments and muted inflation pressures as the reasons for the cut.
+  - id: ret-t02
+    split: test
+    question: What did the FOMC say about the coronavirus outbreak when it cut rates to near zero on 15 March 2020?
+    bank: fed
+    doc_type: fomc_statement
+    event_slug: fomc-2020-03-15
+    char_start: 4
+    char_end: 15
+    notes: The statement's opening sentence on the outbreak's harm.
+  - id: ret-t03
+    split: test
+    question: What did the Fed's March 2022 statement say about Russia's invasion of Ukraine?
+    bank: fed
+    doc_type: fomc_statement
+    event_slug: fomc-2022-03-16
+    char_start: 337
+    char_end: 344
+    notes: The sentence on the invasion's implications for the US economy.
+  - id: ret-t04
+    split: test
+    question: By how much did the FOMC lower the federal funds target range in September 2024?
+    bank: fed
+    doc_type: fomc_statement
+    event_slug: fomc-2024-09-18
+    char_start: 844
+    char_end: 864
+    notes: The decision sentence (a half-point cut).
+  - id: ret-t05
+    split: test
+    question: What did FOMC participants say in January 2022 about the timing and pace of balance sheet runoff?
+    bank: fed
+    doc_type: fomc_minutes
+    event_slug: fomc-2022-01-26
+    char_start: 44047
+    char_end: 44053
+    notes: The participants' discussion of the runoff's timing and pace, in the minutes of the January 2022 meeting.
+  - id: ret-t06
+    split: test
+    question: What did the Vice Chair for Supervision brief the Committee on at the March 2023 FOMC meeting?
+    bank: fed
+    doc_type: fomc_minutes
+    event_slug: fomc-2023-03-22
+    char_start: 5603
+    char_end: 5622
+    notes: The update on the banking sector, naming the failed banks.
+  - id: ret-t07
+    split: test
+    question: According to the minutes of the May 2025 FOMC meeting, what happened to Treasury market liquidity after the tariff announcement of April 2?
+    bank: fed
+    doc_type: fomc_minutes
+    event_slug: fomc-2025-05-07
+    char_start: 6225
+    char_end: 6231
+    notes: The desk's report that liquidity deteriorated after the announcement and partly recovered.
+  - id: ret-t08
+    split: test
+    question: How did Chair Powell describe the July 2019 rate cut at his press conference?
+    bank: fed
+    doc_type: fomc_presconf_transcript
+    event_slug: fomc-2019-07-31
+    char_start: 6831
+    char_end: 6839
+    notes: His opening remarks calling it an adjustment in the middle of the cycle.
+  - id: ret-t09
+    split: test
+    question: Did Chair Powell expect 75 basis point moves to be common, at his June 2022 press conference?
+    bank: fed
+    doc_type: fomc_presconf_transcript
+    event_slug: fomc-2022-06-15
+    char_start: 7196
+    char_end: 7210
+    notes: His remark that the increase was unusually large and that he didn't expect moves of that size to be common.
+
+  # ---------------------------------------------------------------- test: the RBI (resolutions, minutes, statements, press conferences)
+  - id: ret-t10
+    split: test
+    question: What stance did the MPC adopt in February 2019?
+    bank: rbi
+    doc_type: mpc_resolution
+    event_slug: mpc-2019-02-07
+    char_start: 555
+    char_end: 565
+    notes: The change of stance from calibrated tightening to neutral.
+  - id: ret-t11
+    split: test
+    question: How much did the RBI cut the repo rate at its off-cycle meeting in March 2020?
+    bank: rbi
+    doc_type: mpc_resolution
+    event_slug: mpc-2020-03-27
+    char_start: 247
+    char_end: 262
+    notes: The decision sentence of the off-cycle meeting.
+  - id: ret-t12
+    split: test
+    question: What did the RBI's April 2022 resolution say about the new standing deposit facility?
+    bank: rbi
+    doc_type: mpc_resolution
+    event_slug: mpc-2022-04-08
+    char_start: 368
+    char_end: 393
+    notes: The facility's introduction and its rate.
+  - id: ret-t13
+    split: test
+    question: What did the MPC decide at its unscheduled meeting in May 2022?
+    bank: rbi
+    doc_type: mpc_resolution
+    event_slug: mpc-2022-05-04
+    char_start: 246
+    char_end: 261
+    notes: The decision sentence (the off-cycle hike).
+  - id: ret-t14
+    split: test
+    question: What stance did the MPC adopt in October 2026?
+    bank: rbi
+    doc_type: mpc_resolution
+    event_slug: mpc-2026-10-07
+    char_start: 796
+    char_end: 817
+    notes: The decision paragraph's stance change.
+  - id: ret-t15
+    split: test
+    question: Which MPC members wanted a smaller cut than the 35 basis points decided in August 2019?
+    bank: rbi
+    doc_type: mpc_minutes
+    event_slug: mpc-2019-08-07
+    char_start: 16532
+    char_end: 16547
+    notes: The vote sentence naming the four members for 35 basis points and the two for 25.
+  - id: ret-t16
+    split: test
+    question: Why did Prof. Jayanth Varma vote against the stance resolution in December 2022?
+    bank: rbi
+    doc_type: mpc_minutes
+    event_slug: mpc-2022-12-07
+    char_start: 30164
+    char_end: 30168
+    notes: His statement's closing sentences on the stance and why he voted against it.
+  - id: ret-t17
+    split: test
+    question: What did the Governor announce about an incremental cash reserve ratio in August 2023?
+    bank: rbi
+    doc_type: rbi_governor_statement
+    event_slug: mpc-2023-08-10
+    char_start: 12260
+    char_end: 12290
+    notes: The incremental CRR on the rise in deposits over a stated window.
+  - id: ret-t18
+    split: test
+    question: What did the RBI Governor announce about the cash reserve ratio in June 2025?
+    bank: rbi
+    doc_type: rbi_governor_statement
+    event_slug: mpc-2025-06-06
+    char_start: 11600
+    char_end: 11618
+    notes: The CRR cut, staggered over the year.
+  - id: ret-t19
+    split: test
+    question: What did Governor Das say about the incremental CRR at the August 2023 press conference?
+    bank: rbi
+    doc_type: rbi_presconf_transcript
+    event_slug: mpc-2023-08-10
+    char_start: 2422
+    char_end: 2437
+    notes: His answer placing the incremental CRR among the tools beyond rate and stance.
+  - id: ret-t20
+    split: test
+    question: At the June 2025 press conference, why did the Governor announce the CRR cut at once rather than later?
+    bank: rbi
+    doc_type: rbi_presconf_transcript
+    event_slug: mpc-2025-06-06
+    char_start: 7854
+    char_end: 7857
+    notes: His answer that announcing it then assured banks of the liquidity ahead.
+
+  # ---------------------------------------------------------------- dev split (K-06's tuning only)
+  - id: ret-dev01
+    split: dev
+    question: Why did the Fed make an emergency rate cut on 3 March 2020?
+    bank: fed
+    doc_type: fomc_statement
+    event_slug: fomc-2020-03-03
+    char_start: 65
+    char_end: 76
+    notes: The statement's sentence on the risks the coronavirus posed.
+  - id: ret-dev02
+    split: dev
+    question: How did the June 2021 FOMC minutes describe the pickup in PCE inflation through April?
+    bank: fed
+    doc_type: fomc_minutes
+    event_slug: fomc-2021-06-16
+    char_start: 19421
+    char_end: 19431
+    notes: The staff's review attributing it largely to transitory factors.
+  - id: ret-dev03
+    split: dev
+    question: How did Powell explain the half-point cut of September 2024?
+    bank: fed
+    doc_type: fomc_presconf_transcript
+    event_slug: fomc-2024-09-18
+    char_start: 882
+    char_end: 892
+    notes: His opening remarks on recalibrating the policy stance.
+  - id: ret-dev04
+    split: dev
+    question: What stance change did the MPC make in October 2024?
+    bank: rbi
+    doc_type: mpc_resolution
+    event_slug: mpc-2024-10-09
+    char_start: 517
+    char_end: 524
+    notes: The change of stance to neutral.
+  - id: ret-dev05
+    split: dev
+    question: What relief measures for borrowers did the RBI Governor announce in March 2020?
+    bank: rbi
+    doc_type: rbi_governor_statement
+    event_slug: mpc-2020-03-27
+    char_start: 15570
+    char_end: 15580
+    notes: The list of measures, the moratorium on term loans among them.
