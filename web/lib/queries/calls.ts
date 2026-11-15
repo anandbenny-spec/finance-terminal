@@ -11,6 +11,7 @@ import { REMARKS_FIELD } from "@/lib/equity/remarks";
 import { toneOpen } from "@/lib/equity/tone";
 import type { AiCitationRow, ResultsMoveRow, AiOutputRow, ApiDatabase, CallFigureRow, CallToneRow, CallGuidanceRow, RemarksChangeRow, CitationPageRow, GuidanceHitRateRow, EarningsCallRow, EarningsLatestRow, EarningsListRow, FieldPolicyRow } from "@/lib/queries/api";
 import { readFieldPolicy } from "@/lib/queries/policy";
+import { readNiftyAttribution } from "@/lib/queries/rate";
 import { readAll } from "@/lib/queries/read";
 import { publicClient } from "@/lib/supabase/public";
 
@@ -45,7 +46,7 @@ export type GuidanceRecordData = GuidanceRecordReads & {
  * before migration 0044 reaches production); the company's rows once it is shown or labelled; "error" when that one read failed,
  * which holds back only this panel (#328).
  */
-export type ResultsMovesRead = { state: "hidden" } | { state: "error" } | { state: "ok"; rows: ResultsMoveRow[] };
+export type ResultsMovesRead = { state: "hidden" } | { state: "error" } | { state: "ok"; rows: ResultsMoveRow[]; niftyAttribution: string | null };
 
 /**
  * The Tone panel's reads (#482): not made while ai.call_tone is hidden (today's reads stay as they are, so the merge is safe before migration
@@ -129,7 +130,10 @@ async function readResults(db: Db, slug: string, policies: readonly FieldPolicyR
   const policy = policies.find((p) => p.field_key === RESULTS_FIELD);
   if (!policy || policy.status === "hidden") return { state: "hidden" };
   try {
-    return { state: "ok", rows: await readResultsMoves(db, slug) };
+    // One after the other inside this panel's slot, so the tab's waves keep their peak of six (#516).
+    const rows = await readResultsMoves(db, slug);
+    const niftyAttribution = await readNiftyAttribution(db);
+    return { state: "ok", rows, niftyAttribution };
   } catch (error) {
     console.error(`[company] ${slug} results moves read failed: ${error instanceof Error ? error.message : String(error)}`);
     return { state: "error" };
