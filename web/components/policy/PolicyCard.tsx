@@ -9,7 +9,7 @@ import { AIBlock } from "@/components/ai/AIBlock";
 import { Cited } from "@/components/ai/CitationChip";
 import { DecisionLine } from "@/components/ai/DecisionLine";
 import { Gated, type FieldPolicies } from "@/components/data/Gated";
-import { Panel } from "@/components/data/Panel";
+import { Panel, type PanelSpan } from "@/components/data/Panel";
 import { StateNote } from "@/components/data/StateNote";
 import { PendingVote } from "@/components/policy/PendingVote";
 import { FEEDS } from "@/lib/feeds";
@@ -34,12 +34,15 @@ export function PolicyCard({
   policies,
   now,
   footer,
+  span = 6,
 }: {
   bank: Bank;
   latest: LatestDecision | null;
   policies: FieldPolicies | null;
   now: string;
   footer: ReactNode;
+  /** The card's width on the 12-column grid: 6 beside the other bank's card (/policy), 8 on Policy Day. */
+  span?: PanelSpan;
 }) {
   const fed = bank === "Fed";
   const m = latest?.meeting ?? null;
@@ -50,7 +53,7 @@ export function PolicyCard({
       qualifier={date ? <span className="text-meta text-ink-3">{formatDate(date)}</span> : undefined}
       subtitle={fed ? "What did the Fed just decide, and why?" : "What did the RBI just decide, and why?"}
       market={fed ? "US" : "IN"}
-      span={6}
+      span={span}
       footer={footer}
       refresh={fed ? FEEDS.policyLatestFed : FEEDS.policyLatestRbi}
     >

@@ -5,36 +5,45 @@
 import type { ReactNode } from "react";
 import { AdminProvider } from "@/components/shell/admin";
 import { Footer } from "@/components/shell/Footer";
+import { TourProvider } from "@/components/shell/GuidedTour";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { StatusBar } from "@/components/shell/StatusBar";
 import { TickerTape } from "@/components/shell/TickerTape";
 import { TopBar } from "@/components/shell/TopBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { readTourShown } from "@/lib/queries/shell";
+
+/** The guided tour's provider (#91): the tour is published only while `site.guided_tour` has a shown or labelled row. */
+async function Tour({ children }: { children: ReactNode }) {
+  return <TourProvider shown={await readTourShown()}>{children}</TourProvider>;
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <AdminProvider>
       <TooltipProvider>
-        <a
-          href="#main"
-          className="sr-only z-60 rounded-md bg-highlight px-2.5 py-1.5 text-highlight-ink focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
-        >
-          Skip to content
-        </a>
-        <div className="flex min-h-dvh flex-col">
-          <TopBar />
-          <TickerTape />
-          <div className="flex flex-1">
-            <Sidebar />
-            <main id="main" tabIndex={-1} className="min-w-0 flex-1 px-4 pt-5 pb-8 outline-none lg:px-6">
-              <div className="mx-auto max-w-7xl">
-                {children}
-                <Footer />
-              </div>
-            </main>
+        <Tour>
+          <a
+            href="#main"
+            className="sr-only z-60 rounded-md bg-highlight px-2.5 py-1.5 text-highlight-ink focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
+          >
+            Skip to content
+          </a>
+          <div className="flex min-h-dvh flex-col">
+            <TopBar />
+            <TickerTape />
+            <div className="flex flex-1">
+              <Sidebar />
+              <main id="main" tabIndex={-1} className="min-w-0 flex-1 px-4 pt-5 pb-8 outline-none lg:px-6">
+                <div className="mx-auto max-w-7xl">
+                  {children}
+                  <Footer />
+                </div>
+              </main>
+            </div>
+            <StatusBar />
           </div>
-          <StatusBar />
-        </div>
+        </Tour>
       </TooltipProvider>
     </AdminProvider>
   );

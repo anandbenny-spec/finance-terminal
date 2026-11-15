@@ -129,13 +129,13 @@ describe("PolicyCard", () => {
     const fed = html(<PolicyCard bank="Fed" latest={fedLatest} policies={POLICIES} now={NOW} footer="" />);
     expect(row(fed)).toEqual([
       ["/policy/fed/2026-09-17", "FOMC meeting, 17 Sep 2026"],
-      ["/policy/fed/2026-09-17?tab=changes", "What changed"],
+      ["/policy/fed/2026-09-17/changes", "What changed"],
       ["https://www.federalreserve.gov/newsevents/pressreleases/monetary20260917a.htm", "Official statement ↗"],
     ]);
     const rbi = html(<PolicyCard bank="RBI" latest={rbiLatest} policies={POLICIES} now={NOW} footer="" />);
     expect(row(rbi)).toEqual([
       ["/policy/rbi/2026-10-07", "MPC meeting no. 61, 7 Oct 2026"],
-      ["/policy/rbi/2026-10-07?tab=changes", "What changed"],
+      ["/policy/rbi/2026-10-07/changes", "What changed"],
     ]);
   });
 

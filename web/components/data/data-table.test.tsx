@@ -71,3 +71,29 @@ describe("DataTable's scroll option", () => {
     }
   });
 });
+
+// 12 Nov 2026, found in a browser at 375 px on /screener: the first column is sticky, and a long company name made it
+// 359 px wide where the table had 341 px, so every other column scrolled under it and the screener showed only names.
+// A unit test can't measure layout, so this holds the cause: below md the first column is capped and its text wraps.
+describe("DataTable's sticky first column on a phone", () => {
+  const WIDE: Column<Row>[] = [
+    { id: "name", header: "Company", cell: (r) => r.value },
+    { id: "price", header: "Price", align: "right", cell: (r) => r.id },
+  ];
+  const out = renderToStaticMarkup(<DataTable columns={WIDE} rows={ROWS.slice(0, 2)} rowKey={(r) => r.id} caption="Test rows" empty="None" />);
+  const classesOf = (tag: "th" | "td") => [...out.matchAll(new RegExp(`<${tag}(?=[\\s>])[^>]* class="([^"]*)"`, "g"))].map((m) => m[1].split(" "));
+
+  it("caps the first column's width below md and lets it wrap, header and cells alike", () => {
+    for (const cells of [classesOf("th"), classesOf("td")]) {
+      const first = cells.filter((c) => c.includes("sticky"));
+      expect(first.length).toBeGreaterThan(0);
+      for (const c of first) expect(c).toEqual(expect.arrayContaining(["left-0", "max-md:max-w-44", "max-md:whitespace-normal"]));
+    }
+  });
+  it("leaves every other column as it was: never capped, never wrapped", () => {
+    const others = [...classesOf("th"), ...classesOf("td")].filter((c) => !c.includes("sticky"));
+    expect(others.length).toBeGreaterThan(0);
+    for (const c of others) expect(c.join(" ")).not.toMatch(/max-md:/);
+  });
+});
+

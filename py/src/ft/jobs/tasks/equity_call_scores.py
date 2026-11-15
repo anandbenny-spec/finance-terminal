@@ -22,7 +22,8 @@ the checks name counts and companies only.
 
 Checks, B blocking, W warning:
 - (B) `similarity_range`: every stored similarity is between 0 and 1;
-- (B) `pairs_capped`: at most 5 pairs per row, each side at most 400 code points;
+- (B) `pairs_capped`: at most 5 pairs per row, each side at most 400 code points and a verified citation (`remarks-3`, #414:
+  `verified` true, a document, a code-point range inside it);
 - (W) `compared`: calls compared, no previous call, no opening text, role-held, and the labels (always passes);
 - (B) `tone_range`: every stored tone mean is between -2 and +2 with n of at least 8, a held row has no mean, and a change label
   matches its delta and standard error;
@@ -80,7 +81,8 @@ class EquityCallScores(Task):
                   from equity.earnings_call ec
                   join core.event ev on ev.id = ec.event_id and ev.status = 'stored'
                   join core.document d on d.id = ec.transcript_document_id
-                 where ec.fiscal_label is not null and ec.status_reason is null {where}
+                 where ec.fiscal_label is not null and ec.status_reason is null
+                   and ec.entity_id in (select id from core.entity where market = 'IN') {where}
                  order by ec.entity_id, ec.period_end""", args).fetchall()
         by_label = {(c[1], c[2]): c for c in calls}
         pairs = []
@@ -98,6 +100,12 @@ class EquityCallScores(Task):
                         where document_id = any(%s) and section = 'opening' and role = 'management'
                         order by document_id, turn_no""", (docs,)).fetchall():
                 turns.setdefault(did, []).append(rm.TurnRef(a, b, speaker, role, section, w))
+        page_rows: dict[int, list[tuple[int, int, int]]] = {}
+        if docs:
+            for did, pg, a, b in db.execute(
+                    "select document_id, pdf_page, char_start, char_end from equity.transcript_page "
+                    "where document_id = any(%s) order by document_id, pdf_page", (docs,)).fetchall():
+                page_rows.setdefault(did, []).append((pg, a, b))
         cache: dict[int, tuple[str, rm.Opening | None] | None] = {}
 
         def side(c) -> tuple[str, rm.Opening | None] | None:
@@ -120,6 +128,7 @@ class EquityCallScores(Task):
                 f.counts["no_opening"] += 1
                 continue
             ch = rm.compare(a[0], a[1], b[0], b[1])
+            ch.pairs = rm.verify_pairs(ch.pairs, a[0], c[3], page_rows.get(c[3]), b[0], prev[3], page_rows.get(prev[3]))
             f.rows[c[0]] = (prev[0], ch.words_base, ch.words_new, ch.words_added, ch.words_removed,
                             Decimal(str(ch.similarity)), ch.new_speakers, ch.label, ch.pairs, rm.RULE_VERSION)
             f.counts["compared"] += 1
@@ -221,8 +230,10 @@ class EquityCallScores(Task):
         bad_sim = [e for e, s, _ in rows if not (0 <= s <= 1)]
         bad_pairs = []
         for e, _, pairs in rows:
-            sides = [p[k]["text"] for p in pairs for k in ("old", "new") if p.get(k)]
-            if len(pairs) > rm.MAX_PAIRS or any(len(t) > rm.MAX_SIDE for t in sides):
+            sides = [p[k] for p in pairs for k in ("old", "new") if p.get(k)]
+            if (len(pairs) > rm.MAX_PAIRS
+                    or any(len(t["text"]) > rm.MAX_SIDE or t.get("verified") is not True or t["end"] - t["start"] > rm.MAX_SIDE
+                           or t["start"] < 0 for t in sides)):
                 bad_pairs.append(e)
         c = f.counts
         dist = "; ".join(f"{k.removeprefix('label_')} {n}" for k, n in sorted(c.items()) if k.startswith("label_"))
@@ -231,8 +242,8 @@ class EquityCallScores(Task):
                   f"{len(bad_sim)} rows with a similarity outside 0 to 1" if bad_sim
                   else f"all {len(rows)} similarities are between 0 and 1"),
             Check("pairs_capped", not bad_pairs,
-                  f"{len(bad_pairs)} rows with more than 5 pairs or a side over 400 characters" if bad_pairs
-                  else f"all {len(rows)} rows have at most 5 pairs of at most 400 characters a side"),
+                  f"{len(bad_pairs)} rows with more than 5 pairs, a side over 400 characters or a side that is not a verified citation" if bad_pairs
+                  else f"all {len(rows)} rows have at most 5 pairs of at most 400 characters a side, each a verified citation"),
             Check("compared", True,
                   f"compared {c['compared']}; no previous call {c['no_previous']}; no opening text {c['no_opening']}; "
                   f"role-held {c['role_held']}; labels: {dist or 'none'}", blocking=False),

@@ -2,7 +2,7 @@
 // date and source, the grid's centre and the cell a choice names, and the IMF context. No valuation maths is tested
 // here because none runs in the browser: the cell read is the stored row, whatever its value.
 import { describe, expect, it } from "vitest";
-import { IMF_CPI, IMF_GDP, assumptionRows, cellOf, gridCentre, gridOptions, imfContext, leadKind, leadOf, num, runOf, storedInput } from "@/lib/equity/valuation";
+import { IMF_CPI, IMF_GDP, assumptionRows, visitorText, cellOf, gridCentre, gridOptions, imfContext, leadKind, leadOf, num, runOf, storedInput } from "@/lib/equity/valuation";
 import { OPERATING_INPUTS, forecast, grid, lenderRun, run } from "@/tests/valuation-rows";
 
 describe("reading stored decimals", () => {
@@ -109,5 +109,47 @@ describe("imfContext", () => {
   });
   it("has none without forecasts", () => {
     expect(imfContext([], "2026-10-31")).toBeNull();
+  });
+});
+
+describe("visitorText (Review 05, finding 3): stored sources in visitor words", () => {
+  const INTERNAL = /\b(equity|us|policy|core|ops|site|ai|semantic|api)\.[a-z_]+\b/;
+  // Every string py/src/ft/equity/assemble.py and us_inputs.py store today, India and US.
+  const STORED: [string, string][] = [
+    ["the latest close (Source: NSE; equity.metrics)", "the latest close (Source: NSE)"],
+    ["market capitalisation at the latest close (Source: NSE; equity.metrics)", "market capitalisation at the latest close (Source: NSE)"],
+    ["the latest close (Source: Nasdaq; equity.metrics)", "the latest close (Source: Nasdaq)"],
+    ["bottom-up beta: Damodaran's India industry beta relevered at market D/E (equity.beta)", "bottom-up beta: Damodaran's India industry beta relevered at market D/E"],
+    ["bottom-up beta: Damodaran's US industry beta relevered at market D/E (equity.beta)", "bottom-up beta: Damodaran's US industry beta relevered at market D/E"],
+    ["the industry's levered beta: Damodaran's India industry beta, not relevered (equity.beta)", "the industry's levered beta: Damodaran's India industry beta, not relevered"],
+    ["the industry's levered beta: Damodaran's US industry beta, not relevered (equity.beta)", "the industry's levered beta: Damodaran's US industry beta, not relevered"],
+    ["price-to-book: market capitalisation ÷ equity to owners at the latest balance sheet (Source: NSE; equity.metrics)", "price-to-book: market capitalisation ÷ equity to owners at the latest balance sheet (Source: NSE)"],
+    ["India 10-year government bond yield (FRED, OECD, monthly) less India's sovereign default spread (Aswath Damodaran, NYU Stern, ctryprem)", "India 10-year government bond yield (FRED, OECD, monthly) less India's sovereign default spread (Aswath Damodaran, NYU Stern, country risk premiums)"],
+    ["Implied equity risk premium of a mature market plus India's country risk premium (Aswath Damodaran, NYU Stern: ERPbymonth, ctryprem)", "Implied equity risk premium of a mature market plus India's country risk premium (Aswath Damodaran, NYU Stern: implied equity risk premium by month; country risk premiums)"],
+    ["Implied equity risk premium of a mature market, with no country risk premium (Aswath Damodaran, NYU Stern: ERPbymonth)", "Implied equity risk premium of a mature market, with no country risk premium (Aswath Damodaran, NYU Stern: implied equity risk premium by month)"],
+    ["shares outstanding today: the latest stored count less share actions since (equity.metrics)", "shares outstanding today: the latest stored count less share actions since"],
+    ["revenue growth a year over the last three financial years (equity.metrics)", "revenue growth a year over the last three financial years"],
+    ["revenue growth a year over the last five financial years (equity.metrics)", "revenue growth a year over the last five financial years"],
+  ];
+  it("removes every task name and names Damodaran's two files in words, and nothing else", () => {
+    for (const [stored, shown] of STORED) {
+      const out = visitorText(stored);
+      expect(out).toBe(shown);
+      expect(out).not.toMatch(INTERNAL);
+      expect(out).not.toMatch(/ERPbymonth|ctryprem/);
+    }
+  });
+  it("leaves a string with no internal name unchanged, and keeps null", () => {
+    for (const s of ["Derived by the model from the filings", "India 10-year government bond yield (FRED, OECD, monthly)", "Implied equity risk premium of a mature market"]) expect(visitorText(s)).toBe(s);
+    expect(visitorText(null)).toBeNull();
+  });
+  it("cleans the source, held and note text of every row the table shows", () => {
+    const dirty = run("reverse_dcf", {
+      inputs: { ...OPERATING_INPUTS, price: { value: "3456.7", unit: "money", as_of: "2026-10-30", source: "the latest close (Source: NSE; equity.metrics)", held: null, detail: {} } },
+    });
+    for (const r of assumptionRows(dirty)) {
+      for (const t of [r.source, r.held, r.note]) expect(t ?? "").not.toMatch(INTERNAL);
+    }
+    expect(assumptionRows(dirty).find((r) => r.id === "price")?.source).toBe("the latest close (Source: NSE)");
   });
 });

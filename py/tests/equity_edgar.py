@@ -27,18 +27,27 @@ capitalisation of 20 × TTM net income, used only for the WACC's weights. So the
 in USD, reproducible); they aren't valuations. The US rates are fixed with their dates (Data Audit 02 E8: the 10-year
 Treasury, the mature-market ERP, a 25% marginal rate).
 
-When the US slice arrives (its second use), this moves into `ft/equity/` (`CLAUDE.md` §6, reuse rule 2).
+**Moved (US-02, #401):** the rules now live in `ft/equity/edgar.py` (their second use: `CLAUDE.md` §6, reuse rule 2);
+this helper keeps its own fields and test assumptions and imports the rules, its tests unchanged.
 """
 from __future__ import annotations
 
 import datetime as dt
 import gzip
 import json
-from collections import defaultdict
-from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 
+from ft.equity import edgar
+from ft.equity.edgar import (  # noqa: F401  the rules, re-exported for the tests (US-02 moved them)
+    PERIODIC_FORMS,
+    STALE_DAYS,
+    F,
+    cover_shares,
+    fiscal_year_ends,
+    load_facts,
+    pick_tags,
+)
 from ft.equity.valuation.model import Company, Input, Market
 
 FIX = Path(__file__).resolve().parents[2] / "data" / "fixtures" / "equity"
@@ -58,8 +67,7 @@ US_TAX = Decimal("0.25")
 BETA = Decimal(1)
 PE = Decimal(20)
 
-PERIODIC_FORMS = {"10-K", "10-Q", "10-KT", "10-QT", "20-F", "40-F"}
-STALE_DAYS = 400
+# This test's own fields (the engine's inputs); the task's column map is py/config/equity/us_tags.yaml.
 FIELD_TAGS = {
     "revenue": ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
                 "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "RevenuesNetOfInterestExpense",
@@ -86,120 +94,16 @@ NCI_ADJUST = {("total_equity_incl_nci", "StockholdersEquity"): +1}
 SOURCE = "SEC EDGAR companyfacts (10-K and 10-Q)"
 
 
-@dataclass(frozen=True)
-class F:
-    tag: str
-    start: dt.date | None
-    end: dt.date
-    val: Decimal
-    filed: dt.date
-    form: str
-
-    @property
-    def days(self) -> int | None:
-        return (self.end - self.start).days + 1 if self.start else None
-
-    @property
-    def kind(self) -> str:
-        d = self.days
-        if d is None:
-            return "instant"
-        for name, lo, hi in (("Q", 80, 100), ("6M", 170, 195), ("9M", 260, 285), ("FY", 350, 380)):
-            if lo <= d <= hi:
-                return name
-        return f"{d}d"
-
-
-def _d(s: str | None) -> dt.date | None:
-    return dt.date.fromisoformat(s) if s else None
-
-
 def companyfacts(ticker: str) -> dict:
     def read(cik: int) -> dict:
         with gzip.open(EDGAR / f"companyfacts_CIK{cik:010d}.json.gz", "rt", encoding="utf-8") as fh:
             return json.load(fh)
-    primary, preds = read(CIK[ticker]), [read(c) for c in PREDECESSORS.get(ticker, [])]
-    if not preds:
-        return primary
-    out = {"cik": primary.get("cik"), "entityName": primary.get("entityName"), "facts": {}}
-    for doc in [primary] + preds:                      # the successor first: its facts win for the same period
-        for tax, tags in doc.get("facts", {}).items():
-            for tag, body in tags.items():
-                dst = out["facts"].setdefault(tax, {}).setdefault(tag, {"units": {}})
-                for unit, entries in body.get("units", {}).items():
-                    dst["units"].setdefault(unit, []).extend(entries)
-    return out
-
-
-def load_facts(cf: dict) -> dict[str, list[F]]:
-    """tag → facts from periodic reports, one per (start, end), the latest filed winning (an amendment on a tie). For
-    merged CIKs the successor's entries come first, so on equal filing dates they win."""
-    out: dict[str, list[F]] = {}
-    for tag, body in cf.get("facts", {}).get("us-gaap", {}).items():
-        for entries in body.get("units", {}).values():
-            best: dict[tuple, F] = {}
-            for e in entries:
-                if (e.get("form") or "").split("/")[0] not in PERIODIC_FORMS:
-                    continue
-                try:
-                    f = F(tag, _d(e.get("start")), _d(e["end"]), Decimal(str(e["val"])), _d(e["filed"]),
-                          e.get("form", ""))
-                except (KeyError, TypeError, ValueError, ArithmeticError):
-                    continue
-                k = (f.start, f.end)
-                if k not in best or f.filed > best[k].filed or (f.filed == best[k].filed and f.form.endswith("/A")):
-                    best[k] = f
-            if best:
-                out[tag] = list(best.values())
-            break                                       # one unit family per tag
-    return out
-
-
-def pick_tags(facts: dict[str, list[F]], candidates: list[str], flow: bool) -> list[str]:
-    present = [c for c in candidates if c in facts]
-
-    def typed(c):
-        return [f for f in facts[c] if (f.start is not None) == flow]
-    ok = [c for c in present if len(typed(c)) >= 4]
-    if not ok:
-        return present
-    latest = {c: max(f.end for f in typed(c)) for c in ok}
-    newest = max(latest.values())
-    primary = next(c for c in ok if (newest - latest[c]).days <= STALE_DAYS)
-    return [primary] + [c for c in present if c != primary]
+    return edgar.merge_companyfacts(read(CIK[ticker]), [read(c) for c in PREDECESSORS.get(ticker, [])])
 
 
 def merged(facts: dict[str, list[F]], field: str) -> list[F]:
-    tags = pick_tags(facts, FIELD_TAGS[field], field in FLOW)
-    out: dict[tuple, F] = {}
-    nci = None
-    for i, t in enumerate(tags):
-        sign = NCI_ADJUST.get((field, t)) if i > 0 else None
-        if sign and nci is None:
-            nci = {f.end: f.val for f in facts.get("MinorityInterest", []) if f.start is None}
-        for f in facts.get(t, []):
-            k = (f.start, f.end)
-            if k in out:
-                continue
-            if sign:
-                if f.end in nci:
-                    f = replace(f, val=f.val + sign * nci[f.end], tag=f"{t}+MinorityInterest")
-                elif "MinorityInterest" in facts:
-                    continue
-            out[k] = f
-    return list(out.values())
-
-
-def fiscal_year_ends(facts: dict[str, list[F]], min_tags: int = 5) -> list[dt.date]:
-    count: dict[dt.date, int] = defaultdict(int)
-    n_tags = 0
-    for fs in facts.values():
-        ends = {f.end for f in fs if f.start is not None and f.kind == "FY" and f.form.startswith("10-K")}
-        n_tags += bool(ends)
-        for e in ends:
-            count[e] += 1
-    need = min(min_tags, max(1, n_tags // 2))
-    return sorted(e for e, n in count.items() if n >= need)
+    return edgar.merged(facts, FIELD_TAGS[field], field in FLOW,
+                        {t: sign for (fl, t), sign in NCI_ADJUST.items() if fl == field})
 
 
 def recorded_shares(ticker: str) -> tuple[Decimal, dt.date, str] | None:
@@ -210,20 +114,6 @@ def recorded_shares(ticker: str) -> tuple[Decimal, dt.date, str] | None:
         return None
     latest = sh["latest"]
     return Decimal(str(latest["total"])), dt.date.fromisoformat(latest["end"]), latest["source"]
-
-
-def cover_shares(cf: dict) -> tuple[Decimal, dt.date] | None:
-    entries = cf.get("facts", {}).get("dei", {}).get("EntityCommonStockSharesOutstanding", {}) \
-        .get("units", {}).get("shares", [])
-    groups: dict[tuple, list] = defaultdict(list)
-    filed: dict[str, str] = {}
-    for e in entries:
-        groups[(e["accn"], e["end"])].append(Decimal(str(e["val"])))
-        filed[e["accn"]] = e.get("filed") or ""
-    if not groups:
-        return None
-    accn, end = max(groups, key=lambda k: (k[1], filed[k[0]]))
-    return sum(groups[(accn, end)], Decimal(0)), dt.date.fromisoformat(end)
 
 
 class Filer:

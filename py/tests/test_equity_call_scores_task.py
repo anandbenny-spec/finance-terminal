@@ -140,12 +140,37 @@ def test_a_call_is_compared_with_the_previous_quarter_and_a_rerun_writes_nothing
     status, written, checks, _ = go(slug)
     assert status == "success" and written == 1
     [(ev, base, wb, wn, wa, wr, sim, speakers, label, n_pairs, version)] = rows(eid)
-    assert (ev, base, speakers, label, version) == (cur, prev, [], None, "remarks-2")
+    assert (ev, base, speakers, label, version) == (cur, prev, [], None, "remarks-3")
     assert wb == 14 and wn == 15 and (wa, wr) == (5, 4)
     assert float(sim) == pytest.approx(1 - 9 / 29, abs=1e-4)
     assert n_pairs == 2
     assert "similarity_range" in str(checks) and "pairs_capped" in str(checks)
     assert go(slug)[1] == 0                                     # nothing changed: nothing written
+
+
+@pytest.mark.db
+def test_stored_pairs_are_verified_citations_into_the_stored_text():   # remarks-3, #414
+    eid, slug = company()
+    prev = call(eid, slug, D(2026, 7, 25), "Q1 FY27", opening(OLD_BODY))
+    cur = call(eid, slug, D(2026, 10, 25), "Q2 FY27", opening(NEW_BODY))
+    go(slug)
+    [(pairs,)] = q("select pairs from equity.call_remarks_change where event_id = %s", cur)
+    assert pairs
+    docs = {cur: q("select transcript_document_id from equity.earnings_call where event_id = %s", cur)[0][0],
+            prev: q("select transcript_document_id from equity.earnings_call where event_id = %s", prev)[0][0]}
+    texts = {d: q("select string_agg(body, '' order by chunk_no) from core.chunk where document_id = %s", d)[0][0]
+             for d in docs.values()}
+    seen = 0
+    for pair in pairs:
+        for side, doc in (("new", docs[cur]), ("old", docs[prev])):
+            s = pair[side]
+            if s is None:
+                continue
+            seen += 1
+            assert s["verified"] is True and s["document_id"] == doc and len(s["text"]) <= 400
+            assert " ".join(texts[doc][s["start"]:s["end"]].split()) == s["text"]       # re-read from the stored text
+            assert "spans" not in s and s["page"] is None                              # no page rows in this fixture
+    assert seen >= 2
 
 
 @pytest.mark.db

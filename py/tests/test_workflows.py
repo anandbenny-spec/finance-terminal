@@ -260,6 +260,62 @@ def test_the_backfill_can_limit_a_tone_run_to_an_evaluation_set_and_no_other_wor
         assert eca.TONE_SET_ENV not in json.dumps(load(name))
 
 
+def test_the_backfill_can_rerun_the_diff_summaries_through_env_and_no_other_workflow_sets_it():
+    # #445: the re-run of statement_diff_summary's older outputs is a backfill's input only; none is the default.
+    from ft.jobs.tasks import ai_batch
+    wf = load("backfill")
+    option = wf["on"]["workflow_dispatch"]["inputs"]["diff_rerun"]
+    assert option["default"] == "none" and option["type"] == "string"
+    run = next(s for s in wf["jobs"]["run"]["steps"] if s.get("name") == "Run")
+    expr = run["env"][ai_batch.RERUN_ENV]
+    base = {"secrets": {}, "env": {}, "github": {"event_name": "workflow_dispatch"}}
+    assert interpolate(expr, {**base, "inputs": {"diff_rerun": "none"}}) == "none"
+    assert interpolate(expr, {**base, "inputs": {"diff_rerun": "all"}}) == "all"
+    assert ai_batch.rerun_of("backfill", {ai_batch.RERUN_ENV: interpolate(expr, {**base, "inputs": manual_inputs("backfill")})}) \
+        is None                                                     # a dispatch left at its defaults re-runs nothing
+    for name in ("daily", "watch", "weekly", "refresh"):
+        assert ai_batch.RERUN_ENV not in json.dumps(load(name))
+
+
+def test_the_backfill_can_rerun_the_extraction_through_env_and_no_other_workflow_sets_it():
+    # #511: the re-run of the published extractions to the round's version is a backfill's input only; none is the default.
+    from ft.ai import guidance_extraction as ge
+    from ft.jobs.tasks import equity_calls_ai as eca
+    wf = load("backfill")
+    option = wf["on"]["workflow_dispatch"]["inputs"]["guidance_rerun"]
+    assert option["default"] == "none" and option["options"] == ["none", "price", "all"]
+    run = next(s for s in wf["jobs"]["run"]["steps"] if s.get("name") == "Run")
+    expr = run["env"][eca.GUIDANCE_RERUN_ENV]
+    base = {"secrets": {}, "env": {}, "github": {"event_name": "workflow_dispatch"}}
+    assert interpolate(expr, {**base, "inputs": {"guidance_rerun": "price"}}) == "price"
+    defaults = interpolate(expr, {**base, "inputs": manual_inputs("backfill")})
+    assert eca.guidance_rerun("backfill", "production", None, {eca.GUIDANCE_RERUN_ENV: defaults}) is None   # defaults: nothing
+    assert eca.guidance_rerun("backfill", "dev", ge.TASK, {eca.GUIDANCE_RERUN_ENV: "all"}) == "all"
+    assert len(wf["on"]["workflow_dispatch"]["inputs"]) <= 10                    # GitHub's limit on dispatch inputs
+    for name in ("daily", "watch", "weekly", "refresh"):
+        assert eca.GUIDANCE_RERUN_ENV not in json.dumps(load(name))
+
+
+def test_the_backfill_can_rerun_the_calls_whose_turns_changed_through_env_and_no_other_workflow_sets_it():
+    # #554: the re-run of the calls whose turns changed is a backfill's input only; none is the default.
+    from ft.ai import guidance_extraction as ge
+    from ft.jobs.tasks import equity_calls_ai as eca
+    wf = load("backfill")
+    option = wf["on"]["workflow_dispatch"]["inputs"]["turns_rerun"]
+    assert option["default"] == "none" and option["options"] == ["none", "price", "all"] and option["type"] == "choice"
+    run = next(s for s in wf["jobs"]["run"]["steps"] if s.get("name") == "Run")
+    expr = run["env"][eca.TURNS_RERUN_ENV]
+    base = {"secrets": {}, "env": {}, "github": {"event_name": "workflow_dispatch"}}
+    assert interpolate(expr, {**base, "inputs": {"turns_rerun": "price"}}) == "price"
+    defaults = {k: interpolate(run["env"][k], {**base, "inputs": manual_inputs("backfill")})
+                for k in (eca.TURNS_RERUN_ENV, eca.GUIDANCE_RERUN_ENV, eca.TONE_SET_ENV)}
+    assert eca.turns_rerun("backfill", None, defaults) is None                  # a dispatch left at its defaults re-runs nothing
+    assert eca.turns_rerun("backfill", ge.TASK, {**defaults, eca.TURNS_RERUN_ENV: "all"}) == "all"   # the other defaults don't refuse
+    assert len(wf["on"]["workflow_dispatch"]["inputs"]) <= 10                    # GitHub's limit on dispatch inputs
+    for name in ("daily", "watch", "weekly", "refresh"):
+        assert eca.TURNS_RERUN_ENV not in json.dumps(load(name))
+
+
 def test_the_evaluator_follows_githubs_rules():
     ctx = {"secrets": {"A": "a"}, "inputs": {}, "env": {}, "github": {"event_name": "push"}}
     assert evaluate("secrets.MISSING", ctx) == "" and evaluate("inputs.target", ctx) is None
@@ -492,8 +548,9 @@ def test_the_web_job_follows_the_secrets_job_and_runs_only_when_it_says_so():
     step = _web_step()
     assert "${{" not in step["run"]                                              # inputs reach the script through env
     assert set(step["env"]) == {"EVENT", "BASE_SHA", "BEFORE_SHA", "HEAD_SHA", "WEB_READS"}
-    # what the web job reads: web/, the labelling set its tests read, vercel.json and ci.yml itself
+    # what the web job reads: web/, the labelling set and the guidance map its tests read, vercel.json and ci.yml itself
     assert re.search(r"labelling_items\.json", (WORKFLOWS.parent.parent / "web/lib/labelling/labelling.test.ts").read_text())
+    assert re.search(r"guidance_metrics\.yaml", (WORKFLOWS.parent.parent / "web/components/company/calls/guidance-record.test.tsx").read_text())
 
 
 def _git(cwd, *args):
@@ -536,6 +593,8 @@ def _ask(tmp_path, event, changed, *, base="parent"):
     (["web/app/page.tsx"], "true"),
     (["py/src/ft/jobs/due.py", "web/lib/x.ts"], "true"),
     (["py/config/eval/sets/labelling_items.json"], "true"),
+    (["py/config/equity/guidance_metrics.yaml"], "true"),             # #532: web's tests pin the actual's units to it
+    (["py/config/equity/companies.yaml", "py/config/equity/guidance_metrics.yaml.bak"], "false"),
     (["vercel.json"], "true"),
     ([".github/workflows/ci.yml"], "true"),
 ])

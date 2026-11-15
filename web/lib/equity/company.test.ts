@@ -2,7 +2,8 @@
 // when the day's change and the earlier prices are held back, and how corporate actions are grouped.
 import { describe, expect, it } from "vitest";
 import {
-  basisOf, chooseBasis, dayChange, metricByPeriod, periodsOf, PERIODS, pickMetric, priceData, sourceLineFor, splitActions, tabOf,
+  basisOf, chooseBasis, companyHref, dayChange, DEFAULT_VIEW, metricByPeriod, pathParam, periodsOf, PERIODS, pickMetric, priceData, sourceLineFor,
+  splitActions, tabOf, tabParam, TABS, viewParam,
 } from "@/lib/equity/company";
 import { action, company, financial, metric, price } from "@/tests/company-rows";
 
@@ -110,5 +111,63 @@ describe("splitActions", () => {
     const { upcoming, past } = splitActions(list, "2026-10-31");
     expect(upcoming.map((a) => a.subject)).toEqual(["Dividend A"]);
     expect(past.map((a) => a.subject)).toEqual(["Dividend B", "Dividend C"]);
+  });
+});
+
+// R05-9b (12 Nov 2026): the tab and its view are path segments, so every company page is built ahead and cached.
+describe("the company page's addresses", () => {
+  it("builds the bare slug for the Overview and a path for every other tab", () => {
+    expect(companyHref("tcs", "overview")).toBe("/companies/tcs");
+    expect(TABS.map((t) => companyHref("tcs", t.id))).toEqual([
+      "/companies/tcs",
+      "/companies/tcs/financials",
+      "/companies/tcs/valuation",
+      "/companies/tcs/rate-decisions",
+      "/companies/tcs/calls",
+    ]);
+  });
+  it("builds each tab's view in the path and leaves out a view the tab doesn't take", () => {
+    expect(companyHref("tcs", "financials", "standalone")).toBe("/companies/tcs/financials/standalone");
+    expect(companyHref("tcs", "rate-decisions", "d5")).toBe("/companies/tcs/rate-decisions/d5");
+    expect(companyHref("tcs", "calls", "q2-fy27")).toBe("/companies/tcs/calls/q2-fy27");
+    expect(companyHref("tcs", "financials", "d5")).toBe("/companies/tcs/financials");
+    expect(companyHref("tcs", "financials", "consolidated")).toBe("/companies/tcs/financials");
+    expect(companyHref("tcs", "valuation", "standalone")).toBe("/companies/tcs/valuation");
+    expect(companyHref("tcs", "calls", "../x")).toBe("/companies/tcs/calls");
+    expect(companyHref("tcs", "overview", "standalone")).toBe("/companies/tcs");
+  });
+  it("never builds a query string", () => {
+    for (const tab of TABS) for (const view of [undefined, "standalone", "d5", "q2-fy27"]) expect(companyHref("tcs", tab.id, view)).not.toContain("?");
+  });
+  it("reads a tab segment, and no segment for the Overview or the value chain", () => {
+    expect(tabParam("calls")).toBe("calls");
+    expect(tabParam("rate-decisions")).toBe("rate-decisions");
+    expect(tabParam("overview")).toBeNull();
+    expect(tabParam("value-chain")).toBeNull();
+    expect(tabParam("nonsense")).toBeNull();
+    expect(tabParam(undefined)).toBeNull();
+  });
+  it("reads a view only under the tab that takes it; no segment is the default view", () => {
+    expect(viewParam("financials", undefined)).toEqual(DEFAULT_VIEW);
+    expect(viewParam("financials", "standalone")).toEqual({ ...DEFAULT_VIEW, basis: "standalone" });
+    expect(viewParam("rate-decisions", "d5")).toEqual({ ...DEFAULT_VIEW, window: "d5" });
+    expect(viewParam("calls", "q2-fy27")).toEqual({ ...DEFAULT_VIEW, call: "q2-fy27" });
+    expect(viewParam("financials", "d5")).toBeNull();
+    expect(viewParam("financials", "consolidated")).toBeNull();
+    expect(viewParam("rate-decisions", "d1")).toBeNull();
+    expect(viewParam("rate-decisions", "standalone")).toBeNull();
+    expect(viewParam("valuation", "standalone")).toBeNull();
+    expect(viewParam("calls", "../x")).toBeNull();
+  });
+  it("reads a whole path: one or two segments, both valid", () => {
+    expect(pathParam(["calls", "q2-fy27"])).toEqual({ tab: "calls", view: { ...DEFAULT_VIEW, call: "q2-fy27" } });
+    expect(pathParam(["valuation"])).toEqual({ tab: "valuation", view: DEFAULT_VIEW });
+    for (const bad of [undefined, [], ["overview"], ["value-chain"], ["valuation", "x"], ["calls", "q2", "x"]]) expect(pathParam(bad)).toBeNull();
+  });
+  it("round-trips: every link the builder makes is a path the route reads back", () => {
+    for (const [tab, view] of [["financials", "standalone"], ["rate-decisions", "d5"], ["calls", "q1-fy27"], ["valuation", undefined]] as const) {
+      const [, , , ...path] = companyHref("tcs", tab, view).split("/");
+      expect(pathParam(path)?.tab).toBe(tab);
+    }
   });
 });

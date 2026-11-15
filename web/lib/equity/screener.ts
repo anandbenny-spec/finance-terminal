@@ -1,8 +1,9 @@
 // web/lib/equity/screener.ts: the screener's filtering and its cell states (2A-18; Spec 02A §8). Pure. Filtering is
 // client-side over the snapshot (at most 200 rows). Nothing here computes a figure for display: a filter compares the
 // stored value, converted only to the unit its input box is labelled in (a stored fraction 0.18 against "18" per cent,
-// full rupees against crore), and a column that is null for a row never matches an active filter on it.
+// full rupees against crore, full dollars against millions), and a column that is null for a row never matches an active filter on it.
 import type { ScreenerNote, ScreenerRow } from "@/lib/queries/api";
+import type { ScreenerIndex } from "@/lib/queries/equity";
 
 export type FilterKey = "marketCap" | "pe" | "pb" | "roe" | "cagr3" | "ebitMargin" | "debtToEquity" | "promoter" | "dividendYield";
 
@@ -30,6 +31,17 @@ export const RANGE_FILTERS: readonly RangeFilter[] = [
   { key: "dividendYield", label: "Dividend yield", unit: "%", value: (r) => pct(r.dividend_yield) },
 ];
 
+/** The US view's filters (US-06, #405; Spec 02A.1 §7): market cap in dollar millions, and no promoter holding (an Indian
+ * disclosure that US filings don't carry). Every other box is India's. */
+export const US_RANGE_FILTERS: readonly RangeFilter[] = RANGE_FILTERS.filter((f) => f.key !== "promoter").map((f) =>
+  f.key === "marketCap" ? { ...f, unit: "$ million", value: (r: ScreenerRow) => (r.market_cap === null ? null : r.market_cap / 1_000_000) } : f,
+);
+
+/** The filter boxes for a market's view. */
+export function rangeFiltersFor(market: "IN" | "US"): readonly RangeFilter[] {
+  return market === "US" ? US_RANGE_FILTERS : RANGE_FILTERS;
+}
+
 export type Bounds = { min: string; max: string };
 
 export type Filters = {
@@ -49,19 +61,19 @@ export function parseBound(text: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export function isActive(filters: Filters): boolean {
+export function isActive(filters: Filters, boxes: readonly RangeFilter[] = RANGE_FILTERS): boolean {
   return (
     filters.indexes.length > 0 ||
     filters.peerGroup !== null ||
-    RANGE_FILTERS.some((f) => parseBound(filters.ranges[f.key]?.min) !== null || parseBound(filters.ranges[f.key]?.max) !== null)
+    boxes.some((f) => parseBound(filters.ranges[f.key]?.min) !== null || parseBound(filters.ranges[f.key]?.max) !== null)
   );
 }
 
-export function applyFilters(rows: readonly ScreenerRow[], filters: Filters): ScreenerRow[] {
+export function applyFilters(rows: readonly ScreenerRow[], filters: Filters, boxes: readonly RangeFilter[] = RANGE_FILTERS): ScreenerRow[] {
   return rows.filter((row) => {
     if (filters.indexes.length > 0 && !filters.indexes.some((slug) => row.index_slugs?.includes(slug))) return false;
     if (filters.peerGroup !== null && row.peer_group_key !== filters.peerGroup) return false;
-    for (const f of RANGE_FILTERS) {
+    for (const f of boxes) {
       const min = parseBound(filters.ranges[f.key]?.min);
       const max = parseBound(filters.ranges[f.key]?.max);
       if (min === null && max === null) continue;
@@ -106,4 +118,10 @@ export function columnLabel(rows: readonly ScreenerRow[], column: string): strin
     if (note?.label) return note.label;
   }
   return null;
+}
+
+/** The indexes whose members are in a market (US-06, #405): the chips of one market's view. An index read without its market is
+ * India's, as every index was before 0041. */
+export function indexesIn(indexes: readonly ScreenerIndex[], market: "IN" | "US"): { slug: string; name: string }[] {
+  return indexes.filter((i) => (i.market ?? "IN") === market).map(({ slug, name }) => ({ slug, name }));
 }

@@ -2,7 +2,7 @@
 // whole against its exact count or not at all; another company's rows never come back; an unknown slug is null.
 import { describe, expect, it } from "vitest";
 import { IncompleteReadError } from "@/lib/queries/read";
-import { readActions, readCompany, readCompanyMetrics, readCompanyPrices, readFinancials, readPeers, readPromoterHolding } from "@/lib/queries/company";
+import { readActions, readCompany, readCompanyMetrics, readCompanyPrices, readFinancials, readPeers, readPromoterHolding, readSegmentChanges } from "@/lib/queries/company";
 import { fakeClient, type Row } from "@/tests/fake-postgrest";
 import { action, company, financial, metric, peer, price, promoter } from "@/tests/company-rows";
 
@@ -38,6 +38,13 @@ describe("company reads", () => {
     expect(await readFinancials(db, "tcs")).toHaveLength(1);
     expect(await readActions(db, "tcs")).toHaveLength(1);
     expect((await readPromoterHolding(db, "tcs")).map((p) => p.as_of)).toEqual(["2026-06-30", "2026-03-31"]);
+  });
+  it("reads one company's segment changes in the view's flag order, against the exact count (DD-02, #410)", async () => {
+    const flag = (n: number, slug = "tcs") => ({ company_slug: slug, period_end: "2026-09-30", state: "changed", change_no: n, kind: "dropped" });
+    const { db, seen } = fakeClient({ segment_changes: [flag(2), flag(1), flag(1, "other")] as unknown as Row[] });
+    expect((await readSegmentChanges(db, "tcs")).map((r) => r.change_no)).toEqual([1, 2]);
+    expect(seen.every((s) => s.countExact)).toBe(true);
+    await expect(readSegmentChanges(fakeClient({}).db, "tcs")).rejects.toBeInstanceOf(IncompleteReadError);
   });
   it("throws, never returns a cut list, when a view can't be read", async () => {
     const { db } = fakeClient({});

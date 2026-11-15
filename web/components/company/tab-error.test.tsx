@@ -24,7 +24,7 @@ describe("a tab with no data", () => {
     expect(html).toContain(SORRY);
     expect(html).toContain(`aria-label="${page().company.name} sections"`);
     expect(html).toContain(page().company.name);
-    for (const other of ["financials", "valuation", "rate-decisions", "calls"]) expect(html).toContain(`tab=${other}`);
+    for (const other of ["financials", "valuation", "rate-decisions", "calls"]) expect(html).toContain(`href="/companies/tcs/${other}"`);
   });
 });
 

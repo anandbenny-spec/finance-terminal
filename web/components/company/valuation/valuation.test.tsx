@@ -12,7 +12,7 @@ import type { TaskFreshnessRow } from "@/lib/queries/api";
 import type { ValuationData } from "@/lib/queries/company";
 import { bannedWordsIn } from "@/tests/banned-words";
 import { company, page } from "@/tests/company-rows";
-import { POLICIES, cell, forecast, grid, lenderRun, run } from "@/tests/valuation-rows";
+import { OPERATING_INPUTS, POLICIES, cell, forecast, grid, lenderRun, run } from "@/tests/valuation-rows";
 
 const text = (markup: string) => markup.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 const valuation = (over: Partial<ValuationData> = {}): ValuationData => ({
@@ -47,7 +47,7 @@ describe("the Valuation tab", () => {
 
   it("is a tab in the URL, marked current", () => {
     const out = html(valuation());
-    expect(out).toContain('href="/companies/tcs?tab=valuation"');
+    expect(out).toContain('href="/companies/tcs/valuation"');
     expect(text(out)).toContain("What growth does today's price imply?");
   });
 
@@ -160,6 +160,10 @@ describe("the Valuation tab", () => {
       expect(bannedWordsIn(t)).toEqual([]);
       expect(t).not.toMatch(/%\s*(above|below)|versus|vs\./i);
     });
+    it("drops the value's own side padding so it shares the controls' left edge (#483)", () => {
+      const out = renderToStaticMarkup(<ScenarioControls rows={grid()} options={options} initial={centre} currency="INR" />);
+      expect(out).toMatch(/class="[^"]*\bp-3\b[^"]*\bpx-0\b[^"]*"[^>]*><div class="text-meta text-ink-2">Model-implied value/);
+    });
     it("gives the value no colour", () => {
       const out = renderToStaticMarkup(<ScenarioControls rows={grid()} options={options} initial={centre} currency="INR" />);
       expect(out).not.toMatch(/text-(up|down)\b/);
@@ -180,6 +184,15 @@ describe("the Valuation tab", () => {
     });
   });
 
+  it("shows the Source column in visitor words: no task name or Damodaran file key reaches the page (Review 05, finding 3)", () => {
+    const dirty = (src: string) => ({ value: "3456.7", unit: "money", as_of: "2026-10-30", source: src, held: null, detail: {} });
+    const inputs = { ...OPERATING_INPUTS, price: dirty("the latest close (Source: NSE; equity.metrics)"), market: { ...(OPERATING_INPUTS as { market: object }).market, erp: dirty("Implied premium (Aswath Damodaran, NYU Stern: ERPbymonth, ctryprem)") } };
+    const out = text(html(valuation({ runs: [run("reverse_dcf", { inputs })] })));
+    expect(out).toContain("the latest close (Source: NSE)");
+    expect(out).toContain("NYU Stern: implied equity risk premium by month; country risk premiums)");
+    expect(out).not.toMatch(/\b(equity|us|policy|core|ops|site|ai|semantic|api)\.[a-z_]+\b/);
+    expect(out).not.toMatch(/ERPbymonth|ctryprem/);
+  });
   it("finds no banned word in the site's own text, for either kind of company", () => {
     expect(bannedWordsIn(text(html(valuation())))).toEqual([]);
     expect(bannedWordsIn(text(html(valuation({ runs: [lenderRun()] }), { company: company({ valuation_family: "lender" }) })))).toEqual([]);

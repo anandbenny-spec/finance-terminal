@@ -146,12 +146,13 @@ class EquityBrsr(DocumentJob):
         companies = db.execute(
             """select c.entity_id, e.slug, e.name, c.nse_symbol, c.bse_code, c.listed_on
                  from equity.company c join core.entity e on e.id = c.entity_id
-                where c.nse_symbol is not null order by e.slug""").fetchall()
+                where c.nse_symbol is not null and e.market = 'IN' order by e.slug""").fetchall()
         symbols: dict[int, list[str]] = {}
         codes: dict[int, str] = {}
         for entity_id, scheme, value in db.execute(
                 """select entity_id, scheme, value from core.entity_identifier
-                    where scheme in ('nse_symbol', 'bse_code') order by lower(valid) desc nulls last""").fetchall():
+                    where scheme in ('nse_symbol', 'bse_code') and entity_id in (select id from core.entity where market = 'IN')
+                    order by lower(valid) desc nulls last""").fetchall():
             if scheme == "nse_symbol":
                 symbols.setdefault(entity_id, []).append(value)
             else:

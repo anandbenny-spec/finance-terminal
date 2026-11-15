@@ -1,0 +1,12 @@
+# The KPI-table pilot's flag review (DD-05 part 2, #513; Plan 05 §1.3): what `equity.kpi_tables` does with the flags
+# Plan 05 §1.3's rules leave. Read by py/src/ft/jobs/tasks/equity_kpi_tables.py (`review_mode`).
+#   price: every Sonnet check and Haiku quote request is built and priced (the `review` check's `estimate_usd`), none is
+#          sent, and no flag is written (the stored flags stay, unless the run replaces a document they rest on);
+#   all:   the requests are sent, within the task's caps (CHECK_LIMIT_USD, QUOTE_LIMIT_USD, the run's cap and the monthly
+#          switch), and the flags are written to equity.kpi_change.
+# A file, not a workflow input: the backfill's dispatch inputs are at the ten tests/test_workflows.py holds them to, and an
+# NSE task's refresh keeps its six-day minimum interval. So the price run (the dry run every AI run gets first, CLAUDE.md
+# §6) and the run that sends are two backfills, with a reviewed change to this line between them.
+# The environment variable KPI_CHECK, if set, takes precedence (tests; a local run).
+# Set to all on Sat 14 Nov 2026 for #513's dev run, after the dry run in price (dev run on main d2f65fa, recorded on #513).
+mode: all

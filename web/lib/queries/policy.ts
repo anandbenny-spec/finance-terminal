@@ -34,6 +34,7 @@ import type {
   SeriesRow,
 } from "@/lib/queries/api";
 import type { StripDiff, StripDocument } from "@/lib/policy/changestrip";
+import type { DiffPairs } from "@/lib/policy/timeline";
 import { IncompleteReadError, readAll, type PageResult } from "@/lib/queries/read";
 
 export type PolicyDb = SupabaseClient<ApiDatabase, "api">;
@@ -480,4 +481,49 @@ export async function readStatementChanges(db: PolicyDb): Promise<{ documents: S
     );
   }
   return { documents, diffs };
+}
+
+// ------------------------------------------------------------------ How the wording moved (the language timeline, #509)
+
+/**
+ * The most diffs one request reads. A diff's pairs run to tens of kilobytes (the RBI's resolutions average about 36 KB of
+ * JSON, the Fed's statements about 6 KB), so the pairs are read a dozen at a time: a page stays well inside the Data
+ * API's response and anon's 3 s statement timeout, and each page is still checked against an exact count (readAll).
+ */
+export const TIMELINE_PAGE_ROWS = 12;
+
+/** A page of pairs over this many bytes is refused: the read fails and the panel says so, rather than slowing the page. */
+export const TIMELINE_PAGE_MAX_BYTES = 2_000_000;
+
+/**
+ * The stored pairs of the given diffs (`segments->version` and `segments->pairs`, not the counts), `TIMELINE_PAGE_ROWS`
+ * at a time, in document order. The caller cuts the cells it needs from them and drops the pairs (lib/queries/timeline.ts).
+ */
+export async function readDecisionDiffPairs(db: PolicyDb, documentIds: readonly number[]): Promise<DiffPairs[]> {
+  const out: DiffPairs[] = [];
+  // The id list is a short URL (a few dozen documents a bank), but a long one is read in slices of 200 to keep it so.
+  for (let i = 0; i < documentIds.length; i += 200) {
+    const slice = documentIds.slice(i, i + 200);
+    const what = `api.document_diffs pairs of ${slice.length} decision documents`;
+    out.push(
+      ...(await readAll<DiffPairs>(
+        what,
+        async (from, to) => {
+          const page = await db
+            .from("document_diffs")
+            .select<string, DiffPairs>("document_id, base_document_id, version:segments->version, pairs:segments->pairs", { count: "exact" })
+            .in("document_id", slice)
+            .order("document_id")
+            .range(from, to);
+          const bytes = page.data ? new TextEncoder().encode(JSON.stringify(page.data)).length : 0;
+          if (bytes > TIMELINE_PAGE_MAX_BYTES) {
+            throw new IncompleteReadError(what, `a page of ${page.data?.length ?? 0} diffs is ${bytes} bytes, over the ${TIMELINE_PAGE_MAX_BYTES}-byte limit`);
+          }
+          return page;
+        },
+        TIMELINE_PAGE_ROWS,
+      )),
+    );
+  }
+  return out;
 }

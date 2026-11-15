@@ -58,7 +58,7 @@ export default function AboutPage() {
 
       <Section id="ownership" title="Who owns the data">
         <PanelGrid>
-          <Panel title="Data ownership" titleId="ownership-title" variant="prose">
+          <Panel title="Data ownership" titleId="ownership-title" variant="columns">
             <div className="space-y-3 text-ink-1">
               <p>
                 Every piece of data on this site belongs to its owner, and the owner is named on each figure. This is a non-commercial
@@ -79,7 +79,7 @@ export default function AboutPage() {
 
       <Section id="logged" title="What is logged">
         <PanelGrid>
-          <Panel title="Visitors" titleId="logged-title" variant="prose">
+          <Panel title="Visitors" titleId="logged-title" variant="columns">
             <div className="space-y-3 text-ink-2">
               <p>
                 This site sets no cookies for visitors, has no visitor accounts and runs no analytics or advertising trackers. Only the
@@ -102,14 +102,14 @@ export default function AboutPage() {
 
       <Section id="sources" title="Where the figures come from" note="Fed vs RBI policy tracker">
         <PanelGrid>
-          <Panel title="Sources" titleId="sources-title" variant="prose">
+          <Panel title="Sources" titleId="sources-title" variant="columns">
             <p className="mb-3 text-ink-2">
               Every figure shows its source line and the time it was last updated. These are the sources behind this link, with the
               source lines they appear under.
             </p>
             <ul className="space-y-4">
               {SOURCES.map((s) => (
-                <li key={s.name}>
+                <li key={s.name} className="break-inside-avoid">
                   <h4 className="font-semibold text-ink-1">{s.name}</h4>
                   <p className="text-ink-2">{s.used}</p>
                   <p className="mt-1 text-meta text-ink-3">{s.line}</p>
@@ -117,7 +117,7 @@ export default function AboutPage() {
               ))}
             </ul>
           </Panel>
-          <Panel title="AI-written text" titleId="ai-title" variant="prose">
+          <Panel title="AI-written text" titleId="ai-title" variant="columns">
             <p className="text-ink-2">
               Summaries and other AI-written text are marked as AI and cite the passage of a stored document they come from. Text without
               a verified citation is not published.{" "}
@@ -132,7 +132,7 @@ export default function AboutPage() {
 
       <Section id="objections" title="If you own data shown here">
         <PanelGrid>
-          <Panel title="Objections" titleId="objections-title" variant="prose">
+          <Panel title="Objections" titleId="objections-title" variant="columns">
             <p className="text-ink-2">
               If an owner objects to anything on this site, it is removed promptly. Tell whoever shared this link with you, and it
               will reach the person who runs the site.

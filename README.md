@@ -1,6 +1,6 @@
 # Finance Terminal
 
-An AI research terminal for Indian markets and the Fed–RBI policy cycle.
+An AI research terminal for Indian and US markets and the Fed–RBI policy cycle.
 
 **Live site: <https://finance-terminal-phi.vercel.app>**
 
@@ -22,7 +22,8 @@ are picked up by a watcher that polls for the statement, so a decision appears w
 and a page per company: overview, financials parsed from results filings, a valuation tab, and the company's
 sensitivity to rate decisions. Valuation shows what the market price implies (a reverse DCF for operating companies, an
 implied return on equity for lenders) with every assumption listed with its date and source. It gives no target price,
-no upside and no buy or sell view.
+no upside and no buy or sell view. The screener and valuation also cover the Dow 30, in dollars, from SEC EDGAR filings
+and Yahoo Finance prices, and never compare a US company with an Indian one.
 
 **Earnings calls.** For each Nifty 50 company's latest quarterly call: a cited summary, and the figures and guidance
 management stated, each with its quote and a link to the page of the source PDF it came from. A list page shows every

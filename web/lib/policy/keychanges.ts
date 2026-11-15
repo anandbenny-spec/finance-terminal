@@ -2,12 +2,18 @@
 // pairs: the changed, added and removed sentences grouped by topic (py ft/policy/topics.py fills each pair's topic;
 // "Other" is the fallback), each with its Before and Now sides and the paragraph (¶) each side sits in. Pure. Every
 // word is one the stored diff holds: Before is the pair's eq + del words, Now its eq + ins words.
+import type { Citation, CitationPage } from "@/lib/policy/ai";
 import type { Op, RedlinePair } from "@/lib/policy/redline";
 
 export const OTHER_TOPIC = "Other";
 
 /** One side of a pair: its words (with the struck/underlined runs marked), or null when the sentence was added/removed. */
-export type KeySide = { ops: Op[]; para: number | null } | null;
+export type KeySide = {
+  ops: Op[];
+  para: number | null;
+  /** A verified citation into the stored text (the Opening remarks panel, #414): the chip and the page link. Module 1's sides have none. */
+  cite?: { citation: Citation; page: CitationPage | null };
+} | null;
 
 export type KeyRow = { key: string; kind: "changed" | "added" | "removed"; before: KeySide; now: KeySide };
 export type KeyGroup = { topic: string; rows: KeyRow[] };

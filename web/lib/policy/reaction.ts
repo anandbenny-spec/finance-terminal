@@ -45,6 +45,8 @@ export type ReactionEntry = {
   chart: ReactionChart | null;
   /** Why there is no chart, for a move whose window couldn't be read. */
   chartNote: string | null;
+  /** This series' own attribution line (source, and the copyright line for an index), or null when it carries none. */
+  source: string | null;
 };
 
 export type MeetingReaction = { entries: ReactionEntry[]; sources: (string | null)[]; dataTo: string | null };
@@ -102,7 +104,8 @@ export function meetingReaction(input: {
     let cell = reactionCell(spec, bank, shown.has(spec.key), r);
     // Past the waiting period a missing move is not available, not "waiting for the first value".
     if (cell.state === "waiting" && stale) cell = { state: "unavailable", text: cell.text, detail: "Not available." };
-    const head = { key: spec.key, header: spec.header, title: title(spec, bank, r?.series_name), cell };
+    const source = shown.has(spec.key) ? (series.find((x) => x.key === spec.key)?.attribution ?? null) : null;
+    const head = { key: spec.key, header: spec.header, title: title(spec, bank, r?.series_name), cell, source };
     if (!r || cell.state !== "move") {
       entries.push({ ...head, before: null, after: null, chart: null, chartNote: null });
       continue;

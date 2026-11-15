@@ -151,7 +151,7 @@ class EquityUniverse(Task):
 
         # peer groups
         have = {r[0]: r[1:] for r in tx.execute(
-            "select key, market, label, damodaran_industry, source_note from equity.peer_group").fetchall()}
+            "select key, market, label, damodaran_industry, source_note from equity.peer_group where market = 'IN'").fetchall()}
         for g in f.groups.values():
             want = ("IN", g.label, g.damodaran_industry, g.source_note)
             if have.get(g.key) != want:
@@ -169,17 +169,18 @@ class EquityUniverse(Task):
         for eid, scheme, value, lo, hi in tx.execute(
                 """select i.entity_id, i.scheme, i.value, lower(i.valid), upper(i.valid)
                      from core.entity_identifier i join core.entity e on e.id = i.entity_id
-                    where e.kind = 'company' and i.scheme in ('isin', 'nse_symbol', 'bse_code')""").fetchall():
+                    where e.kind = 'company' and e.market = 'IN' and i.scheme in ('isin', 'nse_symbol', 'bse_code')""").fetchall():
             stored.setdefault((eid, scheme), []).append(u.IdRange(value, lo, hi))
             if _open_at(lo, hi, snap):
                 if scheme == "isin":
                     by_isin[value] = eid
                 elif scheme == "nse_symbol":
                     by_symbol[value] = eid
-        slugs = dict(tx.execute("select id, slug from core.entity where kind = 'company'").fetchall())
+        slugs = dict(tx.execute("select id, slug from core.entity where kind = 'company' and market = 'IN'").fetchall())
         company = {r[0]: r[1:] for r in tx.execute(
             """select entity_id, isin, nse_symbol, bse_code, nse_industry, peer_group_key, valuation_family,
-                      family_note, fy_end_month, price_exchange, listed_on from equity.company""").fetchall()}
+                      family_note, fy_end_month, price_exchange, listed_on from equity.company
+                where entity_id in (select id from core.entity where market = 'IN')""").fetchall()}
 
         created, id_changes, curated_missing, universe = [], [], [], []
         for r in f.lists[f.cfg.index].rows:

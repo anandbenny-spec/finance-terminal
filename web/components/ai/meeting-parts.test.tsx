@@ -106,7 +106,7 @@ describe("KeyChanges preview (the front page, #152)", () => {
         before={{ href: "/documents/1", date: "30 Jul 2026" }}
         now={{ href: "/documents/2", date: "17 Sep 2026" }}
         limit={limit}
-        seeAllHref="/policy/fed/2026-09-17?tab=changes"
+        seeAllHref="/policy/fed/2026-09-17/changes"
       />,
     );
 
@@ -118,7 +118,7 @@ describe("KeyChanges preview (the front page, #152)", () => {
     expect(out).not.toContain("Full redline");
     expect(out).not.toContain("aria-pressed");
     expect(text(out)).toContain("1 other sentence changed · See all changes →");
-    expect(out).toContain('href="/policy/fed/2026-09-17?tab=changes"');
+    expect(out).toContain('href="/policy/fed/2026-09-17/changes"');
   });
 
   it("drops the count, keeping the link, when nothing else changed", () => {

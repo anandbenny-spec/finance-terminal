@@ -1,7 +1,10 @@
 // Policy Day (#90; Spec 01 §4.4; Design 01 §5.4): the most recent decision of one bank on a page, with a Fed / RBI
-// switch in the URL (?bank=). The decision card, the countdown to the bank's next meeting, what the decision changed
-// and how markets moved around it. Every panel is a component and a read the meeting pages already use; nothing here
-// computes a figure. Informational only, like the rest of the site.
+// switch in the URL (/workspace/policy-day/fed and /rbi). The decision card, the countdown to the bank's next meeting,
+// what the decision changed and how markets moved around it. Every panel is a component and a read the meeting pages
+// already use; nothing here computes a figure. Informational only, like the rest of the site.
+//
+// The top row is the card (8 of 12) beside the countdown (4), which keeps its own height (12 Nov 2026): at 6 + 6 the
+// countdown's one stat sat in a panel stretched to the card's height, most of it empty.
 import { Freshness } from "@/components/data/Freshness";
 import { PageHeader } from "@/components/data/PageHeader";
 import { Panel, PanelGrid } from "@/components/data/Panel";
@@ -10,7 +13,6 @@ import { PolicyDayMeeting } from "@/components/policy/MeetingView";
 import { ErrorPanel, Foot } from "@/components/policy/PanelFoot";
 import { PolicyCard } from "@/components/policy/PolicyCard";
 import { NextStat } from "@/components/policy/RateStats";
-import { StatRow } from "@/components/data/Stat";
 import { FEEDS } from "@/lib/feeds";
 import { policyDayHref } from "@/lib/policy/policyday";
 import { slugFor } from "@/lib/policy/meeting";
@@ -54,19 +56,18 @@ export async function PolicyDay({ bank, overview }: { bank: Bank; overview: Poli
       <Tabs label="Bank" items={SWITCH.map((b) => ({ id: b.id, label: b.label, href: policyDayHref(b.id) }))} current={bank} />
       <div className="mt-5 flex flex-col gap-4">
         <PanelGrid>
-          <PolicyCard bank={bank} latest={decision} policies={policies} now={now} footer={foot(m?.decision_date ?? null)} />
+          <PolicyCard bank={bank} latest={decision} policies={policies} now={now} footer={foot(m?.decision_date ?? null)} span={8} />
           <Panel
             title={bank === "Fed" ? "Next FOMC meeting" : "Next MPC meeting"}
             titleId="panel-next-meeting"
             subtitle="When is the next decision?"
             market={bank === "Fed" ? "US" : "IN"}
-            span={6}
+            span={4}
             variant="flush"
+            className="self-start"
             footer={<Foot sources={[source]} tasks={FEEDS.statusBarCountdown} dataTo={null} freshness={freshness} now={now} />}
           >
-            <StatRow>
-              <NextStat bank={bank} meetings={next.ok ? next.meetings : null} />
-            </StatRow>
+            <NextStat bank={bank} meetings={next.ok ? next.meetings : null} />
           </Panel>
         </PanelGrid>
         {m && slug ? (

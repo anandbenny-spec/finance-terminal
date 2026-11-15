@@ -14,18 +14,23 @@ import { ErrorPanel, Foot, latestOf } from "@/components/policy/PanelFoot";
 import { PolicyCard } from "@/components/policy/PolicyCard";
 import { RateStats } from "@/components/policy/RateStats";
 import { ReactionsPanel } from "@/components/policy/ReactionsPanel";
+import { LanguageTimelinePanel } from "@/components/policy/LanguageTimeline";
 import { LongRatesPanel } from "@/components/policy/LongRatesPanel";
 import { RatesPanel } from "@/components/policy/RatesPanel";
-import { FEEDS, type TaskKey } from "@/lib/feeds";
+import { VotesOverTimePanel } from "@/components/policy/VotesOverTime";
+import { DAILY_TASKS, FEEDS, type TaskKey } from "@/lib/feeds";
 import { formatDate } from "@/lib/format";
 import { buildChangeStrips, stripScale } from "@/lib/policy/changestrip";
 import { historyRows } from "@/lib/policy/decisions";
 import { pressReleaseLabel } from "@/lib/policy/document";
 import { reactionRows, reactionSources } from "@/lib/policy/reactions";
 import { POLICY_SECTIONS } from "@/lib/policy/sections";
+import { languageTimelineShown } from "@/lib/policy/timeline";
+import { votesOverTime, votesOverTimeShown } from "@/lib/policy/votes-over-time";
 import { readPolicyOverview } from "@/lib/queries/overview";
 import { POLICY_START } from "@/lib/queries/policy";
 import { readFreshness, readNextMeetings } from "@/lib/queries/shell";
+import { readLanguageTimeline } from "@/lib/queries/timeline";
 import { panelFreshness } from "@/lib/shell/freshness";
 
 export const metadata: Metadata = {
@@ -44,16 +49,19 @@ export default async function PolicyPage() {
   const decisions = o.history.ok ? o.history.decisions : null;
   const fed = o.fed.ok ? o.fed : null;
   const rbi = o.rbi.ok ? o.rbi : null;
-  const foot = (sources: (string | null | undefined)[], tasks: readonly TaskKey[], dataTo: string | null) => (
-    <Foot sources={sources} tasks={tasks} dataTo={dataTo} freshness={freshness} now={now} />
+  const foot = (sources: (string | null | undefined)[], tasks: readonly TaskKey[], dataTo: string | null, checkedTasks?: readonly string[]) => (
+    <Foot sources={sources} tasks={tasks} dataTo={dataTo} freshness={freshness} now={now} checkedTasks={checkedTasks} />
   );
   const fedSource = fed?.meeting?.attribution ?? "Source: Federal Reserve Board";
   const rbiSource = rbi?.meeting?.attribution ?? RBI_SOURCE;
   const allTasks = [...new Set(Object.entries(FEEDS).filter(([k]) => k.startsWith("policy")).flatMap(([, t]) => t))];
-  const pageFresh = panelFreshness(freshness, allTasks, null, now);
+  const pageFresh = panelFreshness(freshness, allTasks, null, now, DAILY_TASKS);
   const stanceLabel = policies?.find((p) => p.field_key === "ai.stance_extraction" && p.status === "labelled")?.label ?? null;
   const rbiDoc = rbi?.document;
+  const history = o.history.ok ? o.history : null;
   const strips = o.changes.ok && o.history.ok ? buildChangeStrips(o.history.decisions, o.changes.documents, o.changes.diffs) : null;
+  // Hidden until Anand flips `site.language_timeline` (#509): with no row nothing is read for it.
+  const timeline = languageTimelineShown(policies) ? await readLanguageTimeline() : null;
 
   return (
     <>
@@ -74,7 +82,7 @@ export default async function PolicyPage() {
           <Panel
             label="Where the two policy rates stand now, and the next meetings"
             variant="flush"
-            footer={foot([fedSource, rbiSource], FEEDS.policyRatesStand, latestOf(fed?.meeting?.decision_date, rbi?.meeting?.decision_date))}
+            footer={foot([fedSource, rbiSource], FEEDS.policyRatesStand, latestOf(fed?.meeting?.decision_date, rbi?.meeting?.decision_date), DAILY_TASKS)}
           >
             <RateStats fed={fed} rbi={rbi} decisions={decisions} policies={policies} meetings={next.ok ? next.meetings : null} />
           </Panel>
@@ -159,6 +167,60 @@ export default async function PolicyPage() {
           )}
         </PanelGrid>
       </Section>
+
+      {votesOverTimeShown(policies) && (
+        // Hidden until Anand flips `site.votes_over_time` (#508): with no row nothing here renders or reads.
+        <Section id="votes-over-time" title="How members voted over time">
+          <PanelGrid>
+            {history ? (
+              (["Fed", "RBI"] as const).map((bank) => {
+                const data = votesOverTime(bank, history.decisions, history.votes);
+                return (
+                  <VotesOverTimePanel
+                    key={bank}
+                    data={data}
+                    refresh={FEEDS.policyHistory}
+                    footer={foot([bank === "Fed" ? fedSource : rbiSource], FEEDS.policyHistory, data.latest)}
+                  />
+                );
+              })
+            ) : (
+              <ErrorPanel title="How members voted over time" id="panel-votes-over-time" refresh={FEEDS.policyHistory} />
+            )}
+          </PanelGrid>
+        </Section>
+      )}
+
+      {timeline && (
+        <Section id="language-timeline" title="How the wording moved">
+          <PanelGrid>
+            {(
+              [
+                { read: timeline.rbi, bank: "RBI", source: `${rbiSource} · MPC resolutions` },
+                { read: timeline.fed, bank: "Fed", source: `${fedSource} · FOMC statements` },
+              ] as const
+            ).map(({ read, bank, source }) =>
+              read.ok ? (
+                <LanguageTimelinePanel
+                  key={bank}
+                  data={read.timeline}
+                  refresh={FEEDS.policyChanges}
+                  footer={foot([source], FEEDS.policyChanges, read.timeline.latest)}
+                />
+              ) : (
+                <ErrorPanel
+                  key={bank}
+                  title={`${bank}: how the wording moved`}
+                  id={`panel-language-timeline-${bank === "RBI" ? "rbi" : "fed"}`}
+                  span={12}
+                  market={bank === "RBI" ? "IN" : "US"}
+                  refresh={FEEDS.policyChanges}
+                />
+              ),
+            )}
+          </PanelGrid>
+        </Section>
+      )}
 
       <Section {...POLICY_SECTIONS.history}>
         <PanelGrid>

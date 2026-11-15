@@ -136,7 +136,7 @@ describe("citedBy", () => {
     ];
     const cites = [cite({ ai_output_id: 8, claim_path: "/bullets/0" }), cite({ ai_output_id: 9, claim_path: "/quote" })];
     expect(citedBy(12, span, cites, outputs)).toEqual([
-      { text: "What changed, point 1", href: "/policy/fed/2026-10-28?tab=changes" },
+      { text: "What changed, point 1", href: "/policy/fed/2026-10-28/changes" },
       { text: "AI-extracted stance", href: "/policy/rbi/2026-10-07" },
     ]);
   });

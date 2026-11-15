@@ -1,0 +1,22 @@
+# Reviewed corporate actions of the US companies, for us.corporate_actions (Spec 02A.1 §5.3; job US-03, #402), read by
+# ft/equity/actions.py's load_reviews in the same format as India's corporate_action_review.yaml (Spec 02A §5.2). A
+# file of its own, so India's reviews_matched check never names a US release (and the reverse).
+#
+# releases: a factor the task held (its plausibility check failed, or Yahoo listed a "split" whose ratio isn't a simple
+#   one, 1061:1000 say, the way it carries a spin-off) and a review released. Applied with method `reviewed`.
+#   - event: the action's event slug (us-<ticker>-<kind>-<ex-date>[-n]), as the not_applied check names it
+#     factor: adjusted ÷ raw for trade dates before the ex-date (stored to 12 places)
+#     evidence: what the review rests on (the company's 8-K or press release, the closes either side)
+#     reviewer: who reviewed it
+#     reviewed_on: yyyy-mm-dd
+#
+# jumps: a session whose close moved more than 15% with no applied factor that day, reviewed as a real move, so the
+#   unexplained_jumps warning stops naming it.
+#   - company: the company's slug (us-<ticker>)
+#     date: the session (yyyy-mm-dd)
+#     verdict: real move
+#     note: why (with the source)
+#     reviewer: who reviewed it
+#     reviewed_on: yyyy-mm-dd
+releases: []
+jumps: []

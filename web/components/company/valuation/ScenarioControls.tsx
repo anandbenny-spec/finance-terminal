@@ -76,7 +76,7 @@ export function ScenarioControls({
       <Field id="scenario-margin" label="EBIT margin" value={margin} options={marginOptions} onChange={setMargin} />
       <Field id="scenario-wacc" label="Cost of capital (WACC)" value={wacc} options={waccOptions} onChange={setWacc} />
       <div className="md:col-span-3" aria-live="polite">
-        <Stat label={SCENARIO_LABEL} value={value} unit={cell && cell.value_per_share !== null ? "per share" : undefined} context={context} asOf={cell ? `Grid run on ${formatDate(cell.as_of)}` : undefined} />
+        <Stat className="px-0" label={SCENARIO_LABEL} value={value} unit={cell && cell.value_per_share !== null ? "per share" : undefined} context={context} asOf={cell ? `Grid run on ${formatDate(cell.as_of)}` : undefined} />
       </div>
     </div>
   );

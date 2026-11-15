@@ -30,6 +30,18 @@ describe("the header", () => {
     expect(t).toContain("IT services curated");
     expect(t).toContain("Nifty 50");
   });
+  it("wraps the peer group's label and its qualifier as a pair, so the chip is never wider than its column (#541)", () => {
+    expect(out).toContain("inline-flex max-w-full flex-wrap");
+    expect(out).toContain("min-w-0 break-words");
+    for (const label of ["Exchanges and capital-market infrastructure", "Lenders other than banks, and financial holding companies"]) {
+      const long = html(page({ company: company({ peer_group_label: label }) }));
+      expect(long).toContain("inline-flex max-w-full flex-wrap");
+      expect(text(long)).toContain(`${label} curated`);
+    }
+    const us = html(page({ company: company({ market: "US", currency: "USD", peer_group_label: "Banks, investment banks and card lenders" }) }));
+    expect(us).toContain("inline-flex max-w-full flex-wrap");
+    expect(text(us)).toContain("Banks, investment banks and card lenders curated");
+  });
   it("shows the last close with its date and the day's change with a sign and a triangle", () => {
     const t = text(out);
     expect(t).toContain("₹3,456.70");
@@ -45,9 +57,9 @@ describe("the header", () => {
   });
   it("offers the Overview, Financials, Valuation and Rate decisions tabs, the current one marked (2A-25 adds the last)", () => {
     expect(out).toContain('aria-current="page"');
-    expect(out).toContain('href="/companies/tcs?tab=financials"');
-    expect(out).toContain('href="/companies/tcs?tab=valuation"');
-    expect(out).toContain('href="/companies/tcs?tab=rate-decisions"');
+    expect(out).toContain('href="/companies/tcs/financials"');
+    expect(out).toContain('href="/companies/tcs/valuation"');
+    expect(out).toContain('href="/companies/tcs/rate-decisions"');
   });
   it("says Source: NSE and carries no link to module 1's pages", () => {
     expect(text(out)).toContain("Source: NSE");
@@ -139,9 +151,9 @@ describe("the Financials tab", () => {
     expect(t).toContain("Filed 30 Jun 2026");
     expect(t).toContain("Borrowings exclude lease liabilities (not in results filings).");
   });
-  it("renders the basis toggle in the URL and falls back, with a note, to the basis that has rows", () => {
+  it("renders the basis toggle in the path and falls back, with a note, to the basis that has rows", () => {
     const out = html(base());
-    expect(out).toContain('href="/companies/tcs?tab=financials&amp;basis=standalone"');
+    expect(out).toContain('href="/companies/tcs/financials/standalone"');
     const standaloneOnly = base({ financials: { financials: [financial("quarter", "2026-06-30", { basis: "standalone" })], metrics: [], promoter: [] } });
     const t = text(html(standaloneOnly, "consolidated"));
     expect(t).toContain("No consolidated statements are published for this company; showing standalone.");
@@ -177,6 +189,14 @@ describe("the Financials tab", () => {
     expect(t).toContain("72.30%");
     expect(withNote).toContain('href="https://example.test/sh/2021-12-31"');
     expect(text(html(base({ financials: { financials: quarters, metrics: [], promoter: null } })))).toContain("Promoter holding isn't published yet.");
+  });
+  it("shows a filing's day in India, never the stored instant's UTC date (the Filed dates were a day early; #191's page check)", () => {
+    // NSE's submission date is stored as midnight IST (18:30 UTC the day before); a results filing can be broadcast after midnight IST.
+    const rows = [promoter("2026-09-30", { filed_at: "2026-10-19T18:30:00+00:00" }), promoter("2026-06-30", { filed_at: "2026-07-17T18:30:00+00:00" })];
+    const lateNight = [financial("quarter", "2026-06-30", { filed_at: "2026-07-24T19:10:00+00:00" })];
+    const t = text(html(base({ financials: { financials: lateNight, metrics: [], promoter: rows } })));
+    for (const day of ["20 Oct 2026", "18 Jul 2026", "Filed 25 Jul 2026", "Latest filing 25 Jul 2026"]) expect(t).toContain(day);
+    for (const dayBefore of ["19 Oct 2026", "17 Jul 2026", "24 Jul 2026"]) expect(t).not.toContain(dayBefore);
   });
   it("lists upcoming corporate actions apart, says when none are announced, and tells each factor's status in words", () => {
     const list = [

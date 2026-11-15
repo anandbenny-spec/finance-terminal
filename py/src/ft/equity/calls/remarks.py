@@ -11,6 +11,11 @@ Pure functions: the call's text and turns in; a similarity, labels and at most f
   `new_speaker`; otherwise the label is null. The similarity stays a stored number.
 - **Pairs:** the `MAX_PAIRS` (5) with the most changed words, sentences as filed (numbers included), each side at most
   `MAX_SIDE` (400) code points, with spans in the transcript's canonical text.
+- **Verified quotes (`remarks-3`, #414):** `verify_pairs` turns each pair side into a citation into the call's stored text, the way
+  the AI blocks cite it: the side's leading contiguous run of sentences is re-read from the stored text by its code-point
+  offsets, must equal the side's own text (whitespace collapsed), and is stored as `{text, document_id, start, end, page,
+  page_last, verified: true}`, cut at a word to at most `MAX_SIDE` code points. A side that does not verify is dropped, a pair
+  with no verified side is dropped, and a pair that lost a side keeps its kind. Nothing a visitor sees is free text.
 - **No comparison** (None) when either call has no opening words. Role-held calls and a missing previous call are the task's.
 """
 from __future__ import annotations
@@ -23,7 +28,7 @@ from ft.engines.document.diff import diff_texts
 from ft.engines.document.text import words
 from ft.equity.calls.turns import name_key, same_person
 
-RULE_VERSION = "remarks-2"
+RULE_VERSION = "remarks-3"
 NEW_SPEAKER_SHARE = 0.30
 MAX_PAIRS = 5
 MAX_SIDE = 400
@@ -159,3 +164,56 @@ def previous_label(label: str) -> str | None:
     if q > 1:
         return f"Q{q - 1} FY{y:02d}"
     return f"Q4 FY{(y - 1) % 100:02d}"
+
+
+def _collapse(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _page_at(pages: Sequence[tuple[int, int, int]] | None, point: int) -> int | None:
+    """The physical PDF page holding code point `point`, from (pdf_page, char_start, char_end) rows; None without a page map."""
+    for page, a, b in pages or ():
+        if a <= point < b:
+            return page
+    return None
+
+
+def verify_side(doc_text: str, side: dict | None, document_id: int, pages: Sequence[tuple[int, int, int]] | None = None) -> dict | None:
+    """One pair side as a verified citation, or None. The side's spans are on the stored text; the leading run of spans with
+    only whitespace between them is re-read from `doc_text` and must equal the side's own text (an ellipsis from the cut
+    allowed), else the side is dropped. The range is cut at a word so it is at most MAX_SIDE code points."""
+    if not side or not isinstance(side.get("text"), str) or not side.get("spans"):
+        return None
+    spans = [s for s in side["spans"] if isinstance(s, list) and len(s) == 2 and 0 <= s[0] < s[1] <= len(doc_text)]
+    if len(spans) != len(side["spans"]):
+        return None
+    start = spans[0][0]
+    end = spans[0][1]
+    for a, b in spans[1:]:
+        if a < end or doc_text[end:a].strip():
+            break
+        end = b
+    if end - start > MAX_SIDE:
+        cut = doc_text.rfind(" ", start, start + MAX_SIDE)
+        cut = max(doc_text.rfind("\n", start, start + MAX_SIDE), cut)
+        end = cut if cut > start else start + MAX_SIDE
+    quote = _collapse(doc_text[start:end])
+    claimed = side["text"][:-1].rstrip() if side["text"].endswith("…") else side["text"]
+    if not quote or len(quote) > MAX_SIDE or not _collapse(claimed).startswith(quote):
+        return None
+    last = max(start, end - 1)
+    return {"text": quote, "document_id": document_id, "start": start, "end": end,
+            "page": _page_at(pages, start), "page_last": _page_at(pages, last), "verified": True}
+
+
+def verify_pairs(pairs: Sequence[dict], new_text: str, new_doc: int, new_pages: Sequence[tuple[int, int, int]] | None,
+                 old_text: str, old_doc: int, old_pages: Sequence[tuple[int, int, int]] | None) -> list[dict]:
+    """The pairs with every side a verified citation; unverified sides and pairs left with no verified side are dropped."""
+    out = []
+    for p in pairs:
+        old = verify_side(old_text, p.get("old"), old_doc, old_pages)
+        new = verify_side(new_text, p.get("new"), new_doc, new_pages)
+        if old is None and new is None:
+            continue
+        out.append({"kind": p["kind"], "changed_words": p["changed_words"], "old": old, "new": new})
+    return out

@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "description": "One verdict for each bullet, in the bullets' order",
+      "items": {
+        "type": "object",
+        "properties": {
+          "bullet": {
+            "type": "integer",
+            "description": "The bullet's number, as given"
+          },
+          "supported": {
+            "type": "boolean",
+            "description": "true if everything the bullet says is stated in its cited sentences"
+          },
+          "changes_true": {
+            "type": "boolean",
+            "description": "true if every claim that something was added, removed or changed is true against both documents (true if the bullet makes no such claim)"
+          },
+          "reads_well": {
+            "type": "boolean",
+            "description": "true if the bullet reads as correct, plain English, each quotation fitting the grammar of the sentence around it"
+          },
+          "objection": {
+            "type": "string",
+            "description": "Empty if all three answers are true; otherwise the bullet's words that fail and why, in one sentence"
+          }
+        },
+        "required": [
+          "bullet",
+          "supported",
+          "changes_true",
+          "reads_well",
+          "objection"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "verdicts"
+  ],
+  "additionalProperties": false
+}

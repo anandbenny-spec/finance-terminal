@@ -46,3 +46,143 @@ describe("next.config headers()", () => {
     expect(await nextConfig.rewrites!()).toEqual([{ source: "/favicon.ico", destination: "/icon" }]);
   });
 });
+
+// Policy Day's bank moved from `?bank=` to the path on 12 Nov 2026 so the page can be prerendered
+// (lib/policy/policyday.ts). A link shared before then must still reach the bank it named.
+describe("next.config redirects()", () => {
+  it("sends an old ?bank= link to the bank's own page, temporarily, and nothing else on that path", async () => {
+    const policyDay = (await nextConfig.redirects!()).filter((r) => r.source === "/workspace/policy-day");
+    expect(policyDay).toEqual([
+      { source: "/workspace/policy-day", has: [{ type: "query", key: "bank", value: "fed" }], destination: "/workspace/policy-day/fed", permanent: false },
+      { source: "/workspace/policy-day", has: [{ type: "query", key: "bank", value: "rbi" }], destination: "/workspace/policy-day/rbi", permanent: false },
+    ]);
+  });
+  it("lands on the paths the page links to", async () => {
+    const { policyDayHref } = await import("./lib/policy/policyday");
+    const destinations = (await nextConfig.redirects!()).filter((r) => r.source === "/workspace/policy-day").map((r) => r.destination);
+    expect(destinations).toEqual([policyDayHref("Fed"), policyDayHref("RBI")]);
+  });
+});
+
+// The company page's tab and view moved from `?tab=`, `?basis=`, `?window=` and `?call=` to the path on 12 Nov 2026
+// (lib/equity/company.ts `companyHref`; R05-9b). Next's own matcher isn't importable here, so this one knows only the one
+// source these rules use (`/companies/:slug`) and the `has` query values as anchored regular expressions with named groups,
+// and fails loudly on anything else. The first rule that matches wins, as in Next.
+async function companyRedirect(path: string, query: Record<string, string>): Promise<string | null> {
+  const slug = path.match(/^\/companies\/([^/]+)$/)?.[1];
+  for (const rule of await nextConfig.redirects!()) {
+    if (rule.source === "/workspace/policy-day" || rule.source.startsWith("/policy/")) continue;
+    if (rule.source !== "/companies/:slug") throw new Error(`This test understands only /companies/:slug, not ${rule.source}`);
+    if (!slug) continue;
+    const groups: Record<string, string> = { slug };
+    let all = true;
+    for (const h of rule.has ?? []) {
+      if (h.type !== "query" || h.value === undefined) throw new Error("This test understands only query conditions with a value");
+      const m = (query[h.key] ?? "").match(new RegExp(`^(?:${h.value})$`));
+      if (!m) {
+        all = false;
+        break;
+      }
+      Object.assign(groups, m.groups);
+    }
+    if (all) return rule.destination.replace(/:(\w+)/g, (_, key) => groups[key] ?? `:${key}`);
+  }
+  return null;
+}
+
+describe("next.config redirects() for the company page's old query links", () => {
+  it.each([
+    ["financials", "/companies/tcs/financials"],
+    ["valuation", "/companies/tcs/valuation"],
+    ["rate-decisions", "/companies/tcs/rate-decisions"],
+    ["calls", "/companies/tcs/calls"],
+  ])("sends ?tab=%s to %s", async (tab, to) => {
+    expect(await companyRedirect("/companies/tcs", { tab })).toBe(to);
+  });
+  it("sends each tab's view to the view's path", async () => {
+    expect(await companyRedirect("/companies/tcs", { tab: "financials", basis: "standalone" })).toBe("/companies/tcs/financials/standalone");
+    expect(await companyRedirect("/companies/tcs", { tab: "rate-decisions", window: "d5" })).toBe("/companies/tcs/rate-decisions/d5");
+    expect(await companyRedirect("/companies/tcs", { tab: "calls", call: "q2-fy27" })).toBe("/companies/tcs/calls/q2-fy27");
+  });
+  it("sends a view's old parameter on another tab, or a value the tab doesn't take, to the plain tab", async () => {
+    expect(await companyRedirect("/companies/tcs", { tab: "valuation", basis: "standalone" })).toBe("/companies/tcs/valuation");
+    expect(await companyRedirect("/companies/tcs", { tab: "financials", basis: "consolidated" })).toBe("/companies/tcs/financials");
+    expect(await companyRedirect("/companies/tcs", { tab: "rate-decisions", window: "d1" })).toBe("/companies/tcs/rate-decisions");
+    expect(await companyRedirect("/companies/tcs", { tab: "calls", call: "../x" })).toBe("/companies/tcs/calls");
+  });
+  it("leaves a link with no tab, `overview` or a tab that isn't one alone: the Overview ignores the query, and a redirect to itself would loop", async () => {
+    expect(await companyRedirect("/companies/tcs", {})).toBeNull();
+    expect(await companyRedirect("/companies/tcs", { basis: "standalone" })).toBeNull();
+    expect(await companyRedirect("/companies/tcs", { tab: "overview" })).toBeNull();
+    expect(await companyRedirect("/companies/tcs", { tab: "nonsense" })).toBeNull();
+    expect(await companyRedirect("/companies/tcs/valuation", { tab: "valuation" })).toBeNull();
+  });
+  it("is temporary, and lands on the addresses the page links to", async () => {
+    const { companyHref } = await import("./lib/equity/company");
+    const rules = (await nextConfig.redirects!()).filter((r) => r.source === "/companies/:slug");
+    expect(rules).toHaveLength(4);
+    for (const r of rules) expect(r.permanent).toBe(false);
+    expect(await companyRedirect("/companies/tcs", { tab: "calls", call: "q1-fy27" })).toBe(companyHref("tcs", "calls", "q1-fy27"));
+    expect(await companyRedirect("/companies/tcs", { tab: "financials", basis: "standalone" })).toBe(companyHref("tcs", "financials", "standalone"));
+  });
+});
+
+// A meeting's tab and the Governor's statement moved from `?tab=` and `?doc=governor` to the path on 12 Nov 2026
+// (lib/policy/decisions.ts `meetingTabHref`; R05-9a). This matcher knows only the two source shapes these rules use
+// (`/policy/rbi/:date(re)` and `/policy/:bank(fed|rbi)/:date(re)`) and the `has` query values as anchored regular expressions,
+// and fails loudly on anything else. The first rule that matches wins, as in Next.
+async function meetingRedirect(path: string, query: Record<string, string>): Promise<string | null> {
+  for (const rule of await nextConfig.redirects!()) {
+    if (!rule.source.startsWith("/policy/")) continue;
+    const names: string[] = [];
+    const pattern = rule.source.replace(/:(\w+)\(([^)]*(?:\([^)]*\))?[^)]*)\)/g, (_, name: string, re: string) => {
+      names.push(name);
+      return `(${re.replace(/\\\\/g, "\\")})`;
+    });
+    if (/:\w/.test(pattern)) throw new Error(`This test understands only named groups with a pattern, not ${rule.source}`);
+    const hit = path.match(new RegExp(`^${pattern}$`));
+    if (!hit) continue;
+    const groups: Record<string, string> = {};
+    names.forEach((n, i) => (groups[n] = hit[i + 1]));
+    let all = true;
+    for (const h of rule.has ?? []) {
+      if (h.type !== "query" || h.value === undefined) throw new Error("This test understands only query conditions with a value");
+      const m = (query[h.key] ?? "").match(new RegExp(`^(?:${h.value})$`));
+      if (!m) {
+        all = false;
+        break;
+      }
+      Object.assign(groups, m.groups);
+    }
+    if (all) return rule.destination.replace(/:(\w+)/g, (_, key) => groups[key] ?? `:${key}`);
+  }
+  return null;
+}
+
+describe("next.config redirects() for a meeting page's old query links", () => {
+  it.each(["changes", "statement", "minutes", "press", "reaction"])("sends ?tab=%s on either bank to the tab's path", async (tab) => {
+    expect(await meetingRedirect("/policy/fed/2026-10-28", { tab })).toBe(`/policy/fed/2026-10-28/${tab}`);
+    expect(await meetingRedirect("/policy/rbi/2026-10-07", { tab })).toBe(`/policy/rbi/2026-10-07/${tab}`);
+  });
+  it("sends the RBI's ?tab=statement&doc=governor to the Governor's statement, and the Fed's to its plain statement", async () => {
+    expect(await meetingRedirect("/policy/rbi/2026-10-07", { tab: "statement", doc: "governor" })).toBe("/policy/rbi/2026-10-07/statement/governor");
+    expect(await meetingRedirect("/policy/fed/2026-10-28", { tab: "statement", doc: "governor" })).toBe("/policy/fed/2026-10-28/statement");
+    expect(await meetingRedirect("/policy/rbi/2026-10-07", { tab: "statement", doc: "other" })).toBe("/policy/rbi/2026-10-07/statement");
+  });
+  it("leaves a link with no tab, `overview`, a tab that isn't one, or a path that isn't a meeting date alone", async () => {
+    expect(await meetingRedirect("/policy/fed/2026-10-28", {})).toBeNull();
+    expect(await meetingRedirect("/policy/fed/2026-10-28", { doc: "governor" })).toBeNull();
+    expect(await meetingRedirect("/policy/rbi/2026-10-07", { tab: "overview" })).toBeNull();
+    expect(await meetingRedirect("/policy/rbi/2026-10-07", { tab: "nonsense" })).toBeNull();
+    expect(await meetingRedirect("/policy/fed/latest", { tab: "changes" })).toBeNull(); // the /latest route sends the reader on
+    expect(await meetingRedirect("/policy/fed/2026-10-28/changes", { tab: "changes" })).toBeNull();
+  });
+  it("is temporary, and lands on the addresses the page links to", async () => {
+    const { meetingTabHref } = await import("./lib/policy/decisions");
+    const rules = (await nextConfig.redirects!()).filter((r) => r.source.startsWith("/policy/"));
+    expect(rules).toHaveLength(2);
+    for (const r of rules) expect(r.permanent).toBe(false);
+    expect(await meetingRedirect("/policy/fed/2026-10-28", { tab: "minutes" })).toBe(meetingTabHref("Fed", "2026-10-28", "minutes"));
+    expect(await meetingRedirect("/policy/rbi/2026-10-07", { tab: "statement", doc: "governor" })).toBe(meetingTabHref("RBI", "2026-10-07", "statement", { doc: "governor" }));
+  });
+});

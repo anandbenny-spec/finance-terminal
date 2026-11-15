@@ -6,6 +6,8 @@
 #
 # Manual only; dev only. The first run is a price check: with `send` off nothing goes to the model. `send` on sends one batch, once
 # Anand has seen the price (CLAUDE.md §6: dev AI spend is within the cap or his OK). `collect` reads a batch that was still running.
+# `second_pass_of` (13 Nov 2026): the ids of recorded first-pass runs; the arms are then second passes over those runs' kept targets
+# (prompt v4 unless an arm says otherwise), recorded as their own run with the first pass's cost beside the second's.
 name: extraction-trial
 on:
   workflow_dispatch:
@@ -30,6 +32,10 @@ on:
         description: Refuse a batch whose worst-case cost in USD is over this
         type: string
         default: "0.70"
+      second_pass_of:
+        description: 'First-pass run ids (ops.eval_run, comma or space separated): the arms are then second passes over their kept targets (prompt v4), not first passes'
+        type: string
+        default: ""
 concurrency:
   group: extraction-trial
   cancel-in-progress: false
@@ -56,6 +62,7 @@ jobs:
           args=(--events "$EVENTS" --arms "$ARMS" --max-cost "$MAX_COST" --target dev)
           if [ "$SEND" = "true" ]; then args+=(--send); fi
           if [ -n "$COLLECT" ]; then args+=(--collect "$COLLECT"); fi
+          if [ -n "$SECOND_PASS_OF" ]; then args+=(--second-pass-of "$SECOND_PASS_OF"); fi
           uv run --locked python -m ft.equity.calls.trial "${args[@]}"
         env:
           EVENTS: ${{ inputs.events }}
@@ -63,6 +70,7 @@ jobs:
           MAX_COST: ${{ inputs.max_cost }}
           SEND: ${{ inputs.send }}
           COLLECT: ${{ inputs.collect }}
+          SECOND_PASS_OF: ${{ inputs.second_pass_of }}
           # Dev's database only; a missing DEV_ secret leaves the variable empty (the script then stops), never falling back to
           # production's.
           JOB_DATABASE_URL: ${{ secrets.DEV_JOB_DATABASE_URL }}

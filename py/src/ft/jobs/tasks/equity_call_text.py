@@ -235,6 +235,7 @@ class EquityCallText(Task):
                      from equity.earnings_call ec
                      join core.event ev on ev.id = ec.event_id
                      left join core.document d on d.id = ec.transcript_document_id
+                    where ec.entity_id in (select id from core.entity where market = 'IN')
                     order by ev.slug""").fetchall():
             if reason is not None:
                 out.held.append(f"{slug} ({reason})")                 # held: not analysed, not published
