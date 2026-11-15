@@ -35,7 +35,7 @@ def test_v20_and_v21_are_v19s_text_with_v19s_schema_and_v21_is_current():
     assert load_schema("statement_diff_summary", "v21") == load_schema("statement_diff_summary", "v19")
     assert load_schema("statement_diff_summary", "v22") == load_schema("statement_diff_summary", "v19")
     assert load_schema("statement_diff_summary", "v20") == load_schema("statement_diff_summary", "v19")
-    assert PROMPT_VERSION["statement_diff_summary"] == "v22" and summaries.DIFF_OPEN_END_FROM == 20   # v22: round 19
+    assert PROMPT_VERSION["statement_diff_summary"] == "v23" and summaries.DIFF_OPEN_END_FROM == 20   # v23: round 20
     assert summaries.DIFF_MODEL_OF["v20"] == summaries.DIFF_MODEL_OF["v19"]
     assert summaries.DIFF_EFFORT_OF["v20"] == summaries.DIFF_EFFORT_OF["v19"]
 
