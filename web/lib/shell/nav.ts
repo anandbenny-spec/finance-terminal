@@ -3,11 +3,12 @@
 // and How it's built (stage 2) join then. About (#86) is live: the data ownership statement and privacy note. The admin group shows only to the logged-in admin (C6 builds the login).
 //
 // An item may carry section links (`sections`, #147): indented rows under it, no icon, never marked current. A
-// section link needs a live target like an item does: Fed vs RBI's three are its page's sections
+// section link needs a live target like an item does: Fed vs RBI's six are its page's sections
 // (lib/policy/sections.ts, so a rename can't break them) and its two "what changed" links are the /latest routes,
-// which forward to the newest held meeting. Later jobs (#90) add their items in this shape, after
-// merging main, and update nav.test.ts's lists.
-import { POLICY_SECTION_LIST, policySectionHref } from "@/lib/policy/sections";
+// which forward to the newest held meeting. Screener's one is the sector rate-decision page (#575; Anand, 15 Nov 2026,
+// 17:18 IST), reached before only from a link in /policy's decision-day moves panel. Later jobs (#90) add their items in
+// this shape, after merging main, and update nav.test.ts's lists.
+import { POLICY_SECTION_LIST, policySectionHref, policySectionLabel } from "@/lib/policy/sections";
 
 export type NavIcon = "home" | "policy" | "screener" | "about" | "admin" | "health" | "labelling" | "accuracy" | "earnings";
 
@@ -37,7 +38,7 @@ export const NAV: readonly NavGroup[] = [
         label: "Fed vs RBI",
         icon: "policy",
         sections: [
-          ...POLICY_SECTION_LIST.map((s) => ({ href: policySectionHref(s), label: s.title })),
+          ...POLICY_SECTION_LIST.map((s) => ({ href: policySectionHref(s), label: policySectionLabel(s) })),
           { href: "/policy/fed/latest?tab=changes", label: "FOMC: what changed" },
           { href: "/policy/rbi/latest?tab=changes", label: "MPC: what changed" },
         ],
@@ -47,7 +48,12 @@ export const NAV: readonly NavGroup[] = [
   {
     heading: "Company research",
     items: [
-      { href: "/screener", label: "Screener", icon: "screener" },
+      {
+        href: "/screener",
+        label: "Screener",
+        icon: "screener",
+        sections: [{ href: "/screener/rate-decisions", label: "Sectors on decision days" }],
+      },
       { href: "/earnings", label: "Earnings calls", icon: "earnings" },
     ],
   },

@@ -57,15 +57,53 @@ describe("VotesOverTimePanel", () => {
     const none = renderToStaticMarkup(<VotesOverTimePanel data={votesOverTime("Fed", [], [])} footer={null} />);
     expect(none).toContain("No decisions are on the site yet.");
   });
+
+  it("offers no Show all button when every meeting already fits", () => {
+    expect(html).not.toContain("Show all");
+    expect(html).not.toContain("aria-controls=");
+  });
+});
+
+describe("a long history (#575)", () => {
+  // 15 held decisions, newest first from Oct 2026 back one month at a time; each with its six stored votes.
+  const dates = Array.from({ length: 15 }, (_, i) => {
+    const d = new Date(Date.UTC(2026, 9 - i, 7));
+    return d.toISOString().slice(0, 10);
+  });
+  const meetings = dates.map((d) => m(`mpc-${d}`, d, 0));
+  const all = dates.flatMap((d) => votes.map((v) => ({ ...v, meeting_slug: `mpc-${d}`, is_dissent: false })));
+  const long = renderToStaticMarkup(<VotesOverTimePanel data={votesOverTime("RBI", meetings, all)} footer={null} />);
+
+  it("draws the latest 12 strips, newest first, and holds the 3 oldest back", () => {
+    expect(long.match(/<li /g)).toHaveLength(12);
+    expect(long).toContain(`/policy/rbi/${dates[0]}`);
+    expect(long).toContain(`/policy/rbi/${dates[11]}`);
+    expect(long).not.toContain(`/policy/rbi/${dates[12]}`);
+    expect(long).not.toContain(`/policy/rbi/${dates[14]}`);
+  });
+
+  it("offers every meeting behind one button that names the count and the region it opens", () => {
+    expect(long).toContain(">Show all 15 meetings<");
+    expect(long).toContain('aria-expanded="false"');
+    expect(long).toContain('aria-controls="votes-over-time-rbi-strips"');
+    expect(long).toContain('id="votes-over-time-rbi-strips"');
+    expect(long).toContain('aria-label="RBI votes, the latest 12 of 15 meetings, newest first"');
+  });
+
+  it("keeps every member and every meeting in the select and the table", () => {
+    for (const n of six) expect(long).toContain(`>${n}</option>`);
+    expect(votesOverTime("RBI", meetings, all).meetings).toHaveLength(15); // the grid's columns, drawn on "View as table"
+  });
 });
 
 describe("/policy's gate for the section", () => {
   // The page is an async server component with live reads, so this reads its source, as freshness.test.ts does.
   const src = readFileSync(join(__dirname, "../../app/policy/page.tsx"), "utf8");
-  it("renders the section only behind votesOverTimeShown, and adds no nav or section link", () => {
+  it("renders the section only behind votesOverTimeShown, under the menu's section id", () => {
     expect(src).toMatch(/votesOverTimeShown\(policies\) && \(/);
     expect(src.indexOf("votesOverTime(bank")).toBeGreaterThan(src.indexOf("votesOverTimeShown(policies)"));
-    const sections = readFileSync(join(__dirname, "../../lib/policy/sections.ts"), "utf8");
-    expect(sections).not.toContain("votes-over-time");
+    // In the menu since it was flipped on production (13 Nov) and Anand asked for its link (15 Nov 2026, 17:18 IST, #575).
+    expect(src).toContain("<Section id={POLICY_SECTIONS.votesOverTime.id} title={POLICY_SECTIONS.votesOverTime.title}>");
+    expect(src.indexOf("POLICY_SECTIONS.votesOverTime.id")).toBeGreaterThan(src.indexOf("votesOverTimeShown(policies) && ("));
   });
 });

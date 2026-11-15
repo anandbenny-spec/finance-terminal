@@ -140,11 +140,17 @@ export function symbolOf(row: { market: Market; nse_symbol: string | null; ticke
 
 export type PricePoint = { time: string; value: number };
 
+/**
+ * One session for "View as table": the three fields it shows, and no more (#575, 15 Nov 2026). These rows go to the
+ * browser as the price panel's props; the view's full row (eleven fields) made about 0.6 MB of a 0.65 MB company page.
+ */
+export type PriceTableRow = Pick<CompanyPriceRow, "trade_date" | "close" | "adj_close">;
+
 export type PriceData = {
   /** Adjusted closes, oldest first, for the chart. */
   points: PricePoint[];
   /** Every session, newest first, for "View as table" (raw close and the adjusted one or null). */
-  rows: CompanyPriceRow[];
+  rows: PriceTableRow[];
   /** The last session whose adjusted close is held back; earlier prices are held back to this date. Null: none held. */
   heldTo: string | null;
   from: string | null;
@@ -162,7 +168,7 @@ export function priceData(rows: readonly CompanyPriceRow[]): PriceData {
   }
   return {
     points,
-    rows: ordered.reverse(),
+    rows: ordered.reverse().map((r) => ({ trade_date: r.trade_date, close: r.close, adj_close: r.adj_close })),
     heldTo,
     from: points[0]?.time ?? null,
     to: points.at(-1)?.time ?? null,

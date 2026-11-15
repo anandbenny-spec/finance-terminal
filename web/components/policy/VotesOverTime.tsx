@@ -10,14 +10,19 @@
 // Keyboard: the dots are buttons but, with a thousand of them, only a chosen member's are in the tab order; the
 // select and the table are the keyboard route to every vote. A meeting whose votes aren't all stored shows the tally
 // in words and no dots. Plain HTML/CSS positioned by percentages, so it reflows to 320 px without sideways scroll.
+// The strips start at the latest 12 decisions, with "Show all N meetings" for the rest (#575; Anand, 15 Nov 2026): every
+// strip since 2019 was about 3,600 elements on /policy. Choosing a member draws every strip, so the select still rings
+// that member's dots in all of them. "View as table" still holds every meeting.
 import { ChartScatter, Table2 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 import { DataTable, type Column } from "@/components/data/DataTable";
 import { Panel } from "@/components/data/Panel";
 import { StateNote } from "@/components/data/StateNote";
+import { ShowAllMeetings } from "@/components/policy/ShowAllMeetings";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { NOT_AVAILABLE, formatAxisChange, formatTableDate } from "@/lib/format";
+import { NOT_AVAILABLE, formatAxisChange, formatCount, formatTableDate } from "@/lib/format";
+import { LATEST_MEETINGS, latestMeetings } from "@/lib/policy/show-latest";
 import { dotEmphasis, type BankVotes, type StripRow } from "@/lib/policy/votes-over-time";
 
 const PITCH = 5; // px between stacked dots
@@ -37,9 +42,13 @@ export function VotesOverTimePanel({ data, footer, refresh }: { data: BankVotes;
   const [asTable, setAsTable] = useState(false);
   const [member, setMember] = useState("all");
   const [hover, setHover] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
   const active = member !== "all" ? member : hover;
   const title = `${data.bank}: how members voted over time`;
   const empty = data.rows.length === 0;
+  // A chosen member's dots are ringed in every strip, so choosing one draws them all.
+  const strips = latestMeetings(data.rows, all || member !== "all");
+  const regionId = `votes-over-time-${fed ? "fed" : "rbi"}-strips`;
 
   return (
     <Panel
@@ -81,7 +90,29 @@ export function VotesOverTimePanel({ data, footer, refresh }: { data: BankVotes;
               {asTable ? <ChartScatter aria-hidden className="size-4" /> : <Table2 aria-hidden className="size-4" />}
             </button>
           </div>
-          {asTable ? <Grid data={data} active={active} /> : <Strips data={data} fed={fed} active={active} member={member} onHover={setHover} />}
+          {asTable ? (
+            <Grid data={data} active={active} />
+          ) : (
+            <>
+              <Strips
+                data={data}
+                rows={strips.shown}
+                regionId={regionId}
+                label={
+                  strips.trimmed
+                    ? `${data.bank} votes, the latest ${formatCount(strips.shown.length)} of ${formatCount(strips.total)} meetings, newest first`
+                    : `${data.bank} votes by meeting, newest first`
+                }
+                fed={fed}
+                active={active}
+                member={member}
+                onHover={setHover}
+              />
+              {member === "all" && strips.total > LATEST_MEETINGS && (
+                <ShowAllMeetings total={strips.total} trimmed={strips.trimmed} controls={regionId} onToggle={() => setAll((v) => !v)} />
+              )}
+            </>
+          )}
         </>
       )}
     </Panel>
@@ -90,12 +121,18 @@ export function VotesOverTimePanel({ data, footer, refresh }: { data: BankVotes;
 
 function Strips({
   data,
+  rows,
+  regionId,
+  label,
   fed,
   active,
   member,
   onHover,
 }: {
   data: BankVotes;
+  rows: readonly StripRow[];
+  regionId: string;
+  label: string;
   fed: boolean;
   active: string | null;
   member: string;
@@ -106,9 +143,10 @@ function Strips({
   const pos = (bps: number) => `${((bps - min) / span) * 100}%`;
   return (
     <div
+      id={regionId}
       className="relative max-h-(--table-max-h) overflow-auto focus-visible:-outline-offset-2"
       role="region"
-      aria-label={`${data.bank} votes by meeting, newest first`}
+      aria-label={label}
       tabIndex={0}
     >
       <div className="sticky top-0 z-30 flex border-b border-line-strong bg-raised text-meta text-ink-3">
@@ -130,7 +168,7 @@ function Strips({
         </div>
       </div>
       <ol>
-        {data.rows.map((r) => (
+        {rows.map((r) => (
           <Strip key={r.slug} r={r} ticks={ticks} pos={pos} fed={fed} active={active} member={member} onHover={onHover} />
         ))}
       </ol>
