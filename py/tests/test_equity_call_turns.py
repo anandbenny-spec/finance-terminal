@@ -268,7 +268,12 @@ def test_every_saved_transcript_has_contiguous_turns_and_chunks_inside_them(name
     ct = pdfs.call_text(info)
     a = turns.analyse(ct.extracted, ct.labels)
     turns.check_turns(ct.extracted.text, a.turns)
-    chunks = chunk_text(ct.extracted, speakers="call", marks=a.marks)
+    # #542: the chunker reads the analysis's blocks (cut where an inline label opens a turn); the text is the same string,
+    # and a transcript without an inline label keeps its own blocks
+    assert a.doc.text == ct.extracted.text
+    named = turns.split_turns(ct.extracted, ct.labels)
+    assert (a.doc is ct.extracted) == (not turns.inline_labels(ct.extracted, named))
+    chunks = chunk_text(a.doc, speakers="call", marks=a.marks)
     assert "".join(c.body for c in chunks) == ct.extracted.text and inside_one_turn(chunks, a)
     assert a.turns and 0 <= a.unknown_share <= 1
     assert {t.section for t in a.turns} <= {"qa"} or a.handover
@@ -292,3 +297,157 @@ def test_saved_transcripts_with_a_moderator_hand_over_and_hand_back_read_their_s
 def test_role_hold_share_is_ten_percent():
     # api.earnings_calls.roles_partial (migration 0029) hardcodes `unknown_role_share > 0.10`; change both together.
     assert turns.ROLE_HOLD_SHARE == 0.10
+
+
+# ---------------------------------------------------------------------------------------------- inline generic labels (#542)
+WELCOME = "Moderator: Good evening and welcome. We will now begin the question and answer session. The first question is from Dev Patel."
+ANSWER = "Margins should stay near the guided range this year, and we expect volume growth in the low teens."
+
+
+def call_of(lines, preamble=()):
+    """A call written line by line (a blank line ends a paragraph), read as 2B-07 reads it, and analysed."""
+    pages = ["\n".join([*preamble, *lines]), ""]
+    ex, labels = read(pages)
+    return ex, labels, turns.analyse(ex, labels)
+
+
+def spoken(ex, a):
+    return [(t.speaker, t.role, ex.text[t.char_start:t.char_end].strip()) for t in a.turns]
+
+
+def test_an_inline_management_label_inside_a_paragraph_opens_a_management_turn_at_its_offset_and_the_text_is_unchanged():
+    lines = [WELCOME, "", "Dev Patel: What is the margin outlook for the year?", f"Management: {ANSWER}", "",
+             "Dev Patel: Thank you."]
+    ex, _, a = call_of(lines)
+    # the text is what the extractor made: the label line was joined into the analyst's paragraph, no break added
+    assert ex.text == read(["\n".join(lines), ""])[0].text
+    assert f"year? Management: {ANSWER}" in ex.text and len(ex.blocks) == 3
+    assert spoken(ex, a) == [
+        ("Moderator", "moderator", WELCOME),
+        ("Dev Patel", "analyst", "Dev Patel: What is the margin outlook for the year?"),
+        ("Management", "management", f"Management: {ANSWER}"),
+        ("Dev Patel", "analyst", "Dev Patel: Thank you.")]
+    at = ex.text.index("Management:")
+    assert a.turns[2].char_start == at and a.turns[1].char_end == at
+    turns.check_turns(ex.text, a.turns)
+    # the chunker reads the paragraph cut at the label: each chunk lies inside one turn and the chunks are the text
+    assert a.doc.text == ex.text and len(a.doc.blocks) == len(ex.blocks) + 1 and len(a.marks) == len(a.doc.blocks)
+    chunks = chunk_text(a.doc, speakers="call", marks=a.marks)
+    assert "".join(c.body for c in chunks) == ex.text and inside_one_turn(chunks, a)
+    assert [c.speaker for c in chunks] == ["Moderator", "Dev Patel", "Management", "Dev Patel"]
+    assert chunks[2].char_start == at and chunks[1].body.endswith("year? ")      # the space before the label stays behind
+
+
+def test_an_inline_label_at_a_paragraphs_start_opens_a_turn_there_and_cuts_no_paragraph():
+    lines = [WELCOME, "", "Dev Patel: What is the margin outlook?", "", "Management:", "", ANSWER, "", "Dev Patel: Thanks."]
+    ex, _, a = call_of(lines)
+    assert [(s, r) for s, r, _ in spoken(ex, a)] == [("Moderator", "moderator"), ("Dev Patel", "analyst"),
+                                                    ("Management", "management"), ("Dev Patel", "analyst")]
+    assert [b.start for b in a.doc.blocks] == [b.start for b in ex.blocks]
+    assert a.turns[2].char_start == ex.blocks[2].start and a.turns[2].block_start == 2 and a.turns[2].block_end == 4
+
+
+def test_a_bulleted_generic_label_opens_its_turn_at_the_bullet():
+    lines = [WELCOME, "", "- Ravi Kumar - Chief Executive Officer:", "", f"- {ANSWER}", "", "- Analyst:", "",
+             "- What about demand in the south?"]
+    ex, _, a = call_of(lines)
+    assert [(s, r) for s, r, _ in spoken(ex, a)] == [("Moderator", "moderator"), ("Ravi Kumar", "management"),
+                                                    ("Analyst", "analyst")]
+    assert ex.text[a.turns[2].char_start:].startswith("- Analyst:")
+
+
+def test_a_participants_list_before_the_call_stays_a_header_and_still_names_the_roles():
+    pre = ["Acme Limited Q2 FY27 Earnings Conference Call", "", "Management: Mr. Ravi Kumar – Chief Executive Officer",
+           "Mr. Sam Lee – Chief Financial Officer", "Analysts: Mr. Dev Patel, Ms. Mira Shah", ""]
+    lines = [WELCOME, "", "Dev Patel: Margins?", "", f"Ravi Kumar: {ANSWER}", "", "Mira Shah: And demand?", "",
+             f"Sam Lee: {ANSWER}"]
+    ex, labels, a = call_of(lines, preamble=pre)
+    assert [t.speaker for t in a.turns] == ["Moderator", "Dev Patel", "Ravi Kumar", "Mira Shah", "Sam Lee"]
+    assert roles(a) == {"Moderator": "moderator", "Dev Patel": "analyst", "Ravi Kumar": "management", "Mira Shah": "analyst",
+                        "Sam Lee": "management"}
+    assert a.doc is ex and turns.inline_labels(ex, turns.split_turns(ex, labels)) == []
+
+
+def test_a_participants_list_after_the_first_turn_but_before_the_moderators_first_turn_is_not_a_turn():
+    pre = ["Ref: Acme Limited earnings call", "", "Subject: Transcript", ""]
+    # the cover letter's signatory speaks again in the call, so the call's turns start at the letter (`_drop_spurious`)
+    lines = ["Ravi Kumar: Please find the transcript of the call below.", "",
+             "Management: Mr. Ravi Kumar – Chief Executive Officer", "", WELCOME, "", "Dev Patel: Margins?", "",
+             f"Ravi Kumar: {ANSWER}", "", "Dev Patel: Thanks.", "", f"Ravi Kumar: {ANSWER}"]
+    _, _, a = call_of(lines, preamble=pre)
+    assert a.turns[0].speaker == "Ravi Kumar" and a.turns[1].speaker == "Moderator"
+    assert "Management" not in [t.speaker for t in a.turns]
+
+
+def test_a_call_without_an_inline_label_keeps_its_turns_blocks_and_chunks_exactly():
+    ex, a = analyse(FULL, preamble=["Acme Limited earnings call", ""])
+    labels = read(pages_of(FULL, preamble=["Acme Limited earnings call", ""]))[1]
+    assert a.doc is ex
+    assert [(t.char_start, t.char_end, t.speaker, t.key, t.block_start, t.block_end, t.words) for t in a.turns] == \
+        [(t.char_start, t.char_end, t.speaker, t.key, t.block_start, t.block_end, t.words) for t in turns.split_turns(ex, labels)]
+    assert chunk_text(a.doc, speakers="call", marks=a.marks) == chunk_text(ex, speakers="call", marks=a.marks)
+
+
+def test_management_in_a_named_label_is_part_of_that_label_even_in_a_call_that_labels_its_answers_management():
+    lines = [WELCOME, ""]
+    for _ in range(3):                                             # the call's style: "Management:" after the questions
+        lines += ["Dev Patel: What is the margin outlook?", f"Management: {ANSWER}", ""]
+    lines += ["Mr. Chirag Shah - New Asset Management:", "", "Hi, sir. What about the capex plan?", "",
+              f"Ravi Kumar - Chief Financial Officer: {ANSWER}"]
+    _, _, a = call_of(lines)
+    assert [t.speaker for t in a.turns] == ["Moderator", *["Dev Patel", "Management"] * 3, "Chirag Shah", "Ravi Kumar"]
+
+
+def test_a_label_repeated_with_nothing_said_between_opens_no_second_turn():
+    lines = ["Moderator: Moderator: Good evening and welcome. We will now begin the question and answer session.", ""]
+    for _ in range(3):                                             # a call that labels its answers "Management:"
+        lines += ["Dev Patel: What is the margin outlook?", f"Management: {ANSWER}", ""]
+    lines += ["Dev Patel: And demand?", f"Management: Management: {ANSWER}"]
+    ex, _, a = call_of(lines)
+    assert [t.speaker for t in a.turns] == ["Moderator", *["Dev Patel", "Management"] * 4]
+    assert ex.text[a.turns[-1].char_start:].startswith("Management: Management:")
+
+
+def test_inline_analyst_and_participant_labels_are_analysts_and_an_inline_moderator_introduces_the_next_one():
+    lines = [WELCOME, "", f"Ravi Kumar - Chief Executive Officer: {ANSWER} Participant: Sir, what is the debt plan?",
+             f"Ravi Kumar - Chief Executive Officer: {ANSWER} Moderator: The next question is from Mira Shah.", "",
+             "Mira Shah: And demand?", f"Management: {ANSWER} Analyst: Thank you."]
+    ex, _, a = call_of(lines)
+    assert [(s, r) for s, r, _ in spoken(ex, a)] == [
+        ("Moderator", "moderator"), ("Ravi Kumar", "management"), ("Participant", "analyst"), ("Ravi Kumar", "management"),
+        ("Moderator", "moderator"), ("Mira Shah", "analyst"), ("Management", "management"), ("Analyst", "analyst")]
+    chunks = chunk_text(a.doc, speakers="call", marks=a.marks)
+    assert "".join(c.body for c in chunks) == ex.text and inside_one_turn(chunks, a)
+
+
+def test_a_generic_label_never_merges_with_a_named_speaker_and_its_role_stays_its_words():
+    # "Management" answers only in the Q&A and the moderator introduces no one by that name: still management, never unknown
+    lines = ["Moderator: Welcome. We will now begin the question and answer session. The first question is from Management Kumar.",
+             "", "Management Kumar: Is that me? A question on margins.", f"Management: {ANSWER}"]
+    _, _, a = call_of(lines)
+    assert [(t.speaker, t.key, t.role) for t in a.turns] == [
+        ("Moderator", "moderator", "moderator"), ("Management Kumar", "management kumar", "analyst"),
+        ("Management", "management", "management")]
+    assert a.unknown_speakers == [] and a.both_roles == []
+    assert not turns.same_person("management", "management kumar")
+
+
+def test_after_a_comma_or_a_number_a_label_counts_only_in_a_call_that_writes_it_so_and_never_after_an_article():
+    def call(n_strict, tail):
+        body = [WELCOME, ""]
+        for _ in range(n_strict):
+            body += ["Dev Patel: What is the margin outlook?", f"Management: {ANSWER}", ""]
+        body += [f"Dev Patel: The figure for 2026 was {tail}", f"Management: {ANSWER}"]
+        _, _, a = call_of(body)
+        return [t.speaker for t in a.turns].count("Management") - n_strict
+    assert call(2, "20%,") == 0                    # two labels after a sentence: not the call's style
+    assert call(3, "20%,") == 1                    # three: the call labels its answers so
+    assert call(3, "given by 2030") == 1
+    assert call(5, "asked of the") == 0            # "of the Management:" reads as a phrase, never a label
+
+
+def test_a_lower_case_or_capitalised_word_that_is_not_followed_by_a_colon_is_no_label():
+    lines = [WELCOME, "", "Dev Patel: How does the management see it? MANAGEMENT: is the header style, management: too.",
+             f"Ravi Kumar - Chief Executive Officer: Our Management team: {ANSWER}"]
+    _, _, a = call_of(lines)
+    assert [t.speaker for t in a.turns] == ["Moderator", "Dev Patel", "Ravi Kumar"]

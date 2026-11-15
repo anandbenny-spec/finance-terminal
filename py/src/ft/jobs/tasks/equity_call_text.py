@@ -273,7 +273,9 @@ class EquityCallText(Task):
             try:
                 call.analysis = turns.analyse(ct.extracted, ct.labels)
                 call.text = ct.extracted.text
-                call.chunks = chunk_text(ct.extracted, speakers="call", marks=call.analysis.marks)
+                # the text with its blocks cut where a turn opens inside a paragraph (#542): the same text, `ct.extracted`'s
+                # own blocks for a call without an inline label
+                call.chunks = chunk_text(call.analysis.doc, speakers="call", marks=call.analysis.marks)
             except ValueError as e:
                 call.problem = "turns" if "turn" in str(e) else "chunks"
                 continue
