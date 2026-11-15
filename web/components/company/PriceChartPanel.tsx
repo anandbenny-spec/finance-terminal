@@ -12,10 +12,9 @@ import { Panel } from "@/components/data/Panel";
 import { Qualifier } from "@/components/data/Qualifier";
 import { StateNote } from "@/components/data/StateNote";
 import type { ChartSeries } from "@/components/data/TimeSeriesChart";
-import type { PricePoint } from "@/lib/equity/company";
+import type { PricePoint, PriceTableRow } from "@/lib/equity/company";
 import { NOT_AVAILABLE, formatDate, formatPrice, formatTableDate, type Currency } from "@/lib/format";
 import { yearsBefore } from "@/lib/policy/rates";
-import type { CompanyPriceRow } from "@/lib/queries/api";
 
 const TimeSeriesChart = dynamic(() => import("@/components/data/TimeSeriesChart"), {
   ssr: false,
@@ -39,8 +38,8 @@ export function PriceChartPanel({
   footer,
 }: {
   points: PricePoint[];
-  /** Every session, newest first. */
-  rows: CompanyPriceRow[];
+  /** Every session, newest first: the date, the close and the adjusted close only (#575). */
+  rows: PriceTableRow[];
   heldTo: string | null;
   currency: Currency;
   market: "IN" | "US";
@@ -61,7 +60,7 @@ export function PriceChartPanel({
   const readDate = hovered ?? last;
   const readValue = readDate ? byDate.get(readDate) ?? null : null;
 
-  const columns = useMemo<Column<CompanyPriceRow>[]>(
+  const columns = useMemo<Column<PriceTableRow>[]>(
     () => [
       { id: "date", header: "Date", cell: (r) => <span className="font-mono">{formatTableDate(r.trade_date)}</span>, sortValue: (r) => r.trade_date },
       { id: "close", header: `Close (${currency})`, align: "right", cell: (r) => formatPrice(r.close, currency), sortValue: (r) => r.close },

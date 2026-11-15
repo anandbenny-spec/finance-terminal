@@ -37,6 +37,15 @@ describe("priceData", () => {
     expect(priceData([price("2026-10-01", 1, 1)]).heldTo).toBeNull();
     expect(priceData([]).points).toEqual([]);
   });
+  it("gives the table only the date, the close and the adjusted close, with the stored values (#575)", () => {
+    const rows = [price("2026-10-02", 110, 110), price("2026-09-30", 101, null)];
+    const d = priceData(rows);
+    expect(d.rows).toEqual([
+      { trade_date: "2026-10-02", close: rows[0].close, adj_close: 110 },
+      { trade_date: "2026-09-30", close: rows[1].close, adj_close: null },
+    ]);
+    for (const r of d.rows) expect(Object.keys(r).sort()).toEqual(["adj_close", "close", "trade_date"]);
+  });
 });
 
 describe("pickMetric", () => {

@@ -120,18 +120,54 @@ describe("LanguageTimelinePanel", () => {
   });
 });
 
+describe("a long history (#575)", () => {
+  // 15 meetings, newest first: the latest 12 are drawn, the 3 oldest wait for "Show all".
+  const columns = Array.from({ length: 15 }, (_, i) => {
+    const date = new Date(Date.UTC(2026, 9 - i, 7)).toISOString().slice(0, 10);
+    return { ...rbi.columns[1], slug: `mpc-${date}`, date, href: `/policy/rbi/${date}/statement` };
+  });
+  const long = renderToStaticMarkup(<LanguageTimelinePanel data={{ ...rbi, columns }} footer={null} />);
+  const heads = [...long.matchAll(/<th[^>]*scope="col"[^>]*>(.*?)<\/th>/g)].map((m) => m[1]);
+
+  it("draws the phrase column and the latest 12 meetings, newest first", () => {
+    expect(heads).toHaveLength(13);
+    expect(heads[1]).toBe("07 Oct 2026");
+    expect(heads[12]).toBe("07 Nov 2025");
+    expect(long).not.toContain("/policy/rbi/2025-10-07/statement");
+  });
+
+  it("says it shows the latest 12, and offers every meeting behind one button", () => {
+    expect(long).toContain("Latest 12 of 15 meetings");
+    expect(long).not.toContain("Since 2019");
+    expect(long).toContain(">Show all 15 meetings<");
+    expect(long).toContain('aria-expanded="false"');
+    expect(long).toContain('aria-controls="language-timeline-rbi-table"');
+    expect(long).toContain('id="language-timeline-rbi-table"');
+  });
+
+  it("marks each cell shown exactly as the full table does (the sentence and its marks are the stored ones)", () => {
+    expect(long.match(/The MPC decided to remain neutral\./g)).toHaveLength(12);
+    expect(long.match(/<ins>8\. CPI inflation/g)).toHaveLength(12);
+  });
+
+  it("offers no button when every meeting already fits", () => {
+    expect(html).not.toContain("Show all");
+  });
+});
+
 describe("/policy's gate for the section", () => {
   // The page is an async server component with live reads, so this reads its source, as the other gates' tests do.
   const src = readFileSync(join(__dirname, "../../app/policy/page.tsx"), "utf8");
-  it("reads and renders the section only behind languageTimelineShown, and adds no nav or section link", () => {
+  it("reads and renders the section only behind languageTimelineShown, under the menu's section id", () => {
     expect(src).toMatch(/const timeline = languageTimelineShown\(policies\) \? await readLanguageTimeline\(\) : null;/);
     expect(src).toMatch(/\{timeline && \(/);
     expect(src.match(/readLanguageTimeline\(\)/g)).toHaveLength(1);
     expect(src.indexOf("readLanguageTimeline()")).toBeGreaterThan(src.indexOf("languageTimelineShown(policies)"));
-    expect(src.indexOf('id="language-timeline"')).toBeGreaterThan(src.indexOf('id="votes-over-time"'));
-    expect(src.indexOf('id="language-timeline"')).toBeLessThan(src.indexOf("POLICY_SECTIONS.history"));
-    const sections = readFileSync(join(__dirname, "../../lib/policy/sections.ts"), "utf8");
-    expect(sections).not.toContain("language-timeline");
+    expect(src.indexOf("POLICY_SECTIONS.languageTimeline.id")).toBeGreaterThan(src.indexOf("POLICY_SECTIONS.votesOverTime.id"));
+    expect(src.indexOf("POLICY_SECTIONS.languageTimeline.id")).toBeLessThan(src.indexOf("POLICY_SECTIONS.history"));
+    // In the menu since it was flipped on production (14 Nov) and Anand asked for its link (15 Nov 2026, 17:18 IST, #575);
+    // its Section sits inside `{timeline && (`, so the anchor exists only while the section is shown.
+    expect(src.indexOf("POLICY_SECTIONS.languageTimeline.id")).toBeGreaterThan(src.indexOf("{timeline && ("));
   });
 
   it("is read at most once a page, and is the only new read the page makes", () => {

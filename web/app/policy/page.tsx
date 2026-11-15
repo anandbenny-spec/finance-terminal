@@ -148,7 +148,7 @@ export default async function PolicyPage() {
         </PanelGrid>
       </Section>
 
-      <Section id="statement-changes" title="How much each statement changed">
+      <Section id={POLICY_SECTIONS.statementChanges.id} title={POLICY_SECTIONS.statementChanges.title}>
         <PanelGrid>
           {o.changes.ok && o.history.ok ? (
             <ChangeStrip
@@ -170,7 +170,7 @@ export default async function PolicyPage() {
 
       {votesOverTimeShown(policies) && (
         // Hidden until Anand flips `site.votes_over_time` (#508): with no row nothing here renders or reads.
-        <Section id="votes-over-time" title="How members voted over time">
+        <Section id={POLICY_SECTIONS.votesOverTime.id} title={POLICY_SECTIONS.votesOverTime.title}>
           <PanelGrid>
             {history ? (
               (["Fed", "RBI"] as const).map((bank) => {
@@ -192,7 +192,7 @@ export default async function PolicyPage() {
       )}
 
       {timeline && (
-        <Section id="language-timeline" title="How the wording moved">
+        <Section id={POLICY_SECTIONS.languageTimeline.id} title={POLICY_SECTIONS.languageTimeline.title}>
           <PanelGrid>
             {(
               [
