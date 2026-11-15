@@ -112,7 +112,7 @@ describe("the front page (/)", () => {
   const t = text(out);
 
   it("leads with the positioning, the way the site works and the two buttons", () => {
-    expect(out).toMatch(/<h1[^>]*>An AI research terminal for Indian markets and the Fed–RBI policy cycle\.<\/h1>/);
+    expect(out).toMatch(/<h1[^>]*>An AI research terminal for Indian and US markets and the Fed–RBI policy cycle\.<\/h1>/);
     expect(t).toContain("Start here");
     expect(t).toContain("Every FOMC and RBI decision since 2019");
     expect(t).toContain("An AI line that can't be cited isn't shown");

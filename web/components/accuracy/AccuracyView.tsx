@@ -1,7 +1,8 @@
 // The /accuracy page's body (#135; Plan 02 §4): "How often does this site hold something back, and do its checks
 // work?" One section per module that has rows in api.quality_summary, for the period in the URL. Counts only, all of
 // them the database's (never computed here); no task names, run ids or error text (CLAUDE.md §4). Each panel carries
-// SourceLine (the site's own records) and Freshness (the projection's `as_of`, and its task's freshness).
+// SourceLine (the site's own records) and Freshness (the projection's `as_of`, and its task's freshness). The one
+// exception is "Checked before going live": the fixed record of each one-time judge check (US-09, #408), from its verdict.
 import type { ReactNode } from "react";
 import { Freshness } from "@/components/data/Freshness";
 import { PageHeader } from "@/components/data/PageHeader";
@@ -13,6 +14,7 @@ import { Stat, StatRow } from "@/components/data/Stat";
 import { StateNote } from "@/components/data/StateNote";
 import { Tabs } from "@/components/data/Tabs";
 import { EvalTable } from "@/components/accuracy/EvalTable";
+import { GO_LIVE_CHECKS } from "@/lib/accuracy/checks";
 import {
   countOf,
   dataTo,
@@ -26,7 +28,7 @@ import {
   type Period,
 } from "@/lib/accuracy/summary";
 import { FEEDS } from "@/lib/feeds";
-import { formatTableDate } from "@/lib/format";
+import { formatDate, formatTableDate } from "@/lib/format";
 import type { EvalSummaryRow, QualitySummaryRow, TaskFreshnessRow } from "@/lib/queries/api";
 import { panelFreshness } from "@/lib/shell/freshness";
 
@@ -180,6 +182,29 @@ export function AccuracyView({ data }: { data: AccuracyData }) {
       ) : (
         sections.map((s) => <ModuleBlock key={s.module} section={s} data={data} to={to} />)
       )}
+
+      {/* The one-time checks a judge ran before a hidden feature went live (US-09, #408; Plan 05 §5): the judge named by
+          model, never Anand. A fixed record (lib/accuracy/checks.ts), so its footer dates the check, not a load. */}
+      <Section id="go-live" title="Checked before going live" note="one-time checks">
+        <PanelGrid>
+          {GO_LIVE_CHECKS.map((c) => (
+            <Panel
+              key={c.id}
+              title={c.title}
+              titleId={`go-live-${c.id}`}
+              subtitle={c.question}
+              footer={
+                <>
+                  <SourceLine lines={[OWN_RECORDS]} />
+                  <Freshness freshness={{ text: `Checked ${formatDate(c.on)}`, delayed: false }} />
+                </>
+              }
+            >
+              <p className="text-data text-ink-1">{c.line}</p>
+            </Panel>
+          ))}
+        </PanelGrid>
+      </Section>
 
       <Section id="evaluations" title="Passing evaluation runs" note="all modules">
         <PanelGrid>
