@@ -44,7 +44,7 @@ def test_v23_is_v22s_text_with_v22s_schema_on_sonnet_and_is_current():
     v22, v23 = load_prompt("statement_diff_summary", "v22"), load_prompt("statement_diff_summary", "v23")
     assert v23.text == v22.text and v23.version == "v23"
     assert load_schema("statement_diff_summary", "v23") == load_schema("statement_diff_summary", "v22")
-    assert PROMPT_VERSION["statement_diff_summary"] == "v23" and summaries.DIFF_PACK_FROM == 23
+    assert PROMPT_VERSION["statement_diff_summary"] == "v24" and summaries.DIFF_PACK_FROM == 23   # v24: round 21
     assert summaries.DIFF_MODEL_OF["v23"] == summaries.DIFF_MODEL_OF["v22"]
     assert summaries.DIFF_EFFORT_OF["v23"] == summaries.DIFF_EFFORT_OF["v22"]
     assert summaries.FALLBACK_PER_BULLET == 2
@@ -214,14 +214,14 @@ def test_the_same_words_are_never_quoted_in_two_changes():
 def test_the_fallback_is_packed_from_v23_only(monkeypatch):
     seen = []
 
-    def fake(segments, old, new, prefer, hi=5, *, packed=False):
-        seen.append(packed)
+    def fake(segments, old, new, prefer, hi=5, *, packed=False, restated=False):
+        seen.append((packed, restated))
         return []
 
     monkeypatch.setattr(summaries, "fallback_bullets", fake)
     task, w = ai_batch.AiBatch(), SimpleNamespace(segments={}, base=None, doc=None)
-    for version in ("v17", "v22", "v23"):
+    for version in ("v17", "v22", "v23", "v24"):
         call = SimpleNamespace(reply=SimpleNamespace(json=lambda: {"bullets": []}),
                                request=SimpleNamespace(prompt=SimpleNamespace(version=version)))
         assert task._store_fallback(None, w, call, 1, 1) is None                       # nothing built: nothing stored
-    assert seen == [False, False, True]
+    assert seen == [(False, False), (False, False), (True, False), (True, True)]      # v24: round 21 (#445)
