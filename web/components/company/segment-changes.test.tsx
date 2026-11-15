@@ -22,7 +22,7 @@ function seg(over: Partial<SegmentChangeRow> = {}): SegmentChangeRow {
     quarters_compared: 4, change_no: 1, kind: "merged", segments_before: ["Petrochemicals", "Refining"], segments_after: ["Oil to Chemicals (O2C)"],
     revenue_ratio: 0.913, previous_period_end: "2020-09-30", latest_filing_url: "https://example.test/filing/latest",
     latest_filed_at: "2021-01-22T13:05:00+00:00", previous_filing_url: "https://example.test/filing/previous", previous_filed_at: "2020-10-30T12:00:00+00:00",
-    rule_version: 1, source_key: "nse", ...over,
+    rule_version: 1, source_key: "nse", latest_filed_period: null, ...over,
   };
 }
 const state = (s: SegmentChangeRow["state"], over: Partial<SegmentChangeRow> = {}) =>
@@ -206,20 +206,81 @@ describe("a flag shows only on the company's latest results (#553, decision 3)",
     expect(segmentModel(coal, SHOWN, null).kind).toBe("changed");
   });
 
-  it("leaves the other states as they are: each names its own quarter", () => {
+  it("leaves the states that compare nothing as they are: each names its own quarter", () => {
     expect(text(panel(html([state("single_segment", { period_end: "2026-06-30" })], SHOWN, null, later)))).toContain(
       "One reportable segment, as filed in the results for the quarter ended 30 Jun 2026.",
-    );
-    expect(text(panel(html([state("none_flagged", { period_end: "2026-06-30" })], SHOWN, null, later)))).toContain(
-      "No segment flagged: each segment reported in the four quarters before is in the results for the quarter ended 30 Jun 2026.",
     );
     expect(text(panel(html([state("not_compared", { period_end: "2026-06-30", quarters_compared: 3 })], SHOWN, null, later)))).toContain(
       "Not compared: segments are on record for 3 of the 4 quarters before the quarter ended 30 Jun 2026, and the comparison needs all four.",
     );
   });
 
+  it("gives none flagged the same note when a later quarter is on record (#569, decision 3)", () => {
+    const t = text(panel(html([state("none_flagged", { period_end: "2026-06-30" })], SHOWN, null, later)));
+    expect(t).toContain(NOTE);
+    expect(t).not.toContain("No segment flagged");
+  });
+
   it("stays held back while the field is hidden", () => {
     const t = text(panel(html(coal, HIDDEN, FRESH, later)));
+    expect(t).toContain(SEGMENT_HELD);
+    expect(t).not.toContain("Not compared");
+  });
+});
+
+describe("the latest quarter on record also comes from the stored filings (0049, #569)", () => {
+  // Coal India on 15 Nov 2026: the flag is Jun 2026's, its Sep 2026 filing is stored but unread, so the statements stop at Jun 2026.
+  const coalRow = (latest: string | null) =>
+    seg({ period_end: "2026-06-30", kind: "single_to_multi", revenue_ratio: null, segments_before: [], segments_after: ["Coal", "Solar"], previous_period_end: "2026-03-31", latest_filed_period: latest });
+  const statementsToJune = [financial("quarter", "2026-06-30"), financial("quarter", "2026-03-31")];
+  const NOTE = "Not compared: the segments in the results for the quarter ended 30 Sep 2026 are not on record. The last quarter compared was the quarter ended 30 Jun 2026.";
+  const FLAG = `${KIND_TITLE.single_to_multi} ${KIND_SENTENCE.single_to_multi}`;
+
+  it("shows the note and no flag when the view's filing is later, even though the statements stop at the compared quarter", () => {
+    const p = panel(html([coalRow("2026-09-30")], SHOWN, FRESH, statementsToJune));
+    const t = text(p);
+    expect(t).toContain(NOTE);
+    for (const word of ["Coal", "Solar", "Before", "After", KIND_TITLE.single_to_multi]) expect(t).not.toContain(word);
+    expect(p).not.toContain("example.test/filing/latest");
+    expect(segmentModel([coalRow("2026-09-30")], SHOWN, "2026-06-30")).toEqual({ kind: "not_latest", periodEnd: "2026-06-30", latest: "2026-09-30" });
+  });
+
+  it("shows the flags as before when the view's latest filing is the compared quarter", () => {
+    const t = text(panel(html([coalRow("2026-06-30")], SHOWN, FRESH, statementsToJune)));
+    expect(t).not.toContain("Not compared");
+    expect(t).toContain(FLAG);
+    expect(t).toContain("After Coal Solar Quarter ended 30 Jun 2026");
+  });
+
+  it("takes the later of the view's quarter and the statements' quarter", () => {
+    expect(segmentModel([coalRow("2026-09-30")], SHOWN, "2026-12-31")).toEqual({ kind: "not_latest", periodEnd: "2026-06-30", latest: "2026-12-31" });
+    expect(segmentModel([coalRow("2026-12-31")], SHOWN, "2026-09-30")).toEqual({ kind: "not_latest", periodEnd: "2026-06-30", latest: "2026-12-31" });
+    expect(segmentModel([coalRow(null)], SHOWN, "2026-09-30")).toEqual({ kind: "not_latest", periodEnd: "2026-06-30", latest: "2026-09-30" });
+    expect(segmentModel([coalRow("2026-09-30")], SHOWN, null)).toEqual({ kind: "not_latest", periodEnd: "2026-06-30", latest: "2026-09-30" });
+    expect(segmentModel([coalRow(null)], SHOWN, null).kind).toBe("changed");
+    expect(segmentModel([coalRow("2026-03-31")], SHOWN, null).kind).toBe("changed");
+  });
+
+  it("gives none flagged the note when the view's filing is later, and its own sentence when it isn't", () => {
+    const later = text(panel(html([state("none_flagged", { period_end: "2026-06-30", latest_filed_period: "2026-09-30" })], SHOWN, null, statementsToJune)));
+    expect(later).toContain(NOTE);
+    expect(later).not.toContain("No segment flagged");
+    expect(text(panel(html([state("none_flagged", { period_end: "2026-09-30", latest_filed_period: "2026-09-30" })], SHOWN, null, statementsToJune)))).toContain(
+      "No segment flagged: each segment reported in the four quarters before is in the results for the quarter ended 30 Sep 2026.",
+    );
+  });
+
+  it("leaves one reportable segment and not compared as they are, whatever the view's latest filing", () => {
+    expect(text(panel(html([state("single_segment", { period_end: "2026-06-30", latest_filed_period: "2026-09-30" })], SHOWN, null, statementsToJune)))).toContain(
+      "One reportable segment, as filed in the results for the quarter ended 30 Jun 2026.",
+    );
+    expect(
+      text(panel(html([state("not_compared", { period_end: "2026-06-30", quarters_compared: 3, latest_filed_period: "2026-09-30" })], SHOWN, null, statementsToJune))),
+    ).toContain("Not compared: segments are on record for 3 of the 4 quarters before the quarter ended 30 Jun 2026, and the comparison needs all four.");
+  });
+
+  it("stays held back while the field is hidden", () => {
+    const t = text(panel(html([coalRow("2026-09-30")], HIDDEN, FRESH, statementsToJune)));
     expect(t).toContain(SEGMENT_HELD);
     expect(t).not.toContain("Not compared");
   });

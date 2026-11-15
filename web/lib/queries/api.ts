@@ -474,7 +474,7 @@ export type PromoterHoldingRow = {
 };
 
 /**
- * api.segment_changes (0038, #409): a company's reportable segments in its latest compared quarter (consolidated, as filed)
+ * api.segment_changes (0038, #409; 0049, #569): a company's reportable segments in its latest compared quarter (consolidated, as filed)
  * against the four quarters before it. One row per flag (state `changed`) or one row with the state. No row at all while field
  * policy `equity.segment_changes` is hidden. `segments_before` and `segments_after` are the affected segments as filed: before
  * from the previous quarter, after from the latest. Read through components/company/SegmentChangesPanel.tsx.
@@ -502,6 +502,11 @@ export type SegmentChangeRow = {
   rule_version: number | null;
   /** The latest filing's exchange: nse or bse. */
   source_key: string | null;
+  /**
+   * 0049 (#569): the company's latest stored consolidated results quarter. It is later than `period_end` when a later filing gave
+   * no line-up (Coal India's Sep 2026 filing, which neither the statements nor the segment task dates).
+   */
+  latest_filed_period: string | null;
 };
 
 /**

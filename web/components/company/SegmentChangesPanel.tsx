@@ -4,9 +4,12 @@
 // segments on each side and the filings are the view's. Gated by `equity.segment_changes` (seeded hidden): while it is hidden the
 // panel shows the held note and nothing else. Words, never colour (CLAUDE.md §5: nothing here is a market move), never a motive
 // or a judgment (D8). Each side links to its own filing; every date goes through lib/format.ts. Server-rendered.
-// A flag shows only on the company's latest results (#553, decision 3): when the statements the tab already reads hold a later
-// consolidated quarter than the one compared (Coal India, whose Sep 2026 filing gave no line-up), a `changed` state shows a
-// note naming both quarters and no flag. The other states name their own quarter and never say "latest", so they stay.
+// A flag shows only on the company's latest results (#553, decision 3): when a later consolidated quarter is on record than the
+// one compared, a `changed` state shows a note naming both quarters and no flag. "On record" is the later of the view's
+// `latest_filed_period` (0049, #569: the latest stored consolidated filing, which the statements may not have read, as with Coal
+// India's Sep 2026 filing) and the statements' latest quarter. `none_flagged` takes the same note (#569, decision 3): it answers
+// "did the latest results …" about an older quarter. `single_segment` and `not_compared` compare nothing and name their own
+// quarter, so they stay.
 import type { ReactNode } from "react";
 import { Gated, fieldPolicy, type FieldPolicies } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
@@ -55,7 +58,7 @@ const KINDS = new Set<string>(Object.keys(KIND_TITLE));
 const isKind = (k: unknown): k is Kind => typeof k === "string" && KINDS.has(k);
 
 /** The panel's reading of the view's rows: held back, couldn't load, nothing published, one of the three states, the flags, or
- * flags of a quarter older than the statements' latest (shown as a note, never as flags). */
+ * flags (or none flagged) of a quarter older than the latest on record (shown as a note, never as flags). */
 export type SegmentModel =
   | { kind: "held" }
   | { kind: "error" }
@@ -65,7 +68,13 @@ export type SegmentModel =
   | { kind: "changed"; periodEnd: string; flags: SegmentChangeRow[] }
   | { kind: "not_latest"; periodEnd: string; latest: string };
 
-/** `latestQuarter`: the latest consolidated quarter end in the statements the tab reads, or null when they can't tell. */
+/** The later of two ISO dates, either of which may be missing. */
+const laterOf = (a: string | null, b: string | null): string | null => (a === null ? b : b === null ? a : a > b ? a : b);
+
+/**
+ * `latestQuarter`: the latest consolidated quarter end in the statements the tab reads, or null when they can't tell. The rows'
+ * own `latest_filed_period` (0049) counts too: the later of the two is the latest quarter on record.
+ */
 export function segmentModel(
   rows: readonly SegmentChangeRow[] | null | undefined,
   policies: FieldPolicies | null | undefined,
@@ -77,12 +86,15 @@ export function segmentModel(
   const first = rows.find((r) => r.state !== null);
   if (!first?.state) return { kind: "none" };
   const { state, period_end: periodEnd } = first;
+  const onRecord = laterOf(first.latest_filed_period ?? null, latestQuarter);
+  const later = onRecord !== null && onRecord > periodEnd ? onRecord : null;
   if (state === "changed") {
     const flags = rows.filter((r) => r.state === "changed" && isKind(r.kind)).sort((a, b) => (a.change_no ?? 0) - (b.change_no ?? 0));
     if (flags.length === 0) return { kind: "error" };
-    if (latestQuarter !== null && latestQuarter > periodEnd) return { kind: "not_latest", periodEnd, latest: latestQuarter };
+    if (later !== null) return { kind: "not_latest", periodEnd, latest: later };
     return { kind: "changed", periodEnd, flags };
   }
+  if (state === "none_flagged" && later !== null) return { kind: "not_latest", periodEnd, latest: later };
   if (state === "not_compared") return { kind: "not_compared", periodEnd, quarters: first.quarters_compared };
   return { kind: state, periodEnd };
 }
