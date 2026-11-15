@@ -119,6 +119,11 @@ TASKS: dict[str, TaskSpec] = {
     # The KPI metrics one page of a results press release, fact sheet or data sheet states (the KPI-table pilot, DD-04,
     # #512; Plan 05 §1.3; Data Audit 10 §6): the json route, effort low, 6,000 for thinking plus up to about 40 items.
     "kpi_extraction": TaskSpec("json", "low", 6_000),
+    # The KPI pilot's flags (DD-05 part 2, #513): Sonnet 5.5's check of each flag against the pages it rests on (Data Audit 10
+    # §8 finding 1's second pass; up to 10 flags a request, three enum answers each), and Haiku's pick, by id, of a candidate
+    # transcript sentence for "reason stated" and "an analyst asked". Both json, effort low.
+    "kpi_check": TaskSpec("json", "low", 4_000, SONNET),
+    "kpi_quote": TaskSpec("json", "low", 3_000),
 }
 
 

@@ -37,14 +37,78 @@ const RELATION = {
   moved_as_said: "moved as stated",
   moved_against: "moved the other way",
 } as const;
+/** A point target has no range: its within, above and below are said against the figure (#532 part 2). */
+const POINT_RELATION = {
+  within: "within tolerance of the figure",
+  above: "above the figure",
+  below: "below the figure",
+} as const;
 
-/** "Delivered (above the range)", "Missed (below the range)", "Pending", "Not scored: <the stored reason>". */
-export function outcomeText(r: Pick<CallGuidanceRow, "outcome" | "relation" | "reason" | "not_scored_reason">): string {
-  const relation = r.relation ? ` (${RELATION[r.relation] ?? r.relation})` : "";
+/**
+ * The unit each scored metric's actual is in (#532 part 2): Spec 02B §5.10's map, `lines.<metric>.unit` in
+ * py/config/equity/guidance_metrics.yaml (₹ crore or per cent), which the scorer compares in. A direction statement carries no
+ * unit of its own, so the actual can't take the statement's. guidance-record.test.tsx reads the yaml and fails if this drifts
+ * from it (the yaml stays the one source; Anand's pick, 14 Nov 2026). A metric missing here shows no actual, never a guessed unit.
+ */
+export const ACTUAL_UNIT: Readonly<Record<string, "inr" | "pct">> = {
+  revenue: "inr",
+  revenue_growth: "pct",
+  ebitda_margin: "pct",
+  ebit_margin: "pct",
+  pat: "inr",
+  pat_growth: "pct",
+  capex: "inr",
+  net_debt: "inr",
+  tax_rate: "pct",
+  advances_growth: "pct",
+  deposits_growth: "pct",
+  gnpa: "pct",
+  nnpa: "pct",
+  cet1: "pct",
+};
+
+/** The scored actual in its metric's own unit; "—" when there is none, or the metric isn't in the map. */
+export function actualText(r: Pick<CallGuidanceRow, "actual" | "metric">): string {
+  if (r.actual === null) return NOT_AVAILABLE;
+  const unit = Object.hasOwn(ACTUAL_UNIT, r.metric) ? ACTUAL_UNIT[r.metric] : null;
+  return unit ? formatStatedValue(r.actual, unit) : NOT_AVAILABLE;
+}
+
+/**
+ * Spec 02B §5.10's not-scored reasons in words (#532 part 2). The scorer and the extraction store the key (`no_filed_figure`, …),
+ * and a visitor never sees a key (CLAUDE.md §4), so each is written out here. A `definition` reason covers both of §5.10's cases
+ * (the company's figure differs from ours, or there's no stated figure to check it against).
+ */
+const NOT_SCORED_REASON: Readonly<Record<string, string>> = {
+  no_filed_figure: "no filed figure to compare with",
+  currency: "stated in another currency",
+  undated: "no datable period",
+  vague_figure: "no exact figure stated",
+  scope: "about a segment, subsidiary or region, not the whole company",
+  structural_break: "a merger or demerger falls within the period",
+  definition: "the company's own definition of this figure couldn't be matched to the filed lines",
+  filed_figures_unavailable: "the period's filed figures aren't available",
+  duplicate: "stated more than once on this call",
+};
+const REASON_KEY = /^\S+$/;   // no space: a key, not words
+
+/**
+ * "Delivered (above the range)", "Missed (below the figure)", "Pending", "Not scored: <the reason in words>". A point target's
+ * relation is said against its figure, a range's against the range. A relation or reason key these maps don't know is never
+ * shown: the outcome stands alone ("Delivered", "Not scored"); a reason already in words (it holds a space) is shown as stored.
+ */
+export function outcomeText(r: Pick<CallGuidanceRow, "outcome" | "relation" | "reason" | "not_scored_reason"> & { kind?: string | null }): string {
+  let words: string | null = null;
+  if (r.relation && r.kind === "point" && Object.hasOwn(POINT_RELATION, r.relation)) words = POINT_RELATION[r.relation as keyof typeof POINT_RELATION];
+  else if (r.relation && Object.hasOwn(RELATION, r.relation)) words = RELATION[r.relation];
+  const relation = words ? ` (${words})` : "";
   if (r.outcome === "delivered") return `Delivered${relation}`;
   if (r.outcome === "missed") return `Missed${relation}`;
   if (r.outcome === "pending") return "Pending";
-  return `Not scored: ${r.reason ?? r.not_scored_reason ?? "no reason stored"}`;
+  const reason = r.reason ?? r.not_scored_reason;
+  if (reason === null || reason === undefined || reason.trim() === "") return "Not scored";
+  const said = Object.hasOwn(NOT_SCORED_REASON, reason) ? NOT_SCORED_REASON[reason] : REASON_KEY.test(reason) ? null : reason;
+  return said ? `Not scored: ${said}` : "Not scored";
 }
 
 export type GuidanceRow = {
@@ -78,7 +142,7 @@ function row(r: CallGuidanceRow, i: number, citations: readonly AiCitationRow[],
     basis: r.basis ? (BASIS[r.basis as keyof typeof BASIS] ?? r.basis) : "Not stated",
     firstStated: r.first_stated_on ? formatDate(r.first_stated_on) : NOT_AVAILABLE,
     latest: r.vintage_date ? `${revision}, ${r.fiscal_label} call, ${formatDate(r.vintage_date)}` : `${revision}, ${r.fiscal_label} call`,
-    actual: r.actual === null ? NOT_AVAILABLE : formatStatedValue(r.actual, r.unit),
+    actual: actualText(r),
     outcome: outcomeText(r),
     inRate: r.counted === null ? NOT_AVAILABLE : r.counted ? "Yes" : "No",
     citation: cite ? citationOf(cite, pages) : null,

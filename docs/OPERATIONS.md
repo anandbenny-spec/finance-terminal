@@ -109,7 +109,7 @@ manager can't hold its own way back in.
 |---|---|---|---|
 | **GitHub** (the app repo, the private fixtures and backup repos) | the code; Actions runs the schedules; the secrets above | Actions minutes are free on a public repo. **Scheduled workflows switch off after 60 days with no repository activity.** Scheduled runs can also start very late, or not at all (28 Oct 2026, #158) | `keep-alive.yml` re-enables the scheduled workflows on the 1st and 15th, using its own token; the `watch` catch-up runs and the dead-man check cover a missed run. If `keep-alive` itself is off: Actions tab → each workflow → Enable |
 | **Vercel** (free, Hobby plan; one project, two services) | hosts the site and `/api/*`; one cron | **Cron runs at most once a day, at some point inside the scheduled hour** (`vercel.json`: 03:17 UTC). Hobby is for non-commercial use, which this project is | a cron missed on a given day is covered by `keepalive-db.yml`. Don't add a sub-daily Vercel cron: the deploy fails |
-| **Supabase** (free plan; a production and a dev project) | the database, the Data API and file storage | **A free project is paused after a week of low activity** (an email warns about a week before). Free-plan database and storage size caps (see each project's Usage page; the build kept raw files under an 850 MB stop, #265) | the keep-alive (daily Vercel cron plus `keepalive-db` twice a day) prevents the pause. If paused anyway: section 5.5. At a size cap, writes can be refused: the daily load fails and `/api/health` goes degraded |
+| **Supabase** (free plan; a production and a dev project) | the database, the Data API and file storage | **A free project is paused after a week of low activity** (an email warns about a week before). Free-plan database and storage size caps (see each project's Usage page; the build warns at 850 MB of raw files, #265, and holds new transcript files at 900 MB, #387) | the keep-alive (daily Vercel cron plus `keepalive-db` twice a day) prevents the pause. If paused anyway: section 5.5. At a size cap, writes can be refused: the daily load fails and `/api/health` goes degraded |
 | **Anthropic Console** | the API key for AI summaries and extraction | prepaid credit; the plan's $100 API credit runs to 21 Nov 2026 (18 Nov is when Claude Max ends, not the credit). The pipeline's own $15 monthly switch (`ai_monthly_budget_usd`) stays on | no credit: AI steps skip with the reason "no API credits left"; published AI outputs stay as they are (section 5.3) |
 | **MongoDB Atlas** (for Voyage embeddings) | the Voyage model API key; a payment method is on file | billing; keys are managed in Atlas | a refused or unpaid key: embedding steps skip |
 | **FRED** (St. Louis Fed) | the free API key for the daily rates and series | FRED's terms let it disable a key or change its API at any time | the daily load fails (the first thing to break); health goes degraded |
@@ -261,15 +261,34 @@ gh workflow run watch.yml --repo anandbenny-spec/finance-terminal -f target=prod
 ### 5.9 When the bucket nears 850 MB
 
 The raw bucket holds every stored source file: earnings-call PDFs, NSE replies, filings, and the Fed and RBI documents.
-Supabase's Free plan allows 1 GB of file storage per project. The build set a stop at **850 MB** (`raw_storage_stop_mb` in
-`py/config/equity/calls.yaml`, 85% of the cap; Plan 04b P5, #265). Nothing else watches the size.
+Supabase's Free plan allows 1 GB of file storage per project. Two levels in `py/config/equity/calls.yaml` watch it, both in MB
+of stored objects (1 MB = 1,048,576 bytes): a warning at **850 MB** (`raw_storage_stop_mb`; Plan 04b P5, #265) and a hard stop
+for new transcript files at **900 MB** (`raw_storage_hold_mb`; F3-02, #387). Read as 10^9 bytes, the 1 GB cap is 953.7 MB in
+these units, so the stop leaves about 54 MB for everything it doesn't hold.
 
-**What the stop does, and what it doesn't.** The `raw_storage` check of `equity.call_transcripts` (a `weekly` task) compares
-the bucket with the stop. It is a warning, not a brake: over the stop the run still succeeds and still stores files. The only
-trace is an open alert, `check:equity.call_transcripts:raw_storage`, on the admin Health page (`/admin/health`) and in
-`ops.alert`. It sends no email, and `/api/health` does not read it, so both monitors stay green (section 5.1). The hard limit
-is Supabase's own cap: at it, writes can be refused and the daily load fails too (section 3, Supabase row). So 850 MB is a
-prompt to act, not the point where harm is prevented.
+**The warning (850 MB).** The `raw_storage` check of `equity.call_transcripts` (a `weekly` task) compares the bucket with it
+after the run has stored its files. Over it the run still succeeds and still stores files; the trace is an open alert,
+`check:equity.call_transcripts:raw_storage`, on the admin Health page (`/admin/health`) and in `ops.alert`. It is the early
+signal: act on it.
+
+**The stop (900 MB).** `equity.call_transcripts` lists the bucket once at the start of each run and counts every PDF it keeps.
+At or over 900 MB, or when the bucket can't be listed (the stop fails closed), each company left in the run is held before
+anything of it is fetched: discovery still runs and records its NSE replies, but no transcript, cover letter or company PDF
+is fetched or stored and no call row is written. The task still succeeds, so what it recorded and the calls stored before
+the stop are kept. Where it shows: an **error** alert `storage_stop:equity.call_transcripts` ("storage stop reached") and the
+failed `storage_stop` check on the admin Health page, an `::error` annotation on the run's page in GitHub Actions (counts
+and sizes only), and the `storage_held` check, which names each held company and season. `equity.brsr` (the BRSR files, each June to September) consults the same stop at the same level (one key,
+`raw_storage_hold_mb`): at or over it, no new BRSR file is fetched or stored, both exchanges' lists are still recorded, the held
+company-years are named by its `files_served` check, and its own `storage_stop` check and error alert
+`storage_stop:equity.brsr` open. The stop holds only the files that grow by the season (transcripts and BRSR). Module 1's documents, prices, filings and
+shareholding never consult it and keep storing up to Supabase's cap: about 20 to 25 MB a quarter, so the room under the
+cap lasts about two quarters after the stop. Neither level sends an email, and `/api/health` reads neither, so both
+monitors stay green (section 5.1). At Supabase's own cap writes can be refused and the daily load fails too (section 3,
+Supabase row).
+
+**The two ways out** are free space (move files out of the bucket: exit 1 below, then a separate decision to delete the
+Supabase copies) or a paid plan (exit 3). Both are the owner's decisions; no code deletes anything, and raising the stop
+(exit 2) only spends the room left for the daily load.
 
 **How fast it grows** (production, measured 8 Nov 2026; measure again rather than trust this). The bucket held 269 MB before
 the earnings-call history was loaded and 676 MiB after it: about 300 calls, about 400 MB. Each results season (four a year)
@@ -298,10 +317,11 @@ order by 3 desc;
    - *Buys:* new files stop counting against the 1 GB. *The catch:* one more service to keep alive with no subscription,
      which is why it was parked (30 Oct and 8 Nov 2026). Deleting the Supabase copies afterwards is a separate, irreversible
      decision.
-2. **A higher stop.** Raise `raw_storage_stop_mb` in `py/config/equity/calls.yaml` in a pull request.
+2. **A higher stop.** Raise `raw_storage_stop_mb` (the warning) or `raw_storage_hold_mb` (the stop; it must stay above the
+   warning) in `py/config/equity/calls.yaml` in a pull request.
    - *Needs:* the owner's word, with the reason written next to the line (it loosens a check).
-   - *Buys:* about one more season at the 8 Nov rate. *The catch:* it only moves the warning. Supabase's 1 GB cap stays, and
-     the daily load shares the bucket, so leave room for it.
+   - *Buys:* part of a season. *The catch:* Supabase's 1 GB cap stays, and the daily load shares the bucket: every MB the
+     stop moves up is a MB less for module 1 and the prices, so leave room for them.
 3. **Supabase Pro.** Move production's organisation to a paid plan.
    - *Needs:* the owner's decision (a paid plan) and no code. Production has had its own organisation since 9 Nov 2026, so it
      applies to that one, not dev's.
@@ -311,7 +331,10 @@ order by 3 desc;
 (`CLAUDE.md` §3), and deleting stored objects is irreversible (§7). Do not point `ft/storage.py` at another store by hand.
 
 **After an exit,** read the size again with the query above, start `weekly` by hand (5.7), and check that the
-`raw_storage` alert closes: the next run that passes the check resolves it.
+`raw_storage` and `storage_stop` alerts close: the next run that passes each check resolves it. That run builds the held
+calls of each company's two newest seasons. If the stop held calls for longer, run a `backfill` of
+`equity.call_transcripts` with `--since` the date of the first held filing (the `storage_held` check of the first held run
+names the seasons) to build the older ones.
 
 ### 5.10 Incident record: call-transcript summaries requested in error (8 to 10 Nov 2026; #351, #356)
 

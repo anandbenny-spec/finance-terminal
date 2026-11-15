@@ -43,6 +43,30 @@ def test_spelling_is_not_a_new_segment_but_a_different_name_is():
     assert k("Business") != k("Bus") and k("Glass") == k("glass")                       # "ss" isn't a plural
 
 
+def test_rule_2_a_re_typed_label_is_one_name_wherever_its_enumerators_stand():
+    """#553 decision 1: ONGC's Dec 2025 and Sep 2026 spellings of each India segment (#411's verdict) give one key."""
+    k = sg.key
+    assert k("A. (i) (a) In India - E&P - Offshore") == k("A. In India - (i) E&P - a) Offshore")
+    assert k("A. (i) (b) In India - E&P - Onshore") == k("A. In India - (i) E&P - b) Onshore")
+    assert k("A. (ii) In India - Refining & Marketing") == k("A. In India - (ii) Refining & Marketing")
+    assert k("A. (iii) In India - Petrochemicals") == k("A. In India - (iii) Petrochemicals")
+    assert k("In India - E&P - Offshore") == k("Offshore E&P In India")                  # word order doesn't matter
+    assert k("B. Outside India") != k("B. Outside India-E&P")                           # more words: a changed label
+    assert len({k("A. In India"), k("(i) E&P"), k("a) Offshore"), k("b) Onshore"), k("(ii) Refining & Marketing"),
+                k("(iii) Petrochemicals"), k("B. Outside India")}) == 7                 # Jun 2025's seven rows stay seven
+
+
+def test_rule_2_keeps_enumerators_narrow():
+    k = sg.key
+    assert k("Europe and U.S. Stores") != k("Europe Stores")
+    assert k("U.S. Stores") != k("Stores")                                              # "U." isn't a leading "A."
+    assert k("Stores (UK)") != k("Stores (US)")
+    assert k("Oil and Gas (E&P)") != k("Oil and Gas (E&D)")                             # "P)" after "&" isn't an "a)"
+    assert k("Segment (abc)") != k("Segment")
+    assert k("(iv) Power") == k("Power") == k("iv. Power") == k("Power (12)") == k("10. Power")
+    assert k("(c) Corporate") == k("Corporate")
+
+
 def test_reconciling_rows_are_not_segments():
     for d in ("Less: Inter segment revenue", "Less : Exceptional Items", "Add: Exceptional items (net of tax)",
               "(Add)/Less: Inter-segment margins on capital jobs", "Add/(Less): Exceptional items", "Unallocated",
@@ -133,6 +157,69 @@ def test_a_typo_in_the_latest_is_not_a_rename():
     assert outcome([BASE] * 4, {"Refining": 100, "Petrochemicalz": 50, "Retail": 20}).state == "none_flagged"
 
 
+# ONGC's three label sets (#411's verdict; names as filed, revenues made up; the two heading rows of 2025 at 0, as ONGC filed
+# them on production's pack of 14 Nov 2026).
+ONGC_2025 = {"A. In India": 0, "(i) E&P": 0, "a) Offshore": 2200, "b) Onshore": 980, "(ii) Refining & Marketing": 14100,
+             "(iii) Petrochemicals": 330, "B. Outside India": 210}
+ONGC_DEC25 = {"A. (i) (a) In India - E&P - Offshore": 2210, "A. (i) (b) In India - E&P - Onshore": 940,
+              "A. (ii) In India - Refining & Marketing": 15400, "A. (iii) In India - Petrochemicals": 300, "B. Outside India": 180}
+ONGC_SEP26 = {"A. In India - (i) E&P - a) Offshore": 3090, "A. In India - (i) E&P - b) Onshore": 1280,
+              "A. In India - (ii) Refining & Marketing": 17480, "A. In India - (iii) Petrochemicals": 560,
+              "B. Outside India-E&P": 320}
+
+
+def flags(o: sg.Outcome) -> list[tuple]:
+    return [(c.kind, c.before, c.after) for c in o.changes]
+
+
+def test_ongc_sep_2026_is_one_rename_of_outside_india_and_no_india_segment():
+    """#553 decision 1 and 2: rule 1 stored `other` (before "B. Outside India", after all five), which #411's judge rejected."""
+    o = outcome([ONGC_2025, ONGC_DEC25, ONGC_DEC25, ONGC_DEC25], ONGC_SEP26)
+    assert o.state == "changed"
+    assert flags(o) == [("renamed", ["B. Outside India"], ["B. Outside India-E&P"])]
+
+
+def test_ongc_dec_2025_against_the_heading_layout_is_four_renamed_pairs_and_no_other():
+    qs = [D(2024, 12, 31), D(2025, 3, 31), D(2025, 6, 30), D(2025, 9, 30)]
+    o = sg.compare(lu(D(2025, 12, 31), ONGC_DEC25), [lu(pe, ONGC_2025) for pe in reversed(qs)])
+    assert flags(o) == [
+        ("renamed", ["a) Offshore"], ["A. (i) (a) In India - E&P - Offshore"]),
+        ("renamed", ["b) Onshore"], ["A. (i) (b) In India - E&P - Onshore"]),
+        ("renamed", ["(ii) Refining & Marketing"], ["A. (ii) In India - Refining & Marketing"]),
+        ("renamed", ["(iii) Petrochemicals"], ["A. (iii) In India - Petrochemicals"]),
+    ]
+
+
+def test_pairs_are_one_to_one():
+    # "Retail" and "Wholesale" both fit "Retail and Wholesale": no pair, so the merged rule decides
+    hist = {"Retail": 60, "Wholesale": 40, "Digital": 20}
+    assert flags(outcome([hist] * 4, {"Retail and Wholesale": 95, "Digital": 20})) == [
+        ("merged", ["Retail", "Wholesale"], ["Retail and Wholesale"])]
+    assert flags(outcome([hist] * 4, {"Retail and Wholesale": 200, "Digital": 20})) == [
+        ("other", ["Retail", "Wholesale"], ["Retail and Wholesale"])]
+    # one absent name fitting two new names pairs with neither: a split stays `other`
+    assert flags(outcome([{"Power": 50, "Retail": 20}] * 4, {"Thermal Power": 30, "Green Power": 20, "Retail": 20})) == [
+        ("other", ["Power"], ["Thermal Power", "Green Power"])]
+    assert sg.pair(["power"], ["green power", "power thermal"]) == []
+    assert sg.pair(["retail", "wholesale"], ["and retail wholesale"]) == []
+    assert sg.pair(["retail"], ["and retail wholesale"]) == [("retail", "and retail wholesale")]
+
+
+def test_a_pair_comes_first_and_what_is_left_goes_through_the_rule():
+    # L&T, Jun 2022 (the saved filings): "Infrastructure" pairs with "Infrastructure Projects"; the rest stays `other`
+    hist = {"Infrastructure": 300, "Power": 20, "Hydrocarbon": 80, "Heavy Engineering": 10, "Defence Engineering": 10}
+    o = outcome([hist] * 4, {"Infrastructure Projects": 290, "Energy Projects": 100, "Hi-Tech Manufacturing": 20})
+    assert flags(o) == [("renamed", ["Infrastructure"], ["Infrastructure Projects"]),
+                        ("other", ["Power", "Hydrocarbon", "Heavy Engineering", "Defence Engineering"],
+                         ["Energy Projects", "Hi-Tech Manufacturing"])]
+    # a pair and a drop
+    o = outcome([BASE] * 4, {"Oil Refining": 100, "Retail": 20})
+    assert flags(o) == [("renamed", ["Refining"], ["Oil Refining"]), ("dropped", ["Petrochemicals"], [])]
+    # a pair and nothing else absent: a new segment alone adds no flag
+    o = outcome([BASE] * 4, {"Oil Refining": 100, "Petrochemicals": 50, "Retail": 20, "New Energy": 5})
+    assert flags(o) == [("renamed", ["Refining"], ["Oil Refining"])]
+
+
 def test_reporting_one_segment_or_several():
     assert outcome(["Cars"] * 4, "Cars").state == "single_segment"
     o = outcome([BASE] * 4, "Energy")
@@ -141,6 +228,18 @@ def test_reporting_one_segment_or_several():
     assert [(c.kind, c.before, c.after) for c in o.changes] == [("single_to_multi", [], ["Refining", "Petrochemicals", "Retail"])]
     # the quarter after a switch to several segments compares nothing new (JioFin, Sep 2026)
     assert outcome(["Energy"] * 3 + [BASE], BASE).state == "none_flagged"
+
+
+def test_a_switch_lists_only_segments_with_revenue_on_the_multi_side():
+    """#553 decision 4: Coal India's "Share of Joint Venture Profit/Loss", a results line filed at 0, isn't a segment."""
+    coal = {"Coal": 4624, "Solar": 6, "Share of Joint Venture Profit/Loss": 0}
+    assert flags(outcome(["COAL MINING"] * 3 + ["MINING"], coal)) == [("single_to_multi", [], ["Coal", "Solar"])]
+    assert flags(outcome([coal] * 4, "Mining")) == [("multi_to_single", ["Coal", "Solar"], [])]
+    nil = {"Coal": 4624, "Solar": 6, "Heading": None}
+    assert flags(outcome(["Mining"] * 4, nil)) == [("single_to_multi", [], ["Coal", "Solar"])]
+    # fewer than two with revenue: every line as filed, so a flag never shows one name under "several"
+    one = {"Coal": 4624, "Share of Joint Venture Profit/Loss": 0}
+    assert flags(outcome(["Mining"] * 4, one)) == [("single_to_multi", [], ["Coal", "Share of Joint Venture Profit/Loss"])]
 
 
 def test_a_missing_or_held_earlier_quarter_means_not_compared():
@@ -297,17 +396,31 @@ def test_mm_stable_quarters_give_no_flag():
 
 
 # The rule over every quarter of the 26 saved companies (rule_version 1, fixed on 11 Nov 2026 before any production run; the
-# handoff on #409 lists them). A change to the rule that moves this list is a new rule_version.
+# handoff on #409 lists them). A change to the rule that moves this list is a new rule_version. Rule 2 (#553, 14 Nov 2026; its
+# handoff has the before and after): HUL's Jun 2024 `other` is now a `renamed` pair ("Beauty & Personal Care" to "Personal
+# Care"; "Beauty & Wellbeing" is new, and a new segment alone is no flag), and L&T's Jun 2022 `other` keeps its `other` and adds
+# a `renamed` pair ("Infrastructure" to "Infrastructure Projects"). No flag disappeared.
 SWEEP = {
     ("COALINDIA", "2026-06-30", "single_to_multi"), ("ETERNAL", "2024-06-30", "renamed"), ("GRASIM", "2021-12-31", "renamed"),
     ("GRASIM", "2022-12-31", "renamed"), ("GRASIM", "2024-03-31", "other"), ("HDFCBANK", "2024-03-31", "renamed"),
-    ("HINDUNILVR", "2021-06-30", "renamed"), ("HINDUNILVR", "2024-06-30", "other"), ("HINDUNILVR", "2024-12-31", "renamed"),
+    ("HINDUNILVR", "2021-06-30", "renamed"), ("HINDUNILVR", "2024-06-30", "renamed"), ("HINDUNILVR", "2024-12-31", "renamed"),
     ("HINDUNILVR", "2025-06-30", "renamed"), ("ICICIBANK", "2022-06-30", "dropped"), ("ITC", "2024-12-31", "dropped"),
     ("JIOFIN", "2026-06-30", "single_to_multi"), ("LT", "2021-06-30", "dropped"), ("LT", "2022-06-30", "other"),
+    ("LT", "2022-06-30", "renamed"),
     ("LT", "2026-06-30", "other"), ("M&M", "2023-06-30", "merged"), ("RELIANCE", "2020-06-30", "renamed"),
     ("RELIANCE", "2020-12-31", "merged"), ("RELIANCE", "2023-06-30", "dropped"), ("SBIN", "2020-12-31", "renamed"),
     ("TCS", "2023-09-30", "renamed"), ("TMPV", "2025-06-30", "dropped"), ("TMPV", "2025-12-31", "dropped"),
 }
+
+
+@needs_fixtures
+def test_rule_2_moves_the_saved_flags_only_by_its_pairs_and_its_lists():
+    assert flags(at("HINDUNILVR", D(2024, 6, 30))) == [("renamed", ["Beauty & Personal Care"], ["Personal Care"])]
+    assert flags(at("LT", D(2022, 6, 30))) == [
+        ("renamed", ["Infrastructure"], ["Infrastructure Projects"]),
+        ("other", ["Defence Engineering", "Heavy Engineering", "Hydrocarbon", "Power"], ["Energy Projects", "Hi-Tech Manufacturing"])]
+    assert flags(at("COALINDIA", D(2026, 6, 30))) == [("single_to_multi", [], ["Coal", "Solar"])]
+    assert flags(at("RELIANCE", D(2020, 12, 31))) == [("merged", ["Petrochemicals", "Refining"], ["Oil to Chemicals (O2C)"])]
 
 
 @needs_fixtures
@@ -323,6 +436,17 @@ def test_the_rule_over_every_saved_quarter_gives_the_recorded_flags():
             got |= {(sym, pe.isoformat(), c.kind) for c in o.changes}
     assert got == SWEEP
     assert states["changed"] == 24 and states["none_flagged"] > 300 and states["single_segment"] > 100
+
+
+def test_a_company_with_no_line_up_anywhere_is_named_with_its_filings_reason_classes():
+    """#553 step 5 (HDFC Life's reason class was in no check's detail): counts of reason classes, never a name."""
+    from ft.jobs.tasks.equity_segment_changes import Item, _why_none
+    items = [Item(i, 7, "zs-life", 100 + i, QS[i], None, error=sg.SegmentError("no_disclosure", "no segment disclosure"))
+             for i in range(4)]
+    items.append(Item(9, 7, "zs-life", 109, QS[4], None, error=sg.SegmentError("unreadable", "x")))
+    items.append(Item(10, 8, "zs-other", 110, QS[4], None, lineup=lu(QS[4], BASE)))
+    assert _why_none(items, 7) == " (no_disclosure 4, unreadable 1)"
+    assert _why_none(items, 8) == ""
 
 
 # ---------------------------------------------------------------------------------------------- wiring
@@ -514,7 +638,7 @@ def test_a_refresh_stores_six_quarters_and_reliances_merged_flag(s3):
     flags = q("""select c.period_end, c.kind, c.segments_before, c.segments_after, round(c.revenue_ratio, 3), c.previous_period_end, c.rule_version
                    from equity.segment_change c join core.entity e on e.id = c.entity_id where e.slug = 'zs-reliance'""")
     assert flags == [(D(2020, 12, 31), "merged", ["Petrochemicals", "Refining"], ["Oil to Chemicals (O2C)"], Decimal("0.913"),
-                      D(2020, 9, 30), 1)]
+                      D(2020, 9, 30), 2)]
     assert q("""select distinct reporting from equity.segment_lineup l join core.entity e on e.id = l.entity_id
                  where e.slug = 'zs-maruti'""") == [("single",)]
     c = checks(tr)
@@ -532,6 +656,24 @@ def test_a_second_run_writes_nothing(s3):
     code, tr = go()
     assert code == 0 and tr[1] == 0
     assert q("select count(*), sum(coalesce(revenue, 0)) from equity.segment_lineup where entity_id in (select id from core.entity where slug like 'zs-%%')") == before
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_a_run_on_a_new_rule_version_rewrites_every_flag_even_an_unchanged_one(s3):
+    """#553 step 3: after a run on rule 2, every stored flag reads rule_version 2, including one whose result didn't change
+    (Reliance's merge here, Coal India's switch on production), so the judge can tell which rule made each flag."""
+    seed()
+    go()
+    ids = "(select id from core.entity where slug like 'zs-%%')"
+    q(f"update equity.segment_change set rule_version = 1 where entity_id in {ids}")      # as rule 1 left production
+    code, tr = go()
+    assert code == 0 and tr[0] == "success", tr[3]
+    assert q(f"select distinct rule_version from equity.segment_change where entity_id in {ids}") == [(sg.RULE_VERSION,)]
+    assert sg.RULE_VERSION == 2
+    assert q(f"select count(*) from equity.segment_change where entity_id in {ids}") == [(1,)]
+    code, tr = go()
+    assert code == 0 and tr[1] == 0                                                       # and then nothing to write
 
 
 @pytest.mark.db

@@ -46,6 +46,13 @@ columns:
     chain: [Revenues, RevenueFromContractWithCustomerExcludingAssessedTax, RevenueFromContractWithCustomerIncludingAssessedTax,
             SalesRevenueNet, RevenuesNetOfInterestExpense, SalesRevenueGoodsNet, OperatingLeasesIncomeStatementLeaseRevenue,
             RealEstateRevenueNet, InterestAndDividendIncomeOperating]
+    # US-08's fail (#407, seed us08-20261114; job US-02d, #558): the income statement's total wins. A tag of `totals`
+    # filed for a period in a filing is taken before every other tag of the chain filed for it, whichever tag is
+    # primary: American Express tags its total revenues net of interest expense RevenuesNetOfInterestExpense and the
+    # part inside the revenue-from-contracts standard RevenueFromContractWithCustomerExcludingAssessedTax (its segment
+    # note: 41,304 against 72,229 for 2025, $ millions), and the narrower tag had been stored. The task's
+    # revenue_alternatives warning names any period where another tag of the chain is still more than 0.5% above.
+    totals: [Revenues, RevenuesNetOfInterestExpense]
   operating_income: {kind: flow, chain: [OperatingIncomeLoss]}
   finance_cost: {kind: flow, chain: [InterestExpense, InterestExpenseNonoperating, InterestExpenseDebt]}
   pbt:

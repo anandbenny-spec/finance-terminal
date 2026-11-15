@@ -1,8 +1,8 @@
 # Two-minute demo script
 
 For a recruiter or interviewer. Open the live site in a desktop browser (1440 px wide) before you start, and say the
-one-line pitch first: *"An AI research terminal for Indian markets and the Fed–RBI policy cycle, where every number
-shows its source and the AI can only quote what it can cite."*
+one-line pitch first: *"An AI research terminal for Indian and US markets and the Fed–RBI policy cycle, where every
+number shows its source and the AI can only quote what it can cite."*
 
 Read the site as it is on the day: some panels (AI summaries, extracted call figures, model-based valuation fields)
 appear only after the owner has checked them, and the site shows a labelled state until then. Each beat has a fallback

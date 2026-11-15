@@ -37,7 +37,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
           HEAD_SHA: ${{ github.sha }}
-          WEB_READS: '^(web/|py/config/eval/sets/|vercel\.json$|\.github/workflows/ci\.yml$)'   # web/'s tests read the labelling set
+          WEB_READS: '^(web/|py/config/eval/sets/|py/config/equity/guidance_metrics\.yaml$|vercel\.json$|\.github/workflows/ci\.yml$)'   # web/'s tests read the labelling set and the guidance map's units (#532)
         run: |
           case "$EVENT" in
             pull_request) from="$BASE_SHA" ;;

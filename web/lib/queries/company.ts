@@ -8,6 +8,8 @@
 // exists, the Financials tab says that holding isn't published yet and the rest of the page is unaffected. The segment-changes
 // reads (DD-02, #410: view 0038 and the field policy) fail on their own the same way: before 0038 is pushed, or when either read
 // fails, the panel holds back (no policy read is a hidden field) or says it couldn't load, and the rest of the tab is unaffected.
+// The KPI-table pilot's reads (DD-06, #514: view 0047, and the company's calls) are made for the 7 pilot companies only, and fail
+// on their own the same way; the calls are read only when the view returned a flag (none while equity.kpi_changes is hidden).
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cacheLife, cacheTag } from "next/cache";
 import { dateInZone } from "@/lib/format";
@@ -19,8 +21,10 @@ import type {
   CompanyRow,
   CompanyValuationRow,
   CorporateActionRow,
+  EarningsCallRow,
   FieldPolicyRow,
   ForecastRow,
+  KpiChangeRow,
   PeerCompRow,
   PromoterHoldingRow,
   SegmentChangeRow,
@@ -29,12 +33,13 @@ import type {
 } from "@/lib/queries/api";
 import { indexesOf, readIndexMembers } from "@/lib/queries/equity";
 import { readFieldPolicy, readSeriesInfo, type PolicyDb } from "@/lib/queries/policy";
-import { readCallsTab, type CallsTabData } from "@/lib/queries/calls";
+import { readCallsTab, readCompanyCalls, type CallsTabData } from "@/lib/queries/calls";
 import { readRateTab, type RateTabData } from "@/lib/queries/rate";
 import { readAll } from "@/lib/queries/read";
 import { readValueChainOverview, type ValueChainOverviewData } from "@/lib/queries/valuechain";
 import { publicClient } from "@/lib/supabase/public";
 import type { TabId } from "@/lib/equity/company";
+import { isKpiPilot } from "@/lib/equity/kpi";
 import { IMF_CPI, IMF_GDP } from "@/lib/equity/valuation";
 import { IN_10Y, US_10Y } from "@/lib/policy/longrates";
 
@@ -87,6 +92,23 @@ export async function readFinancials(db: CompanyDb, slug: string): Promise<Compa
   );
 }
 
+/** The filed ends of a US company's quarters, years and balance sheets (US-06b, #564): what its Overview and Valuation
+ * dates are resolved against (components/company/us/filedDates.ts), so a 52/53-week filer's figure shows its filed end. */
+export type FiledEndRow = Pick<CompanyFinancialRow, "period_kind" | "period_end">;
+
+export async function readFiledEnds(db: CompanyDb, slug: string): Promise<FiledEndRow[]> {
+  return readAll<FiledEndRow>("api.company_financials ends", (from, to) =>
+    db
+      .from("company_financials")
+      .select("period_kind, period_end", { count: "exact" })
+      .eq("slug", slug)
+      .in("period_kind", ["quarter", "year", "instant"])
+      .order("period_kind")
+      .order("period_end")
+      .range(from, to),
+  );
+}
+
 export async function readActions(db: CompanyDb, slug: string): Promise<CorporateActionRow[]> {
   return readAll<CorporateActionRow>("api.company_corporate_actions", (from, to) =>
     db
@@ -111,6 +133,34 @@ export async function readSegmentChanges(db: CompanyDb, slug: string): Promise<S
   return readAll<SegmentChangeRow>("api.segment_changes", (from, to) =>
     db.from("segment_changes").select("*", { count: "exact" }).eq("company_slug", slug).order("change_no").range(from, to),
   );
+}
+
+/** The KPI-table pilot's confirmed flags for the company (0047, #512): none while equity.kpi_changes is hidden or none is confirmed. */
+export async function readKpiChanges(db: CompanyDb, slug: string): Promise<KpiChangeRow[]> {
+  return readAll<KpiChangeRow>("api.kpi_changes", (from, to) =>
+    db
+      .from("kpi_changes")
+      .select("*", { count: "exact" })
+      .eq("company_slug", slug)
+      .order("period_end", { ascending: false })
+      .order("dict_key")
+      .range(from, to),
+  );
+}
+
+/** The pilot panel's reads (DD-06, #514): its flags, then the company's calls only when there is a flag to word. Each part null
+ * when its read failed; the calls undefined when not read. */
+export async function readKpiPanel(db: CompanyDb, slug: string): Promise<{ kpiChanges: KpiChangeRow[] | null; kpiCalls?: EarningsCallRow[] | null }> {
+  const kpiChanges = await readKpiChanges(db, slug).catch((error: unknown) => {
+    logFailure(`${slug} KPI changes`, error);
+    return null;
+  });
+  if (!kpiChanges || kpiChanges.length === 0) return { kpiChanges };
+  const kpiCalls = await readCompanyCalls(db, slug).catch((error: unknown) => {
+    logFailure(`${slug} KPI calls`, error);
+    return null;
+  });
+  return { kpiChanges, kpiCalls };
 }
 
 export async function readValuationRuns(db: CompanyDb, slug: string): Promise<CompanyValuationRow[]> {
@@ -153,6 +203,8 @@ export type OverviewData = {
   peers: PeerCompRow[];
   /** The value chain panel's reads (VC-06, #191); each part null when its read failed (view 0034 not pushed yet). Absent: not read. */
   valueChain?: ValueChainOverviewData;
+  /** A US company's filed period ends (US-06b, #564), for the key figures' dates. Absent: not read (India). */
+  filed?: FiledEndRow[];
 };
 export type FinancialsData = {
   financials: CompanyFinancialRow[];
@@ -163,6 +215,10 @@ export type FinancialsData = {
   segmentChanges?: SegmentChangeRow[] | null;
   /** The field policies, for the segment-changes panel's gate; null or absent when not read, which holds the panel back. */
   policies?: FieldPolicyRow[] | null;
+  /** api.kpi_changes for a pilot company (DD-06, #514); null when its read failed. Absent: not a pilot company, or not read. */
+  kpiChanges?: KpiChangeRow[] | null;
+  /** The company's calls, read only when kpiChanges has a flag; null when that read failed. */
+  kpiCalls?: EarningsCallRow[] | null;
 };
 
 export type ValuationData = {
@@ -173,6 +229,8 @@ export type ValuationData = {
   imf: ForecastRow[] | null;
   /** The IMF series' and the India 10-year's source lines; null when they can't be read. */
   series: SeriesRow[] | null;
+  /** A US company's filed period ends (US-06b, #564), for the assumptions' dates. Absent: not read (India). */
+  filed?: FiledEndRow[];
 };
 
 export type CompanyPageData =
@@ -301,7 +359,7 @@ export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: st
     ]);
     data.overview = { prices, metrics, peers, valueChain };
   } else {
-    const [rows, metrics, promoter, segmentChanges, policies] = await Promise.all([
+    const [rows, metrics, promoter, segmentChanges, policies, kpi] = await Promise.all([
       readFinancials(db, slug),
       readCompanyMetrics(db, slug),
       readPromoterHolding(db, slug).catch((error: unknown) => {
@@ -316,8 +374,9 @@ export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: st
         logFailure(`${slug} field policy`, error);
         return null;
       }),
+      isKpiPilot(slug) ? readKpiPanel(db, slug) : Promise.resolve(null),
     ]);
-    data.financials = { financials: rows, metrics, promoter, segmentChanges, policies };
+    data.financials = { financials: rows, metrics, promoter, segmentChanges, policies, ...(kpi ?? {}) };
   }
   return data;
 }
@@ -333,21 +392,23 @@ export function tabReadFailed(data: TabData, market: "IN" | "US"): boolean {
   const vc = overview?.valueChain;
   if (vc && (vc.rows === null || vc.products === null || vc.policies === null)) return true;
   if (financials && ((market === "IN" && financials.promoter === null) || financials.segmentChanges === null || financials.policies === null)) return true;
+  if (financials && (financials.kpiChanges === null || financials.kpiCalls === null)) return true;
   if (valuation && (valuation.series === null || (market === "IN" && valuation.imf === null))) return true;
   if (calls && (calls.guidance === null || calls.remarks === null || calls.results.state === "error" || calls.tone.state === "error")) return true;
   return false;
 }
 
-/** A US company's tab reads (Spec 02A.1 §7). Earnings calls and rate decisions read nothing: the page says they don't apply. */
+/** A US company's tab reads (Spec 02A.1 §7). Earnings calls and rate decisions read nothing: the page says they don't apply.
+ * The Overview and Valuation tabs also read the filed period ends (US-06b, #564), whole or not at all like the tab's other reads. */
 async function loadUsTab(db: CompanyDb, slug: string, tab: TabId, data: TabData): Promise<TabData> {
   if (tab === "overview") {
-    const [prices, metrics, peers] = await Promise.all([readCompanyPrices(db, slug), readCompanyMetrics(db, slug), readPeers(db, slug)]);
-    data.overview = { prices, metrics, peers };
+    const [prices, metrics, peers, filed] = await Promise.all([readCompanyPrices(db, slug), readCompanyMetrics(db, slug), readPeers(db, slug), readFiledEnds(db, slug)]);
+    data.overview = { prices, metrics, peers, filed };
   } else if (tab === "financials") {
     const [rows, metrics] = await Promise.all([readFinancials(db, slug), readCompanyMetrics(db, slug)]);
     data.financials = { financials: rows, metrics, promoter: null };
   } else if (tab === "valuation") {
-    const [runs, scenarios, policies, series] = await Promise.all([
+    const [runs, scenarios, policies, series, filed] = await Promise.all([
       readValuationRuns(db, slug),
       readScenarios(db, slug),
       readFieldPolicy(db as PolicyDb),
@@ -355,8 +416,9 @@ async function loadUsTab(db: CompanyDb, slug: string, tab: TabId, data: TabData)
         logFailure(`${slug} valuation series`, error);
         return null;
       }),
+      readFiledEnds(db, slug),
     ]);
-    data.valuation = { runs, scenarios, policies, imf: null, series };
+    data.valuation = { runs, scenarios, policies, imf: null, series, filed };
   }
   return data;
 }

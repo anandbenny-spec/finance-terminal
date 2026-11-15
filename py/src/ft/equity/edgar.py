@@ -8,7 +8,10 @@ which imports its rules from here, its tests unchanged. The rules (Data Audit 02
   E1's 19 Oct run);
 - durations classed by day count, never by the fiscal-period labels (`F.kind`);
 - a chain of tags per field, the primary the first still current (`pick_tags`: a tag abandoned for over 400 days
-  gives way, the revenue tag changes of red flag 10), the rest filling only what the primary lacks;
+  gives way, the revenue tag changes of red flag 10), the rest filling only what the primary lacks; a column's
+  `totals` come before the rest wherever a filing files them for the period, so the income statement's total revenue
+  wins over a narrower tag filed beside it (American Express's revenue from contracts with customers in its segment
+  note: US-08's fail, #558; `Statements.alternatives` and the task's revenue_alternatives warning compare the rest);
 - year-end balances chosen by date (`fiscal_year_ends`), never by the form of the latest filing;
 - CIK succession: a predecessor CIK's facts merged, the successor's winning (`merge_companyfacts`);
 - equity fills net of non-controlling interests (a fill from the other equity concept adjusts by `MinorityInterest`
@@ -49,7 +52,9 @@ from pathlib import Path
 import yaml
 
 # Bump it when a change alters what a filing's rows are: the task rebuilds older filings' rows from that run's bytes.
-PARSER_VERSION = 3           # 3 (#470, 12 Nov 2026): IBM's filed total, other short-term borrowings beside commercial
+PARSER_VERSION = 4           # 4 (#558, 14 Nov 2026): revenue is the income statement's total (a `totals` tag filed for
+                             # the period wins over a narrower one: American Express);
+                             # 3 (#470, 12 Nov 2026): IBM's filed total, other short-term borrowings beside commercial
                              # paper, pre-tax income in parts, the parts rules off where they don't tie;
                              # 2 (#455, 12 Nov 2026): current debt summed from its filed captions, no row displacing a
                              # fuller one, Visa's share classes (1: US-02's first load, #401)
@@ -238,6 +243,7 @@ class Column:
     filed_total: dict[str, FiledTotal] = field(default_factory=dict)    # ticker -> its one caption that is the whole
     all_parts: tuple[str, ...] = ()  # flows: where no chain tag is filed for a period and all of these are, their sum
     all_parts_label: str = ""
+    totals: tuple[str, ...] = ()     # chain tags taken before the rest wherever filed: the statement's total (#558)
 
     @property
     def unit(self) -> str:
@@ -388,8 +394,11 @@ def load_tags(path: Path | None = None) -> TagConfig:
         if all_parts and (kind != "flow" or len(all_parts) < 2 or not label or set(all_parts) & {e.tag for e in chain}):
             raise EdgarError(f"us_tags.yaml: {name}: all_parts is for a flow column, two or more tags outside its chain, "
                              "with all_parts_label")
+        firsts = tuple(spec.get("totals") or ())
+        if firsts and (kind != "flow" or not set(firsts) <= {e.tag for e in chain} or len(set(firsts)) != len(firsts)):
+            raise EdgarError(f"us_tags.yaml: {name}: totals is for a flow column and names tags of its chain, each once")
         cols[name] = Column(name, kind, tuple(chain), parts, groups, included, not_summed, added_to, tie, totals,
-                            all_parts, label)
+                            all_parts, label, firsts)
     bal = raw.get("balance_check") or {}
     classes = {ticker: _share_classes(ticker, c) for ticker, c in (raw.get("share_classes") or {}).items()}
     need = ("liabilities", "total", "temporary_equity", "temporary_equity_total", "tolerance")
@@ -631,6 +640,7 @@ class Tie:
 
 
 TIE_TOLERANCE = Decimal(1_000_000)   # $1 million (#470)
+ALT_TOLERANCE = Decimal("0.005")     # 0.5%: another tag of a chain against the stored figure (#558)
 
 
 class Statements:
@@ -656,7 +666,10 @@ class Statements:
         self.order: dict[str, list[Entry]] = {}
         for c in cfg.columns.values():
             by_tag = {e.tag: e for e in c.chain}
-            self.order[c.name] = [by_tag[t] for t in pick_tags(self.facts, [e.tag for e in c.chain], c.flow)]
+            picked = pick_tags(self.facts, [e.tag for e in c.chain], c.flow)
+            # the statement's totals first, in the order picked (the still-current one leads), then the rest (#558)
+            picked = [t for t in picked if t in c.totals] + [t for t in picked if t not in c.totals]
+            self.order[c.name] = [by_tag[t] for t in picked]
         self.ties = self._ties(since or cfg.start)
         self.untied = {t.column for t in self.ties if not t.ties}     # columns whose parts rule is off for this company
 
@@ -986,6 +999,26 @@ class Statements:
         chain = ({e.tag for e in c.chain} | set(c.parts)) if c else set()
         return sorted({t for (t, u, s, e) in f.facts if e == end and s == start and t not in chain
                        and any(w in t for w in words)})
+
+    def alternatives(self, f: Filing, col: str, r: Row) -> list[tuple[str, str]] | None:
+        """The other tags of a column's chain that filing `f` files for row `r`'s period (the same start and end), each
+        with how it compares with the stored value: "above" or "below" by more than ALT_TOLERANCE of it, else "equal"
+        (a tag with two values in the filing: "above" if either is). None when the row's value isn't one filed tag of
+        the chain (empty, held or derived). The revenue_alternatives warning reads it (#558)."""
+        c = self.cfg.columns[col]
+        v, how = r.values.get(col), r.tags.get(col)
+        if v is None or how not in {e.tag for e in c.chain}:
+            return None
+        band = abs(v) * ALT_TOLERANCE
+        out = []
+        for e in c.chain:
+            if e.tag == how:
+                continue
+            seen = {"above" if x > v + band else "below" if x < v - band else "equal"
+                    for x in f.get(e.tag, c.unit, r.period_start, r.period_end)}
+            if seen:
+                out.append((e.tag, next(k for k in ("above", "equal", "below") if k in seen)))
+        return out
 
     def switched(self, used: dict[str, set[str]]) -> list[str]:
         """Columns whose rows came from more than one tag of their chain, the primary named."""

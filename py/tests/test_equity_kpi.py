@@ -545,11 +545,25 @@ def test_read_reaches_past_200_pages(monkeypatch):
 
 
 def test_the_run_cap_is_what_is_left_of_the_pilot():
-    """The pilot's $5 (pre-approval 2) less DA-10's $0.3864, dev run 2's $0.6196 (13 Nov 2026) and dev run 9's $0.8178
-    (14 Nov 2026), rounded down: no single run can take the pilot past $5 (#512's fix round tightened it from $4.61 to
-    $3.99, part 4 to $3.17)."""
+    """The pilot's $5 (pre-approval 2) less the $2.4733 spent by dev run 15 (DA-10's $0.3864, dev run 2's $0.6196 on 13 Nov
+    2026, dev run 9's $0.8178 and runs 10 to 13 on 14 Nov 2026, $1.8519 in all; dev run 15's flag review $0.6214, #513),
+    rounded down: DD-06's one production run (#514), extraction and the flag review together, can't take the pilot past $5
+    (#512's fix round tightened it from $4.61 to $3.99, part 4 to $3.17; #513 part 2 to $3.14; DD-06 to $2.52). The
+    review's own caps sit inside it."""
     from ft.jobs.tasks import equity_kpi_tables as t
-    assert Decimal("3.17") == t.RUN_LIMIT_USD <= Decimal(5) - Decimal("0.3864") - Decimal("0.6196") - Decimal("0.8178")
+    assert Decimal("2.52") == t.RUN_LIMIT_USD <= Decimal(5) - Decimal("1.8519") - Decimal("0.6214")
+    assert Decimal("1.8519") >= Decimal("0.3864") + Decimal("0.6196") + Decimal("0.8178")
+    assert t.CHECK_LIMIT_USD + t.QUOTE_LIMIT_USD <= t.RUN_LIMIT_USD
+
+
+def test_the_web_panel_shows_on_the_pilot_companies_only():
+    """DD-06 (#514): the Financials tab's panel lists the pilot's companies in web/lib/equity/kpi.ts; they are this task's,
+    in the same order, so the panel never shows on a company the task doesn't read (or misses one it does)."""
+    import re
+    ts = (Path(__file__).resolve().parents[2] / "web" / "lib" / "equity" / "kpi.ts").read_text(encoding="utf-8")
+    m = re.search(r"export const KPI_PILOT = \[([^\]]*)\] as const;", ts)
+    assert m, "KPI_PILOT not found in web/lib/equity/kpi.ts"
+    assert tuple(re.findall(r'"([a-z&-]+)"', m[1])) == dc.COMPANIES
 
 
 # ----------------------------------------------------------------------------------- the fix round (#512 part 2, 14 Nov)
@@ -827,16 +841,22 @@ def test_results_day_counts_say_why_a_quarter_has_none():
 
 
 class _Feed:
-    """NSE's announcements as a fake fetch: answers each window with the rows filed inside it, and records the windows."""
+    """NSE's announcements as a fake fetch, as NSE's new host answered on 14 Nov 2026: a window longer than `short` days
+    answers without the rows in `lost` (dev run 9's missing April 2025 filings); a short window answers with every row
+    filed inside it, or with `short_answer` (dev run 10's HTTP 200 without JSON) when given. Records the windows asked."""
 
-    def __init__(self, rows):
-        self.rows, self.asked = rows, []
+    def __init__(self, rows, lost=(), short=76, short_answer=None):
+        self.rows, self.lost, self.short, self.short_answer, self.asked = rows, set(lost), short, short_answer, []
 
     def __call__(self, symbol, a, b):
         from ft.equity.calls import discovery as calls
         self.asked.append((a, b))
+        is_short = (b - a).days < self.short
+        if is_short and self.short_answer is not None:
+            return self.short_answer
         inside = [r for r in self.rows
-                  if a <= datetime.strptime(r["an_dt"], "%d-%b-%Y %H:%M:%S").date() <= b]
+                  if a <= datetime.strptime(r["an_dt"], "%d-%b-%Y %H:%M:%S").date() <= b
+                  and (is_short or r["seq_id"] not in self.lost)]
         return calls.Answer(200, inside)
 
 
@@ -845,36 +865,98 @@ def _nse_row(seq, when, text, desc):
             "sm_isin": "INE467B01029", "attchmntFile": f"https://nsearchives.nseindia.com/corporate/{seq}.pdf"}
 
 
-def test_discover_asks_one_window_per_quarter_and_finds_the_april_results_day(monkeypatch):
+def _tcs_feed(**kw):
+    return _Feed([
+        _nse_row("1", "09-Jan-2025 15:30:00", "Tata Consultancy Services Limited has submitted to the Exchange, the "
+                 "financial results for the period ended December 31, 2024.", "Outcome of Board Meeting"),
+        _nse_row("2", "10-Apr-2025 15:30:00", "Tata Consultancy Services Limited has submitted to the Exchange, the "
+                 "financial results for the period ended March 31, 2025.", "Outcome of Board Meeting"),
+        _nse_row("3", "10-Apr-2025 16:00:00", "Press Release", "Press Release"),
+        _nse_row("4", "20-Mar-2025 10:00:00", "Trading window closure", "Trading Window"),   # in no quarter's window
+    ], lost={"2", "3"}, **kw)
+
+
+def test_discover_asks_the_long_windows_then_a_short_one_for_a_quarter_without_a_results_day(monkeypatch):
+    """Dev run 9 (14 Nov 2026): the 365-day windows answered without the April 2025 results filings. Dev run 10: short
+    windows alone got no JSON. Now the long windows come first, and only a quarter they leave without a results day
+    (here Q4 FY25) has its own window asked; its rows fill the gap when NSE answers it."""
     from datetime import date
 
     from ft.equity.calls import discovery as calls
     from ft.jobs.tasks import equity_kpi_tables as t
     task = t.EquityKpiTables()
-    feed = _Feed([
-        _nse_row("1", "10-Apr-2025 15:30:00", "Tata Consultancy Services Limited has submitted to the Exchange, the "
-                 "financial results for the period ended March 31, 2025.", "Outcome of Board Meeting"),
-        _nse_row("2", "10-Apr-2025 16:00:00", "Press Release", "Press Release"),
-        _nse_row("3", "20-Mar-2025 10:00:00", "Trading window closure", "Trading Window"),   # in no quarter's window
-    ])
+    feed = _tcs_feed()
     monkeypatch.setattr(task, "_nse", lambda ctx: feed)
     monkeypatch.setattr(task, "_warm", lambda ctx, errors=None: None)
     co = calls.Company(1, "tcs", "TCS", "INE467B01029", None)
-    anns = task.discover(SimpleNamespace(fetcher=None), [co], date(2024, 10, 1), date(2026, 11, 14))
-    assert feed.asked == dc.feed_windows("tcs", date(2024, 10, 1), date(2026, 11, 14))     # 9 windows, no 365-day one
-    assert task.feed == {1: "nse"} and sorted(a.filing_key for a in anns[1]) == ["1", "2"]
+    anns = task.discover(SimpleNamespace(fetcher=None), [co], date(2025, 1, 1), date(2025, 6, 30))
+    assert feed.asked == [(date(2025, 1, 1), date(2025, 6, 30)),                  # the long window (one here)
+                          (date(2025, 4, 1), date(2025, 6, 15))]                  # Q4 FY25's own window, nothing else
+    assert dc.quarter_window("Q4 FY25", date(2025, 1, 1), date(2025, 6, 30)) == feed.asked[1]
+    assert task.feed == {1: "nse"} and sorted(a.filing_key for a in anns[1]) == ["1", "2", "3", "4"]
     rd, cands = dc.candidates(anns[1], dc.load_rules()["tcs"], "Q4 FY25")
-    assert rd == date(2025, 4, 10) and [c.filing_key for c in cands] == ["2"]
+    assert rd == date(2025, 4, 10) and [c.filing_key for c in cands] == ["3"]
 
     h = t.Harvest(companies=[co])
     assert task._preflight(h, anns, dc.load_rules()) is None
-    assert h.windows["tcs"] == {"requests": 9, "leaves": 9, "answered": 9, "rows": 2, "largest": 2, "round": []}
-    assert set(h.no_day) == {f"tcs {q}" for q in dc.quarters("tcs") if q != "Q4 FY25"}
+    assert h.windows["tcs"] == {"requests": 1, "leaves": 1, "answered": 1, "rows": 2, "largest": 2, "round": [],
+                                "retried": {"requests": 1, "leaves": 1, "answered": 1, "rows": 2, "largest": 2,
+                                            "round": []}}
+    assert set(h.no_day) == {f"tcs {q}" for q in dc.quarters("tcs") if q not in ("Q3 FY25", "Q4 FY25")}
     assert h.no_day["tcs Q1 FY26"] == {"rows": 0, "named": 0, "outcome": 0, "rejected": 0}
     checks = {c.name: c for c in task.checks(None, h, 1)}
-    assert checks["feed"].passed and '"requests": 9' in checks["feed"].detail
+    assert checks["feed"].passed and '"retried": {"requests": 1' in checks["feed"].detail
     assert '"tcs Q1 FY26": {"rows": 0' in checks["feed"].detail
     assert "Tata" not in checks["feed"].detail and "Press" not in checks["feed"].detail      # counts only (CLAUDE.md §4)
+
+
+def test_a_short_window_without_json_never_fails_the_feed(monkeypatch):
+    """Dev run 10's answer to every short historical window (HTTP 200, no JSON): the supplement adds nothing, the feed
+    still counts as NSE's (its long windows answered), and the quarter stays held."""
+    from datetime import date
+
+    from ft.equity.calls import discovery as calls
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    feed = _tcs_feed(short_answer=calls.Answer("not JSON"))
+    monkeypatch.setattr(task, "_nse", lambda ctx: feed)
+    monkeypatch.setattr(task, "_warm", lambda ctx, errors=None: None)
+    co = calls.Company(1, "tcs", "TCS", "INE467B01029", None)
+    anns = task.discover(SimpleNamespace(fetcher=None), [co], date(2025, 1, 1), date(2025, 6, 30))
+    assert len(feed.asked) == 2 and task.feed == {1: "nse"}                    # a failed short window isn't split
+    assert dc.results_day(anns[1], dc.load_rules()["tcs"], "Q4 FY25") is None
+    h = t.Harvest(companies=[co])
+    assert task._preflight(h, anns, dc.load_rules()) is None                   # Q3 FY25's results day: the feed passes
+    assert h.windows["tcs"]["retried"] == {"requests": 1, "leaves": 1, "answered": 0, "rows": 0, "largest": 0,
+                                           "round": []}
+    assert h.no_day["tcs Q4 FY25"] == {"rows": 0, "named": 0, "outcome": 0, "rejected": 0}   # NSE sent nothing for it
+
+
+def test_a_long_window_feed_that_fails_asks_no_short_window(monkeypatch):
+    from datetime import date
+
+    from ft.equity.calls import discovery as calls
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    asked = []
+    monkeypatch.setattr(task, "_nse", lambda ctx: lambda s, a, b: asked.append((a, b)) or calls.Answer("not JSON"))
+    monkeypatch.setattr(task, "_warm", lambda ctx, errors=None: None)
+    co = calls.Company(1, "tcs", "TCS", "INE467B01029", None)
+    task.discover(SimpleNamespace(fetcher=None), [co], date(2025, 1, 1), date(2025, 6, 30))
+    assert len(asked) == 3 and task.feed == {1: "none"} and not task.retried   # the failed window and its halves only
+
+
+def test_an_nse_reply_without_json_is_counted_by_its_reason():
+    from ft.jobs.tasks import equity_kpi_tables as t
+
+    class _Html:
+        def get(self, url, **kw):
+            return SimpleNamespace(body=b"<html>Access</html>")
+    task = t.EquityKpiTables()
+    ans = task._get_json(SimpleNamespace(fetcher=_Html()), "https://www.nseindia.com/api/x", "nse", {}, {}, warm=True)
+    assert ans.status == "not JSON" and dict(task.nse_errors) == {"HTTP 200, not JSON": 1}
+    task._get_json(SimpleNamespace(fetcher=_Html()), "https://api.bseindia.com/x", "bse", {}, {}, warm=False)
+    assert sum(task.nse_errors.values()) == 1                             # BSE's replies aren't NSE's
 
 
 def test_window_counts_name_a_leaf_at_a_round_count():
@@ -901,3 +983,91 @@ def test_a_failed_feed_check_still_gives_the_counts():
     detail = {c.name: c for c in task.checks(None, h, 1)}["feed"].detail
     assert detail.startswith("no results day found for tcs; nothing read or written; {")
     assert '"windows": {"tcs": {"requests": 0' in detail and '"tcs Q4 FY25": {"rows": 0' in detail
+
+
+# ----------------------------------------------------------------------------------- a file not had this run (#512 part 4)
+class _FlakyFetcher:
+    """NSE's archive as dev runs 9 and 11 met it: the first `fail` asks for a URL get a 404 page, the next the file."""
+    def __init__(self, bodies, fail=1):
+        self.bodies, self.fail, self.asked, self.db = bodies, fail, [], None
+
+    def get(self, url, *, source, keep=None, allow=()):
+        self.asked.append(url)
+        if self.asked.count(url) <= self.fail:
+            return _Got(b"<html>404</html>")
+        return _Got(self.bodies[url])
+
+
+def _icici_q2fy26():
+    day = datetime(2025, 10, 18, 14, 41, tzinfo=IST)
+    return [Ann("ICICI Bank Limited has submitted to the Exchange, the unaudited financial results", "a.pdf", day,
+                url="full", filing_key="k1", category="Outcome of Board Meeting")]
+
+
+def test_a_file_not_had_is_asked_once_more(monkeypatch):
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    monkeypatch.setattr(t.pdfs, "is_pdf_bytes", lambda b: b.startswith(b"%PDF"))
+    monkeypatch.setattr(task, "_read", lambda body: _info(["cover"] * 13 + ["News Release", "table", "Safe Harbor"]))
+    f = _FlakyFetcher({"full": b"%PDF-full"})
+    body, info, reason = task._fetch_pdf(SimpleNamespace(fetcher=f), _icici_q2fy26()[0])
+    assert f.asked == ["full", "full"] and reason is None and body == b"%PDF-full" and info.pages == 16
+    f = _FlakyFetcher({"full": b"%PDF-full"}, fail=2)                      # twice not had: held, asked no more
+    assert task._fetch_pdf(SimpleNamespace(fetcher=f), _icici_q2fy26()[0])[2] == "the filing is not a PDF"
+    assert f.asked == ["full", "full"]
+    monkeypatch.setattr(task, "_read", lambda body: _info(["cover", "letter"]))
+    f = _FlakyFetcher({"full": b"%PDF-full"}, fail=0)                      # a usable-or-not verdict isn't retried
+    assert task._fetch_pdf(SimpleNamespace(fetcher=f), _icici_q2fy26()[0])[2] is None and f.asked == ["full"]
+
+
+class _KeptDb:
+    """The stored read document (filing `k1`) and its rows, as `_keep_stored` asks for them."""
+    def __init__(self, filing_key="k1"):
+        self.filing_key = filing_key
+
+    def execute(self, sql, params):
+        if "from equity.kpi_document" in sql and "sha256, bytes" in sql:
+            row = (self.filing_key, "full", "NSE", datetime(2025, 10, 18, 14, 41, tzinfo=IST), [14, 15], 16, 0,
+                   b"\x01" * 32, 1234)
+            return SimpleNamespace(fetchone=lambda: row)
+        return SimpleNamespace(fetchall=lambda: [
+            (1, "CASA ratio", None, "percent", Decimal("38.5"), "%", 14, fl.KEPT, None),
+            (2, "Net profit growth", None, "percent_change", Decimal(12), "%", 14, fl.FILTERED, fl.STATEMENT_TOTAL)])
+
+
+def test_a_quarter_whose_file_is_not_had_keeps_its_stored_document(monkeypatch):
+    """Dev run 11 (14 Nov 2026): one failed download replaced HDFC Bank's Q2 FY27, read in run 9, with a hold. Now the
+    stored document of the same filing stands, its rows untouched, and the `documents` check counts it as kept."""
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    monkeypatch.setattr(t.pdfs, "is_pdf_bytes", lambda b: b.startswith(b"%PDF"))
+    monkeypatch.setattr(task, "_extract", lambda *a, **k: pytest.fail("a kept document is never re-asked"))
+    rules = dc.load_rules()
+    f = _FlakyFetcher({"full": b"%PDF-full"}, fail=2)
+    plan = task._one(SimpleNamespace(fetcher=f), _KeptDb(), _Co(5, "icicibank"), rules["icicibank"], "Q2 FY26",
+                     _icici_q2fy26(), None, None, Decimal(25), Decimal(0), t.Harvest())
+    assert plan.status == "read" and plan.kept and plan.reused and plan.held_reason is None
+    assert plan.filing_key == "k1" and plan.pages_used == [14, 15] and plan.sha256 == b"\x01" * 32
+    assert [(v.row_no, v.filter_status) for v in plan.values] == [(1, fl.KEPT), (2, fl.FILTERED)]
+    assert task._rewrite_filters(None, plan) == 0                           # the load writes nothing for it
+    h = t.Harvest(plans=[plan], companies=[])
+    checks = {c.name: c for c in task.checks(None, h, 1)}
+    assert '"kept": 1' in checks["documents"].detail and "1 of 1 read documents" in checks["empty"].detail
+
+    other = task._one(SimpleNamespace(fetcher=_FlakyFetcher({"full": b"%PDF-full"}, fail=2)), _KeptDb("k-other"),
+                      _Co(5, "icicibank"), rules["icicibank"], "Q2 FY26", _icici_q2fy26(), None, None, Decimal(25),
+                      Decimal(0), t.Harvest())
+    assert other.status == "held" and not other.kept                        # a different filing is never kept
+    assert other.held_reason == "results day 18 Oct 2025: no usable filing (1 tried: the filing is not a PDF)"
+
+
+def test_a_file_that_is_not_the_document_is_never_kept(monkeypatch):
+    """Only a file not had keeps the stored document: a file read and found too short is held as before."""
+    from ft.jobs.tasks import equity_kpi_tables as t
+    task = t.EquityKpiTables()
+    monkeypatch.setattr(t.pdfs, "is_pdf_bytes", lambda b: True)
+    monkeypatch.setattr(task, "_read", lambda body: _info(["cover", "letter"]))
+    plan = task._one(SimpleNamespace(fetcher=_DocFetcher({"full": b"%PDF"})), _KeptDb(), _Co(5, "icicibank"),
+                     dc.load_rules()["icicibank"], "Q2 FY26", _icici_q2fy26(), None, None, Decimal(25), Decimal(0),
+                     t.Harvest())
+    assert plan.status == "held" and not plan.kept and "fewer than 10" in plan.held_reason

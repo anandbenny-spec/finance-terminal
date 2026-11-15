@@ -78,9 +78,10 @@ def good_diff_json(docs: list[tuple[str, str]], mode: str = "ok") -> dict:
     out = []
     for doc, sentence in rows:
         q = sentence.strip().rstrip(".")
-        verb = "adds" if doc == "new" else "drops"
+        # "says" and "said", not "adds" and "drops": from v17 (#445, round 16) a sentence the fixtures reword isn't "added"
+        lead = "The new statement says" if doc == "new" else "The previous statement said"
         quote = "words that are in neither statement" if mode == "uncited" else q
-        out.append({"text": f'The new statement {verb} "{q}".', "quotes": [{"document": doc, "text": quote}]})
+        out.append({"text": f'{lead} "{q}".', "quotes": [{"document": doc, "text": quote}]})
     return {"bullets": out}
 
 
@@ -145,14 +146,19 @@ class FakeClaude:
     back in reverse order (the API promises no order). The list endpoint returns the newest batches first.
     JSON-route requests (structured outputs) are answered by `answer(body)` (default: `good_stance` for a stance
     schema, `good_diff_json` for a two-document bullets schema (statement_diff_summary v11 on), no projections otherwise), or, in 'not_json', with text that isn't JSON; the error and stop modes apply to
-    them too, and `answered` lists (schema's first property, answer) for each."""
+    them too, and `answered` lists (schema's first property, answer) for each.
+    The second model's check of a statement_diff_summary v17-on reply (#445, round 16: a schema whose first property is
+    "verdicts") is answered apart: it takes no turn of `script`, isn't listed in `requests` (but in `verify_requests`), costs
+    nothing, and passes every bullet unless `verdict(body)` gives the answer."""
 
     def __init__(self, script=("ok",), *, creates=("ok",), ends_after: int | None = 1, truncate: int | None = None,
-                 cut: str = "mid", answer=None, reply=None):
+                 cut: str = "mid", answer=None, reply=None, verdict=None, verify_usage=(0, 0)):
         self.script, self.requests, self.n = list(script), [], 0
         self.reply = reply                          # citations route: reply(docs, mode) -> text blocks, or None for the default
         self.creates, self.ends_after, self.truncate, self.cut = list(creates), ends_after, truncate, cut
         self.answer, self.answered = answer, []
+        self.verdict, self.verify_requests = verdict, []    # the second model's checks (#445, v17 on)
+        self.verify_usage = verify_usage                    # its (input, output) tokens: free unless a test prices it
         self.batches: dict[str, dict] = {}          # id -> {"requests", "reads", "results", "created_at", ...}
         self.create_calls = 0                       # batch creates attempted, refused ones included
 
@@ -179,11 +185,28 @@ class FakeClaude:
         if m := re.fullmatch(r"/v1/messages/batches/([^/]+)", path):
             return self._retrieve(m.group(1))
         body = json.loads(request.content)
+        if (schema := schema_of(body)) is not None and next(iter(schema["properties"])) == "verdicts":
+            self.verify_requests.append(body)
+            return httpx2.Response(200, json=self._verdicts(body))
         self.requests.append(body)
         mode = self._mode()
         if mode in ("400", "401", "402", "429", "529"):
             return _error(mode)
         return httpx2.Response(200, json=self._message(body, mode))
+
+    def _verdicts(self, body: dict) -> dict:
+        """The second model's answer (see the class docstring): every bullet passes, at no cost, unless `verdict` answers."""
+        if self.verdict is not None:
+            got = self.verdict(body)
+        else:
+            text = body["messages"][0]["content"][-1]["text"]
+            n = len(re.findall(r"^Bullet \d+: ", text, flags=re.MULTILINE))
+            got = {"verdicts": [{"bullet": i, "supported": True, "changes_true": True, "reads_well": True, "objection": ""}
+                                for i in range(1, n + 1)]}
+        text = got if isinstance(got, str) else json.dumps(got)
+        return message([{"type": "text", "text": text}], input_tokens=self.verify_usage[0], output_tokens=self.verify_usage[1],
+                       mid=f"msg_v{len(self.verify_requests)}",
+                       model=body.get("model") or "claude-haiku-5-5")
 
     def _message(self, body: dict, mode: str) -> dict:
         docs, _ = documents_of(body)

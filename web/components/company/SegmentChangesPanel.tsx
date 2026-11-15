@@ -4,6 +4,9 @@
 // segments on each side and the filings are the view's. Gated by `equity.segment_changes` (seeded hidden): while it is hidden the
 // panel shows the held note and nothing else. Words, never colour (CLAUDE.md §5: nothing here is a market move), never a motive
 // or a judgment (D8). Each side links to its own filing; every date goes through lib/format.ts. Server-rendered.
+// A flag shows only on the company's latest results (#553, decision 3): when the statements the tab already reads hold a later
+// consolidated quarter than the one compared (Coal India, whose Sep 2026 filing gave no line-up), a `changed` state shows a
+// note naming both quarters and no flag. The other states name their own quarter and never say "latest", so they stay.
 import type { ReactNode } from "react";
 import { Gated, fieldPolicy, type FieldPolicies } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
@@ -51,16 +54,23 @@ const EMPTY_SIDE: Partial<Record<Kind, { before?: string; after?: string }>> = {
 const KINDS = new Set<string>(Object.keys(KIND_TITLE));
 const isKind = (k: unknown): k is Kind => typeof k === "string" && KINDS.has(k);
 
-/** The panel's reading of the view's rows: held back, couldn't load, nothing published, one of the three states, or the flags. */
+/** The panel's reading of the view's rows: held back, couldn't load, nothing published, one of the three states, the flags, or
+ * flags of a quarter older than the statements' latest (shown as a note, never as flags). */
 export type SegmentModel =
   | { kind: "held" }
   | { kind: "error" }
   | { kind: "none" }
   | { kind: "single_segment" | "none_flagged"; periodEnd: string }
   | { kind: "not_compared"; periodEnd: string; quarters: number }
-  | { kind: "changed"; periodEnd: string; flags: SegmentChangeRow[] };
+  | { kind: "changed"; periodEnd: string; flags: SegmentChangeRow[] }
+  | { kind: "not_latest"; periodEnd: string; latest: string };
 
-export function segmentModel(rows: readonly SegmentChangeRow[] | null | undefined, policies: FieldPolicies | null | undefined): SegmentModel {
+/** `latestQuarter`: the latest consolidated quarter end in the statements the tab reads, or null when they can't tell. */
+export function segmentModel(
+  rows: readonly SegmentChangeRow[] | null | undefined,
+  policies: FieldPolicies | null | undefined,
+  latestQuarter: string | null = null,
+): SegmentModel {
   const policy = fieldPolicy(policies ?? [], SEGMENT_FIELD);
   if (!policy || policy.status === "hidden") return { kind: "held" };
   if (rows === null || rows === undefined) return { kind: "error" };
@@ -69,7 +79,9 @@ export function segmentModel(rows: readonly SegmentChangeRow[] | null | undefine
   const { state, period_end: periodEnd } = first;
   if (state === "changed") {
     const flags = rows.filter((r) => r.state === "changed" && isKind(r.kind)).sort((a, b) => (a.change_no ?? 0) - (b.change_no ?? 0));
-    return flags.length > 0 ? { kind: "changed", periodEnd, flags } : { kind: "error" };
+    if (flags.length === 0) return { kind: "error" };
+    if (latestQuarter !== null && latestQuarter > periodEnd) return { kind: "not_latest", periodEnd, latest: latestQuarter };
+    return { kind: "changed", periodEnd, flags };
   }
   if (state === "not_compared") return { kind: "not_compared", periodEnd, quarters: first.quarters_compared };
   return { kind: state, periodEnd };
@@ -160,6 +172,13 @@ function Body({ model }: { model: Exclude<SegmentModel, { kind: "held" }> }) {
           comparison needs all four.
         </StateNote>
       );
+    case "not_latest":
+      return (
+        <StateNote kind="unavailable">
+          Not compared: the segments in the results for the quarter ended {formatDate(model.latest)} are not on record. The last quarter compared was the
+          quarter ended {formatDate(model.periodEnd)}.
+        </StateNote>
+      );
     case "changed":
       return (
         <>
@@ -179,15 +198,18 @@ function Body({ model }: { model: Exclude<SegmentModel, { kind: "held" }> }) {
 export function SegmentChangesPanel({
   rows,
   policies,
+  latestQuarter = null,
   freshness,
   now,
 }: {
   rows: readonly SegmentChangeRow[] | null | undefined;
   policies: FieldPolicies | null | undefined;
+  /** The latest consolidated quarter end in the statements the Financials tab already reads (null: they can't tell). */
+  latestQuarter?: string | null;
   freshness: TaskFreshnessRow[] | null;
   now: string;
 }) {
-  const model = segmentModel(rows, policies);
+  const model = segmentModel(rows, policies, latestQuarter);
   const policy = fieldPolicy(policies ?? [], SEGMENT_FIELD);
   const shown = model.kind !== "held" ? (rows ?? []).filter((r) => r.state !== null) : [];
   const latestFiled = shown.map((r) => filedDay(r.latest_filed_at)).filter((d): d is string => d !== null).sort().at(-1) ?? null;

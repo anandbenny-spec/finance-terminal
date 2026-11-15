@@ -10,6 +10,7 @@ import functools
 import gzip
 import itertools
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -137,7 +138,11 @@ def test_the_column_map_loads_and_refuses_a_broken_file(tmp_path):
                           "filed_total IBM needs its tag, label and source"),
                          (text.replace("not_summed: {}", "not_summed: {IBM: why}"), "IBM is in both"),
                          (text.replace("    all_parts_label: the sum of the filed domestic and foreign parts\n", ""),
-                          "all_parts is for a flow column")):
+                          "all_parts is for a flow column"),
+                         (text.replace("totals: [Revenues, RevenuesNetOfInterestExpense]", "totals: [Revenues, OperatingIncomeLoss]"),
+                          "totals is for a flow column and names tags of its chain"),
+                         (text.replace("totals: [Revenues, RevenuesNetOfInterestExpense]", "totals: [Revenues, Revenues]"),
+                          "each once")):
         (tmp_path / "t.yaml").write_text(bad)
         with pytest.raises(E.EdgarError, match=message):
             E.load_tags(tmp_path / "t.yaml")
@@ -462,6 +467,121 @@ def test_the_debt_held_warning_names_every_period_ibms_filed_total_is_held():
     y.stmts = E.Statements([(1, cf)], tags, "KO")
     y.built = [y.stmts.build(fl) for fl in y.stmts.filings.values()]
     assert UsFilings._debt_held(task_module.Fetched(START, tags), [y]).passed
+
+
+RFC, RNOIE = "RevenueFromContractWithCustomerExcludingAssessedTax", "RevenuesNetOfInterestExpense"
+AXP_Q1, AXP_Q2, AXP_Q3, AXP_K = ("0000004962-25-000050", "0000004962-25-000070", "0000004962-25-000090",
+                                 "0000004962-26-000080")
+
+
+def axp(tags: dict[str, tuple[int, int, int, int]], *, cfg: E.TagConfig | None = None, ticker: str = "AXP",
+        extra: dict | None = None) -> E.Statements:
+    """A year of filings in American Express's shape (US-08's fail, #558): each tag given its Q1, Q2, Q3 and Q4 figures,
+    filed as a 10-Q for each of the first three quarters (the quarter and the year to date) and the 10-K's year."""
+    def filed(q1, q2, q3, q4):
+        return [fact(q1, "2025-03-31", "2025-01-01", accn=AXP_Q1, filed="2025-04-18"),
+                fact(q2, "2025-06-30", "2025-04-01", accn=AXP_Q2, filed="2025-07-25"),
+                fact(q1 + q2, "2025-06-30", "2025-01-01", accn=AXP_Q2, filed="2025-07-25"),
+                fact(q3, "2025-09-30", "2025-07-01", accn=AXP_Q3, filed="2025-10-17"),
+                fact(q1 + q2 + q3, "2025-09-30", "2025-01-01", accn=AXP_Q3, filed="2025-10-17"),
+                fact(q1 + q2 + q3 + q4, "2025-12-31", "2025-01-01", accn=AXP_K, form="10-K", filed="2026-02-06")]
+    us_gaap = {t: {"USD": filed(*v)} for t, v in tags.items()}
+    for t, u in (extra or {}).items():
+        us_gaap.setdefault(t, {"USD": []})["USD"].extend(u["USD"])
+    return E.Statements([(4962, facts(us_gaap))], cfg or E.load_tags(), ticker)
+
+
+AXP_TOTAL, AXP_PART = (17_000, 17_900, 18_400, 18_929), (9_800, 10_200, 10_500, 10_804)     # 72,229 and 41,304
+
+
+def without_totals() -> E.TagConfig:
+    """The column map as it was before #558: no `totals`, so the chain's primary is taken first."""
+    t = E.load_tags()
+    return replace(t, columns={**t.columns, "revenue": replace(t.columns["revenue"], totals=())})
+
+
+def revenue(s: E.Statements, accn: str) -> dict:
+    return {k: (r.values.get("revenue"), r.tags.get("revenue")) for k, r in rows(s, accn).items() if k != "instant"}
+
+
+def test_revenue_is_the_income_statements_total_where_a_narrower_tag_is_filed_beside_it():
+    """US-08's fail (#407, seed us08-20261114; #558): American Express files its total revenues net of interest expense
+    and, for the same periods, the part inside the revenue-from-contracts standard (41,304 against 72,229 for 2025,
+    $ millions). The narrower tag is first in the chain and current, so it was primary and stored."""
+    assert E.load_tags().columns["revenue"].totals == ("Revenues", RNOIE)
+    s = axp({RFC: AXP_PART, RNOIE: AXP_TOTAL})
+    assert [e.tag for e in s.order["revenue"]] == [RNOIE, RFC]
+    assert revenue(s, AXP_K) == {"year": (72_229, RNOIE),
+                                 "quarter": (18_929, f"derived: {RNOIE} FY − 9M filed 2025-10-17")}
+    assert revenue(s, AXP_Q3) == {"quarter": (18_400, RNOIE), "nine_months": (53_300, RNOIE)}
+    assert revenue(s, AXP_Q1) == {"quarter": (17_000, RNOIE)}
+    year = next(r for r in s.build(s.filings[AXP_K]).rows if r.period_kind == "year")
+    assert s.alternatives(s.filings[AXP_K], "revenue", year) == [(RFC, "below")]
+    # before the fix: the narrower tag, primary, was stored in every period
+    old = axp({RFC: AXP_PART, RNOIE: AXP_TOTAL}, cfg=without_totals())
+    assert revenue(old, AXP_K) == {"year": (41_304, RFC), "quarter": (10_804, f"derived: {RFC} FY − 9M filed 2025-10-17")}
+    year = next(r for r in old.build(old.filings[AXP_K]).rows if r.period_kind == "year")
+    assert old.alternatives(old.filings[AXP_K], "revenue", year) == [(RNOIE, "above")]
+    # a quarter where only the narrower tag is filed still falls back to it (a chain's fill, as before)
+    s = axp({RFC: AXP_PART, RNOIE: AXP_TOTAL},
+            extra={RFC: {"USD": [fact(9_500, "2024-09-30", "2024-07-01", accn="0000004962-24-000001")]}})
+    assert revenue(s, "0000004962-24-000001") == {"quarter": (9_500, RFC)}
+
+
+def test_a_company_filing_only_the_narrower_tag_or_revenues_beside_it_is_unchanged():
+    # only the revenue-from-contracts tag (Apple, Microsoft): it is the total, as before, with nothing to compare
+    s = axp({RFC: AXP_PART}, ticker="AAPL")
+    assert revenue(s, AXP_K)["year"] == (41_304, RFC)
+    year = next(r for r in s.build(s.filings[AXP_K]).rows if r.period_kind == "year")
+    assert s.alternatives(s.filings[AXP_K], "revenue", year) == []
+    # Revenues beside the narrower tag (Walmart, Berkshire): Revenues stays, with or without the rule
+    for cfg in (None, without_totals()):
+        s = axp({"Revenues": AXP_TOTAL, RFC: AXP_PART}, cfg=cfg, ticker="WMT")
+        assert revenue(s, AXP_K)["year"] == (72_229, "Revenues") and revenue(s, AXP_Q3)["quarter"] == (18_400, "Revenues")
+    # and where the narrower tag is primary (Revenues filed in too few periods to lead), a filed Revenues still wins
+    s = axp({RFC: AXP_PART}, ticker="AMGN",
+            extra={"Revenues": {"USD": [fact(72_229, "2025-12-31", "2025-01-01", accn=AXP_K, form="10-K", filed="2026-02-06")]}})
+    assert [e.tag for e in s.order["revenue"]] == ["Revenues", RFC]
+    assert revenue(s, AXP_K)["year"] == (72_229, "Revenues")
+    assert revenue(s, AXP_Q3)["quarter"] == (10_500, RFC)
+    assert revenue(s, AXP_K)["quarter"] == (10_804, f"derived: {RFC} FY − 9M filed 2025-10-17")  # one tag both sides
+    # equal figures under two tags (JPMorgan's Revenues and RevenuesNetOfInterestExpense): "equal", not named
+    s = axp({"Revenues": AXP_TOTAL, RNOIE: AXP_TOTAL}, ticker="JPM")
+    year = next(r for r in s.build(s.filings[AXP_K]).rows if r.period_kind == "year")
+    assert year.tags["revenue"] == "Revenues" and s.alternatives(s.filings[AXP_K], "revenue", year) == [(RNOIE, "equal")]
+
+
+def test_the_revenue_alternatives_warning_names_companies_and_periods_never_values():
+    def company(ticker, s):
+        x = us_company(ticker)
+        x.stmts = s
+        x.built = [s.build(fl) for fl in s.filings.values()]
+        return x
+    old = company("AXP", axp({RFC: AXP_PART, RNOIE: AXP_TOTAL}, cfg=without_totals()))
+    wmt = company("WMT", axp({"Revenues": AXP_TOTAL, RFC: AXP_PART}, ticker="WMT"))
+    aapl = company("AAPL", axp({RFC: AXP_PART}, ticker="AAPL"))
+    got = UsFilings._revenue_alternatives([old, wmt, aapl])
+    assert not got.passed and not got.blocking
+    assert got.detail == (
+        f"another revenue tag filed for the period is more than 0.5% above the stored one: AXP {RNOIE} above the stored "
+        f"{RFC} at 2025-01-01 to 2025-06-30, 2025-07-01 to 2025-09-30, 2025-01-01 to 2025-09-30, 2025-01-01 to "
+        f"2025-12-31 and 2 more (6 periods); latest fiscal years filing more than one revenue tag: AXP 2025-12-31: {RFC} "
+        f"stored, {RNOIE} above; WMT 2025-12-31: Revenues stored, {RFC} below")
+    assert not any(str(v) in got.detail for v in (*AXP_TOTAL, *AXP_PART, 72_229, 41_304, 53_300, 30_500))
+    fixed = company("AXP", axp({RFC: AXP_PART, RNOIE: AXP_TOTAL}))
+    got = UsFilings._revenue_alternatives([fixed, wmt, aapl])
+    assert got.passed and got.detail == (
+        "no revenue tag filed beside the stored one is more than 0.5% above it; latest fiscal years filing more than one "
+        f"revenue tag: AXP 2025-12-31: {RNOIE} stored, {RFC} below; WMT 2025-12-31: Revenues stored, {RFC} below")
+    # within 0.5% is "equal"; more than 0.5% above is named
+    close = company("AXP", axp({RFC: (17_000, 17_900, 18_400, 18_929 + 72), RNOIE: AXP_TOTAL}, cfg=without_totals()))
+    assert UsFilings._revenue_alternatives([close]).passed
+    far = company("AXP", axp({RFC: (17_000, 17_900, 18_400, 18_929 - 362), RNOIE: AXP_TOTAL}, cfg=without_totals()))
+    assert UsFilings._revenue_alternatives([far]).detail.endswith(
+        f"(1 period); latest fiscal years filing more than one revenue tag: AXP 2025-12-31: {RFC} stored, {RNOIE} above")
+    assert UsFilings._revenue_alternatives([aapl]).detail == (
+        "no revenue tag filed beside the stored one is more than 0.5% above it; no company's latest fiscal year files "
+        "more than one revenue tag")
 
 
 def test_a_row_that_lacks_a_figure_never_displaces_one_that_has_it():
@@ -878,7 +998,13 @@ def test_the_first_load_registers_every_filing_since_2019_unpublished(s3, monkey
                           "coverage": (True, True), "shares": (True, True), "shares_held": (True, False),
                           "tag_switch": (False, False), "debt_held": (True, False), "share_rates": (True, False),
                           "parts_tie": (True, False), "kept_fuller": (True, False), "gaps": (False, False),
-                          "loaded": (True, False)}
+                          "revenue_alternatives": (True, False), "loaded": (True, False)}
+    # the income statement's total is stored wherever two revenue tags are filed (#558): Walmart's Revenues over its
+    # narrower revenue from contracts, JPMorgan's two tags for one figure
+    assert detail(tr, "revenue_alternatives") == (
+        "no revenue tag filed beside the stored one is more than 0.5% above it; latest fiscal years filing more than "
+        "one revenue tag: JPM 2025-12-31: Revenues stored, RevenuesNetOfInterestExpense equal; WMT 2026-01-31: "
+        "Revenues stored, RevenueFromContractWithCustomerExcludingAssessedTax below")
     # every E1 name's pre-tax income ties with its domestic and foreign parts wherever it files all three (#470)
     assert detail(tr, "parts_tie") == ("every filed total ties with its parts within $1 million (company, periods): "
                                        "pbt: GOOGL 9, JPM 9, MSFT 10, NVDA 10, WMT 10")

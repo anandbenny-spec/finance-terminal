@@ -1,10 +1,14 @@
 // CompanyView (2A-19; Spec 02A §8): the company page's header, tabs and the tab shown, from one cached read
 // (lib/queries/company.ts). The tab and the basis are in the path (/companies/tcs/financials/standalone), so every view can be
 // linked. Overview, Financials, Valuation (2A-20) and Rate decisions (2A-25) exist; the Financials tab's "Segment changes" panel
-// (DD-02, #410) sits after the statements, held back until equity.segment_changes is released. Each panel carries its source line and freshness; a figure with no value says why. Server-rendered.
+// (DD-02, #410) sits after the statements, held back until equity.segment_changes is released; it's given the statements' latest
+// consolidated quarter, so a flag shows only on the latest results (#553). The KPI-table pilot's panel (DD-06, #514) follows it on the
+// 7 pilot companies' tabs only, held back until equity.kpi_changes is released. Each panel carries its source line and freshness; a
+// figure with no value says why. Server-rendered.
 // A US company (US-06, #405; Spec 02A.1 §7) shows Overview, Financials and Valuation only, in dollars: statements from SEC EDGAR
 // with each filing's sec.gov link, prices from Yahoo Finance, no basis toggle (US filings are consolidated), no promoter, segment
-// or value chain panel (Indian disclosures). A deep link to a tab that doesn't apply shows a StateNote with the reason.
+// or value chain panel (Indian disclosures). A deep link to a tab that doesn't apply shows a StateNote with the reason. Its key
+// figures are dated by their filed period ends (US-06b, #564; components/company/us/filedDates.ts), as the Financials tab is.
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ActionsPanel } from "@/components/company/ActionsPanel";
@@ -15,10 +19,12 @@ import { PeersPanel } from "@/components/company/PeersPanel";
 import { PriceChartPanel } from "@/components/company/PriceChartPanel";
 import { RateDecisionsTab } from "@/components/company/RateDecisionsTab";
 import { PromoterPanel } from "@/components/company/PromoterPanel";
+import { KpiChangesPanel } from "@/components/company/KpiChangesPanel";
 import { SegmentChangesPanel } from "@/components/company/SegmentChangesPanel";
 import { StatementTable } from "@/components/company/StatementTable";
 import { ValueChainPanel } from "@/components/company/value-chain/ValueChainPanel";
 import { TabError } from "@/components/company/TabError";
+import { filedDates, metricDate } from "@/components/company/us/filedDates";
 import { ValuationTab } from "@/components/company/valuation/ValuationTab";
 import { Freshness } from "@/components/data/Freshness";
 import { PageHeader } from "@/components/data/PageHeader";
@@ -58,11 +64,12 @@ import {
   type LineSpec,
   type TabId,
 } from "@/lib/equity/company";
+import { isKpiPilot } from "@/lib/equity/kpi";
 import type { WindowKey } from "@/lib/equity/rate";
 import { FEEDS, PREVIEW_FEEDS, type TaskKey } from "@/lib/feeds";
 import { filingDay, formatDate } from "@/lib/format";
 import type { CompanyPageData } from "@/lib/queries/company";
-import type { CompanyFinancialRow, TaskFreshnessRow } from "@/lib/queries/api";
+import type { CompanyFinancialRow, CompanyMetricRow, TaskFreshnessRow } from "@/lib/queries/api";
 import { panelFreshness } from "@/lib/shell/freshness";
 
 type Ok = Extract<CompanyPageData, { ok: true }>;
@@ -119,7 +126,15 @@ function Overview({ data, freshness }: { data: Ok; freshness: TaskFreshnessRow[]
   const price = sourceLineFor(company.price_source_key ?? overview.prices[0]?.source_key);
   const stats = overview.metrics;
   const usesDamodaran = pickMetric(stats, "beta_bottom_up", ["market"])?.state === "value";
-  const statsTo = latest(["pe_ttm", "pb", "dividend_yield", "roe"].map((k) => pickMetric(stats, k, k === "roe" ? ["year"] : ["market"])?.period_end));
+  // A US figure from a statement period shows its filed end (US-06b, #564); India's dates are shown as stored.
+  const filed = us ? filedDates(overview.filed ?? []) : null;
+  const dateOf = filed ? (row: CompanyMetricRow) => metricDate(filed, row) : undefined;
+  const statsTo = latest(
+    ["pe_ttm", "pb", "dividend_yield", "roe"].map((k) => {
+      const row = pickMetric(stats, k, k === "roe" ? ["year"] : ["market"]);
+      return row && dateOf ? dateOf(row) : row?.period_end;
+    }),
+  );
   const peerRows = overview.peers;
   const peerTo = latest(peerRows.map((p) => p.snapshot_date));
   // A US figure is built from the SEC filings and the Yahoo Finance price; India's from NSE's (one line).
@@ -139,6 +154,7 @@ function Overview({ data, freshness }: { data: Ok; freshness: TaskFreshnessRow[]
       <KeyFigures
         company={company}
         metrics={stats}
+        dateOf={dateOf}
         footer={<Foot sources={[...figureSources, usesDamodaran ? DAMODARAN : null]} tasks={TASKS} dataTo={statsTo} freshness={freshness} now={now} />}
       />
       <PeersPanel
@@ -253,7 +269,16 @@ function Financials({ data, basis: asked, freshness }: { data: Ok; basis: Basis;
           emptyText="No standalone bank filings are published for this company yet."
         />
       )}
-      <SegmentChangesPanel rows={financials.segmentChanges} policies={financials.policies} freshness={freshness} now={now} />
+      <SegmentChangesPanel
+        rows={financials.segmentChanges}
+        policies={financials.policies}
+        latestQuarter={periodsOf(rows, "consolidated", PERIODS.quarterly)[0]?.period_end ?? null}
+        freshness={freshness}
+        now={now}
+      />
+      {isKpiPilot(company.slug) && (
+        <KpiChangesPanel rows={financials.kpiChanges} calls={financials.kpiCalls} policies={financials.policies} freshness={freshness} now={now} />
+      )}
       <PromoterPanel
         rows={financials.promoter}
         market={company.market}
