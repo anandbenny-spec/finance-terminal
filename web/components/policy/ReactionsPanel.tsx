@@ -47,7 +47,7 @@ export function ReactionsPanel({ rows, footer, refresh }: { rows: ReactionRow[];
         header: "Date",
         sortValue: (r) => r.date,
         cell: (r) => (
-          <Link href={r.href} className="font-mono text-ink-1 underline">
+          <Link prefetch={false} href={r.href} className="font-mono text-ink-1 underline">
             {formatTableDate(r.date)}
           </Link>
         ),
@@ -109,7 +109,7 @@ export function ReactionsPanel({ rows, footer, refresh }: { rows: ReactionRow[];
       </p>
       <p className="border-b border-line px-3 py-2 text-meta text-ink-2">
         How the Nifty 50&apos;s companies moved on these decisions:{" "}
-        <Link href="/screener/rate-decisions" className="text-ink-1 underline">
+        <Link prefetch={false} href="/screener/rate-decisions" className="text-ink-1 underline">
           the sector view
         </Link>
         .

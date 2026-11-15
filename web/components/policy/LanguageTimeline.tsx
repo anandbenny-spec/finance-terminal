@@ -48,7 +48,7 @@ function CellView({ cell, column, line }: { cell: TimelineCell | undefined; colu
         {cell.para !== null && (
           <>
             {" · "}
-            <Link
+            <Link prefetch={false}
               href={`${column.href}#p-${cell.para}`}
               className="whitespace-nowrap font-mono underline hover:text-ink-1"
               aria-label={`${line.label}, ${formatTableDate(column.date)}: paragraph ${cell.para}`}

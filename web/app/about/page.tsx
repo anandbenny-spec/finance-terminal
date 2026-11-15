@@ -121,7 +121,7 @@ export default function AboutPage() {
             <p className="text-ink-2">
               Summaries and other AI-written text are marked as AI and cite the passage of a stored document they come from. Text without
               a verified citation is not published.{" "}
-              <Link href="/methodology" className="underline">
+              <Link prefetch={false} href="/methodology" className="underline">
                 How the figures and AI text are made and checked
               </Link>
               .

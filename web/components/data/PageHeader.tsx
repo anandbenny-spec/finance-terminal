@@ -28,7 +28,7 @@ export function PageHeader({
                 {typeof c === "string" ? (
                   <span aria-current={i === crumbs.length - 1 ? "page" : undefined}>{c}</span>
                 ) : (
-                  <Link href={c.href} {...(c.prefetch === undefined ? {} : { prefetch: c.prefetch })} className="text-ink-3 underline hover:text-ink-1">
+                  <Link href={c.href} prefetch={c.prefetch ?? false} className="text-ink-3 underline hover:text-ink-1">
                     {c.label}
                   </Link>
                 )}

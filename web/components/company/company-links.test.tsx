@@ -94,9 +94,9 @@ describe("Tabs", () => {
     { id: "a", label: "A", href: "/x/a" },
     { id: "b", label: "B", href: "/x/b" },
   ];
-  it("leaves prefetch unset when the caller doesn't pass it", () => {
+  it("defaults prefetch to false when the caller doesn't pass it (#592)", () => {
     const out = renderToStaticMarkup(<Tabs label="T" items={items} current="a" />);
-    expect(out.match(/data-prefetch="absent"/g)).toHaveLength(2);
+    expect(out.match(/data-prefetch="false"/g)).toHaveLength(2);
   });
   it("passes prefetch={false} to every link", () => {
     const out = renderToStaticMarkup(<Tabs label="T" items={items} current="a" prefetch={false} />);
@@ -105,11 +105,11 @@ describe("Tabs", () => {
 });
 
 describe("PageHeader crumbs", () => {
-  it("leaves prefetch unset unless the crumb sets it", () => {
+  it("defaults prefetch to false unless the crumb sets it (#592)", () => {
     const out = renderToStaticMarkup(
       <PageHeader crumbs={[{ label: "One", href: "/one" }, { label: "Two", href: "/two", prefetch: false }, "End"]} title="T" />,
     );
-    expect(out).toContain('href="/one" data-prefetch="absent"');
+    expect(out).toContain('href="/one" data-prefetch="false"');
     expect(out).toContain('href="/two" data-prefetch="false"');
   });
 });

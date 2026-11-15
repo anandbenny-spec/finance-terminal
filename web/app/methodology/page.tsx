@@ -40,7 +40,7 @@ const BLOCKS: Block[] = [
       <>
         The Fed vs RBI policy tracker&apos;s documents come from the Federal Reserve Board and the Reserve Bank of India, its rates
         and exchange rate from the data owners named on each figure, and its index levels from the index owners, each with the source line and copyright
-        line its owner asks for. The full list, with the source lines, is on the <Link className="underline" href="/about#sources">About and privacy</Link> page.
+        line its owner asks for. The full list, with the source lines, is on the <Link prefetch={false} className="underline" href="/about#sources">About and privacy</Link> page.
       </>,
       "The Nifty 50 screener and company pages read company filings and exchange data. Each company keeps its own reporting currency and market, and figures are never compared, ranked or summed across currencies.",
       "Every piece of data belongs to its owner, who is named on each figure. Market data is end-of-day only. Raw data from any source is never offered for download or export. The browser never calls a data source: it talks only to this site and to its database.",
@@ -90,7 +90,7 @@ const BLOCKS: Block[] = [
     panel: "Checks and health",
     paragraphs: [
       <>
-        Every change runs through automated tests for the code and the database before it is merged. Data loads run blocking checks: a load that fails them is rolled back, the last good data stays, and the site shows “Update delayed” instead of publishing bad numbers. A health check reports the state of the data jobs. The <Link className="underline" href="/accuracy">Accuracy</Link> page publishes how often the site has held something back and how its checks have done, as counts from its own records.
+        Every change runs through automated tests for the code and the database before it is merged. Data loads run blocking checks: a load that fails them is rolled back, the last good data stays, and the site shows “Update delayed” instead of publishing bad numbers. A health check reports the state of the data jobs. The <Link prefetch={false} className="underline" href="/accuracy">Accuracy</Link> page publishes how often the site has held something back and how its checks have done, as counts from its own records.
       </>,
     ],
   },
@@ -111,7 +111,7 @@ const BLOCKS: Block[] = [
         Before the US companies were published, the slice was checked by an AI model, Claude Opus 5.5, in a separate session that built none of
         it, against a checklist and a seeded sample both fixed before the check began: figures read against the filings on sec.gov, valuations
         recomputed from their stored inputs, and the pages. A first sample failed on one company&apos;s revenue; the rule was fixed for every
-        company, and a new sample, drawn on a new seed, passed. The counts are on the <Link className="underline" href="/accuracy">Accuracy</Link> page.
+        company, and a new sample, drawn on a new seed, passed. The counts are on the <Link prefetch={false} className="underline" href="/accuracy">Accuracy</Link> page.
       </>,
     ],
   },
@@ -141,7 +141,7 @@ const BLOCKS: Block[] = [
     paragraphs: [
       <>
         The site is run by Anand Benny. If you own data shown here and want it removed, say so to whoever shared this link with you and it will reach him; it
-        is removed promptly. The site collects no personal data beyond what the <Link className="underline" href="/about#logged">About and privacy</Link> page describes.
+        is removed promptly. The site collects no personal data beyond what the <Link prefetch={false} className="underline" href="/about#logged">About and privacy</Link> page describes.
       </>,
     ],
   },

@@ -48,7 +48,7 @@ function Side({ side, label, doc, absent }: { side: KeySide; label: string; doc:
           {side.para !== null && (
             <>
               {" "}
-              <Link href={`${doc.href}#p-${side.para}`} className="whitespace-nowrap font-mono text-meta text-ink-3 underline hover:text-ink-1" aria-label={`${label}: paragraph ${side.para}`}>
+              <Link prefetch={false} href={`${doc.href}#p-${side.para}`} className="whitespace-nowrap font-mono text-meta text-ink-3 underline hover:text-ink-1" aria-label={`${label}: paragraph ${side.para}`}>
                 ¶{side.para}
               </Link>
             </>
@@ -133,7 +133,7 @@ export function KeyChanges({
                 </>
               )}
               {seeAllHref && (
-                <Link href={seeAllHref} className="text-ink-1 underline">
+                <Link prefetch={false} href={seeAllHref} className="text-ink-1 underline">
                   See all changes →
                 </Link>
               )}

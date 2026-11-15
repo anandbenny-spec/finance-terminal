@@ -16,7 +16,7 @@ export function Tabs({ label, items, current, prefetch, scrollCurrent }: { label
           <li key={t.id}>
             <Link
               href={t.href}
-              {...(prefetch === undefined ? {} : { prefetch })}
+              prefetch={prefetch ?? false}
               aria-current={t.id === current ? "page" : undefined}
               className="-mb-px inline-block border-b-2 border-transparent py-2 text-ui text-ink-2 no-underline hover:text-ink-1 aria-[current=page]:border-highlight aria-[current=page]:text-ink-1"
             >

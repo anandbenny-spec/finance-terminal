@@ -28,7 +28,7 @@ export function NavList({ active, onNavigate }: { active: string | null; onNavig
               const current = item.href === active;
               return (
                 <li key={item.href}>
-                  <Link
+                  <Link prefetch={false}
                     href={item.href}
                     onClick={onNavigate}
                     aria-current={current ? "page" : undefined}
