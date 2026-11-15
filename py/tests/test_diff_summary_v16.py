@@ -28,7 +28,7 @@ from ft.ai.summaries import (
     sentence_spans,
 )
 from ft.engines.document.diff import diff_texts
-from ft.jobs.tasks.ai_batch import PROMPT_VERSION, Work
+from ft.jobs.tasks.ai_batch import Work
 from ft.quality import reasons
 
 D = diff_texts(FOMC_A, FOMC_B)
@@ -55,11 +55,11 @@ def check(version, *rows, sentences=SENTENCES):
     return check_diff_json({"bullets": list(rows)}, REQ.sources, CHANGED, version=version, sentences=sentences)
 
 
-def test_v16_sends_v15s_text_with_v15s_schema_on_sonnet_and_is_current():
+def test_v16_sends_v15s_text_with_v15s_schema_on_sonnet():
     assert V16.text == V15.text and "<!--" not in V16.text
     assert load_schema("statement_diff_summary", "v16") == load_schema("statement_diff_summary", "v15")
     assert (REQ.spec.route, REQ.model_id, REQ.spec.effort) == ("json", SONNET, "medium")
-    assert PROMPT_VERSION["statement_diff_summary"] == "v16" and summaries.DIFF_FIT_FROM == 16
+    assert summaries.DIFF_FIT_FROM == 16 and V16.version == "v16"       # current from v17 on: test_diff_summary_v17.py
     assert summaries.DIFF_FP_FIX_FROM == 15 and summaries.DIFF_SIDES_FROM == 14
 
 
