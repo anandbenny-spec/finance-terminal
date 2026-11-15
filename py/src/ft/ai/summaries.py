@@ -52,6 +52,8 @@ passages they cite.
   ends on a word such as "a", "the" or "to" in the middle of a phrase, even where the bullet goes on in its own words.
 - From v23 on (#445, round 20; Anand's decision of 15 Nov 2026, 12:10 IST; `DIFF_PACK_FROM`): the replies are checked as v22's;
   the fallback packs up to two changes of one kind into a bullet while bullets are scarce (`_pack`).
+- From v24 on (#445, round 21; Anand's decision of 15 Nov 2026, about 13:25 IST; `DIFF_RESTATED_FROM`): the replies are checked
+  as v22's; the fallback reads a further decision sentence that also states the stance as the stance.
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
 (`policy.ai_batch`). The database checks the published output's citations again at commit (Architecture 01 §1.4).
@@ -73,7 +75,7 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
 DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
-                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET, "v23": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET, "v23": SONNET, "v24": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
 # (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
 # two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12); v14: v13 plus two rules, with one
 # more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14); v16: v15's
@@ -81,11 +83,11 @@ DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11":
 # fallback built by code (round 16); v18: v17's text, marking those checks' revision before the judge (round 16's second run); v19: v17's
 # text again, marking the third run's (a narrower "adds" check, the fallback's trivial changes and repeated sentences).
 # v20 to v22: v19's text again, marking rounds 17 to 19's revisions; v23: v22's text, marking round 20's packed fallback
-# (`DIFF_PACK_FROM`).
+# (`DIFF_PACK_FROM`); v24: v23's text, marking round 21's (`DIFF_RESTATED_FROM`).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
 DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium",
-                  "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium", "v20": "medium", "v21": "medium", "v22": "medium", "v23": "medium"}
+                  "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium", "v20": "medium", "v21": "medium", "v22": "medium", "v23": "medium", "v24": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -187,6 +189,12 @@ DIFF_OPEN_END_FROM = 20
 #   holdings" are one change: its fallback (3557) quoted the old sentence alone, as removed, and left out the new one.
 # Fallbacks of v22 or earlier keep their rules.
 DIFF_PACK_FROM = 23
+# From v24 (#445, round 21; Anand's decision of 15 Nov 2026, about 13:25 IST, after round 20's dev run): v23's text, and the
+# packed fallback reads a change of the decision's other than the one it shows, when it also states the stance, as the stance
+# (`fallback_bullets`' `restated`): mpc-2021-02-05's 3592 left out "decided to continue with an accommodative stance of
+# monetary policy till the prospects of a sustained recovery are well secured", which restates the rate decision too, so it
+# was a second decision, and the decision is shown once; v1 (397) has it. Fallbacks of v23 keep their rules.
+DIFF_RESTATED_FROM = 24
 
 
 def diff_json(version: str) -> bool:
@@ -1782,10 +1790,11 @@ def _side(text: str, spans: list[tuple[int, int]]) -> tuple[str, list[tuple[int,
 
 
 def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], hi: int = 5, *,
-                     packed: bool = False) -> list[Bullet]:
+                     packed: bool = False, restated: bool = False) -> list[Bullet]:
     """The fallback's bullets (see above): `prefer` holds a rejected reply's quotes as (document, text), in its order.
     `packed` (from v23, `DIFF_PACK_FROM`): the balance sheet's words rank before the stance's, and a bullet carries up to
-    FALLBACK_PER_BULLET changes of one kind (`_pack`)."""
+    FALLBACK_PER_BULLET changes of one kind (`_pack`). `restated` (from v24, `DIFF_RESTATED_FROM`; with `packed`): a change
+    of the decision's other than the one shown that also states the stance is the stance."""
     def kind_of(text: str) -> int:
         return _kind(text, packed=packed)
 
@@ -1878,6 +1887,19 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
     # points to 4.40 per cent" before "All members voted for a reduction in the policy repo rate").
     rate = {id(p): 0 if not packed or kind[id(p)] or _K_FIGURE_RATE.search(words(p[1], new.text)) else 1 for p in unique}
     by_kind = sorted(unique, key=lambda p: (kind[id(p)], says[id(p)], rate[id(p)], preferred[id(p)], where(p)))
+    if packed and restated:
+        # From v24: the decision is shown once, and another change of the decision's that also states the stance is the stance
+        # (mpc-2021-02-05, round 20: "the MPC decided to continue with an accommodative stance … till the prospects of a
+        # sustained recovery are well secured" restates the rate decision too, so v23 left it out as a second decision, and v1
+        # (397) has it).
+        decision, stance = FALLBACK_KINDS.index("decision"), FALLBACK_KINDS.index("stance")
+        shown = next((p for p in by_kind if kind[id(p)] == decision), None)
+        for p in unique:
+            text = words(p[0], old.text) + " " + words(p[1], new.text)
+            if kind[id(p)] == decision and p is not shown and _K_STANCE_PACKED.search(text):
+                kind[id(p)], rate[id(p)] = stance, 0
+                says[id(p)] = 0 if p[1] and _K_STANCE_PACKED.search(words(p[1], new.text)) else 1
+        by_kind = sorted(unique, key=lambda p: (kind[id(p)], says[id(p)], rate[id(p)], preferred[id(p)], where(p)))
     after = sorted(unique, key=lambda p: (preferred[id(p)], kind[id(p)], where(p)))
     if packed:
         said = {id(p): (" ".join(_undated(words(p[0], old.text))), " ".join(_undated(words(p[1], new.text)))) for p in unique}
