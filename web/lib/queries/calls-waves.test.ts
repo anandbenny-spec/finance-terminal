@@ -101,6 +101,10 @@ describe("the calls tab's waves (#516)", () => {
   it("with every field open, wave 2 holds the six panel reads and wave 3 still three, so the peak is six, not ten", async () => {
     const { db, started, peak } = slowClient(store(EVERY));
     await readCallsTab(db, "tcs", undefined);
+    // The Nifty 50's attribution (one `series` read) follows the results rows inside that panel's slot, so it is not a seventh at once.
+    expect(started.filter((v) => v === "series")).toHaveLength(1);
+    expect(started.indexOf("series")).toBeGreaterThan(started.indexOf("results_moves"));
+    started.splice(started.indexOf("series"), 1);
     expect(started.slice(0, 2).sort()).toEqual(WAVE1);
     expect(started.slice(2, 8).sort()).toEqual(["call_figures", "call_guidance", "call_tone", "guidance_hit_rates", "remarks_changes", "results_moves"]);
     expect(started.slice(8).sort()).toEqual(WAVE3);

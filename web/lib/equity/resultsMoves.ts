@@ -74,9 +74,10 @@ export function leftOutLine(lines: readonly MoveLine[]): string | null {
 }
 
 /**
- * The release time in IST and which close counts as the first after it. The first close after a release in market hours is that
- * day's own (the move includes the part of the day before the release); an evening or weekend release reads the next session.
- * Said only when the first window has its dates.
+ * The release time in IST and which close counts as the first after it. When the first close after the release is the release
+ * day's own, the note says so without naming session hours (true for a pre-open filing and a special session's day too): the move
+ * includes any trading that day before the release. A release whose first close is a later day names that day. Said only when the
+ * first window has its dates.
  */
 export function releaseNote(rows: readonly ResultsMoveRow[]): string | null {
   const first = rows[0];
@@ -86,11 +87,18 @@ export function releaseNote(rows: readonly ResultsMoveRow[]): string | null {
   if (!d1 || d1.left_out_reason !== null || !d1.post_date) return when;
   const sameDay = dateInZone(first.occurs_at, "Asia/Kolkata") === d1.post_date;
   return sameDay
-    ? `${when} Released during market hours, so the first close after it is that day's, and the move includes the part of the day before the release.`
+    ? `${when} The first close after it is that day's, so the move includes any trading that day before the release.`
     : `${when} The first close after it is ${formatDate(d1.post_date)}.`;
 }
 
-export function resultsSources(rows: readonly ResultsMoveRow[]): string[] {
+/** The latest close the panel shows: the latest `post_date` among the windows that have figures; null when none has. */
+export function latestCloseShown(rows: readonly ResultsMoveRow[]): string | null {
+  const dates = rows.filter((r) => r.left_out_reason === null && r.post_date).map((r) => r.post_date as string);
+  return dates.length ? dates.reduce((a, b) => (a > b ? a : b)) : null;
+}
+
+/** The company prices' source and the Nifty 50's own attribution (null when it couldn't be read: the line then names NSE only). */
+export function resultsSources(rows: readonly ResultsMoveRow[], niftyAttribution: string | null = null): string[] {
   const named = rows.find((r) => r.attribution)?.attribution;
-  return [named ?? "Source: NSE"];
+  return [named ?? "Source: NSE", ...(niftyAttribution ? [niftyAttribution] : [])];
 }

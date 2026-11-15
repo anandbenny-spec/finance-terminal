@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CompanyView } from "@/components/company/CompanyView";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { LEFT_OUT_TEXT, RESULTS_NOT_A_FORECAST, leftOutLine, moveLines, releaseNote, rowsOfCall } from "@/lib/equity/resultsMoves";
+import { LEFT_OUT_TEXT, RESULTS_NOT_A_FORECAST, latestCloseShown, leftOutLine, moveLines, releaseNote, resultsSources, rowsOfCall } from "@/lib/equity/resultsMoves";
 import type { FieldPolicyRow, ResultsMoveRow } from "@/lib/queries/api";
 import { readCallsTab, type CallsTabData } from "@/lib/queries/calls";
 import { bannedCallWordsIn } from "@/tests/banned-words";
@@ -34,7 +34,8 @@ function row(over: Partial<ResultsMoveRow> = {}): ResultsMoveRow {
 }
 const d5 = (over: Partial<ResultsMoveRow> = {}) =>
   row({ window_key: "d5", pre_date: "2026-10-08", post_date: "2026-10-15", own_change_pct: -2, nifty_change_pct: 0.5, excess_pct: -2.5, ...over });
-const withRows = (rows: ResultsMoveRow[], policies = open()) => calls({ policies, results: { state: "ok", rows } });
+const NIFTY = "Source: NSE, Nifty 50 index (test attribution)";
+const withRows = (rows: ResultsMoveRow[], policies = open()) => calls({ policies, results: { state: "ok", rows, niftyAttribution: NIFTY } });
 
 describe("hidden", () => {
   it("shows no panel and no word of it while equity.results_move is hidden or has no row", () => {
@@ -65,8 +66,29 @@ describe("shown", () => {
   it("states the release in IST and which close counts: in market hours, the same day's", () => {
     const t = text(html(withRows([row(), d5()])));
     expect(t).toContain("Released 9 Oct 2026, 12:30 IST.");
-    expect(t).toContain("during market hours");
-    expect(t).toContain("the move includes the part of the day before the release");
+    expect(t).toContain("The first close after it is that day's, so the move includes any trading that day before the release.");
+    expect(t).not.toContain("market hours");
+  });
+
+  it("says the same for a pre-open release (00:10 IST) whose first close is that day's, never 'market hours'", () => {
+    const pre = [row({ occurs_at: "2026-10-09T00:10:00+05:30" }), d5({ occurs_at: "2026-10-09T00:10:00+05:30" })];
+    const note = releaseNote(pre) ?? "";
+    expect(note).toContain("Released 9 Oct 2026, 00:10 IST.");
+    expect(note).toContain("The first close after it is that day's, so the move includes any trading that day before the release.");
+    expect(note).not.toContain("market hours");
+  });
+
+  it("'Data to' is the latest close shown: d5's when it has figures, d1's when only d1 does, absent when neither", () => {
+    const left = (o: Partial<ResultsMoveRow>) => ({ own_change_pct: null, nifty_change_pct: null, excess_pct: null, pre_date: null, post_date: null, left_out_reason: "dividend" as const, ...o });
+    expect(latestCloseShown([row(), d5()])).toBe("2026-10-15");
+    expect(latestCloseShown([row(), d5(left({}))])).toBe("2026-10-09");
+    expect(latestCloseShown([row(left({})), d5(left({}))])).toBeNull();
+  });
+
+  it("names both the company prices' source and the Nifty 50's attribution, NSE alone when that is null", () => {
+    expect(resultsSources([row(), d5()], NIFTY)).toEqual(["Source: NSE", NIFTY]);
+    expect(resultsSources([row(), d5()], null)).toEqual(["Source: NSE"]);
+    expect(text(html(withRows([row(), d5()])))).toContain(NIFTY);
   });
 
   it("states an evening release's first close as the next session's date", () => {
@@ -140,11 +162,11 @@ describe("the read", () => {
     ...extra,
   });
 
-  it("does not query api.results_moves at all while the field is hidden", async () => {
+  it("does not query api.results_moves at all while the field is hidden, nor the Nifty 50's attribution", async () => {
     const { db, seen } = fakeClient(store(hidden()));
     const got = await readCallsTab(db, "tcs", undefined);
     expect(got.results).toEqual({ state: "hidden" });
-    expect(seen.some((s) => s.view === "results_moves")).toBe(false);
+    expect(seen.some((s) => s.view === "results_moves" || s.view === "series")).toBe(false);
   });
 
   it("reads the company's rows once shown: filtered to the company, against the exact count, past one request's cap", async () => {

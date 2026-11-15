@@ -41,6 +41,7 @@ import {
   RESULTS_TASKS,
   leftOutLine,
   moveLines,
+  latestCloseShown,
   releaseNote,
   resultsSources,
   rowsOfCall,
@@ -162,7 +163,6 @@ function ResultsMoves({ data, call, freshness, now }: { data: NonNullable<Ok["ca
   const rows = data.results.state === "ok" ? rowsOfCall(data.results.rows, call.call_slug) : [];
   const lines = moveLines(rows);
   const out = leftOutLine(lines);
-  const released = rows[0]?.occurs_at ?? null;
   return (
     <Panel
       title="Results and the first move"
@@ -170,7 +170,7 @@ function ResultsMoves({ data, call, freshness, now }: { data: NonNullable<Ok["ca
       subtitle={`How did the stock move after the ${call.fiscal_label} results, against the Nifty 50?`}
       qualifier={policy.status === "labelled" && policy.label ? <Qualifier>{policy.label}</Qualifier> : undefined}
       variant="flush"
-      footer={<Foot sources={resultsSources(rows)} tasks={RESULTS_TASKS} dataTo={released ? dateInZone(released, "Asia/Kolkata") : null} freshness={freshness} now={now} />}
+      footer={<Foot sources={resultsSources(rows, data.results.state === "ok" ? data.results.niftyAttribution : null)} tasks={RESULTS_TASKS} dataTo={latestCloseShown(rows)} freshness={freshness} now={now} />}
     >
       {data.results.state === "error" ? (
         <Note kind="error">Couldn&apos;t load this panel. Try again.</Note>

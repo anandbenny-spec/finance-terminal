@@ -187,7 +187,7 @@ describe("tabReadFailed", () => {
 
   it("counts the calls tab's own failures: the guidance record, the remarks, the results moves and the tone", () => {
     expect(co.tabReadFailed(callsTab({}), "IN")).toBe(false);
-    expect(co.tabReadFailed(callsTab({ results: { state: "ok", rows: [] }, tone: { state: "ok", rows: [], output: null, citations: [], pages: [] } }), "IN")).toBe(false);
+    expect(co.tabReadFailed(callsTab({ results: { state: "ok", rows: [], niftyAttribution: null }, tone: { state: "ok", rows: [], output: null, citations: [], pages: [] } }), "IN")).toBe(false);
     expect(co.tabReadFailed(callsTab({ guidance: null }), "IN")).toBe(true);
     expect(co.tabReadFailed(callsTab({ remarks: null }), "IN")).toBe(true);
     expect(co.tabReadFailed(callsTab({ results: { state: "error" } }), "IN")).toBe(true);
