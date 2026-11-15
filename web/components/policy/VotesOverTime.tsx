@@ -199,7 +199,7 @@ function Strip({
   return (
     <li className="flex border-b border-line last:border-b-0" style={{ minHeight: height }}>
       <div className="w-24 shrink-0 px-3 py-1 text-meta">
-        <Link href={r.href} className="block font-mono text-ink-1 underline">
+        <Link prefetch={false} href={r.href} className="block font-mono text-ink-1 underline">
           {formatTableDate(r.date)}
         </Link>
         <span className="block text-ink-3">{r.decision === null ? NOT_AVAILABLE : `${formatAxisChange(r.decision)} bps`}</span>

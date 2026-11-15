@@ -33,7 +33,7 @@ export function MarketChips({ current, view }: { current: Market; view: "screene
     <nav aria-label="Market" className="mt-4 flex flex-wrap items-center gap-2">
       <span className="text-meta text-ink-2">Market</span>
       {MARKETS.map((m) => (
-        <Link
+        <Link prefetch={false}
           key={m.id}
           href={screenerHref(m.id, view)}
           aria-current={m.id === current ? "page" : undefined}

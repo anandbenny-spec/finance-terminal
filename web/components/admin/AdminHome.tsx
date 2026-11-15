@@ -102,13 +102,13 @@ export function AdminHome() {
         <p className="text-ink-2">Logged in as the admin{email ? ` (${email})` : ""}.</p>
         <ul className="flex flex-col gap-1">
           <li>
-            <Link href="/admin/health" className="text-ink-1 underline">
+            <Link prefetch={false} href="/admin/health" className="text-ink-1 underline">
               Health
             </Link>
             <span className="text-ink-2">: the tasks, open alerts and recent runs.</span>
           </li>
           <li>
-            <Link href="/admin/labelling" className="text-ink-1 underline">
+            <Link prefetch={false} href="/admin/labelling" className="text-ink-1 underline">
               Labelling
             </Link>
             <span className="text-ink-2">: Pass 2&apos;s evaluation sets, one item at a time.</span>

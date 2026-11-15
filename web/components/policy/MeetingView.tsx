@@ -325,7 +325,7 @@ function Rail({ ctx }: { ctx: Ctx }) {
       {!page.adjacent.ok ? (
         <StateNote kind="error">{ERROR}</StateNote>
       ) : next ? (
-        <Link href={meetingHref(bank, next.decision_date)} className="text-data text-ink-1 underline">
+        <Link prefetch={false} href={meetingHref(bank, next.decision_date)} className="text-data text-ink-1 underline">
           {meetingTitle(next)}
         </Link>
       ) : (
@@ -555,7 +555,7 @@ function StatementSwitch({ ctx, which }: { ctx: Ctx; which: "resolution" | "gove
   return (
     <div role="group" aria-label="Document" className="flex w-max overflow-hidden rounded-md border border-line">
       {items.map((x) => (
-        <Link
+        <Link prefetch={false}
           key={x.id}
           href={meetingTabHref(ctx.bank, ctx.m.decision_date, "statement", x.id === "governor" ? { doc: "governor" } : {})}
           aria-current={which === x.id ? "page" : undefined}
@@ -578,12 +578,12 @@ export function OtherMeetings({ bank, tab, previous, next }: { bank: Bank; tab: 
   return (
     <nav aria-label="Other meetings" className="flex flex-wrap gap-x-4 gap-y-1">
       {previous && (
-        <Link href={meetingTabHref(bank, previous.decision_date, tab)} className="text-ink-3 underline decoration-line-strong hover:text-ink-1 hover:decoration-highlight">
+        <Link prefetch={false} href={meetingTabHref(bank, previous.decision_date, tab)} className="text-ink-3 underline decoration-line-strong hover:text-ink-1 hover:decoration-highlight">
           ← Previous: {formatDate(previous.decision_date)}
         </Link>
       )}
       {next && (
-        <Link href={meetingTabHref(bank, next.decision_date, tab)} className="text-ink-3 underline decoration-line-strong hover:text-ink-1 hover:decoration-highlight">
+        <Link prefetch={false} href={meetingTabHref(bank, next.decision_date, tab)} className="text-ink-3 underline decoration-line-strong hover:text-ink-1 hover:decoration-highlight">
           Next: {formatDate(next.decision_date)} →
         </Link>
       )}

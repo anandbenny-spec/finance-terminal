@@ -196,7 +196,7 @@ export function HealthView() {
     return (
       <StateNote kind="unavailable">
         This page is for the admin.{" "}
-        <Link href="/admin" className="text-ink-1 underline">
+        <Link prefetch={false} href="/admin" className="text-ink-1 underline">
           Log in
         </Link>
       </StateNote>

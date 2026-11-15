@@ -59,13 +59,13 @@ function Hero({ year }: { year: string }) {
       </ul>
       <div className="mt-4 flex flex-wrap gap-2">
         <Button asChild size="lg">
-          <Link href="/policy">Open the Fed vs RBI tracker</Link>
+          <Link prefetch={false} href="/policy">Open the Fed vs RBI tracker</Link>
         </Button>
         <Button asChild size="lg" variant="outline">
-          <Link href="/policy#history">Every decision since {year}</Link>
+          <Link prefetch={false} href="/policy#history">Every decision since {year}</Link>
         </Button>
         <Button asChild size="lg" variant="outline">
-          <Link href="/methodology">How it works</Link>
+          <Link prefetch={false} href="/methodology">How it works</Link>
         </Button>
         <TakeTourButton variant="page" />
       </div>
@@ -251,7 +251,7 @@ export function FrontView({ front }: { front: Front }) {
             footer={
               <>
                 {foot([fedSource, rbiSource], FEEDS.policyRatesStand, latestOf(fed?.meeting?.decision_date, rbi?.meeting?.decision_date), DAILY_TASKS)}
-                <Link href="/policy" className="text-ink-1 underline">
+                <Link prefetch={false} href="/policy" className="text-ink-1 underline">
                   Open the Fed vs RBI tracker →
                 </Link>
               </>

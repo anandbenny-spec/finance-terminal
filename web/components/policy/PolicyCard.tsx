@@ -102,10 +102,10 @@ export function PolicyCard({
         )}
       </div>
       <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-data">
-        <Link href={meetingHref(bank, m.decision_date)} className="text-ink-1 underline">
+        <Link prefetch={false} href={meetingHref(bank, m.decision_date)} className="text-ink-1 underline">
           {fed ? "FOMC meeting" : `MPC meeting${m.meeting_no ? ` no. ${m.meeting_no}` : ""}`}, {formatDate(m.decision_date)}
         </Link>
-        <Link href={meetingTabHref(bank, m.decision_date, "changes")} className="text-ink-1 underline">
+        <Link prefetch={false} href={meetingTabHref(bank, m.decision_date, "changes")} className="text-ink-1 underline">
           What changed
         </Link>
         {officialUrl && (

@@ -43,7 +43,7 @@ export function changeStripColumns<T extends RowBar>(opts: { groupHeader: string
       id: "meeting",
       header: opts.dateHeader,
       cell: (r) => (
-        <Link href={r.href} className="font-mono text-ink-1 underline">
+        <Link prefetch={false} href={r.href} className="font-mono text-ink-1 underline">
           {opts.dateCell ? opts.dateCell(r) : formatTableDate(r.date)}
         </Link>
       ),
@@ -79,7 +79,7 @@ function Readout({ bar, linkText }: { bar: RowBar; linkText: string }) {
         <b className="font-semibold text-ink-1">{formatShareChange(-bar.removedPct)}</b> removed
         <span className="text-ink-3"> ({formatCount(bar.wordsRemoved)} of {formatCount(bar.wordsOld)} words)</span>
       </span>
-      <Link href={bar.href} className="text-ink-1 underline">
+      <Link prefetch={false} href={bar.href} className="text-ink-1 underline">
         {linkText}
       </Link>
     </span>

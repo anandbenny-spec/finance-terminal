@@ -12,7 +12,7 @@ export function TopBar() {
   return (
     <header className="sticky top-0 z-20 flex h-(--topbar-h) shrink-0 items-center gap-3 border-b border-line bg-panel px-4 sm:gap-4">
       <MobileNav />
-      <Link
+      <Link prefetch={false}
         href="/"
         className="flex min-h-6 items-center gap-2 font-mono text-ui font-medium whitespace-nowrap text-ink-1 no-underline lg:min-w-50"
       >

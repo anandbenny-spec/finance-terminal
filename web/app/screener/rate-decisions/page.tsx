@@ -40,7 +40,7 @@ function WindowToggle({ window }: { window: WindowKey }) {
       <span>Move over</span>
       <div role="group" className="flex overflow-hidden rounded-md border border-line">
         {WINDOWS.map((w) => (
-          <Link
+          <Link prefetch={false}
             key={w.id}
             href={sectorHref(w.id)}
             aria-current={w.id === window ? "page" : undefined}
