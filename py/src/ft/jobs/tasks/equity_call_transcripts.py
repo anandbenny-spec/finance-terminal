@@ -37,6 +37,13 @@ Checks, B blocking, W warning:
   §13.3's 90% applies to the latest call only);
 - (W) `raw_storage` (Plan 04b P5): the files and bytes this run stored, and the raw bucket's stored size against the stop
   in `config/equity/calls.yaml` (850 MB); fails when the bucket is over it or can't be read;
+- (W) `storage_stop` (F3-02, #387): the hard stop for new files (`raw_storage_hold_mb`, 900 MB). The bucket is listed once
+  before the first fetch (`ft.storage.StorageStop`) and each PDF kept is added. At or over the stop, or when the bucket
+  can't be listed, a company is held before anything of it is fetched: discovery is still recorded, but no transcript, cover
+  letter or company PDF is fetched or stored and no call row is written, so a later run the stop allows builds the call as
+  usual. The check fails (counts and sizes only), an **error** alert `storage_stop:<task>` opens and the run log carries an
+  `::error` annotation, "storage stop reached"; the task still succeeds, like the other held states, so what discovery
+  recorded and the calls stored before the stop are kept. `storage_held` (always passes) names each held company-season;
 - (W) `files_not_kept` (#287; always passes): the PDFs this run read and did not store, with their size, and the URLs recorded on
   earlier runs that were not fetched. **A PDF is stored only if a document is made from it** (a transcript or a call's cover
   letter; an image-only file too, as before): a first-page candidate that is not a transcript, a notice named a transcript that
@@ -84,6 +91,7 @@ from ft.jobs.due import Due
 from ft.jobs.fetch import COMPANY_WEB, FetchError
 from ft.jobs.runner import Alert, Check, Context
 from ft.jobs.tasks import register
+from ft.storage import StorageStop
 
 SHOWN = 12
 ROWS_SHOWN = 60                                  # filing rows named in a check (#264)
@@ -126,6 +134,10 @@ class EquityCallTranscripts(DocumentJob):
         self.report = pl.Report()
         self.storage_host = ""
         self.storage = None                                   # the object store, for the raw_storage check
+        self.stop: StorageStop | None = None                  # F3-02 (#387): may this run store a new file now?
+        self.stop_reached = False                             # a company was held by it
+        self.held_companies = 0
+        self.checked_companies = 0
         self.cfg: dc.CallsConfig | None = None
         self.conflicts: list[str] = []
         self.demoted: list[int] = []                          # events unpublished as general meetings by this run (#285)
@@ -269,14 +281,17 @@ class EquityCallTranscripts(DocumentJob):
 
     # ================================================================== part 2 (2B-07): fetch, text, the call rows
     def fetch(self, ctx: Context) -> Harvest:
-        h = super().fetch(ctx)                                # part 1: discovery
-        self.report, self.plans, self.conflicts, self.demoted, self.differs = pl.Report(), [], [], [], []
-        db = ctx.fetcher.db
         try:
             self.storage = ctx.fetcher.storage()
             self.storage_host = self.storage._s3.meta.endpoint_url or ""
-        except Exception:                                      # noqa: BLE001 - only the storage checks use it
+        except Exception:                                      # noqa: BLE001 - only the storage checks and the stop use it
             self.storage, self.storage_host = None, ""
+        # F3-02 (#387): the bucket is listed once, before the first fetch; each PDF kept is added as it is stored.
+        self.stop = StorageStop(self.storage, dc.load_calls_config().raw_storage_hold_mb)
+        self.stop_reached, self.held_companies, self.checked_companies = False, 0, 0
+        h = super().fetch(ctx)                                # part 1: discovery (recorded whatever the stop says)
+        self.report, self.plans, self.conflicts, self.demoted, self.differs = pl.Report(), [], [], [], []
+        db = ctx.fetcher.db
         names = dict(db.execute("select id, name from core.entity where kind = 'company' and market = 'IN'").fetchall())
         by_entity: dict[int, str] = {}                         # the quarter of each company's newest call (weekly runs, #285)
         stored: dict[int, dict[str, pl.StoredCall]] = {}       # the calls in the database by quarter (not a backfill)
@@ -289,10 +304,20 @@ class EquityCallTranscripts(DocumentJob):
                      releaser=self._releaser(ctx))
         for co in h.notes["companies"]:
             ref = pl.CompanyRef(co.entity_id, co.slug, names.get(co.entity_id, co.slug), co.symbol)
+            self.checked_companies += 1
+            if not self.stop.allows():                         # #387: nothing fetched or stored for this company
+                self.stop_reached = True
+                self.held_companies += 1
+                self.report.storage_held += pl.held_by_storage(ref, self.announcements, weekly=ctx.workflow == "weekly",
+                                                               newest_call=by_entity.get(co.entity_id),
+                                                               history=ctx.workflow == "backfill")
+                continue
             self.plans += pl.process_company(run, ref, self.announcements, self.results_events(db, co.entity_id),
                                              weekly=ctx.workflow == "weekly", newest_call=by_entity.get(co.entity_id),
                                              history=ctx.workflow == "backfill", first_pages_from=self.cfg.first_pages_from,
                                              stored=stored.get(co.entity_id))
+        if self.stop_reached:                                 # the run's annotation: counts and sizes only
+            print(f"::error title=storage stop::{self.key}: storage stop reached: {self.stop.describe()}; {self._held_line()}")
         return h
 
     @staticmethod
@@ -381,11 +406,16 @@ class EquityCallTranscripts(DocumentJob):
             return None
         return get
 
-    @staticmethod
-    def _keeper(ctx: Context):
-        """Store a deferred PDF the pipeline is making a document from (the fetcher's `keep`)."""
+    def _keeper(self, ctx: Context):
+        """Store a deferred PDF the pipeline is making a document from (the fetcher's `keep`), and count it against the storage
+        stop (#387; a PDF is stored as it is, so its stored size is its size). Every kept file counts, even one whose bytes the
+        bucket already held: the count can only run early, never late."""
+        stop = self.stop
+
         def keep(f: pl.File) -> pl.File:
             got = ctx.fetcher.keep(f.url)
+            if stop is not None:
+                stop.add(len(f.body))
             return pl.File(f.url, f.body, got.sha256 or f.sha256, got.raw_file_id)
         return keep
 
@@ -584,7 +614,29 @@ class EquityCallTranscripts(DocumentJob):
         out.append(Check("coverage_by_season", True,
                          pl.format_coverage(pl.coverage_by_season(self.announcements, self.plans)), blocking=False))
         out.append(self._raw_storage_check(tx, task_run_id))
+        out += self._storage_stop_checks()
         return out
+
+    def _held_line(self) -> str:
+        """Counts only (an alert's and the run log's line): never a company's name."""
+        return (f"held: {self.held_companies} of {self.checked_companies} companies "
+                f"({len(self.report.storage_held)} company-seasons with transcript filings)")
+
+    def _storage_stop_checks(self) -> list[Check]:
+        """F3-02 (#387). `storage_stop` fails when the stop held a company (counts and sizes only, as its alert is);
+        `storage_held` names each held company-season and always passes (the record, like `coverage_by_season`)."""
+        if self.stop is None:
+            return []
+        if not self.stop_reached:
+            return [Check("storage_stop", True, f"not reached: {self.stop.describe()}", blocking=False)]
+        held = self.report.storage_held
+        return [
+            Check("storage_stop", False,
+                  f"storage stop reached: {self.stop.describe()}; {self._held_line()}; no transcript, cover letter or company "
+                  "PDF was fetched or stored for them, discovery was recorded as usual, and coverage_by_season counts them as "
+                  "with no call", blocking=False),
+            Check("storage_held", True, ("held by the storage stop: " + _rows(held)) if held
+                  else "held by the storage stop: no company had a transcript filing to build", blocking=False)]
 
     def _raw_storage_check(self, tx, task_run_id: int) -> Check:
         """Plan 04b P5: the bytes this run stored, and the raw bucket's stored size against the stop (850 MB)."""
@@ -601,6 +653,10 @@ class EquityCallTranscripts(DocumentJob):
 
     def alerts(self, db) -> list[Alert]:
         out = super().alerts(db)
+        if self.stop is not None:                              # #387: error level; resolved by the next run the stop allows
+            out.append(Alert(f"storage_stop:{self.key}", self.stop_reached, "error",
+                             f"{self.key}: storage stop reached: {self.stop.describe()}; {self._held_line()}; no new transcript "
+                             "files fetched or stored (docs/OPERATIONS.md section 5.9)"))
         for p in self.plans:
             if p.quarter.held_reason == "quarter_conflict":
                 out.append(Alert(f"call_quarter_conflict:{p.company.slug}:{p.season}", True, "warn",
