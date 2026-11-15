@@ -277,8 +277,10 @@ anything of it is fetched: discovery still runs and records its NSE replies, but
 is fetched or stored and no call row is written. The task still succeeds, so what it recorded and the calls stored before
 the stop are kept. Where it shows: an **error** alert `storage_stop:equity.call_transcripts` ("storage stop reached") and the
 failed `storage_stop` check on the admin Health page, an `::error` annotation on the run's page in GitHub Actions (counts
-and sizes only), and the `storage_held` check, which names each held company and season. The stop holds only the files
-that grow by the season (transcripts now; BRSR files once `equity.brsr` opts in). Module 1's documents, prices, filings and
+and sizes only), and the `storage_held` check, which names each held company and season. `equity.brsr` (the BRSR files, each June to September) consults the same stop at the same level (one key,
+`raw_storage_hold_mb`): at or over it, no new BRSR file is fetched or stored, both exchanges' lists are still recorded, the held
+company-years are named by its `files_served` check, and its own `storage_stop` check and error alert
+`storage_stop:equity.brsr` open. The stop holds only the files that grow by the season (transcripts and BRSR). Module 1's documents, prices, filings and
 shareholding never consult it and keep storing up to Supabase's cap: about 20 to 25 MB a quarter, so the room under the
 cap lasts about two quarters after the stop. Neither level sends an email, and `/api/health` reads neither, so both
 monitors stay green (section 5.1). At Supabase's own cap writes can be refused and the daily load fails too (section 3,

@@ -29,7 +29,13 @@ Checks, B blocking, W warning:
 - (W) `held_filings`: a filing held because it is not the company's or the listed year's, or BSE served no `.xml`, named;
 - (W) `held_values`: held values counted by reason; filings in the 2021 format (stored, not shown) counted; an entry point
   the config doesn't know named;
-- (W) `filings_filed`: a company with no stored filing for a year whose annual-report season ended (30 Sep), named.
+- (W) `filings_filed`: a company with no stored filing for a year whose annual-report season ended (30 Sep), named;
+- (W) `storage_stop` (F3-02 follow-up, #496): the hard stop for new files (`raw_storage_hold_mb`, the same key as the transcript
+  task's, 900 MB). The bucket is listed once before the first filing file is fetched (`ft.storage.StorageStop`); at or over the
+  stop, or when the bucket can't be listed (the stop fails closed), no new file is fetched or stored for a company-year: it is
+  held through the `files_served` line ("storage stop") and a later run the stop allows reads it. Discovery (both exchanges'
+  lists) is recorded as usual, and a filing already registered keeps its rows. The check fails (counts and sizes only) and an
+  **error** alert `storage_stop:equity.brsr` opens; the run itself still succeeds, as its other held states do.
 """
 from __future__ import annotations
 
@@ -50,11 +56,13 @@ from ft.engines.document.job import (
     latest_stored,
 )
 from ft.equity import brsr as br
+from ft.equity.calls import discovery as dc
 from ft.equity.guard import equity_due
 from ft.jobs.due import Due
 from ft.jobs.fetch import FetchError
 from ft.jobs.runner import Alert, Check, Context
 from ft.jobs.tasks import register
+from ft.storage import StorageStop
 
 SHOWN = 12
 ALLOWED_FAILURES = 2                                  # of the universe: at least all but two answered (§12.4)
@@ -89,12 +97,15 @@ class EquityBrsr(DocumentJob):
         self.cfg = br.load_config()
         self._reset()
         self.result: dict = {}
+        self.stop: StorageStop | None = None                  # F3-02 (#496): may this run store a new file now?
+        self.checked_filings = 0
 
     def _reset(self) -> None:
         self.refusals: Counter = Counter()
         self.fallbacks: list[str] = []
         self.value_changes: list[tuple[str, str, int]] = []
         self.restated = 0
+        self.stop_held = 0                                    # company-years held by the storage stop this run
 
     def due(self, db, workflow: str, now=None) -> Due:
         return equity_due(db, self.key, workflow, super().due(db, workflow, now), requires="equity.brsr_filing")
@@ -137,6 +148,39 @@ class EquityBrsr(DocumentJob):
         last = db.execute("select max(filed_at) from equity.brsr_filing").fetchone()[0]
         start = br.BACKFILL_START if last is None else max(br.BACKFILL_START, last.astimezone(br.INDIA).date() - RETRY_WINDOW)
         return start, end
+
+    # ------------------------------------------------------------------ the storage stop
+    def fetch(self, ctx: Context) -> Harvest:
+        # F3-02 (#496): the bucket is listed once, before the first file is fetched (discovery's lists are small and are
+        # recorded whatever the stop says); each new file stored is added as it comes. A bucket that can't be listed holds.
+        fetcher = ctx.fetcher
+        self.stop = StorageStop(lambda: fetcher.storage(), dc.load_calls_config().raw_storage_hold_mb)
+        h = super().fetch(ctx)
+        self.checked_filings = len(h.candidates)
+        if self.stop_held:                                    # the run's annotation: counts and sizes only
+            print(f"::error title=storage stop::{self.key}: storage stop reached: {self.stop.describe()}; {self._held_line()}")
+        return h
+
+    def _held_line(self) -> str:
+        """Counts only (an alert's and the run log's line): never a company's name."""
+        return f"held: {self.stop_held} of {self.checked_filings} company-years"
+
+    def _registered(self, ctx: Context, m: dict) -> bool:
+        """True when a file of this company-year is stored already (by the name any route would serve): its fetch is a 304."""
+        return any(self._stored_hash(ctx, r.exchange.lower(), br.file_name(url)) is not None
+                   for r in m["routes"] for url in br.xml_variants(r.url))
+
+    def _storage_stop_checks(self) -> list[Check]:
+        """`storage_stop` fails when the stop held a company-year (counts and sizes only, as its alert is); the held
+        company-years are named by `files_served`."""
+        if self.stop is None:
+            return []
+        if not self.stop_held:
+            return [Check("storage_stop", True, f"not reached: {self.stop.describe()}", blocking=False)]
+        return [Check("storage_stop", False,
+                      f"storage stop reached: {self.stop.describe()}; {self._held_line()}; no BRSR file was fetched or stored "
+                      "for them (files_served names them), both exchanges' lists were recorded as usual, and a later run "
+                      "the stop allows reads them", blocking=False)]
 
     # ------------------------------------------------------------------ discovery
     def discover(self, ctx: Context):
@@ -237,11 +281,16 @@ class EquityBrsr(DocumentJob):
             return None, (f"HTTP {e.status}" if e.status else str(e).removeprefix(f"{e.url}: ")[:100])
         if got.raw_file_id is None:
             return None, f"HTTP {got.status}"
+        if got.body is not None and self.stop is not None:            # a 200 was stored: count it (a 304 stores nothing)
+            self.stop.add(len(got.body))
         return got, None
 
     def fetch_candidate(self, ctx: Context, c: Candidate):
         m = c.meta
         company: br.CompanyId = m["company"]
+        if self.stop is not None and not self.stop.allows() and not self._registered(ctx, m):
+            self.stop_held += 1                                        # F3-02 (#496): nothing fetched or stored; (W) files_served
+            raise FetchError(m["routes"][0].url, "held by the storage stop (the raw bucket is at or over its stop for new files)")
         why: list[str] = []
         first_held: BrsrServed | None = None
         html_only: str | None = None
@@ -448,6 +497,7 @@ class EquityBrsr(DocumentJob):
         out.append(Check("filings_filed", not missing,
                          ("no filing stored for: " + _names(missing)) if missing
                          else "every company has a filing for each year whose annual-report season ended", blocking=False))
+        out += self._storage_stop_checks()
         self.result = {"skipped": self.outcome.get("skipped", 0), "added": len(self.outcome.get("added", [])),
                        "versions": len(self.outcome.get("versions", [])), "candidates": len(h.candidates),
                        "fallbacks": len(self.fallbacks), "held": len(held), "restated": self.restated}
@@ -455,6 +505,10 @@ class EquityBrsr(DocumentJob):
 
     def alerts(self, db) -> list[Alert]:
         out = super().alerts(db)
+        if self.stop is not None:                              # error level; resolved by the next run the stop allows
+            out.append(Alert(f"storage_stop:{self.key}", bool(self.stop_held), "error",
+                             f"{self.key}: storage stop reached: {self.stop.describe()}; {self._held_line()}; no new BRSR "
+                             "files fetched or stored (docs/OPERATIONS.md section 5.9)"))
         out += [Alert(f"brsr_values_changed:{slug}:{label}", True, "warn",
                       f"{self.key}: {n} published values of {slug} {label} changed in a new version of its filing")
                 for slug, label, n in self.value_changes]
