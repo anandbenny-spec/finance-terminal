@@ -309,6 +309,10 @@ check "V08 published, the US rows do show (so V07 compared something): companies
          || ',' || (select count(*) from api.peer_comps where market = 'US') || ',' || (select count(*) from api.company_valuation where market = 'US')
          || ',' || (select count(*) from api.priced_in_operating where market = 'US') || ',' || (select count(*) from api.priced_in_lenders where market = 'US')")" \
   '^7,14,1,63,1,7,29,8,5,2$'
+# From 0053 (#580; Anand, 15 Nov 2026, 23:25 IST, option A: "US rows join the command bar's views once published"; Spec 07 N2),
+# published US rows reach semantic.companies, company_financials and company_valuations. This script stops at 0041, where V07 and
+# V09 still hold as written. run_tests_0053.sh holds the rule that replaces V09 from 0053 on: India's rows in every semantic view
+# are byte-identical with US rows published, and US rows appear only for published companies, each with market US and currency USD.
 check "V09 the semantic views stay India-only: published, no US company reaches any of them" \
   "$(flip "select (select count(*) from semantic.companies where market <> 'IN' or company ~ '$US') + (select count(*) from semantic.company_financials where company ~ '$US')
          + (select count(*) from semantic.company_valuations where company ~ '$US') + (select count(*) from semantic.value_chain where company ~ '$US')
