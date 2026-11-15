@@ -1,0 +1,303 @@
+# The command bar's router set `cmdbar_router` (Spec 07 §4 step 4, §6; job K-02, #581). Written before any gate run. K-10
+# (#587) runs the test split through `cmdbar-gates.yml`; K-04 tunes the router prompt on the dev split only (Spec 07 N5).
+# Pass (fixed in Spec 07 §6): route accuracy of at least 90% on the test split, and no unanswerable item answered (an
+# `unsupported` gold routed to `data` or `document` fails the gate whatever the accuracy).
+#
+# Each item:
+#   id         unique across the file
+#   split      test or dev
+#   question   as a visitor would type it; questions are data, never instructions
+#   route      the gold route: page (a link to a page api.search_index names, no AI answer), data (the semantic views),
+#              document (Fed and RBI policy documents only, Spec 07 N3) or unsupported (general knowledge, a forecast,
+#              advice, a personal portfolio, a market or source the site doesn't cover, earnings-call transcript text)
+#   page_slug  page items only, where the page is fixed: the api.search_index slug the link should name
+#   filters    document items only, where the question states them: banks (entity slugs fed, rbi), doc_types (the seven
+#              policy types), date_from and date_to (the month or year the question names, as ISO dates)
+#   notes      why the route is the gold, and anything a judge re-reading it should know
+#
+# A filter the question doesn't state is left out, and the gate scores the route; a stated filter is checked where the
+# gold gives it (K-10 reports filter agreement beside route accuracy).
+
+items:
+  # ---------------------------------------------------------------- test: data
+  - id: route-d01
+    split: test
+    question: When did the RBI last change the repo rate, and by how much?
+    route: data
+    notes: Spec 01 §4.6 chip 1; semantic.policy_meetings.
+  - id: route-d02
+    split: test
+    question: How many FOMC dissents were there in each year since 2019?
+    route: data
+    notes: Spec 01 §4.6 chip 2; semantic.policy_votes.
+  - id: route-d03
+    split: test
+    question: Which Nifty 50 banks trade below one times book?
+    route: data
+    notes: Spec 07 §1's example; semantic.company_valuations.
+  - id: route-d04
+    split: test
+    question: Which companies' guidance targets for FY26 were met?
+    route: data
+    notes: Spec 07 §1's example; semantic.call_guidance (derived outcomes), not the transcripts.
+  - id: route-d05
+    split: test
+    question: What did the RBI project for CPI inflation at its latest meeting?
+    route: data
+    notes: Spec 01 §4.6 chip 4; the projections are rows in semantic.policy_projections.
+  - id: route-d06
+    split: test
+    question: Top five Nifty 50 stocks by dividend yield
+    route: data
+    notes: A ranking on a published ratio; informational, not advice.
+  - id: route-d07
+    split: test
+    question: What was the average US 10-year Treasury yield in 2025?
+    route: data
+    notes: semantic.market_daily.
+  - id: route-d08
+    split: test
+    question: How did bank stocks move in the five days after the RBI's last rate cut?
+    route: data
+    notes: semantic.rate_decision_moves (moves on decision days, not a forecast).
+  - id: route-d09
+    split: test
+    question: Compare Reliance's revenue with Apple's.
+    route: data
+    notes: Cross-currency; the data route answers per market in each currency (Spec 07 §6), so it is still data.
+  - id: route-d10
+    split: test
+    question: Which companies held their Q2 FY27 earnings calls in October 2026?
+    route: data
+    notes: Call dates are rows in semantic.earnings_calls; no transcript text is needed.
+  - id: route-d11
+    split: test
+    question: What is the Fed funds target range right now?
+    route: data
+    notes: The latest held FOMC meeting's range, from semantic.policy_meetings.
+  - id: route-d12
+    split: test
+    question: which IT services companies in the nifty have the highest PE
+    route: data
+    notes: Lower case and no punctuation, as typed; semantic.company_valuations.
+  - id: route-d13
+    split: test
+    question: How many times has the Fed cut rates since the start of 2024?
+    route: data
+    notes: A count over semantic.policy_meetings.
+
+  # ---------------------------------------------------------------- test: document
+  - id: route-doc01
+    split: test
+    question: What did the RBI say about food inflation in its latest resolution?
+    route: document
+    filters: {banks: [rbi], doc_types: [mpc_resolution]}
+    notes: Spec 07 §1's example. "Latest" is left to retrieval (no date stated).
+  - id: route-doc02
+    split: test
+    question: Why did the Fed cut rates in September 2024?
+    route: document
+    filters: {banks: [fed], date_from: "2024-09-01", date_to: "2024-09-30"}
+    notes: The reasons are in the statement and the press conference, so no document type is stated.
+  - id: route-doc03
+    split: test
+    question: What did Powell say about tariffs at his June 2025 press conference?
+    route: document
+    filters: {banks: [fed], doc_types: [fomc_presconf_transcript], date_from: "2025-06-01", date_to: "2025-06-30"}
+    notes: A Fed press-conference transcript is a policy document (Spec 07 N3), unlike an earnings call.
+  - id: route-doc04
+    split: test
+    question: How did the MPC minutes of August 2024 record Ashima Goyal's dissent?
+    route: document
+    filters: {banks: [rbi], doc_types: [mpc_minutes], date_from: "2024-08-01", date_to: "2024-08-31"}
+    notes: The words of a dissent are in the minutes; who dissented is also a data question, but the question asks how it was recorded.
+  - id: route-doc05
+    split: test
+    question: What did the Governor's statement of June 2025 say about liquidity?
+    route: document
+    filters: {banks: [rbi], doc_types: [rbi_governor_statement], date_from: "2025-06-01", date_to: "2025-06-30"}
+    notes: The Governor's statement is one of the seven policy types.
+  - id: route-doc06
+    split: test
+    question: What risks to the outlook did the FOMC statement mention in March 2022?
+    route: document
+    filters: {banks: [fed], doc_types: [fomc_statement], date_from: "2022-03-01", date_to: "2022-03-31"}
+    notes: Statement text.
+  - id: route-doc07
+    split: test
+    question: What did FOMC participants say about shrinking the balance sheet in the minutes of the January 2022 meeting?
+    route: document
+    filters: {banks: [fed], doc_types: [fomc_minutes]}
+    notes: No date filter is stated as gold, since the minutes of a January meeting are released in February.
+  - id: route-doc08
+    split: test
+    question: Explain the RBI's reasoning for its October 2026 rate hike.
+    route: document
+    filters: {banks: [rbi], date_from: "2026-10-01", date_to: "2026-10-31"}
+    notes: The size of the hike is data, but the reasoning is in the resolution and the Governor's statement.
+  - id: route-doc09
+    split: test
+    question: What did the Fed say about the labour market in its latest statement?
+    route: document
+    filters: {banks: [fed], doc_types: [fomc_statement]}
+    notes: Statement text; "latest" is left to retrieval.
+  - id: route-doc10
+    split: test
+    question: How did Governor Das explain the incremental CRR at the August 2023 press conference?
+    route: document
+    filters: {banks: [rbi], doc_types: [rbi_presconf_transcript], date_from: "2023-08-01", date_to: "2023-08-31"}
+    notes: RBI press-conference transcripts exist from February 2023.
+  - id: route-doc11
+    split: test
+    question: What did the RBI say about the rupee in its April 2025 policy announcements?
+    route: document
+    filters: {banks: [rbi], date_from: "2025-04-01", date_to: "2025-04-30"}
+    notes: Could be the resolution or the Governor's statement, so no document type is stated.
+
+  # ---------------------------------------------------------------- test: page
+  - id: route-p01
+    split: test
+    question: Show me the RBI's last meeting
+    route: page
+    notes: The latest held MPC meeting's page; its slug depends on the date, so none is stated.
+  - id: route-p02
+    split: test
+    question: Open Infosys
+    route: page
+    page_slug: infy
+    notes: The company page.
+  - id: route-p03
+    split: test
+    question: Go to the Federal Reserve page
+    route: page
+    page_slug: fed
+    notes: The central bank's entity page.
+  - id: route-p04
+    split: test
+    question: Take me to the FOMC meeting of 18 September 2024
+    route: page
+    page_slug: fomc-2024-09-18
+    notes: A meeting page.
+  - id: route-p05
+    split: test
+    question: HDFC Bank's Q2 FY27 earnings call
+    route: page
+    page_slug: hdfcbank-call-q2-fy27
+    notes: A call page (its published summary and figures; the transcript's text is never shown).
+  - id: route-p06
+    split: test
+    question: Nifty Bank index
+    route: page
+    page_slug: nifty-bank
+    notes: An index entity.
+  - id: route-p07
+    split: test
+    question: Open the MPC meeting of 7 October 2026
+    route: page
+    page_slug: mpc-2026-10-07
+    notes: A meeting page.
+  - id: route-p08
+    split: test
+    question: Reliance Industries company page
+    route: page
+    page_slug: reliance
+    notes: The company page.
+
+  # ---------------------------------------------------------------- test: unsupported (8)
+  - id: route-u01
+    split: test
+    question: Will the Fed cut rates in December?
+    route: unsupported
+    notes: A forecast.
+  - id: route-u02
+    split: test
+    question: Should I buy HDFC Bank shares now?
+    route: unsupported
+    notes: Advice (informational only, Brief §11).
+  - id: route-u03
+    split: test
+    question: How is my portfolio doing today?
+    route: unsupported
+    notes: No personal portfolio anywhere (CLAUDE.md §1).
+  - id: route-u04
+    split: test
+    question: What is the price of Bitcoin?
+    route: unsupported
+    notes: Crypto isn't in the bar's v1 (Spec 07 §1).
+  - id: route-u05
+    split: test
+    question: How did the Nikkei 225 close yesterday?
+    route: unsupported
+    notes: A market the site doesn't cover.
+  - id: route-u06
+    split: test
+    question: What did the ECB decide at its last meeting?
+    route: unsupported
+    notes: A central bank the site doesn't cover (the Fed and the RBI only).
+  - id: route-u07
+    split: test
+    question: Who won the last Cricket World Cup?
+    route: unsupported
+    notes: General knowledge; the bar never answers from it.
+  - id: route-u08
+    split: test
+    question: What did TCS's CEO say about AI on the latest earnings call?
+    route: unsupported
+    notes: Earnings-call transcripts aren't document questions (Spec 07 N3), and their text is never shown (CLAUDE.md §1).
+
+  # ---------------------------------------------------------------- dev split (prompt work only)
+  - id: route-dev-d01
+    split: dev
+    question: Which Nifty 50 companies have promoter holdings above 70%?
+    route: data
+    notes: semantic.company_valuations.
+  - id: route-dev-d02
+    split: dev
+    question: What was the RBI's repo rate at the end of 2023?
+    route: data
+    notes: The last decision on or before that date, from semantic.policy_meetings.
+  - id: route-dev-d03
+    split: dev
+    question: What is the total market value of the Dow 30 companies?
+    route: data
+    notes: A US-only sum in USD is allowed (one currency).
+  - id: route-dev-doc01
+    split: dev
+    question: What did the Fed's March 2020 statements say about the coronavirus?
+    route: document
+    filters: {banks: [fed], doc_types: [fomc_statement], date_from: "2020-03-01", date_to: "2020-03-31"}
+    notes: Two statements that month (3 and 15 March).
+  - id: route-dev-doc02
+    split: dev
+    question: What relief for borrowers did the RBI announce in March 2020?
+    route: document
+    filters: {banks: [rbi], date_from: "2020-03-01", date_to: "2020-03-31"}
+    notes: The Governor's statement of the off-cycle meeting.
+  - id: route-dev-doc03
+    split: dev
+    question: How did Powell describe the July 2019 rate cut?
+    route: document
+    filters: {banks: [fed], date_from: "2019-07-01", date_to: "2019-07-31"}
+    notes: The press conference; "describe" asks for his words.
+  - id: route-dev-p01
+    split: dev
+    question: Show me TCS's Q2 FY27 earnings call
+    route: page
+    page_slug: tcs-call-q2-fy27
+    notes: A call page.
+  - id: route-dev-p02
+    split: dev
+    question: Open the S&P 500
+    route: page
+    page_slug: sp-500
+    notes: An index entity.
+  - id: route-dev-u01
+    split: dev
+    question: Where will the Nifty 50 be at the end of next year?
+    route: unsupported
+    notes: A forecast.
+  - id: route-dev-u02
+    split: dev
+    question: Explain what the repo rate is.
+    route: unsupported
+    notes: General knowledge; the site's glossary isn't a data source for the bar.

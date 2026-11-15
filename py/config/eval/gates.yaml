@@ -31,19 +31,19 @@ gates:
     source: Brief §11; Architecture 03 §1.9
   - key: retrieval
     module: policy                      # module 1's document questions in v1
-    eval_set: retrieval
+    eval_set: retrieval                 # 20 Fed and RBI policy-document questions (test split): sets/retrieval.yaml (#581)
     metric: recall_at_8
     rule: {min: 0.85}
     source: Brief §11; Architecture 03 §1.9
   - key: cmdbar_router
     module: policy
-    eval_set: cmdbar_router
+    eval_set: cmdbar_router             # 40 questions, 8 unanswerable (test split): sets/cmdbar_router.yaml (#581)
     metric: route_accuracy
     rule: {min: 0.90}                   # and no unanswerable question answered (checked by the run)
     source: Brief §11; Architecture 03 §1.9
   - key: cmdbar_sql
-    module: policy                      # the 15 module-1 data questions now
-    eval_set: cmdbar_sql
+    module: policy                      # about 60 data questions, module 1 and module 2 (Spec 07 §6)
+    eval_set: cmdbar_sql                # test split: sets/cmdbar_sql.yaml (#581), with 9 cross-currency items
     metric: result_match
-    rule: {min: 0.85}
+    rule: {min: 0.85}                   # and 100% on the cross-currency items (checked by the run)
     source: Brief §11; Architecture 03 §1.9
