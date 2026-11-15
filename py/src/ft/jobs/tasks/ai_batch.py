@@ -130,7 +130,13 @@ rate with a verb of deciding (`summaries._kind`); v21 is v20's text again, marki
 IST): the fallback gives growth projections their own slot and quotes up to three consecutive added (or removed) sentences as
 one change. v22 is v21's text again, marking
 round 19's (Anand, 15 Nov 2026, about 00:28 IST): the committee's own vote is the fallback's decision, "policy rates" never is,
-guidance is not a second decision, the decision is shown once, and a run of consecutive sentences stays in one paragraph.
+guidance is not a second decision, the decision is shown once, and a run of consecutive sentences stays in one paragraph. v23 is
+v22's text again, marking round 20's (Anand, 15 Nov 2026, 12:10 IST): the fallback packs up to two changes of one kind into a
+bullet (the inflation and growth projections one kind, the corridor rates with the decision) and splits them again while
+bullets are to spare, ranks the balance sheet's words before the stance's, takes the decision whose sentence gives the rate
+first, reads "will continue" as guidance only with a policy maker as its subject and the RBI's forward guidance ("rate cuts are
+off the table", "policy action ahead") as guidance, and never quotes the same words in two changes
+(`summaries.DIFF_PACK_FROM`); fallbacks of v22 or earlier keep their rules.
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -206,7 +212,7 @@ from ft.policy import rbi_resolution
 # v15 (Anand's pick of 13 Nov 2026, before 17:36 IST, after round 13): v14's text, with two false positives fixed
 # (summaries.DIFF_FP_FIX_FROM). v16 (Anand's decision of 14 Nov 2026, about 00:38 IST, after the judge failed round 14): v15's
 # text, with the grammar-fit, run-on and neighbour checks (summaries.DIFF_FIT_FROM).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v22", "stance_extraction": "v2",
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v23", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
@@ -953,7 +959,8 @@ class AiBatch(BatchSteps, Task):
             rows = []
         prefer = [(q.get("document"), q.get("text")) for r in rows if isinstance(r, dict)
                   for q in (r.get("quotes") or []) if isinstance(q, dict) and isinstance(q.get("text"), str)]
-        bullets = summaries.fallback_bullets(w.segments, w.base, w.doc, prefer)
+        bullets = summaries.fallback_bullets(w.segments, w.base, w.doc, prefer,
+                                             packed=_vnum(call.request.prompt.version) >= summaries.DIFF_PACK_FROM)
         if not bullets:
             return None
         checked = Checked(w.task, bullets, [], Counter({"redline": sum(len(b.citations) for b in bullets)}))

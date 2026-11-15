@@ -50,6 +50,8 @@ passages they cite.
   (`fallback_bullets`).
 - From v20 on (#445, round 17; Anand's decision of 14 Nov 2026, about 22:19 IST; `DIFF_OPEN_END_FROM`): also no quotation that
   ends on a word such as "a", "the" or "to" in the middle of a phrase, even where the bullet goes on in its own words.
+- From v23 on (#445, round 20; Anand's decision of 15 Nov 2026, 12:10 IST; `DIFF_PACK_FROM`): the replies are checked as v22's;
+  the fallback packs up to two changes of one kind into a bullet while bullets are scarce (`_pack`).
 A reply with any dropped bullet or the wrong count isn't published: the request is retried once, with a note naming
 the problems (so the retry is a new input, with its own ops.ai_request row), then rejected with an alert
 (`policy.ai_batch`). The database checks the published output's citations again at commit (Architecture 01 §1.4).
@@ -71,17 +73,19 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
 DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
-                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET, "v23": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
 # (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
 # two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12); v14: v13 plus two rules, with one
 # more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14); v16: v15's
 # text, with three more checks (round 15); v17: v16 plus three rules, with four more checks, a second model's check and a
 # fallback built by code (round 16); v18: v17's text, marking those checks' revision before the judge (round 16's second run); v19: v17's
 # text again, marking the third run's (a narrower "adds" check, the fallback's trivial changes and repeated sentences).
+# v20 to v22: v19's text again, marking rounds 17 to 19's revisions; v23: v22's text, marking round 20's packed fallback
+# (`DIFF_PACK_FROM`).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
 DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium",
-                  "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium", "v20": "medium", "v21": "medium", "v22": "medium"}
+                  "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium", "v20": "medium", "v21": "medium", "v22": "medium", "v23": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -171,6 +175,18 @@ VERIFY_MAX_TOKENS = 16_000            # thinking and one verdict per bullet; a s
 # be a" and went on "hike or a pause", the statement's "rate hike or a pause" with a word left out, which the run-on check
 # (`runs_on_problem`: the passage's next words, word for word) let through. Round 15's judge failed that shape (3376).
 DIFF_OPEN_END_FROM = 20
+# From v23 (#445, round 20; Anand's decision of 15 Nov 2026, 12:10 IST, after round 19's dev run, whose likely failures were
+# both the fallback's): v22's text, and the fallback packs (`fallback_bullets`' `packed`). Rounds 16 to 19 lost targets on the
+# fallback, which shows one change per bullet in at most five bullets while v1 (a model) often puts two changes in a bullet,
+# so a fallback could miss a change v1 had and Part 2's rule (c) compares with v1:
+# - a bullet carries up to FALLBACK_PER_BULLET changes of one kind, the inflation and growth projections counting as one
+#   kind (`_pack`): mpc-2020-03-27's 3561 spent two of its five bullets on restated projections and left out the global
+#   standstill and the liquidity operations that v1 (346) had;
+# - the balance sheet's words rank before the stance's (`_kind`'s `packed`), so fomc-2025-10-29's old "will continue
+#   reducing its holdings" (read as guidance) and new "decided to conclude the reduction of its aggregate securities
+#   holdings" are one change: its fallback (3557) quoted the old sentence alone, as removed, and left out the new one.
+# Fallbacks of v22 or earlier keep their rules.
+DIFF_PACK_FROM = 23
 
 
 def diff_json(version: str) -> bool:
@@ -1624,6 +1640,9 @@ def apply_verdicts(c: Checked, answer) -> None:
 #   at most ADDED_MAX_SENTENCES sentences of the previous document), or of the same kind (`_kind`) and topic (`_same_topic`;
 #   round 17: mpc-2020-12-04's reworded decision and GDP sentences were shown as two bullets each), are shown as one change,
 #   the removed sentence sharing the most content words, so a reworded sentence is never called added.
+# From v23 (`DIFF_PACK_FROM`, `_pack`), a bullet carries up to FALLBACK_PER_BULLET changes of one kind, the second opening
+# "Also, …", while bullets are scarce; the balance sheet comes before the projections (FALLBACK_PACKED_ORDER); and the
+# decision's sentence that gives the rate comes first.
 # The citations are the quoted sentences.
 _MONTH_WORD = re.compile(r"^(?:january|february|march|april|may|june|july|august|september|october|november|december"
                          r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$", re.IGNORECASE)
@@ -1636,6 +1655,11 @@ FALLBACK_KINDS = ("decision", "stance", "dissent", "projections", "growth projec
                   "corridor", "votes", "other")
 FALLBACK_FIRST_KINDS = 9              # decision to corridor: one of each before any second of a kind
 FALLBACK_RUN_MAX = 3                  # consecutive added (or removed) sentences shown as one change, at most this many
+FALLBACK_PER_BULLET = 2               # from v23 (`DIFF_PACK_FROM`): changes of one kind a bullet may carry
+# From v23, the first pass's order and the bullets' (the balance sheet is policy: it comes before the projections and the
+# economy's words): fomc-2025-10-29's decision to conclude the reduction of its securities holdings is a policy change v1 has.
+FALLBACK_PACKED_ORDER = ("decision", "stance", "dissent", "balance sheet", "projections", "growth projections", "inflation",
+                         "economy", "corridor", "votes", "other")
 _PARA_NO = re.compile(r"\d{1,2}\.\s")    # an RBI paragraph number opening a sentence: a new paragraph, so no run across it
 _K_RATE = re.compile(r"target range|federal funds rate|(?<!reverse )repo rate|policy rate\b", re.IGNORECASE)   # not "policy rates"
 # A decision says so: "decided"/"decides", the committee's own vote, or an RBI resolution's list item opening with its verb
@@ -1654,17 +1678,32 @@ _K_DISSENT = re.compile(r"\bvot\w* against\b|\bdissent|\bpreferred\b|\bwere of t
                         r"|\bvoted for (?:a|an)\b", re.IGNORECASE)
 _K_STANCE = re.compile(r"stance|withdrawal of accommodation|appropriate|guided by|prepared to|expects|anticipates"
                        r"|will continue|future|patient|vigil|disinflationary", re.IGNORECASE)
+# From v23: "will continue" is guidance only with a policy maker as its subject ("The Committee will continue to monitor …"; not
+# "global economic uncertainty will continue to have some bearing on domestic economic activity", mpc-2026-10-07), "future"
+# is a word of its own (not "The crude oil futures curve has become downward sloping", mpc-2021-02-05), and the
+# RBI's forward guidance is guidance ("rate cuts are off the table in the near term and policy action ahead can only be a rate
+# hike or a pause", mpc-2026-10-07, which v1 (58) has and the v22 fallback read as the economy, for "the outlook").
+_K_STANCE_PACKED = re.compile(r"stance|withdrawal of accommodation|appropriate|guided by|prepared to|expects|anticipates"
+                              r"|\b(?:Committee|MPC|Reserve Bank|Federal Reserve|it)\s+will continue|\bfuture\b|patient|vigil"
+                              r"|disinflationary|\boff the table\b|\bpolicy action ahead\b"
+                              r"|\brate (?:hike|cut|tightening|easing) cycle\b", re.IGNORECASE)
 _K_PROJECTIONS = re.compile(r"projected|projection|path of|revised (?:up|down)", re.IGNORECASE)
 _K_GROWTH = re.compile(r"\bgdp\b|\bgva\b|growth", re.IGNORECASE)
 _K_INFLATION = re.compile(r"inflation|price pressures|prices", re.IGNORECASE)
 _K_ECONOMY = re.compile(r"growth|gdp|employment|labor|labour|unemployment|activity|spending|investment|outlook|uncertain",
                         re.IGNORECASE)
 _K_BALANCE = re.compile(r"securities|holdings|purchases|balance sheet|treasury|mortgage", re.IGNORECASE)
+# From v23: the central bank's balance sheet, not "the balance sheets of banks and corporates" (mpc-2023-08-10).
+_K_BALANCE_PACKED = re.compile(r"securities|holdings|purchases|balance sheet\b|treasury|mortgage", re.IGNORECASE)
 _K_CORRIDOR = re.compile(r"reverse repo|standing deposit|\bSDF\b|marginal standing|\bMSF\b|bank rate", re.IGNORECASE)
+_K_FIGURE_RATE = re.compile(r"\d(?:[\d./-]*\d)?\s*(?:per\s*cent|percent|bps\b|basis points?|percentage points?)", re.IGNORECASE)
 
 
-def _kind(text: str) -> int:
-    """The fallback's kind of a change (an index into FALLBACK_KINDS) from its two sides' words."""
+def _kind(text: str, *, packed: bool = False) -> int:
+    """The fallback's kind of a change (an index into FALLBACK_KINDS) from its two sides' words. `packed` (from v23,
+    `DIFF_PACK_FROM`): a change naming the balance sheet's words is the balance sheet before it is the stance, so "will
+    continue reducing its holdings" and "decided to conclude the reduction of its aggregate securities holdings" are one
+    kind; and the stance reads `_K_STANCE_PACKED`."""
     if _K_MARKET.search(text):
         return FALLBACK_KINDS.index("other")              # the call rate against the repo rate is no decision
     committee = bool(_K_COMMITTEE_VOTE.search(text))
@@ -1672,7 +1711,9 @@ def _kind(text: str) -> int:
         return FALLBACK_KINDS.index("dissent")
     if _K_RATE.search(text) and (committee or (_K_DECIDE.search(text) and not _K_VOTE.search(text))):
         return FALLBACK_KINDS.index("decision")
-    for name, pattern in (("stance", _K_STANCE), ("projections", _K_PROJECTIONS), ("inflation", _K_INFLATION),
+    if packed and _K_BALANCE_PACKED.search(text):
+        return FALLBACK_KINDS.index("balance sheet")
+    for name, pattern in (("stance", _K_STANCE_PACKED if packed else _K_STANCE), ("projections", _K_PROJECTIONS), ("inflation", _K_INFLATION),
                           ("economy", _K_ECONOMY), ("balance sheet", _K_BALANCE), ("corridor", _K_CORRIDOR), ("votes", _K_VOTE)):
         if pattern.search(text):
             if name == "projections" and _K_GROWTH.search(text) and not _K_INFLATION.search(text):
@@ -1740,8 +1781,14 @@ def _side(text: str, spans: list[tuple[int, int]]) -> tuple[str, list[tuple[int,
     return '" and "'.join(parts), spans
 
 
-def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], hi: int = 5) -> list[Bullet]:
-    """The fallback's bullets (see above): `prefer` holds a rejected reply's quotes as (document, text), in its order."""
+def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], hi: int = 5, *,
+                     packed: bool = False) -> list[Bullet]:
+    """The fallback's bullets (see above): `prefer` holds a rejected reply's quotes as (document, text), in its order.
+    `packed` (from v23, `DIFF_PACK_FROM`): the balance sheet's words rank before the stance's, and a bullet carries up to
+    FALLBACK_PER_BULLET changes of one kind (`_pack`)."""
+    def kind_of(text: str) -> int:
+        return _kind(text, packed=packed)
+
     def words(spans: list[tuple[int, int]], text: str) -> str:
         return " ".join(text[s:e] for s, e in spans)
 
@@ -1770,7 +1817,7 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
             theirs = set().union(*(_pairs(old.text[s:e]) for s, e in r[0]))
             gone = words(r[0], old.text)
             if (any(sum(x in _pairs(old.text[a:b]) for a, b in every_old) <= ADDED_MAX_SENTENCES for x in mine & theirs)
-                    or (_same_topic(gone, added) and _kind(gone) == _kind(added))):    # round 17: same kind and topic too
+                    or (_same_topic(gone, added) and kind_of(gone) == kind_of(added))):    # round 17: same kind and topic too
                 a, b = _content(gone), _content(added)
                 shared = len(a & b) / max(1, min(len(a), len(b)))
                 if shared > best_shared:
@@ -1805,7 +1852,7 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
                 return k
         return len(prefer)
 
-    kind = {id(p): _kind(words(p[0], old.text) + " " + words(p[1], new.text)) for p in unique}
+    kind = {id(p): kind_of(words(p[0], old.text) + " " + words(p[1], new.text)) for p in unique}
     preferred = {id(p): first_preferred(p) for p in unique}
 
     def where(p) -> tuple[int, int]:
@@ -1826,39 +1873,107 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
     # Within a kind, a change whose new side is itself of that kind first: the new sentence says it (round 17: mpc-2019-02-07's
     # old "consistent with the stance of calibrated tightening" was paired with a new sentence without the stance, while the
     # added "decided to change the monetary policy stance from calibrated tightening to neutral" was left out).
-    says = {id(p): 0 if p[1] and _kind(words(p[1], new.text)) == kind[id(p)] else 1 for p in unique}
-    by_kind = sorted(unique, key=lambda p: (kind[id(p)], says[id(p)], preferred[id(p)], where(p)))
-    for k in range(FALLBACK_FIRST_KINDS):              # one of each kind first
-        for p in by_kind:
-            if len(chosen) < hi and kind[id(p)] == k and take(p):
+    says = {id(p): 0 if p[1] and kind_of(words(p[1], new.text)) == kind[id(p)] else 1 for p in unique}
+    # From v23, the decision whose new sentence gives the rate first (mpc-2020-03-27: "reduce the policy repo rate … by 75 basis
+    # points to 4.40 per cent" before "All members voted for a reduction in the policy repo rate").
+    rate = {id(p): 0 if not packed or kind[id(p)] or _K_FIGURE_RATE.search(words(p[1], new.text)) else 1 for p in unique}
+    by_kind = sorted(unique, key=lambda p: (kind[id(p)], says[id(p)], rate[id(p)], preferred[id(p)], where(p)))
+    after = sorted(unique, key=lambda p: (preferred[id(p)], kind[id(p)], where(p)))
+    if packed:
+        said = {id(p): (" ".join(_undated(words(p[0], old.text))), " ".join(_undated(words(p[1], new.text)))) for p in unique}
+        bullets = _pack(by_kind, after, {id(p): kind[id(p)] for p in unique}, said, take, hi)
+    else:
+        for k in range(FALLBACK_FIRST_KINDS):          # one of each kind first
+            for p in by_kind:
+                if len(chosen) < hi and kind[id(p)] == k and take(p):
+                    break
+        for p in after:
+            if len(chosen) == hi:
                 break
-    for p in sorted(unique, key=lambda p: (preferred[id(p)], kind[id(p)], where(p))):
-        if len(chosen) == hi:
-            break
-        if kind[id(p)] == 0 and any(kind[id(c)] == 0 for c in chosen):
-            continue                                   # the decision once (an RBI resolution says it in two paragraphs)
-        take(p)
+            if kind[id(p)] == 0 and any(kind[id(c)] == 0 for c in chosen):
+                continue                               # the decision once (an RBI resolution says it in two paragraphs)
+            take(p)
+        bullets = [[p] for p in chosen]
+
+    def rank(p) -> int:
+        return FALLBACK_PACKED_ORDER.index(FALLBACK_KINDS[kind[id(p)]]) if packed else kind[id(p)]
 
     out: list[Bullet] = []
-    for o, n in sorted(chosen, key=lambda p: (kind[id(p)], preferred[id(p)], where(p))):
+    for changes in sorted(bullets, key=lambda g: (rank(g[0]), preferred[id(g[0])], where(g[0]))):
         b = Bullet("")
-        said = []
-        if o:
-            q, spans = _side(old.text, o)
-            said.append(f'The previous {old.label} said: "{q}"')
-            b.citations += [Cited(old.document_id, s, e, "redline") for s, e in spans]
-        if n:
-            q, spans = _side(new.text, n)
-            said.append(f'The new {new.label} says: "{q}"')
-            b.citations += [Cited(new.document_id, s, e, "redline") for s, e in spans]
-        these = "these sentences" if len(o or n) > 1 else "this sentence"
-        if not o:
-            said.append(f"The previous {old.label} doesn't have {these}.")
-        if not n:
-            said.append(f"The new {new.label} doesn't have {these}.")
-        b.text = " ".join(said)
+        parts = []
+        for i, (o, n) in enumerate(changes):
+            said = []
+            if o:
+                q, spans = _side(old.text, o)
+                said.append(f'The previous {old.label} said: "{q}"')
+                b.citations += [Cited(old.document_id, s, e, "redline") for s, e in spans]
+            if n:
+                q, spans = _side(new.text, n)
+                said.append(f'The new {new.label} says: "{q}"')
+                b.citations += [Cited(new.document_id, s, e, "redline") for s, e in spans]
+            these = "these sentences" if len(o or n) > 1 else "this sentence"
+            if not o:
+                said.append(f"The previous {old.label} doesn't have {these}.")
+            if not n:
+                said.append(f"The new {new.label} doesn't have {these}.")
+            text = " ".join(said)
+            parts.append(f"Also, {text[0].lower()}{text[1:]}" if i else text)    # a second change of the bullet's kind
+        b.text = " ".join(parts)
         out.append(b)
     return out
+
+
+def _pack(by_kind: list, after: list, kind: dict[int, int], said: dict[int, tuple[str, str]], take, hi: int) -> list[list]:
+    """The packed fallback's choice (v23 on, `fallback_bullets`): bullets as lists of changes, each holding up to
+    FALLBACK_PER_BULLET changes of one kind. Here the inflation and growth projections are one kind, and the corridor rates
+    join the decision's bullet (they move with it: "Consequently, the reverse repo rate … stands adjusted to …"), as v1 often
+    puts them. `by_kind` and `after` are the changes in the first pass's order and the later passes' order, `kind` their
+    kinds by id, `said` their two sides' words without dates, and `take` claims a change's sentences (False if another
+    bullet quotes one). Three passes: one change of each of the first FALLBACK_FIRST_KINDS kinds of FALLBACK_PACKED_ORDER
+    (the balance sheet before the projections), joining the bullet of its
+    kind if it has room, else in a bullet of its own while there are fewer than `hi`; then each bullet takes the next
+    changes of its kind, in `by_kind`'s order, up to its limit; then the changes left, in `after`'s order, join a bullet of
+    their kind with room or open one while slots are left. The decision is shown once, and no change whose previous or new
+    words another chosen change already has (an RBI resolution states its stance in two paragraphs). Last, while there are
+    fewer than `hi` bullets, a bullet's second change moves to a bullet of its own: packing is for coverage, so a target with
+    few changes keeps one change to a bullet."""
+    decision, projections = FALLBACK_KINDS.index("decision"), FALLBACK_KINDS.index("projections")
+    growth, corridor = FALLBACK_KINDS.index("growth projections"), FALLBACK_KINDS.index("corridor")
+    bullets: list[list] = []
+
+    def group(p) -> int:
+        return {growth: projections, corridor: decision}.get(kind[id(p)], kind[id(p)])
+
+    def place(p, *, open_new: bool = True) -> bool:
+        chosen = [c for g in bullets for c in g]
+        if kind[id(p)] == decision and any(kind[id(c)] == decision for c in chosen):
+            return False                               # the decision once (an RBI resolution says it in two paragraphs)
+        if any(a and a == b for c in chosen for a, b in zip(said[id(c)], said[id(p)], strict=True)):
+            return False                               # words another chosen change already quotes
+        room = [g for g in bullets if group(g[0]) == group(p) and kind[id(p)] != decision and len(g) < FALLBACK_PER_BULLET]
+        if not room and (not open_new or len(bullets) >= hi):
+            return False
+        if not take(p):
+            return False                               # a sentence another bullet already quotes
+        if room:
+            room[0].append(p)
+        else:
+            bullets.append([p])
+        return True
+
+    for name in FALLBACK_PACKED_ORDER[:FALLBACK_FIRST_KINDS]:     # one of each kind first
+        for p in by_kind:
+            if kind[id(p)] == FALLBACK_KINDS.index(name) and place(p):
+                break
+    for p in by_kind:                                  # then each bullet's next changes of its kind
+        place(p, open_new=False)
+    for p in after:                                    # then the slots left
+        place(p)
+    for g in list(bullets):                            # bullets to spare: a second change gets a bullet of its own
+        while len(g) > 1 and len(bullets) < hi:
+            bullets.append([g.pop()])
+    return bullets
 
 
 def retry_note(c: Checked) -> str:
