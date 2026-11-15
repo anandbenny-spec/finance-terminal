@@ -2,7 +2,8 @@
 // no-internals scan, and the row-count check against the Data API stand-in. Rows are test data, not real counts.
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AccuracyView, type AccuracyData } from "@/components/accuracy/AccuracyView";
+import { AccuracyView, OWN_RECORDS, type AccuracyData } from "@/components/accuracy/AccuracyView";
+import { bannedWordsIn } from "@/tests/banned-words";
 import { TASK_KEY_PATTERN } from "@/lib/accuracy/summary";
 import type { EvalSummaryRow, QualitySummaryRow } from "@/lib/queries/api";
 import { loadEvalSummary, loadQualitySummary } from "@/lib/queries/accuracy";
@@ -128,6 +129,30 @@ describe("AccuracyView", () => {
 
   it("uses no raw colours: green and red are for market moves only", () => {
     expect(html(data())).not.toMatch(/text-(up|down)|bg-(up|down)|#[0-9a-f]{3,6}\b/i);
+  });
+
+  it("records the US slice's go-live check: its date, counts and the judge named by model, never Anand (US-09, #408)", () => {
+    for (const d of [data(), data({ quality: { ok: false }, evals: { ok: false } }), data({ quality: { ok: true, rows: [] } })]) {
+      const out = text(html(d));
+      expect(out).toContain("Checked before going live");
+      expect(out).toContain("Who checked the US companies' figures before they were published, and what passed?");
+      expect(out).toContain(
+        "Checked on 14 Nov 2026 by an AI model, Claude Opus 5.5, in a separate session that built none of the US slice: " +
+          "30 of 30 sampled figures from 3 companies matched their 10-K and 10-Q filings on sec.gov, and 2 of 2 valuations " +
+          "recomputed from their stored inputs to the cent.",
+      );
+      expect(out).toContain("An earlier sample failed on one company's revenue; the rule was fixed for every company and a new sample was drawn.");
+      expect(out).toContain("Checked 14 Nov 2026");
+    }
+    const section = html(data()).match(/<h2 id="go-live"[\s\S]*?(?=<h2 id=")/)?.[0] ?? "";
+    expect(text(section)).toContain(OWN_RECORDS);
+    expect(text(section)).not.toMatch(/Anand|reviewed by|labelled by (the owner|a person)/i);
+    expect(bannedWordsIn(text(section))).toEqual([]);
+  });
+
+  it("keeps the module sections before the go-live checks, and the evaluation runs after them", () => {
+    const ids = [...html(data()).matchAll(/<h2 id="([^"]+)"/g)].map((m) => m[1]);
+    expect(ids).toEqual(["module-policy", "go-live", "evaluations"]);
   });
 });
 

@@ -98,6 +98,7 @@ export async function readMeetingExists(bank: Bank, slug: string): Promise<boole
     const row = await readMeeting(db, slug);
     return row !== null && row.bank === bank;
   } catch (error) {
+    cacheLife("failedRead");
     failed(`${slug} existence`, error);
     return null;
   }
@@ -135,6 +136,7 @@ export async function readMeetingPage(bank: Bank, slug: string, date: string): P
       return { stance: stance as CitedOutput | null, summaries };
     }),
   ]);
+  if ([meeting, adjacent, fieldPolicy, votes, settings, documents, projections, ai].some((part) => !part.ok)) cacheLife("failedRead");
   return { readAt, today, meeting, adjacent, fieldPolicy, votes, settings, documents, projections, ai };
 }
 
@@ -145,7 +147,9 @@ export async function readDocumentChunks(id: number): Promise<Read<{ chunks: Doc
   cacheTag("documents", `document-${id}`);
   const db = publicClient();
   if (!db) return failed(`document ${id}`, UNCONFIGURED);
-  return attempt(`document ${id} chunks`, async () => ({ chunks: await readChunks(db, id) }));
+  const read = await attempt(`document ${id} chunks`, async () => ({ chunks: await readChunks(db, id) }));
+  if (!read.ok) cacheLife("failedRead");
+  return read;
 }
 
 /** The What changed tab: the diff against the previous statement, its base document and the cited AI summary. */
@@ -157,13 +161,15 @@ export async function readMeetingDiff(
   cacheTag("documents", `diff-${documentId}`);
   const db = publicClient();
   if (!db) return failed(`diff of ${documentId}`, UNCONFIGURED);
-  return attempt(`diff of ${documentId}`, async () => {
+  const read = await attempt(`diff of ${documentId}`, async () => {
     const [diff, summary] = await Promise.all([
       readDiff(db, documentId),
       cited(db, "statement_diff_summary", { documentId }),
     ]);
     return { diff, base: diff ? await readDocument(db, diff.base_document_id) : null, summary };
   });
+  if (!read.ok) cacheLife("failedRead");
+  return read;
 }
 
 /** The earlier meeting NumbersChanged compares with (the diff's base document's meeting): its row, rates, votes and
@@ -177,7 +183,7 @@ export async function readNumbersBase(
   cacheTag("policy", `meeting-${slug}`);
   const db = publicClient();
   if (!db) return failed(`numbers base ${slug}`, UNCONFIGURED);
-  return attempt(`numbers base ${slug}`, async () => {
+  const read = await attempt(`numbers base ${slug}`, async () => {
     const meeting = await readMeeting(db, slug);
     if (!meeting) return { meeting: null, settings: [], votes: [], projections: [] };
     const [settings, votes, projections] = await Promise.all([
@@ -187,6 +193,8 @@ export async function readNumbersBase(
     ]);
     return { meeting, settings, votes, projections };
   });
+  if (!read.ok) cacheLife("failedRead");
+  return read;
 }
 
 /**
@@ -202,10 +210,12 @@ export async function readMeetingReaction(
   cacheTag("policy", `meeting-${slug}`, "reactions");
   const db = publicClient();
   if (!db) return failed(`reactions of ${slug}`, UNCONFIGURED);
-  return attempt(`reactions of ${slug}`, async () => {
+  const read = await attempt(`reactions of ${slug}`, async () => {
     const keys = REACTION_SERIES.filter((s) => (s.banks as readonly Bank[]).includes(bank)).map((s) => s.key);
     const [reactions, series] = await Promise.all([readMeetingReactions(db, slug), readSeriesInfo(db, keys)]);
     const pairs = await Promise.all(reactions.map(async (r) => [r.series_key, await readDailySeries(db, r.series_key, readRange(r))] as const));
     return { reactions, series, observations: Object.fromEntries(pairs) };
   });
+  if (!read.ok) cacheLife("failedRead");
+  return read;
 }

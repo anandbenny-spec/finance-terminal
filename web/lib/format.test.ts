@@ -11,6 +11,7 @@ import {
   formatAxisChange,
   formatCountChangeWords,
   formatFiledShare,
+  formatPrintedValue,
   formatShareChangeWords,
   formatAxisShare,
   formatShare,
@@ -408,5 +409,27 @@ describe("the value chain card's figures (VC-06, #191)", () => {
     expect(formatCountChangeWords(1234567)).toBe("up 12,34,567");
     expect(formatCountChangeWords(0)).toBe("unchanged");
     expect(() => formatCountChangeWords(1.5)).toThrow(RangeError);
+  });
+});
+
+// The KPI-table pilot (DD-06, #514): a value as the release printed it, the unit as printed, grouping by its currency.
+describe("formatPrintedValue", () => {
+  it("keeps the stored decimals and the unit as printed, never rounding or padding", () => {
+    expect(formatPrintedValue(12.5, "%")).toBe("12.5%");
+    expect(formatPrintedValue(13.3, " % ")).toBe("13.3%");
+    expect(formatPrintedValue(614795, "people")).toBe("6,14,795 people");
+    expect(formatPrintedValue(1234.5678, "₹ crore")).toBe("1,234.5678 ₹ crore");
+    expect(formatPrintedValue(25, "bps")).toBe("25 bps");
+    expect(formatPrintedValue(42, null)).toBe("42");
+  });
+  it("groups a dollar figure the US way and every other figure the Indian way", () => {
+    expect(formatPrintedValue(1234567.5, "US$ mn")).toBe("1,234,567.5 US$ mn");
+    expect(formatPrintedValue(1234567, "USD million")).toBe("1,234,567 USD million");
+    expect(formatPrintedValue(1234567, "₹ crore")).toBe("12,34,567 ₹ crore");
+  });
+  it("uses the true minus, and the dash for a value held back", () => {
+    expect(formatPrintedValue(-0.4, "%")).toBe(`${MINUS}0.4%`);
+    expect(formatPrintedValue(null, "%")).toBe(NOT_AVAILABLE);
+    expect(formatPrintedValue(undefined, "people")).toBe(NOT_AVAILABLE);
   });
 });

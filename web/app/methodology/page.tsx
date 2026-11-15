@@ -4,7 +4,9 @@
 // accuracy rule has nothing to check here, and every claim below is one the shipped code backs (the issue's stop rule:
 // a claim that can't be checked leaves the page). It describes module 1 (the Fed vs RBI tracker) and, since the 1 Nov
 // 2026 extension, module 2's shipped pages (the Nifty 50 screener and company pages) and, since 5 Nov 2026, the earnings-call lines (the calls tab and
-// /earnings); and, since 5 Nov 2026, the guidance record's line. RBI is named, never linked (CLAUDE.md §1).
+// /earnings); and, since 5 Nov 2026, the guidance record's line; and, since the US slice went live on 14 Nov 2026, the
+// Dow 30's section (US-09, #408), naming its judge by model, never Anand (Plan 05 §5). RBI is named, never linked
+// (CLAUDE.md §1).
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -93,6 +95,27 @@ const BLOCKS: Block[] = [
     ],
   },
   {
+    // US-09 (#408; Spec 02A.1 §1, §8; Plan 05 §5): what the code of US-01 to US-07 does, in the words the US pages use.
+    // Who checked it is the judge, named by model (US-08's verdict, #407), never Anand.
+    id: "us",
+    title: "The US slice (Dow 30)",
+    panel: "US companies, in dollars",
+    paragraphs: [
+      "The screener and company pages also cover the companies of the Dow Jones Industrial Average (the Dow 30), in dollars, under their own market filter. The list is curated and dated. Their statements come from each company's own 10-K and 10-Q filings, read from SEC EDGAR, with each filing linked on sec.gov. Their end-of-day prices come from Yahoo Finance, used for this non-commercial project with the source named on every figure and never exported. Their valuation inputs come from the Federal Reserve Board (the 10-year Treasury yield, via FRED) and from Aswath Damodaran of NYU Stern (the equity risk premium and the US industry betas). A US company is never compared, ranked or summed with an Indian one.",
+      "Statements are built from the figures each company tagged in its periodic reports (10-K and 10-Q filings and their variants), never from other kinds of filing. Each line is read from a set list of XBRL tags, in order, and where a company files its total revenue beside a narrower revenue line, the total is used. A line a company doesn't file is left empty rather than worked out from other lines, except where a stated rule says otherwise: the fourth quarter is the fiscal year less its first nine months, quarterly cash flows are the differences of year-to-date figures, equity filed only with non-controlling interests is taken net of them, and a total filed only as its parts (current debt, pre-tax income) is their sum where the company's filed parts and totals agree. Each filing's figures stay as that filing reported them, so a later restatement doesn't rewrite an earlier filing. Shares are the cover page's count, summed across share classes, and operating income is the line as filed, never derived.",
+      "Yahoo Finance returns a company's past prices already scaled to its latest split. The site undoes that scaling, so each stored price is the price as traded on its day, and then adjusts once, by its own factor, for each split after the first stored price. The one-year price return is a price return: adjusted for splits, without dividends.",
+      "The cost of equity uses the 10-year Treasury yield at the price date, as published (not netted of the US default spread), and Damodaran's implied equity risk premium for a mature market, with no country risk premium added. The beta is bottom-up: Damodaran's US industry beta for the company's curated peer group, relevered at the company's own debt to market equity.",
+      "The marginal tax rate is 25%, federal and state taxes together (Damodaran's US rate). Debt is borrowings as filed, without lease liabilities, and cash is cash and cash equivalents, without marketable securities; both say so where they are shown. Lenders are valued on the return on equity their price implies; an insurer, or a company with a material lending or insurance arm, isn't valued with the cash-flow model, and its Valuation tab says why.",
+      "Not covered for US companies: earnings calls (there is no free transcript source), guidance, the value chain and rate sensitivity. The slice is the Dow 30 only, not the rest of the S&P 500. The tabs that don't apply say so.",
+      <>
+        Before the US companies were published, the slice was checked by an AI model, Claude Opus 5.5, in a separate session that built none of
+        it, against a checklist and a seeded sample both fixed before the check began: figures read against the filings on sec.gov, valuations
+        recomputed from their stored inputs, and the pages. A first sample failed on one company&apos;s revenue; the rule was fixed for every
+        company, and a new sample, drawn on a new seed, passed. The counts are on the <Link className="underline" href="/accuracy">Accuracy</Link> page.
+      </>,
+    ],
+  },
+  {
     id: "limits",
     title: "Limitations",
     panel: "What it cannot do",
@@ -100,8 +123,8 @@ const BLOCKS: Block[] = [
       "The policy tracker covers the Federal Reserve and the Reserve Bank of India only. Market series are end-of-day, so they lag the market, and the India 10-year yield is monthly and says its month.",
       "Vote and stance information is only as complete as the published minutes and statements, which arrive days or weeks after a decision. Until then the site says the minutes are pending rather than guessing.",
       "AI summaries and extractions can miss or misread a passage even when every number in them matches the source. Read the cited passage for anything that matters.",
-      "The screener and company pages cover the Nifty 50 only. Valuations shown are model-implied and informational, never a verdict, a target or a recommendation.",
-      "Company debt is borrowings only, labelled as excluding lease liabilities because results filings do not report them. Where a company's filed lease payments are material against its operating profit, enterprise-value figures are held back with the reason shown. Operating profit (EBIT) is derived from the filed lines and labelled as derived, and a lender's return on assets is annualised and labelled.",
+      "For India the screener and company pages cover the Nifty 50 only, and for the US the Dow 30 only. Valuations shown are model-implied and informational, never a verdict, a target or a recommendation.",
+      "For Indian companies, debt is borrowings only, labelled as excluding lease liabilities because results filings do not report them. Where a company's filed lease payments are material against its operating profit, enterprise-value figures are held back with the reason shown. Operating profit (EBIT) is derived from the filed lines and labelled as derived, and a lender's return on assets is annualised and labelled.",
       "The one-year price return is a price return: it is adjusted for splits and bonus issues but leaves out dividends.",
       "The earnings-calls list shows the latest call of each Nifty 50 company, and a company's Calls tab also lists its earlier calls. Its summary, the guidance given and the figures management stated are written by AI from the stored transcript and labelled AI-extracted, and they are held back until they have passed review. Management's tone on each call is scored by AI and labelled AI-scored; it was checked against 30 passages labelled by a separate AI model (Claude Fable) and is shown only once that check has passed.",
       "The guidance record compares each measurable target management gave on a call with the company's own filed figures once they are out: delivered, missed, still pending, or not scored with the reason shown. Only what speakers identified as management said is a target. The tolerance for each kind of target was written down before any target was scored, a target is scored on the first time it was stated, and a revised target is shown as revised. A missed target is a fact about a figure, not a verdict on management. The record is held back until it has passed review, and the share delivered appears only once a company has at least five scored targets.",

@@ -111,12 +111,20 @@ export async function loadValueChainPage(db: ValueChainDb, slug: string): Promis
   return { ...base, group, rpt, segments, peers };
 }
 
-/** The sub-page's reads, cached for minutes like the company page's tabs; a read that throws out of a `'use cache'` function is not stored. */
+/** Whether any part of the sub-page's reads failed on its own: each part is null only then (#499). */
+export function valueChainReadFailed(page: ValueChainPageData): boolean {
+  return [page.rows, page.products, page.policies, page.group, page.rpt, page.segments, page.peers].some((part) => part === null);
+}
+
+/** The sub-page's reads, cached for minutes like the company page's tabs; a read that throws out of a `'use cache'` function is not
+ * stored, and a page with a part that failed is cached on the short `failedRead` profile (#499). */
 export async function readValueChainPage(slug: string): Promise<ValueChainPageData> {
   "use cache";
   cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);
   const db = publicClient();
   if (!db) throw new Error("NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
-  return loadValueChainPage(db, slug);
+  const page = await loadValueChainPage(db, slug);
+  if (valueChainReadFailed(page)) cacheLife("failedRead");
+  return page;
 }

@@ -423,6 +423,27 @@ describe("related parties: not available is not none", () => {
     expect(g).toContain("FY 2025-26 (part of the year): covers 1 Apr 2025 – 30 Sep 2025, not the whole fiscal year.");
   });
 
+  // VC-06f (#518): a figure that reads as zero must be zero.
+  it("a non-zero value under one crore never reads as ₹0 cr, and a net zero or reversal is left out of the top five", () => {
+    const rows = [
+      rpt("Sale of goods or services", 1, "Large Buyer Ltd.", 1_470_900_000),
+      rpt("Sale of goods or services", 2, "Small Buyer Ltd.", 4_300_000),
+      rpt("Sale of goods or services", 3, "Tiny Buyer Ltd.", 40_000),
+      rpt("Sale of goods or services", 4, "Net Zero Ltd.", 0),
+      rpt("Sale of goods or services", 5, "Reversal Ltd.", -2_000_000),
+      rpt("Purchase of goods or services", 1, "Only Zero Supplier Ltd.", 0),
+    ];
+    const g = text(panel(sub(pageData({ rpt: rows })), "panel-vc-group"));
+    expect(g).toContain("₹147 cr");
+    expect(g).toContain("₹0.43 cr");
+    expect(g).toContain("less than ₹0.01 cr");
+    expect(g).not.toContain("₹0 cr");
+    expect(g).not.toContain("Net Zero Ltd.");
+    expect(g).not.toContain("Reversal Ltd.");
+    expect(g).not.toContain("Only Zero Supplier Ltd.");
+    expect(g).toContain("Not available: no purchase related-party rows were read from this company's results filings for the latest year.");
+  });
+
   it("a failed related-party read says it couldn't load", () => {
     expect(text(panel(sub(pageData({ rpt: null })), "panel-vc-group"))).toContain("Couldn't load this panel");
   });

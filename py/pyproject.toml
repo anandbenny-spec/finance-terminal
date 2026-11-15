@@ -23,6 +23,8 @@ jobs = [
     "pandas",
     "yfinance",
     "pypdf",
+    "pypdfium2",
+    "pillow",
     "feedparser",
     "openpyxl",
     "xlrd",

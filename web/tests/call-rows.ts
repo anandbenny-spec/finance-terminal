@@ -16,6 +16,8 @@ export const SHOWN: FieldPolicyRow[] = [
   { field_key: "ai.call_summary", status: "labelled", label: "AI summary" },
   { field_key: "ai.guidance_extraction", status: "labelled", label: "AI-extracted" },
   { field_key: "equity.guidance_outcome", status: "labelled", label: "derived" },
+  // 0048 (#532): the hit rates' own key; every field shown means this one too (a setup row, no test's assertion changed)
+  { field_key: "equity.guidance_hit_rate", status: "labelled", label: "derived" },
 ];
 export const HELD: FieldPolicyRow[] = [
   { field_key: "ai.call_summary", status: "hidden", label: "AI summary" },

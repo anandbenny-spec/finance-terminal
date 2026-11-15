@@ -1,13 +1,14 @@
 """The extraction trial (#178, sitting 2; py ft/equity/calls/trial.py): the arms and their parsing, that a trial request differs from
 production's only where the arm says so (an arm of Haiku on v1 is production's request, byte for byte), that prompt v2 is v1 plus
 the completeness section and nothing else, the worst-case price that stops a batch before it is sent, how a batch result is
-judged, and what is written (no quote, once per batch). No database, no model and no network."""
+judged, and what is written (no quote, once per batch). No model and no network; one test reads and writes the test database."""
 import json
 from contextlib import nullcontext
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
+import psycopg
 import pytest
 from test_ai_guidance_extraction import GROWTH, IYER, RAO, T, doc, one
 
@@ -565,6 +566,31 @@ def test_the_first_pass_is_read_back_from_the_recorded_run_in_the_order_it_was_s
     assert rid == 9 and (result.status, result.cost, result.stated, result.input_tokens) == ("checked", Decimal("0.001000"), 3, 10_000)
     assert [t["span"] for t in result.targets] == [list(t["span"]) for t in base.targets]
     assert all("quote" not in t for t in result.targets)
+
+
+@pytest.mark.db
+def test_a_recorded_first_pass_is_read_back_on_the_real_tables():
+    """The first dry run of the second pass stopped on a column ops.eval_result doesn't have, which the fake connection allowed:
+    record a first pass and read it back through the real schema, as job_writer does in the workflow."""
+    from conftest import dsn
+
+    call = three_part_call()
+    _, _, base = stored_first_pass(call)
+    arm = trial.Arm(HAIKU, "v2", "medium", 24_000)
+    ids = []
+    try:
+        with psycopg.connect(dsn("job_writer"), autocommit=True) as conn:
+            ids = trial.record(conn, [arm], [base], "msgbatch_db_regression", "a regression test")
+            assert len(ids) == 1
+            got = trial.read_base(conn, ids, [work(call)])
+        rid, result = got[3743]
+        assert rid == ids[0] and result.status == "checked"
+        assert [t["span"] for t in result.targets] == [list(t["span"]) for t in base.targets]
+    finally:
+        if ids:
+            with psycopg.connect(dsn("postgres"), autocommit=True) as admin:
+                admin.execute("delete from ops.eval_result where eval_run_id = any(%s)", (ids,))
+                admin.execute("delete from ops.eval_run where id = any(%s)", (ids,))
 
 
 @pytest.mark.parametrize("what", ["no_run", "not_first_pass", "two_hold_it", "not_checked", "rows_missing"])

@@ -107,3 +107,32 @@ describe("focus after the tour ends", () => {
     expect(end.indexOf("flushSync(")).toBeLessThan(end.indexOf("restoreFocus(trigger.current)"));
   });
 });
+
+// ---- stop 1's focus when the tour starts from the drawer (#494) ----
+//
+// Route (a): MobileNav's SheetContent skips Radix's close focus return only when the tour's step panel already holds
+// focus. These tests use stand-ins (vitest runs in node, with no DOM); the wiring in MobileNav is checked by source.
+
+import { tourHoldsFocus } from "@/components/shell/GuidedTour";
+
+describe("tourHoldsFocus (#494)", () => {
+  const within = (selectors: string[]) => ({ closest: (s: string) => (selectors.includes(s) ? {} : null) });
+
+  it("is true when focus is the step panel or inside it", () => {
+    expect(tourHoldsFocus(within(["[data-tour-panel]"]))).toBe(true);
+  });
+
+  it("is false for the Menu button, a link, the close button, the body or nothing: those closes return focus as before", () => {
+    expect(tourHoldsFocus(within([]))).toBe(false);
+    expect(tourHoldsFocus({})).toBe(false);
+    expect(tourHoldsFocus(null)).toBe(false);
+    expect(tourHoldsFocus(undefined)).toBe(false);
+  });
+
+  it("is wired into the drawer's onCloseAutoFocus only, and the step panel carries the marker", () => {
+    const dir = join(__dirname);
+    const nav = readFileSync(join(dir, "MobileNav.tsx"), "utf8");
+    expect(nav).toMatch(/onCloseAutoFocus=\{\(e\) => \{\s*if \(tourHoldsFocus\(document\.activeElement\)\) e\.preventDefault\(\)/);
+    expect(readFileSync(join(dir, "GuidedTour.tsx"), "utf8")).toContain('data-tour-panel=""');
+  });
+});

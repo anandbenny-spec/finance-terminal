@@ -66,6 +66,16 @@ export function restoreFocus(from: { readonly isConnected: boolean; focus(): voi
   if (!from || page.activeElement !== from) page.getElementById("main")?.focus();
 }
 
+/**
+ * Whether the tour's step panel already holds focus (#494). A drawer that "Take the tour" closes hands focus back to the
+ * Menu button just after the panel took it, which leaves stop 1 with focus behind the dimming; the drawer asks this in its
+ * `onCloseAutoFocus` and keeps its hands off focus when it is true. Every other close finds focus elsewhere (on a link,
+ * the close button, the drawer), so it returns focus to Menu as before.
+ */
+export function tourHoldsFocus(active: { closest?(selector: string): unknown } | null | undefined): boolean {
+  return Boolean(active && typeof active.closest === "function" && active.closest("[data-tour-panel]"));
+}
+
 export function TourProvider({ shown, children }: { shown: boolean; children: ReactNode }) {
   const [state, dispatch] = useReducer((s: TourState, a: TourAction) => tourReducer(s, a), TOUR_IDLE);
   const trigger = useRef<HTMLElement | null>(null);
@@ -274,6 +284,7 @@ function TourStep({
         ref={panel}
         role="dialog"
         aria-modal="true"
+        data-tour-panel=""
         aria-labelledby="tour-title"
         aria-describedby="tour-text"
         tabIndex={-1}

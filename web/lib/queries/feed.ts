@@ -30,6 +30,7 @@ export async function readFeedDecisions(): Promise<Read<{ decisions: PolicyMeeti
     const votes = await readVotes(db, decisions.map((m) => m.slug));
     return { ok: true, decisions, votes, readAt: now.toISOString() };
   } catch (error) {
+    cacheLife("failedRead");
     return failed(error);
   }
 }

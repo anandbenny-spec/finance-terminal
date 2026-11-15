@@ -14,7 +14,7 @@ from ft.ai import summaries
 from ft.ai.client import SONNET, load_prompt, load_schema
 from ft.ai.summaries import check_diff_json, side_by_side_problem, unquoted_copy_problem
 from ft.engines.document.diff import diff_texts
-from ft.jobs.tasks.ai_batch import PROMPT_VERSION, Work
+from ft.jobs.tasks.ai_batch import Work
 from ft.quality import reasons
 
 D = diff_texts(FOMC_A, FOMC_B)
@@ -187,7 +187,7 @@ def check12(*rows):
     return check_diff_json({"bullets": list(rows)}, REQ.sources, CHANGED, version="v12")
 
 
-def test_v12_is_v11_plus_the_evidence_rule_with_v11s_schema_and_is_current():
+def test_v12_is_v11_plus_the_evidence_rule_with_v11s_schema():
     """Round 10 (v11 on dev): a dissent stated with no quote behind it (dev's 2535)."""
     eleven, twelve = V11.text.splitlines(), V12.text.splitlines()
     assert [x for x in twelve if x not in eleven] == [EVIDENCE_RULE]
@@ -196,7 +196,7 @@ def test_v12_is_v11_plus_the_evidence_rule_with_v11s_schema_and_is_current():
     assert load_schema("statement_diff_summary", "v12") == load_schema("statement_diff_summary", "v11")
     req = summaries.diff_summary_request(NEW, OLD, D.segments, V12)
     assert (req.spec.route, req.model_id, req.spec.effort) == ("json", SONNET, "medium")
-    assert PROMPT_VERSION["statement_diff_summary"] == "v12" and summaries.DIFF_STRICT_FROM == 12
+    assert summaries.DIFF_STRICT_FROM == 12        # v15 is current (test_diff_summary_v15.py)
 
 
 DOC = ("Two members - Dr. Nagesh Kumar and Prof. Ram Singh - were of the view that the stance be retained at neutral. "

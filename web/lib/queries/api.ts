@@ -504,6 +504,44 @@ export type SegmentChangeRow = {
   source_key: string | null;
 };
 
+/**
+ * api.kpi_changes (0047, #512): the KPI-table pilot's flags (DD-05, #513), one row per flag: a metric the company's results
+ * release (press release, fact sheet or data sheet) reported in earlier quarters and doesn't carry in this one. No row at all
+ * while field policy `equity.kpi_changes` is hidden, and a flag only once a judge has confirmed it against the same documents
+ * (DD-07, #515). The quotes are verified quotes into the quarter's stored call transcript (at most 400 characters), never the
+ * release's text. Read through components/company/KpiChangesPanel.tsx.
+ */
+export type KpiChangeRow = {
+  company_slug: string;
+  company_name: string;
+  /** The flagged quarter's end, and its fiscal label ("Q2 FY27"). */
+  period_end: string;
+  fiscal_label: string;
+  /** The curated display name of the metric. */
+  metric_label: string;
+  dict_key: string;
+  kind: "missing" | "dropped" | "renamed_or_redefined";
+  /** The value as last reported, in the unit as printed; null when it is held back. */
+  last_value: Num;
+  last_value_unit: string | null;
+  last_value_quarter: string | null;
+  corporate_action_note: string | null;
+  reason_stated: boolean;
+  reason_quote: string | null;
+  reason_page: number | null;
+  analyst_asked: boolean;
+  analyst_quote: string | null;
+  analyst_page: number | null;
+  current_document_url: string | null;
+  current_filed_at: string | null;
+  current_quarter: string | null;
+  /** The earlier documents the metric was reported in, oldest first. */
+  previous_document_urls: string[] | null;
+  rule_version: number;
+  /** The current document's exchange: nse or bse. */
+  source_key: string | null;
+};
+
 /** A BRSR field's state in api.value_chain: `ok`, `held` (with its reason), `absent` (not in the filing), `zero` (filed as 0), `not_shown` (a top-10 share whose parent share is 0, held or absent). Null while the field is hidden. */
 export type ValueChainState = "ok" | "held" | "absent" | "zero" | "not_shown";
 
@@ -941,7 +979,10 @@ export type EarningsListRow = EarningsLatestRow & {
   roles_partial: boolean | null;
 };
 
-/** api.call_guidance (0027, 0028): one row per guidance target management stated on a call; the outcome columns are null while equity.guidance_outcome is hidden. */
+/**
+ * api.call_guidance (0027, 0028, 0048): one row per guidance target management stated on a call; the outcome columns are null while
+ * equity.guidance_outcome is hidden, and is_first, revision, counted, first_call_slug and first_stated_on also while equity.guidance_hit_rate is.
+ */
 export type CallGuidanceRow = {
   company_slug: string;
   company_name: string;
@@ -982,7 +1023,7 @@ export type CallGuidanceRow = {
   first_stated_on: string | null;
 };
 
-/** api.guidance_hit_rates (0027, 0028): delivered and missed counts per scope; `rate` is null below 5 scored targets. */
+/** api.guidance_hit_rates (0027, 0028, 0048): delivered and missed counts per scope; `rate` is null below 5 scored targets; no rows while equity.guidance_hit_rate is hidden. */
 export type GuidanceHitRateRow = {
   scope: "company" | "peer_group" | "nifty50";
   scope_key: string;
@@ -1042,6 +1083,7 @@ export type ApiDatabase = {
       company_corporate_actions: View<CorporateActionRow>;
       company_promoter_holding: View<PromoterHoldingRow>;
       segment_changes: View<SegmentChangeRow>;
+      kpi_changes: View<KpiChangeRow>;
       value_chain: View<ValueChainRow>;
       value_chain_products: View<ValueChainProductRow>;
       value_chain_group: View<ValueChainGroupRow>;

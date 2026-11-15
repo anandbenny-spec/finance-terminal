@@ -41,6 +41,7 @@ export async function readTape(): Promise<Read<{ latest: SeriesLatestRow[]; seri
     ]);
     return { ok: true, latest, series };
   } catch (error) {
+    cacheLife("failedRead");
     return failed("tape", error);
   }
 }
@@ -63,6 +64,7 @@ export async function readNextMeetings(): Promise<Read<{ meetings: NextMeetingRo
     );
     return { ok: true, meetings };
   } catch (error) {
+    cacheLife("failedRead");
     return failed("next meetings", error);
   }
 }
@@ -85,6 +87,7 @@ export async function readFreshness(): Promise<Read<{ tasks: TaskFreshnessRow[];
     // When the rows were read: the checked time's year is worked out against it (Design 01 §3).
     return { ok: true, tasks, readAt: new Date().toISOString() };
   } catch (error) {
+    cacheLife("failedRead");
     return failed("freshness", error);
   }
 }
@@ -103,6 +106,7 @@ export async function readTourShown(): Promise<boolean> {
   try {
     return tourShown(await readFieldPolicy(db));
   } catch (error) {
+    cacheLife("failedRead");
     failed("tour field policy", error);
     return false;
   }

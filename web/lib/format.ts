@@ -463,6 +463,20 @@ export function formatRupeesAsCrore(rupees: Num): string {
   return formatMoney(rupees / 10_000_000, "INR", { unit: "crore" });
 }
 
+/**
+ * Rupees given in full, shown in crore for a list of related-party values (VC-06f, #518): from ₹1 cr up exactly as
+ * `formatRupeesAsCrore`; under ₹1 cr two decimals, so a non-zero amount never reads as `₹0 cr` or rounds up to `₹1 cr`;
+ * below ₹0.005 cr (two decimals would print 0.00) `less than ₹0.01 cr`. `4_300_000` → `₹0.43 cr`.
+ */
+export function formatRupeesAsCroreFine(rupees: Num): string {
+  if (isMissing(rupees)) return NOT_AVAILABLE;
+  const crore = rupees / 10_000_000;
+  const abs = Math.abs(crore);
+  if (abs >= 1 || abs === 0) return formatRupeesAsCrore(rupees);
+  if (abs < 0.005) return `${crore < 0 ? MINUS : ""}less than ₹0.01 cr`;
+  return formatMoney(crore, "INR", { unit: "crore", decimals: 2 });
+}
+
 /** Dollars given in full, shown in millions with US grouping (US-06, #405; the US twin of crore): `3.94328e11` → `$394,328 mn`. */
 export function formatDollarsAsMillion(dollars: Num): string {
   if (isMissing(dollars)) return NOT_AVAILABLE;
@@ -499,6 +513,22 @@ export function formatStatedValue(value: Num, unit: string | null | undefined): 
   if (unit === "pct") return `${body}%`;
   if (unit === "inr") return `${value < 0 ? MINUS : ""}₹${digits(Math.abs(value), { decimals, locale: "en-IN" })} cr`;
   return `${body} (unit as spoken)`;
+}
+
+/**
+ * A metric's value as a company's results release printed it (the KPI-table pilot, DD-06, #514): the decimals the stored value
+ * carries (at most four, nothing rounded or padded) and the unit as printed after it. Grouping by the figure's currency: US for a
+ * dollar unit ("US$ mn"), Indian otherwise. `12.5, "%"` → `12.5%`; `614795, "people"` → `6,14,795 people`; `1234.5, "US$ mn"` →
+ * `1,234.5 US$ mn`; no unit → the number alone. The value is AI-extracted, so the panel says so.
+ */
+export function formatPrintedValue(value: Num, unit: string | null | undefined): string {
+  if (isMissing(value)) return NOT_AVAILABLE;
+  const decimals = Math.min(4, (String(Math.abs(value)).split(".")[1] ?? "").length);
+  const printed = (unit ?? "").replace(/\s+/g, " ").trim();
+  const body = digits(value, { decimals, locale: /\$|\bUSD\b/i.test(printed) ? "en-US" : "en-IN" });
+  if (printed === "") return body;
+  if (printed === "%") return `${body}%`;
+  return `${body} ${printed}`;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

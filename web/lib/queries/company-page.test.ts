@@ -92,6 +92,15 @@ describe("the Earnings calls tab's guidance record", () => {
     expect(out.selected).toBeNull();
     expect(seen.filter((s) => s.view === "earnings_latest")).toHaveLength(1);
   });
+  it("doesn't ask api.guidance_hit_rates while equity.guidance_hit_rate is hidden, and still reads the guidance rows (#532)", async () => {
+    // guidance_hit_rates is absent from the store, so a request for it would answer 404 and the record would be null.
+    const outcomesOnly = SHOWN.filter((p) => p.field_key !== "equity.guidance_hit_rate");
+    const { db, seen } = fakeClient({ ...CALLS, field_policy: outcomesOnly as unknown as Row[], call_guidance: [] });
+    const out = await readCallsTab(db, "tcs", undefined);
+    expect(out.guidance).toEqual({ rows: [], rate: null, unattributed: 0, citations: [], pages: [] });
+    expect(seen.some((s) => s.view === "call_guidance")).toBe(true);
+    expect(seen.some((s) => s.view === "guidance_hit_rates")).toBe(false);
+  });
   it("still throws when the calls list itself can't be read", async () => {
     const { db } = fakeClient({ field_policy: SHOWN as unknown as Row[], call_guidance: [], guidance_hit_rates: [], earnings_latest: [] });
     await expect(readCallsTab(db, "tcs", undefined)).rejects.toThrow();
@@ -99,9 +108,11 @@ describe("the Earnings calls tab's guidance record", () => {
 });
 
 describe("the Earnings calls tab's opening-remarks read (#388)", () => {
+  // Read only while equity.remarks_change is released (#516): production shows it since 13 Nov 2026.
+  const OPEN = [...SHOWN, { field_key: "equity.remarks_change", status: "labelled", label: "derived" }];
   const CALLS: Store = {
     earnings_calls: [call() as unknown as Row],
-    field_policy: SHOWN as unknown as Row[],
+    field_policy: OPEN as unknown as Row[],
     ai_outputs: [],
     call_figures: [],
     ai_citations: [],
@@ -123,6 +134,12 @@ describe("the Earnings calls tab's opening-remarks read (#388)", () => {
     const read = seen.filter((s) => s.view === "remarks_changes");
     expect(read).toHaveLength(1);
     expect(read[0].countExact).toBe(true);
+  });
+  it("makes no request for api.remarks_changes while the field is hidden, and gives an empty list, not a failure (#516)", async () => {
+    const { db, seen } = fakeClient({ ...CALLS, field_policy: SHOWN as unknown as Row[] });
+    const out = await readCallsTab(db, "tcs", undefined);
+    expect(out.remarks).toEqual([]);
+    expect(seen.some((s) => s.view === "remarks_changes")).toBe(false);
   });
   it("is null when its own read throws, and the rest of the tab still reads", async () => {
     const out = await readCallsTab(fakeClient({ ...CALLS }).db, "tcs", undefined);
@@ -190,7 +207,8 @@ describe("the Earnings calls tab's tone read (#482)", () => {
     expect(read).toHaveLength(1);
     expect(read[0].countExact).toBe(true);
     expect(read[0].params.get("company_slug")).toBe("eq.tcs");
-    const outputs = seen.filter((s) => s.view === "ai_outputs" && s.params.get("id") === "eq.9100");
+    // One read of the outputs the page quotes (#516): the tone's, with the summary's when the call has one.
+    const outputs = seen.filter((s) => s.view === "ai_outputs" && s.params.get("id") === "in.(9001,9100)");
     expect(outputs).toHaveLength(1);
   });
 
