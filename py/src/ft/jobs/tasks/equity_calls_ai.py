@@ -93,9 +93,13 @@ again, at the task's current prompt version, for each call whose published outpu
 than the one the call gives now: the request built from the call as it is now (and its retry, where the stored first attempt was
 retried with a note: `_next_step`) has another `input_sha256` than the output's (`_turns_choice`). Every request reads the turns
 (the extraction's and the structured summary's marker lines, the citations route's roster, the tone's management passages), so a
-call whose turns didn't change builds the same request and is never chosen. Counted and never chosen: an output of another
-version (dev's extractions are v6, #533), an output with no input hash, a call that can't be asked for now (no longer eligible,
-no turns, a role-held call's tone). A run in which every output of the version looked at would be chosen is refused before
+call whose turns didn't change builds the same request and is never chosen. A call with no published output of the version is
+looked at through its final outputs of that version, a `no_targets` draft or a rejection, and is chosen when none of them was made
+from an input the call gives now (Anand, 15 Nov 2026, about 19:10 IST: the three extractions that found nothing and NTPC's newest
+call's summary, rejected twice, on the calls #542 changed); a reply that passes then publishes, superseding an older version's
+output if the call shows one. Counted and never chosen: an output of another version (dev's extractions are v6, #533), an output
+with no input hash, a call that can't be asked for now (no longer eligible, no turns, a role-held call's tone). A run in which
+every output of the version looked at would be chosen is refused before
 anything is sent: that is a changed prompt file or request format, which changes every input, not turns (decided by Claude under
 the standing delegation of 24 Oct 2026; the alternative, sending them, would re-ask calls whose turns didn't change). Refused
 too, before anything is sent: any workflow but a backfill, a run not limited to one task, and a run with #511's re-run or a tone
@@ -131,8 +135,9 @@ Checks, B blocking, W warning:
 - (W) `ai_spend`, `ai_available`, `batches`: as `policy.ai_batch`'s;
 - (W) `call_summaries`, `call_guidance`: what the run found and did (counts; always pass).
 - (W) `guidance_rerun`: on a re-run of the extraction (#511), the outputs it chose by id, and its price or its outcomes.
-- (W) `turns_rerun`: on a re-run of the calls whose turns changed (#554), the outputs it chose (ids and event slugs), what it left
-  and why, and its price or its outcomes; blocking when the run was refused (every output of the version would have been chosen).
+- (W) `turns_rerun`: on a re-run of the calls whose turns changed (#554), the outputs it chose (ids and event slugs; those of calls
+  with no published output of the version also apart), what it left and why, and its price or its outcomes; blocking when the run
+  was refused (every output of the version would have been chosen).
 """
 from __future__ import annotations
 
@@ -564,44 +569,77 @@ class EquityCallsAi(BatchSteps, Task):
         input than the one the call gives now (within a backfill's window, and the tests' scope), and the record of the choice:
         output ids, event slugs and counts only. The input is compared through `_next_step`, which builds the first attempt and,
         where the stored first attempt was retried with a note, the retry: an output published by the retry matches it. An
-        output with no input hash is never chosen (nothing shows its input changed). If every output of the version would be
-        chosen, none is: the record says why and the `turns_rerun` check fails (module docstring)."""
+        output with no input hash is never chosen (nothing shows its input changed).
+
+        A call with no published output of the current version is looked at through its final ones of that version (Anand,
+        15 Nov 2026, about 19:10 IST): a `no_targets` draft (an extraction that found nothing) or a rejection. It is chosen
+        when none of them was made from an input the call gives now, so a call whose turns didn't change matches its own
+        answered requests and is never chosen. If every output looked at would be chosen, none is: the record says why and the
+        `turns_rerun` check fails (module docstring)."""
         version = PROMPT_VERSION[task]
-        where = ["o.task = %s", "o.status = 'published'", "o.scope = ''"]
-        args: list = [task]
+        final = ("(o.status = 'published' or (o.prompt_version = %s and (o.status = 'rejected' "
+                 "or (o.status = 'draft' and o.status_reason = 'no_targets'))))")
+        where = ["o.task = %s", final, "o.scope = ''"]
+        args: list = [task, version]
         if self.scope is not None:
             where.append("ev.slug = any(%s)"); args.append(sorted(self.scope))
         if since is not None:
             where.append(f"(ec.filed_at at time zone '{IST}')::date >= %s"); args.append(since)
         if until is not None:
             where.append(f"(ec.filed_at at time zone '{IST}')::date <= %s"); args.append(until)
-        rows = db.execute(f"""select o.document_id, o.id, o.prompt_version, o.input_sha256, ev.slug
+        rows = db.execute(f"""select o.document_id, o.id, o.prompt_version, o.input_sha256, ev.slug, o.status
                                 from core.ai_output o
                                 join equity.earnings_call ec on ec.transcript_document_id = o.document_id
                                 join core.event ev on ev.id = ec.event_id
                                where {' and '.join(where)}
                                order by o.document_id, o.id""", args).fetchall()
-        current = [r for r in rows if r[2] == version]
-        works = {w.document_id: w for w in self._calls(db, doc_ids=sorted({r[0] for r in current}), lacking=False,
+        published = [r for r in rows if r[5] == "published"]
+        current = [r for r in published if r[2] == version]
+        with_current = {r[0] for r in current}
+        finals: dict[int, list] = {}                       # a call with no published output of the version: its final ones
+        for r in rows:
+            if r[5] != "published" and r[0] not in with_current:
+                finals.setdefault(r[0], []).append(r)
+        works = {w.document_id: w for w in self._calls(db, doc_ids=sorted(with_current | finals.keys()), lacking=False,
                                                        tone=task == ct.TASK) if w.task == task}
+
+        def inputs(w: Work) -> set[bytes]:
+            return {req.input_sha256 for _, req, _ in self._next_step(db, w, prompts[task]).built}
+
         chosen: list[tuple[Work, int]] = []
-        unchanged, no_hash, cannot = 0, [], []
-        for doc_id, out_id, _, sha, slug in current:
+        unchanged, no_hash, cannot, unpublished = 0, [], [], []
+        for doc_id, out_id, _, sha, slug, _ in current:
             w = works.get(doc_id)
             if w is None:                                  # not eligible now, no turns or fiscal-year end, a role-held tone
                 cannot.append(f"{slug} (output {out_id})")
             elif sha is None:
                 no_hash.append(f"{slug} (output {out_id})")
-            elif bytes(sha) in {req.input_sha256 for _, req, _ in self._next_step(db, w, prompts[task]).built}:
+            elif bytes(sha) in inputs(w):
                 unchanged += 1
             else:
                 chosen.append((w, out_id))
-        record = {"task": task, "version": version, "published": len(rows), "current_version": len(current),
-                  "other_versions": dict(sorted(Counter(r[2] for r in rows if r[2] != version).items())),
+        for doc_id, outs in finals.items():
+            out_id, slug = outs[-1][1], outs[-1][4]        # named by its latest final output
+            hashes = {bytes(r[3]) for r in outs if r[3] is not None}
+            w = works.get(doc_id)
+            if w is None:
+                cannot.append(f"{slug} (output {out_id})")
+            elif not hashes:
+                no_hash.append(f"{slug} (output {out_id})")
+            elif hashes & inputs(w):                       # one of its answered requests is the call's input now
+                unchanged += 1
+            else:
+                chosen.append((w, out_id))
+                unpublished.append(slug)
+        chosen.sort(key=lambda c: c[0].document_id)
+        record = {"task": task, "version": version, "published": len(published), "current_version": len(current),
+                  "without_published": len(finals),
+                  "other_versions": dict(sorted(Counter(r[2] for r in published if r[2] != version).items())),
                   "unchanged": unchanged, "changed": len(chosen), "outputs": [o for _, o in chosen],
-                  "calls": [w.slug for w, _ in chosen], "cannot_ask": cannot, "no_input_hash": no_hash, "refused": None}
+                  "calls": [w.slug for w, _ in chosen], "calls_without_published": sorted(unpublished),
+                  "cannot_ask": cannot, "no_input_hash": no_hash, "refused": None}
         if chosen and not unchanged:
-            record["refused"] = (f"every one of the {len(chosen)} published {task} {version} outputs looked at has another "
+            record["refused"] = (f"every one of the {len(chosen)} {task} {version} outputs looked at has another "
                                  "input: a changed prompt file or request format, not turns; nothing is sent")
             return [], record
         return [w for w, _ in chosen], record

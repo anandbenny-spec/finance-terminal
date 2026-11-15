@@ -269,3 +269,64 @@ def test_the_tone_of_the_call_whose_management_turn_changed_is_asked_again_and_t
     assert [(o[0], o[2]) for o in tone_outputs(changed["doc"])] == [("superseded", "v3"), ("published", "v3")]
     assert [o[0] for o in tone_outputs(plain["doc"])] == ["published"]
     assert turns_check()["changed"] == 1 and turns_check()["outcomes"] == {"published": 1}
+
+
+# ------------------------------------------------- a changed call with no published output of the version (Anand, 15 Nov 2026)
+@pytest.mark.db
+def test_an_extraction_that_found_nothing_is_asked_again_once_its_turns_change_and_one_whose_turns_stand_is_not(monkeypatch):
+    changed, quiet = make_call(lines=MERGED, fy_end=3), make_call(lines=MERGED, fy_end=3)
+    with monkeypatch.context() as m:
+        m.setenv(eca.ONLY_ENV, ge.TASK)
+        assert go(task([changed["slug"], quiet["slug"]], FakeClaude(["ok"], answer=answers()))) == 0
+    for c in (changed, quiet):
+        assert [(g[0], g[1], g[2]) for g in gx(c["doc"])] == [("draft", "no_targets", "v1")]
+    rerun(monkeypatch, "price")
+    assert go(task([changed["slug"], quiet["slug"]], FakeClaude(["ok"]))) == 0
+    assert turns_check()["changed"] == 0 and turns_check()["unchanged"] == 2      # before the re-derive: both match
+    split_turn(changed)
+    assert go(task([changed["slug"], quiet["slug"]], FakeClaude(["ok"]))) == 0
+    rec = turns_check()
+    assert rec["refused"] is None and rec["published"] == 0 and rec["current_version"] == 0 and rec["without_published"] == 2
+    assert rec["changed"] == 1 and rec["unchanged"] == 1 and rec["requests"] == 1
+    assert rec["calls"] == rec["calls_without_published"] == [changed["slug"]]
+    rerun(monkeypatch, "all")
+    fake = FakeClaude(["ok"], answer=answers([CAPEX_T, OUTLOOK_T], [REV_S]))
+    assert go(task([changed["slug"], quiet["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    ((_, sent),) = fake.batches.items()
+    assert len(sent["requests"]) == 1                                            # the changed call only
+    assert [(g[0], g[1], g[2]) for g in gx(changed["doc"])] == [("draft", "no_targets", "v1"), ("published", "", "v1")]
+    assert [(g[0], g[1]) for g in gx(quiet["doc"])] == [("draft", "no_targets")]   # its turns stand: not asked, not touched
+    assert turns_check()["outcomes"] == {"published": 1}
+    assert go(task([changed["slug"], quiet["slug"]], fake)) == 0                 # again: its published output matches now
+    assert fake.create_calls == 1 and turns_check()["changed"] == 0 and turns_check()["unchanged"] == 2
+
+
+@pytest.mark.db
+def test_a_summary_rejected_twice_is_asked_again_once_its_turns_change_and_one_whose_turns_stand_is_not(monkeypatch):
+    changed, stuck, plain = make_call(lines=MERGED), make_call(lines=MERGED), make_call()
+    with monkeypatch.context() as m:
+        m.setenv(eca.ONLY_ENV, cs.TASK)
+        assert go(task([changed["slug"], stuck["slug"]], FakeClaude(["not_json"]))) == 0
+        assert go(task([plain["slug"]], FakeClaude(["ok"], reply=replies()))) == 0
+    v = eca.PROMPT_VERSION[cs.TASK]
+    for c in (changed, stuck):
+        assert [o[0] for o in outputs(c["doc"])] == ["rejected", "rejected"]     # retried once, then final
+    split_turn(changed)
+    rerun(monkeypatch, "price", cs.TASK)
+    assert go(task([changed["slug"], stuck["slug"], plain["slug"]], FakeClaude(["ok"]))) == 0
+    rec = turns_check()
+    assert rec["current_version"] == 1 and rec["without_published"] == 2 and rec["unchanged"] == 2
+    assert rec["calls"] == rec["calls_without_published"] == [changed["slug"]]
+    rerun(monkeypatch, "all", cs.TASK)
+    fake = FakeClaude(["ok"], reply=replies())
+    assert go(task([changed["slug"], stuck["slug"], plain["slug"]], fake)) == 0
+    r = last_run()
+    assert r["status"] == "success", r["error"]
+    ((_, sent),) = fake.batches.items()
+    assert len(sent["requests"]) == 1
+    assert [(o[0], o[4]) for o in outputs(changed["doc"])] == [("rejected", v), ("rejected", v), ("published", v)]
+    assert [o[0] for o in outputs(stuck["doc"])] == ["rejected", "rejected"]
+    assert [o[0] for o in outputs(plain["doc"])] == ["published"]
+    assert r["checks"]["citation_roles"]["passed"] and turns_check()["outcomes"] == {"published": 1}
