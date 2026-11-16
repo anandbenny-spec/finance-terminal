@@ -1,0 +1,73 @@
+# The command bar's gate runs (Spec 07 §6; K-04 #582 builds it, K-10 #587 runs the test splits, the K-11 judge draws its sample
+# here): py ft/eval/cmdbar.py answers a set's split through the route's own code on dev (router; or prompt, guard, read-only run
+# as sql_reader, one Sonnet retry, summary) and scores it with Spec 07 §6's fixed rules. Golds are SQL, never rows (N4): each
+# gold runs beside the model's query on the same database.
+#
+# Manual only; dev only: there is no target input, and every database secret is a DEV_ one (an unset DEV_ secret leaves the
+# variable empty and the script stops; it never falls back to production's). With `send` off nothing reaches a model: the run
+# prices itself from config/ai_prices.yaml and, for cmdbar_sql, logs in as sql_reader and runs the golds (the transaction
+# pooler, port 6543). With `send` on it answers, records one ops.eval_run and one ops.eval_result per item on dev as job_writer,
+# and stops before spend could pass `max_cost`. Annotations hold ids, counts, classes and costs only: never a row, a summary
+# line or a figure (this repository and its run logs are public: CLAUDE.md §4). Retrieval (the third set) is K-06's.
+name: cmdbar-gates
+on:
+  workflow_dispatch:
+    inputs:
+      set:
+        description: The evaluation set
+        type: choice
+        options: [cmdbar_sql, cmdbar_router]
+        default: cmdbar_sql
+      split:
+        description: 'dev: prompt work (K-04, K-06); test: the gate (K-10) and the judge (K-11) only (Spec 07 N5)'
+        type: choice
+        options: [dev, test]
+        default: dev
+      items:
+        description: Only these item ids of the split, comma or space separated (empty = the whole split)
+        type: string
+        default: ""
+      send:
+        description: Send the items to the model (off = the price and the golds only, nothing sent)
+        type: boolean
+        default: false
+      max_cost:
+        description: Stop before the run's spend in USD could pass this
+        type: string
+        default: "0.50"
+concurrency:
+  group: cmdbar-gates
+  cancel-in-progress: false
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: py
+jobs:
+  run:
+    runs-on: ubuntu-24.04   # pinned, as in gate-samples
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0, pinned by SHA (setup-uv publishes no v8+ major tags)
+        with:
+          enable-cache: true
+          cache-dependency-glob: py/uv.lock
+      - run: uv sync --locked
+      - name: Gate run
+        run: |
+          args=(--set "$SET" --split "$SPLIT" --max-cost "$MAX_COST")
+          if [ -n "$ITEMS" ]; then args+=(--items "$ITEMS"); fi
+          if [ "$SEND" = "true" ]; then args+=(--send); fi
+          uv run --locked python -m ft.eval.cmdbar "${args[@]}"
+        env:
+          SET: ${{ inputs.set }}
+          SPLIT: ${{ inputs.split }}
+          ITEMS: ${{ inputs.items }}
+          SEND: ${{ inputs.send }}
+          MAX_COST: ${{ inputs.max_cost }}
+          # Dev's databases only: sql_reader (transaction pooler) for the answers and the golds, job_writer for the records.
+          SQL_READER_DATABASE_URL: ${{ secrets.DEV_SQL_READER_DATABASE_URL }}
+          JOB_DATABASE_URL: ${{ secrets.DEV_JOB_DATABASE_URL }}
+          # The model key is present only on a run that sends, so a price check cannot reach the model.
+          ANTHROPIC_API_KEY: ${{ inputs.send && secrets.ANTHROPIC_API_KEY || '' }}
