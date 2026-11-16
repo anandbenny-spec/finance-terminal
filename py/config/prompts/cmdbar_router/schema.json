@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "route": {"type": "string", "enum": ["page", "data", "document", "unsupported"]},
+    "page_slug": {"anyOf": [{"type": "string"}, {"type": "null"}], "description": "page route only: the page's address, else null"},
+    "filters": {
+      "type": "object",
+      "properties": {
+        "banks": {"type": "array", "items": {"type": "string", "enum": ["fed", "rbi"]}},
+        "doc_types": {"type": "array", "items": {"type": "string", "enum": ["fomc_statement", "fomc_minutes", "fomc_presconf_transcript", "mpc_resolution", "mpc_minutes", "rbi_governor_statement", "rbi_presconf_transcript"]}},
+        "date_from": {"anyOf": [{"type": "string"}, {"type": "null"}], "description": "YYYY-MM-DD, or null"},
+        "date_to": {"anyOf": [{"type": "string"}, {"type": "null"}], "description": "YYYY-MM-DD, or null"}
+      },
+      "required": ["banks", "doc_types", "date_from", "date_to"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["route", "page_slug", "filters"],
+  "additionalProperties": false
+}

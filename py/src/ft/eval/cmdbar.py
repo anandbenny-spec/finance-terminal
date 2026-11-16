@@ -1,0 +1,579 @@
+"""The command bar's gate runner (Spec 07 §6, N4, N5; K-04 #582, run by K-10 #587 and the K-11 judge): runs a set's split
+through the route's own code (`ft/cmdbar`) on dev and scores it with the rules Spec 07 §6 fixed before any run.
+
+    python -m ft.eval.cmdbar --set cmdbar_sql --split dev            # the price and the golds only: no model call
+    python -m ft.eval.cmdbar --set cmdbar_sql --split dev --send     # answers every item, scores, records
+
+**Sets.** `cmdbar_sql`: each item's question goes through `ft.cmdbar.sql.answer_data` (prompt, guard, the read-only run as
+`sql_reader`, one Sonnet retry, the summary); its gold SQL goes through the same guard and runs on the same database
+(golds are SQL, never rows: N4). `cmdbar_router`: each question goes through `ft.cmdbar.router.route`. Retrieval is K-06's.
+
+**Scoring** (Spec 07 §6):
+- `cmdbar_sql`, result-set match: the model's rows equal the gold's as multisets of tuples on the gold's columns; each gold column
+  is matched by one model column with equal values in every row (extra model columns allowed); numbers are equal at the gold's
+  precision (each gold column's largest number of decimal places; half rounds up); row order counts only where the item says
+  `ordered`. An unanswerable item is right only if the model says so. Cross-currency items are also wrong, whatever their rows,
+  if the answer could rank or compare money across currencies: an extra numeric column beside the matched ones (a ratio or a
+  difference), or an ORDER BY on a figure (decided by Claude under the standing delegation, 16 Nov 2026, #582: this only
+  tightens §6's "an answer that ranks, sums or compares money across currencies fails"; the alternative was the match alone,
+  which an ordered or ratio-carrying answer passes on dev, where no US company is published). Pass: at least 85%, and 100% of
+  the cross-currency items.
+- `cmdbar_router`, route accuracy; filter agreement is reported beside it where the gold states filters. Pass: at least 90%,
+  and no unanswerable (`unsupported`) item routed to data or documents.
+A dev-split run is prompt work, never the gate: its `passed` is false whatever its numbers (N5).
+
+**Spend.** Without `--send` nothing reaches a model: it prices the run from `config/ai_prices.yaml` (the estimate and the worst
+case, every request using its whole token cap and every SQL item retried on Sonnet) and, for `cmdbar_sql`, runs the golds. With
+`--send`, the run stops before any item whose worst case would take its actual spend past `--max-cost`.
+
+**Writes** one `ops.eval_run` and one `ops.eval_result` per item on dev, as `job_writer` (`JOB_DATABASE_URL`): counts, the
+query that ran and the summary line, never the rows. **Prints** annotations with ids, counts, classes and costs only: never a
+row, a summary or a figure from the data (the repository and its run logs are public: CLAUDE.md §4). At most four: the run's
+price and golds, then one for all the items and one for the result (GitHub keeps only the first 10 notices of a step).
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
+from pathlib import Path
+
+import yaml
+from pglast import ast, parse_sql, stream
+from pglast.parser import ParseError
+
+from ft.ai import sqlguard
+from ft.ai.client import CONFIG, MILLION, AIError, Client, Request, price_entry
+from ft.cmdbar import router as router_mod
+from ft.cmdbar import sql as sql_mod
+from ft.cmdbar import summary as summary_mod
+
+SETS_DIR = CONFIG / "eval" / "sets"
+SETS = ("cmdbar_sql", "cmdbar_router")
+SPLITS = ("dev", "test")
+DEFAULT_MAX_COST = Decimal("0.50")
+SUMMARY_INPUT_TOKENS_EST = 2_500          # a summary request with 50 rows of a wide view, over-estimated
+MAX_ASSIGNMENTS = 20_000                  # column-matching search limit (sets have a handful of columns)
+GATE = {"cmdbar_sql": "accuracy >= 0.85 and cross-currency accuracy == 1.0 (test split; Spec 07 §6)",
+        "cmdbar_router": "route accuracy >= 0.90 and no unanswerable item answered (test split; Spec 07 §6)"}
+
+
+# ---------------------------------------------------------------------------------------------- the sets
+def set_path(name: str) -> Path:
+    return SETS_DIR / f"{name}.yaml"
+
+
+def load_items(name: str, split: str, ids: list[str] | None = None) -> list[dict]:
+    """The split's items, in file order (or only `ids`, each of which must be in the split)."""
+    if name not in SETS or split not in SPLITS:
+        raise ValueError(f"set {name!r} split {split!r}: not one this runner reads")
+    items = [i for i in yaml.safe_load(set_path(name).read_text())["items"] if i["split"] == split]
+    if ids:
+        known = {i["id"] for i in items}
+        if missing := [x for x in ids if x not in known]:
+            raise ValueError(f"not in the {split} split of {name}: {', '.join(missing)}")
+        items = [i for i in items if i["id"] in set(ids)]
+    return items
+
+
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def git_sha(env) -> str:
+    if sha := (env.get("GITHUB_SHA") or "").strip():
+        return sha
+    try:
+        return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True,
+                              cwd=SETS_DIR).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+# ---------------------------------------------------------------------------------------------- result-set match
+def _is_num(v) -> bool:
+    return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
+
+
+def _dec(v) -> Decimal:
+    return v if isinstance(v, Decimal) else Decimal(str(v))
+
+
+def column_scale(values) -> int:
+    """A gold column's precision: its numbers' largest count of decimal places (0 for whole numbers)."""
+    places = 0
+    for v in values:
+        if _is_num(v):
+            d = _dec(v)
+            if d.is_finite() and d.as_tuple().exponent < 0:
+                places = max(places, -d.as_tuple().exponent)
+    return places
+
+
+def norm(v, scale: int):
+    """A cell as the match compares it: numbers rounded to the gold column's precision (half up), dates and instants as ISO
+    text (instants in UTC), text as it is. Types stay apart: the number 5 never equals the text '5'."""
+    if v is None:
+        return ("null",)
+    if isinstance(v, bool):
+        return ("bool", v)
+    if _is_num(v):
+        d = _dec(v)
+        if not d.is_finite():
+            return ("num", str(d))
+        with localcontext() as ctx:
+            ctx.prec = 80
+            try:
+                q = d.quantize(Decimal(1).scaleb(-scale), rounding=ROUND_HALF_UP)
+            except InvalidOperation:
+                return ("num", str(d))
+        return ("num", q + 0)                  # + 0 folds -0 into 0
+    if isinstance(v, datetime):
+        return ("instant", (v.astimezone(UTC) if v.tzinfo else v).isoformat())
+    if isinstance(v, date):
+        return ("date", v.isoformat())
+    return ("text", str(v))
+
+
+@dataclass(frozen=True)
+class Match:
+    ok: bool
+    reason: str                                # match | row_count | columns | rows
+    mapping: tuple[int, ...] = ()              # gold column j -> model column mapping[j]
+
+
+def rows_match(gold_cols: list[str], gold_rows: list[tuple], model_cols: list[str], model_rows: list[tuple],
+               ordered: bool) -> Match:
+    """Spec 07 §6's result-set match (module docstring)."""
+    if len(gold_rows) != len(model_rows):
+        return Match(False, "row_count")
+    k = len(gold_cols)
+    if len(model_cols) < k:
+        return Match(False, "columns")
+    scales = [column_scale(r[j] for r in gold_rows) for j in range(k)]
+    gold = [tuple(norm(r[j], scales[j]) for j in range(k)) for r in gold_rows]
+    cands = []
+    for j in range(k):
+        want = Counter(g[j] for g in gold)
+        cj = [m for m in range(len(model_cols)) if Counter(norm(r[m], scales[j]) for r in model_rows) == want]
+        if not cj:
+            return Match(False, "columns")
+        cands.append(cj)
+    target = gold if ordered else Counter(gold)
+    tried = 0
+
+    def search(j: int, used: tuple[int, ...]):
+        nonlocal tried
+        if j == k:
+            tried += 1
+            got = [tuple(norm(r[used[i]], scales[i]) for i in range(k)) for r in model_rows]
+            return used if (got if ordered else Counter(got)) == target else None
+        for m in cands[j]:
+            if m in used or tried >= MAX_ASSIGNMENTS:
+                continue
+            if (found := search(j + 1, used + (m,))) is not None:
+                return found
+        return None
+
+    found = search(0, ())
+    return Match(True, "match", found) if found is not None else Match(False, "rows")
+
+
+def money_comparison(model_sql: str, model_cols: list[str], model_rows: list[tuple], mapping: tuple[int, ...]) -> str | None:
+    """For a cross-currency item whose rows matched: a reason the answer could still rank or compare money across currencies
+    (an extra numeric column, or an ORDER BY on a figure), else None."""
+    matched = set(mapping)
+    for m in range(len(model_cols)):
+        if m not in matched and any(_is_num(r[m]) for r in model_rows):
+            return "extra_numeric_column"
+    if not model_rows:
+        return None
+    try:
+        stmt = parse_sql(model_sql)[0].stmt
+    except ParseError:                                   # it passed the guard, so it parses; refuse if it doesn't
+        return "orders_by_figure"
+    names = {c: i for i, c in enumerate(model_cols)}
+    for sb in getattr(stmt, "sortClause", None) or ():
+        node, idx = sb.node, None
+        if isinstance(node, ast.ColumnRef) and isinstance(node.fields[-1], ast.String):
+            idx = names.get(node.fields[-1].sval)
+        elif isinstance(node, ast.A_Const) and isinstance(getattr(node, "val", None), ast.Integer):
+            idx = node.val.ival - 1 if 0 < node.val.ival <= len(model_cols) else None
+        if idx is None or any(_is_num(r[idx]) for r in model_rows):
+            return "orders_by_figure"
+    return None
+
+
+# ---------------------------------------------------------------------------------------------- items
+@dataclass
+class ItemResult:
+    id: str
+    correct: bool | None                       # None: unscored (the gold didn't run)
+    reason: str
+    family: str | None = None
+    cross_currency: bool = False
+    gold_answerable: bool | None = None
+    gold_rows: int | None = None
+    model_rows: int | None = None
+    state: str | None = None
+    sql: str | None = None
+    error_class: str | None = None
+    models: list[str] = field(default_factory=list)
+    guard_verdict: str | None = None
+    summary: str | None = None
+    summary_grounded: bool | None = None
+    route: str | None = None
+    gold_route: str | None = None
+    filters_agree: bool | None = None
+    predicted_filters: dict | None = None
+    cost_usd: Decimal = Decimal(0)
+    ms: int = 0
+
+    def annotation(self) -> dict:
+        """What the log may show: ids, classes, counts, costs. Never a row, a summary or the SQL."""
+        out = {"id": self.id, "correct": self.correct, "reason": self.reason}
+        for k in ("gold_rows", "model_rows", "error_class", "route", "gold_route", "filters_agree"):
+            if (v := getattr(self, k)) is not None:
+                out[k] = v
+        if self.models:
+            out["models"] = self.models
+        out["cost_usd"] = f"{self.cost_usd:.6f}"
+        out["ms"] = self.ms
+        return out
+
+
+def run_gold(reader: sql_mod.Reader, item: dict) -> tuple[sql_mod.Result | None, str | None]:
+    """The gold through the same guard and the same read-only run. (result, None) or (None, error class)."""
+    try:
+        return reader.run(sqlguard.guard(item["gold_sql"])), None
+    except sqlguard.Rejected as e:
+        return None, f"guard: {sql_mod.guard_class(e)}"
+    except sql_mod.QueryError as e:
+        return None, f"database: {e.kind}"
+    except sql_mod.ReaderDown:
+        return None, "database_unavailable"
+
+
+def score_sql_item(item: dict, gold: sql_mod.Result | None, gold_error: str | None, ans: sql_mod.DataAnswer) -> ItemResult:
+    r = ItemResult(item["id"], None, "", item.get("family"), bool(item.get("cross_currency")), bool(item["answerable"]),
+                   state=ans.state, sql=ans.sql, error_class=ans.error_class, models=ans.models,
+                   guard_verdict=ans.guard_verdict, summary=ans.summary,
+                   summary_grounded=ans.summary_grounded if ans.state == "answered" else None,
+                   model_rows=len(ans.rows) if ans.state == "answered" else None, cost_usd=ans.cost_usd, ms=ans.ms)
+    if not item["answerable"]:
+        r.correct = ans.state == "unanswerable"
+        r.reason = {"unanswerable": "said_unanswerable", "answered": "answered_unanswerable"}.get(
+            ans.state, f"cant_answer: {ans.error_class}")
+        return r
+    if gold is None:
+        r.reason = f"gold_error: {gold_error}"
+        return r
+    r.gold_rows = len(gold.rows)
+    if ans.state != "answered":
+        r.correct = False
+        r.reason = "said_unanswerable" if ans.state == "unanswerable" else f"cant_answer: {ans.error_class}"
+        return r
+    m = rows_match(gold.columns, gold.rows, ans.columns, ans.rows, bool(item.get("ordered")))
+    r.correct, r.reason = m.ok, m.reason
+    if m.ok and r.cross_currency and (why := money_comparison(_inner_sql(ans.sql), ans.columns, ans.rows, m.mapping)):
+        r.correct, r.reason = False, why
+    return r
+
+
+def _inner_sql(guarded: str) -> str:
+    """The model's query inside the guard's wrapper (`SELECT * FROM (<query>) AS q LIMIT n`), for its ORDER BY."""
+    stmt = parse_sql(guarded)[0].stmt
+    return stream.RawStream()(stmt.fromClause[0].subquery)
+
+
+def score_router_item(item: dict, got: router_mod.Route | None, error_class: str | None, cost: Decimal, ms: int) -> ItemResult:
+    r = ItemResult(item["id"], False, "", gold_route=item["route"], cost_usd=cost, ms=ms)
+    if got is None:
+        r.reason, r.error_class = f"error: {error_class}", error_class
+        return r
+    r.route = got.route
+    r.correct = got.route == item["route"]
+    r.reason = "route_match" if r.correct else "route_differs"
+    r.predicted_filters = got.filters.as_json()
+    if item.get("filters"):
+        want, have = item["filters"], got.filters.as_json()
+        agree = True
+        for key in ("banks", "doc_types"):
+            if key in want and set(want[key]) != set(have[key]):
+                agree = False
+        for key in ("date_from", "date_to"):
+            if key in want and str(want[key]) != str(have[key]):
+                agree = False
+        r.filters_agree = agree
+    return r
+
+
+# ---------------------------------------------------------------------------------------------- metrics
+def _frac(n: int, d: int) -> float | None:
+    return round(n / d, 4) if d else None
+
+
+def sql_metrics(results: list[ItemResult]) -> dict:
+    scored = [r for r in results if r.correct is not None]
+    cc = [r for r in scored if r.cross_currency]
+    unans = [r for r in scored if r.gold_answerable is False]
+    answered = [r for r in results if r.state == "answered"]
+    return {
+        "n": len(results), "scored": len(scored), "unscored": len(results) - len(scored),
+        "correct": sum(1 for r in scored if r.correct), "accuracy": _frac(sum(1 for r in scored if r.correct), len(scored)),
+        "cross_currency": {"n": len(cc), "correct": sum(1 for r in cc if r.correct),
+                           "accuracy": _frac(sum(1 for r in cc if r.correct), len(cc))},
+        "unanswerable": {"n": len(unans), "correct": sum(1 for r in unans if r.correct)},
+        "by_family": {f: {"n": sum(1 for r in scored if r.family == f), "correct": sum(1 for r in scored if r.family == f and r.correct)}
+                      for f in sorted({r.family for r in scored if r.family})},
+        "reasons": dict(Counter(r.reason for r in results)),
+        "retried": sum(1 for r in results if len(r.models) > 1),
+        "guard_rejections": sum(1 for r in results if (r.error_class or "").startswith("guard")),
+        "summaries": {"answered": len(answered), "grounded": sum(1 for r in answered if r.summary_grounded)},
+    }
+
+
+def sql_rule_met(m: dict) -> bool:
+    acc, cc = m["accuracy"], m["cross_currency"]
+    return (m["unscored"] == 0 and acc is not None and acc >= 0.85
+            and (cc["n"] == 0 or cc["correct"] == cc["n"]))
+
+
+def router_metrics(results: list[ItemResult]) -> dict:
+    with_filters = [r for r in results if r.filters_agree is not None]
+    confusion = Counter(f"{r.gold_route}->{r.route}" for r in results)
+    return {
+        "n": len(results), "correct": sum(1 for r in results if r.correct),
+        "accuracy": _frac(sum(1 for r in results if r.correct), len(results)),
+        "unanswerable": {"n": sum(1 for r in results if r.gold_route == "unsupported"),
+                         "answered": sum(1 for r in results if r.gold_route == "unsupported" and r.route in ("data", "document"))},
+        "filters": {"n": len(with_filters), "agree": sum(1 for r in with_filters if r.filters_agree)},
+        "confusion": dict(sorted(confusion.items())),
+        "errors": sum(1 for r in results if r.route is None),
+    }
+
+
+def router_rule_met(m: dict) -> bool:
+    return m["accuracy"] is not None and m["accuracy"] >= 0.90 and m["unanswerable"]["answered"] == 0
+
+
+# ---------------------------------------------------------------------------------------------- price
+def _price(model: str, on: date) -> dict:
+    m, _, _ = price_entry(model, on)
+    return {k: Decimal(str(v)) for k, v in m["standard"].items()}
+
+
+def request_cost(req: Request, on: date, *, output_tokens: int | None = None, cached: bool = False) -> Decimal:
+    """A request's cost from its estimated input (uncached, or read from the cache) and `output_tokens` (default: its cap)."""
+    p = _price(req.model_id, on)
+    inp = Decimal(req.estimated_tokens()) * (p["cache_read"] if cached else p["input"])
+    out = Decimal(req.spec.max_tokens if output_tokens is None else output_tokens) * p["output"]
+    return (inp + out) / MILLION
+
+
+def sql_item_worst(question: str, prompt, on: date) -> Decimal:
+    first = sql_mod.request(question, prompt)
+    retry = sql_mod.request(question, prompt, model=sql_mod.RETRY_MODEL, note=sql_mod.retry_note("guard: x"))
+    p = _price(sql_mod.FIRST_MODEL, on)            # the summary runs on the first model (Haiku 5.5)
+    summary = (Decimal(SUMMARY_INPUT_TOKENS_EST) * p["input"] + Decimal(3_000) * p["output"]) / MILLION
+    return request_cost(first, on) + request_cost(retry, on) + summary
+
+
+def price_run(set_name: str, items: list[dict], prompt, on: date) -> dict:
+    """{estimate, worst_case, per_item_worst} in USD. The estimate: the first request uncached once, then cache reads, about
+    1,500 output tokens, a summary, no retry. The worst case: every request at its cap, every SQL item retried on Sonnet."""
+    est = worst = Decimal(0)
+    per = {}
+    for n, it in enumerate(items):
+        if set_name == "cmdbar_sql":
+            req = sql_mod.request(it["question"], prompt)
+            w = sql_item_worst(it["question"], prompt, on)
+            p = _price(req.model_id, on)
+            e = (request_cost(req, on, output_tokens=1_500, cached=n > 0)
+                 + (Decimal(1_500) * p["input"] + Decimal(150) * p["output"]) / MILLION)
+        else:
+            req = router_mod.request(it["question"])
+            w = request_cost(req, on)
+            e = request_cost(req, on, output_tokens=300, cached=n > 0)
+        per[it["id"]] = w
+        est, worst = est + e, worst + w
+    return {"estimate": est, "worst_case": worst, "per_item_worst": per}
+
+
+# ---------------------------------------------------------------------------------------------- record
+def record(conn, set_name: str, split: str, set_version: str, model: str, prompt_version: str, metrics: dict,
+           passed: bool, notes: str, results: list[ItemResult], expected_of) -> int:
+    from psycopg.types.json import Jsonb
+    with conn.transaction():
+        run_id = conn.execute(
+            """insert into ops.eval_run (eval_set, set_version, model, prompt_version, n_items, metrics, passed, notes)
+               values (%s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+            (set_name, set_version, model, prompt_version, len(results), Jsonb(metrics), passed, notes)).fetchone()[0]
+        for r in results:
+            predicted = {"state": r.state, "route": r.route, "sql": r.sql, "rows": r.model_rows, "error_class": r.error_class,
+                         "models": r.models, "guard": r.guard_verdict, "reason": r.reason, "summary": r.summary,
+                         "summary_grounded": r.summary_grounded, "filters": r.predicted_filters}
+            conn.execute(
+                """insert into ops.eval_result (eval_run_id, item_key, expected, predicted, correct, latency_ms, cost_usd)
+                   values (%s, %s, %s, %s, %s, %s, %s)""",
+                (run_id, r.id, Jsonb(expected_of(r)), Jsonb({k: v for k, v in predicted.items() if v is not None}),
+                 r.correct, r.ms, r.cost_usd))
+    return run_id
+
+
+# ---------------------------------------------------------------------------------------------- the CLI
+def annotation(title: str, payload) -> str:
+    text = payload if isinstance(payload, str) else json.dumps(payload, separators=(",", ":"), default=str)
+    esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return f"::notice title={title}::{esc}"
+
+
+def _connect_writer(dsn: str):
+    import psycopg
+    conn = psycopg.connect(dsn, autocommit=True, application_name="ft-cmdbar-gates")
+    conn.execute("set time zone 'UTC'")
+    return conn
+
+
+def main(argv: list[str] | None = None, *, env=None, out=print, client=None, reader=None, writer=None,
+         today=lambda: datetime.now(UTC).date()) -> int:
+    env = os.environ if env is None else env
+    p = argparse.ArgumentParser(prog="python -m ft.eval.cmdbar", description=__doc__.split("\n\n")[0])
+    p.add_argument("--set", required=True, choices=SETS)
+    p.add_argument("--split", required=True, choices=SPLITS)
+    p.add_argument("--items", default="", help="only these item ids of the split (comma or space separated)")
+    p.add_argument("--send", action="store_true", help="answer the items (spends); without it: the price and the golds only")
+    p.add_argument("--max-cost", type=Decimal, default=DEFAULT_MAX_COST, help="stop before spend could pass this (USD)")
+    args = p.parse_args(argv)
+    ids = [x for x in args.items.replace(",", " ").split() if x]
+    try:
+        items = load_items(args.set, args.split, ids or None)
+    except ValueError as e:
+        p.error(str(e))
+    needs_reader = args.set == "cmdbar_sql"
+    if needs_reader and reader is None and not (env.get("SQL_READER_DATABASE_URL") or "").strip():
+        p.error("SQL_READER_DATABASE_URL is not set (the workflow reads the DEV_ secret)")
+    if args.send:
+        if client is None and not (env.get("ANTHROPIC_API_KEY") or "").strip():
+            p.error("ANTHROPIC_API_KEY is not set")
+        if writer is None and not (env.get("JOB_DATABASE_URL") or "").strip():
+            p.error("JOB_DATABASE_URL is not set (the workflow reads the DEV_ secret)")
+    on = today()
+    set_version = git_sha(env)
+    info = {"set": args.set, "split": args.split, "items": len(items), "set_version": set_version,
+            "set_file_sha256": file_sha256(set_path(args.set))}
+
+    prompt = None
+    golds: dict[str, tuple] = {}
+    own_reader = False
+    try:
+        if needs_reader:
+            if reader is None:
+                try:
+                    reader = sql_mod.Reader.connect(env["SQL_READER_DATABASE_URL"].strip())
+                except sql_mod.ReaderDown as e:
+                    out(f"::error title=sql_reader::could not connect as sql_reader ({e})")
+                    return 1
+                own_reader = True
+            docs, groups = reader.describe()
+            missing = sorted(sqlguard.VIEWS - {d.name for d in docs})
+            prompt = sql_mod.sql_prompt(sql_mod.render_views(docs, groups))
+            info |= {"views_described": len(docs), "views_missing": missing, "prompt_sha256": prompt.sha256}
+            for it in items:
+                if it["answerable"]:
+                    t0 = time.monotonic()
+                    res, err = run_gold(reader, it)
+                    golds[it["id"]] = (res, err, int((time.monotonic() - t0) * 1000))
+            info["golds"] = {"run": sum(1 for g in golds.values() if g[0] is not None),
+                             "errors": {k: g[1] for k, g in golds.items() if g[1]},
+                             "rows": {k: len(g[0].rows) for k, g in golds.items() if g[0] is not None},
+                             "ms": {k: g[2] for k, g in golds.items()}}
+            if missing:
+                out(f"::warning title=views::sql_reader can't describe {', '.join(missing)}")
+        price = price_run(args.set, items, prompt, on)
+        info["price_usd"] = {"estimate": f"{price['estimate']:.4f}", "worst_case": f"{price['worst_case']:.4f}",
+                             "max_cost": str(args.max_cost)}
+        out(annotation(f"{args.set} {args.split}", info))
+        if not args.send:
+            out(annotation("dry run", "nothing sent to a model; run again with send on to answer and record"))
+            return 0
+
+        claude = client or Client(env["ANTHROPIC_API_KEY"].strip())
+        results: list[ItemResult] = []
+        spent, stopped = Decimal(0), False
+        for it in items:
+            if spent + price["per_item_worst"][it["id"]] > args.max_cost:
+                stopped = True
+                out(f"::warning title=budget stop::stopped before {it['id']}: spend {spent:.4f} USD plus its worst case "
+                    f"would pass {args.max_cost}")
+                break
+            if args.set == "cmdbar_sql":
+                ans = sql_mod.answer_data(claude, reader, it["question"], prompt)
+                g = golds.get(it["id"], (None, None, 0))
+                r = score_sql_item(it, g[0], g[1], ans)
+            else:
+                t0 = time.monotonic()
+                try:
+                    got = router_mod.route(claude, it["question"])
+                    r = score_router_item(it, got, None, got.reply.cost_usd, int((time.monotonic() - t0) * 1000))
+                except AIError as e:                        # one item's failure is recorded, not raised
+                    cost = getattr(getattr(e, "reply", None), "cost_usd", Decimal(0))
+                    r = score_router_item(it, None, type(e).__name__, cost, int((time.monotonic() - t0) * 1000))
+            spent += r.cost_usd
+            results.append(r)
+
+        if args.set == "cmdbar_sql":
+            metrics = sql_metrics(results)
+            met = sql_rule_met(metrics)
+            prompt_version, model = sql_mod.PROMPT_VERSION, sql_mod.FIRST_MODEL
+            metrics |= {"prompt_sha256": prompt.sha256, "summary_prompt": summary_mod.PROMPT_VERSION,
+                        "retry_model": sql_mod.RETRY_MODEL}
+            gold_rows = {k: (len(g[0].rows) if g[0] is not None else None) for k, g in golds.items()}
+
+            def expected_of(r: ItemResult) -> dict:
+                it = next(i for i in items if i["id"] == r.id)
+                return {"answerable": it["answerable"], "rows": gold_rows.get(r.id), "cross_currency": bool(it.get("cross_currency")),
+                        "ordered": bool(it.get("ordered")), "family": it.get("family")}
+        else:
+            metrics = router_metrics(results)
+            met = router_rule_met(metrics)
+            prompt_version, model = router_mod.PROMPT_VERSION, router_mod.request(items[0]["question"]).model_id
+
+            def expected_of(r: ItemResult) -> dict:
+                it = next(i for i in items if i["id"] == r.id)
+                return {"route": it["route"], **({"filters": it["filters"]} if it.get("filters") else {})}
+        complete = not stopped and len(results) == len(items)
+        passed = args.split == "test" and met and complete
+        metrics |= {"split": args.split, "gate_rule": GATE[args.set], "rule_met": met, "complete": complete,
+                    "stopped_by_budget": stopped, "cost_usd": f"{spent:.6f}", "set_file_sha256": info["set_file_sha256"],
+                    "mean_ms": int(sum(r.ms for r in results) / len(results)) if results else 0,
+                    "max_ms": max((r.ms for r in results), default=0)}
+        notes = ("dev split: prompt work, not the gate (Spec 07 N5)" if args.split == "dev"
+                 else "test split: the gate run (Spec 07 §6)")
+        conn = writer or _connect_writer(env["JOB_DATABASE_URL"].strip())
+        try:
+            run_id = record(conn, args.set, args.split, set_version, model, prompt_version, metrics, passed, notes,
+                            results, expected_of)
+        finally:
+            if writer is None:
+                conn.close()
+        # One annotation for every item, then the result: GitHub keeps only the first 10 notices of a step, so one per item
+        # would drop the result of any split over 9 items (the 16 Nov dev run of cmdbar_router lost its last item and result).
+        out(annotation(f"{args.set} {args.split} items", [r.annotation() for r in results]))
+        out(annotation(f"{args.set} {args.split} result", {"eval_run_id": run_id, "passed": passed, **metrics}))
+        return 0
+    finally:
+        if own_reader:
+            reader.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
