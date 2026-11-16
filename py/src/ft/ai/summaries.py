@@ -60,14 +60,19 @@ the problems (so the retry is a new input, with its own ops.ai_request row), the
 """
 from __future__ import annotations
 
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
+from difflib import SequenceMatcher
+from functools import lru_cache
 from itertools import pairwise
 
 from ft.ai.citations import map_api_citation
 from ft.ai.client import HAIKU, SONNET, Prompt, Reply, Request, Source, TextPart, load_schema
+from ft.engines.document.diff import PAIR_MIN
+from ft.engines.document.text import words as text_words
 
 BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # The model of a statement_diff_summary prompt version that doesn't run on the task's (Haiku 5.5). v7 is Sonnet 5.5's (#445,
@@ -75,7 +80,7 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
 DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
-                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET, "v23": SONNET, "v24": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET, "v23": SONNET, "v24": SONNET, "v25": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
 # (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
 # two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12); v14: v13 plus two rules, with one
 # more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14); v16: v15's
@@ -83,11 +88,13 @@ DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11":
 # fallback built by code (round 16); v18: v17's text, marking those checks' revision before the judge (round 16's second run); v19: v17's
 # text again, marking the third run's (a narrower "adds" check, the fallback's trivial changes and repeated sentences).
 # v20 to v22: v19's text again, marking rounds 17 to 19's revisions; v23: v22's text, marking round 20's packed fallback
-# (`DIFF_PACK_FROM`); v24: v23's text, marking round 21's (`DIFF_RESTATED_FROM`).
+# (`DIFF_PACK_FROM`); v24: v23's text, marking round 21's (`DIFF_RESTATED_FROM`); v25: v24's text, marking round 22's
+# (`DIFF_COUNTERPART_FROM`).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
 DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium",
-                  "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium", "v20": "medium", "v21": "medium", "v22": "medium", "v23": "medium", "v24": "medium"}
+                  "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium", "v20": "medium", "v21": "medium", "v22": "medium", "v23": "medium", "v24": "medium",
+                  "v25": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -195,6 +202,24 @@ DIFF_PACK_FROM = 23
 # monetary policy till the prospects of a sustained recovery are well secured", which restates the rate decision too, so it
 # was a second decision, and the decision is shown once; v1 (397) has it. Fallbacks of v23 keep their rules.
 DIFF_RESTATED_FROM = 24
+# From v25 (#445, round 22; Anand's decision of 16 Nov 2026, 22:12 IST, after round 21's verdict failed four RBI fallbacks on
+# rule (b)): v24's text, and the packed fallback (`fallback_bullets`' `counterparts`, `_counterparts`):
+# - pairs a removed and an added sentence as one change only when the second is what the first became: in the same stretch
+#   between two sentences the redline keeps or pairs itself (so never across an RBI resolution's sections), in paragraphs the
+#   redline aligns (or one of them not aligned at all), a paragraph's opening only with an opening, on the same subject, and
+#   the best-matched pairs first (round 21: mpc-2024-06-07's paragraph 5 headline sentence was paired with paragraph 2's
+#   global one, mpc-2022-12-07's enterprise-survey sentence with a global one, mpc-2026-10-07's global opening with the
+#   August CPI sentence, and mpc-2023-06-08's opening and fuel sentences crossed); a sentence the redline left unpaired that is
+#   at least PAIR_MIN like one anywhere in the other document is that sentence, moved, so it is never shown as missing;
+# - shows a sentence that a reworded one was split into (or merged from) with it, so "doesn't have this sentence" is kept
+#   for a sentence the other document has no counterpart for (round 21: mpc-2023-06-08's "It will take further monetary
+#   actions …");
+# - ranks first the changes the target's v1 output cites (its stored citations, `v1`), and last a change of a word or two
+#   that changes no meaning (`_minor`: "These decisions are" to "This decision is", mpc-2025-04-09);
+# - quotes an RBI paragraph without its number ("15. Two members …" as "Two members …"), and labels a list item as one
+#   ("continue with the neutral monetary policy stance …", mpc-2025-04-09) instead of quoting it as a sentence.
+# Fallbacks of v24 or earlier keep their rules.
+DIFF_COUNTERPART_FROM = 25
 
 
 def diff_json(version: str) -> bool:
@@ -1776,25 +1801,407 @@ def _same_topic(old_text: str, new_text: str) -> bool:
     return bool(a and b) and len(a & b) >= PAIR_MIN_SHARED * min(len(a), len(b))
 
 
-def _side(text: str, spans: list[tuple[int, int]]) -> tuple[str, list[tuple[int, int]]]:
-    """One side of a change as one quotation: its sentences, joined as the document joins them when only spaces lie between."""
+def _side(text: str, spans: list[tuple[int, int]], *, bare: bool = False) -> tuple[str, list[tuple[int, int]]]:
+    """One side of a change as one quotation: its sentences, joined as the document joins them when only spaces lie between.
+    `bare` (from v25): a sentence opening a paragraph is quoted without its RBI paragraph number ("15. Two members …" as "Two
+    members …"; its span starts after the number), and it starts a quotation of its own."""
     spans = sorted(spans)
-    parts, last = [], None
+    parts, last, out = [], None, []
     for s, e in spans:
-        if last is not None and not text[last:s].strip():
+        cut = False
+        if bare and _opening(text, s) and (m := _PARA_NUMBER.match(text, s, e)) and m.end() < e:
+            s, cut = m.end(), True
+        if last is not None and not cut and not text[last:s].strip():
             parts[-1] += " " + " ".join(text[s:e].split())
         else:
             parts.append(" ".join(text[s:e].split()))
         last = e
-    return '" and "'.join(parts), spans
+        out.append((s, e))
+    return '" and "'.join(parts), out
+
+
+# ---- v25's counterparts (`DIFF_COUNTERPART_FROM`; `fallback_bullets`' `counterparts`)
+_PARA_NUMBER = re.compile(r"\d{1,2}\.[ \t]+")      # an RBI paragraph number opening a paragraph ("15. Two members …")
+_DECISIONS_LEAD = re.compile(r"\bdecided to:$", re.IGNORECASE)
+# Words whose change alone changes no meaning (`_minor`), besides a word's other form ("decisions" for "decision").
+_MINOR_WORDS = frozenset({"a", "an", "the", "this", "these", "that", "those", "is", "are", "was", "were", "has", "have", "had",
+                          "its", "their", "it", "they", "also", "and", "of", "to", "in", "on", "for", "by", "with", "as",
+                          "be", "been"})
+MINOR_MAX_WORDS = 6                    # a change of at most this many words, all of them `_MINOR_WORDS` or another form
+SUBJECT_STEM = 6                       # letters of a word that make its stem (`_subject`), as `_stem_match`
+# Whether two sentences are on one subject (`_counterparts`), by their subject words (`_subject`), the share of the smaller
+# one's that they have in common (`_shared`) and how many:
+# - what each is about first in common (`_heads`, leaving out words in more than SUBJECT_COMMON of the sentences, such as
+#   "inflation" in an RBI resolution), unless both open their paragraphs: mpc-2023-06-08's "Fuel inflation
+#   remained elevated …" and "In the fuel group, inflation …"; not mpc-2021-06-04's "Firms engaged in manufacturing, services
+#   and infrastructure … were optimistic about a pick-up in demand …" and "Urban demand has been dented by the second wave,
+#   but … manufacturing and services sectors …";
+# - in paragraphs that correspond (the redline aligns them, or their openings are paired): SUBJECT_STRONG of them, at least
+#   SUBJECT_SHARED; or SUBJECT_SAME, at least SUBJECT_SHARED, of one kind (`_kind`);
+# - elsewhere in one stretch (paragraphs not known to correspond), the same on the words' weights (rarer words weigh more:
+#   the log of the two documents' sentences over those having the word), at SUBJECT_FAR_STRONG and SUBJECT_FAR;
+# - all of a short sentence's subject words when it has fewer than SUBJECT_SHARED, SUBJECT_ALL of the share (mpc-2026-04-08's
+#   "The growth outlook remains favourable." isn't "It is prudent to wait and watch … the evolving growth-inflation
+#   outlook.");
+# - never two sentences naming different financial years ("2021-22" and "2022-23": mpc-2022-02-10's two inflation
+#   projections) or different economies (`_regions`: mpc-2019-02-07's "In most EMEs, bond yields have softened …" and "The
+#   10-year yield in the US …"), even moved ones;
+# - two paragraphs' openings of one kind: OPENING_SHARED words in common, and the same RBI paragraph number or what each is
+#   about first in common (mpc-2026-10-07's paragraph 3, the global outlook, in both).
+SUBJECT_SAME = 0.3
+SUBJECT_STRONG = 0.5
+SUBJECT_SHARED = 3
+SUBJECT_ALL = 0.6
+SUBJECT_FAR = 0.45
+SUBJECT_FAR_STRONG = 0.55
+SUBJECT_HEAD = 5
+SUBJECT_COMMON = 0.2                  # a word in more than this share of the sentences is common (`_heads` leaves it out),
+SUBJECT_COMMON_MIN = 6                # and in this many at least
+OPENING_SHARED = 2
+_FISCAL_YEAR = re.compile(r"\b(?:19|20)\d\d-\d\d\b")
+_SUBJECT_STOP = frozenset({"remain", "contin", "likely", "expect", "recent", "though", "amidst", "around", "across",
+                           "toward", "reflec", "owing", "along", "level", "period", "month", "year", "quarte", "week",
+                           "still", "well", "alread", "ahead", "going", "forwar", "lookin", "taking", "accoun", "factor",
+                           "consid", "noted", "note", "view", "mpc", "commit", "previo", "current", "curren", "durin",
+                           "even", "however", "howeve", "overal", "becaus", "includ", "furthe", "togeth",
+                           "first", "firstl", "second", "third", "thirdl", "fourth", "fifthl", "sixthl", "sevent",
+                           "the", "in", "on", "as", "at", "it", "its", "of", "for", "with", "while", "accord",
+                           "reserv", "bank", "rbi", "federa", "fomc", "open", "market", "q1", "q2", "q3", "q4", "dr",
+                           "shri", "prof", "smt", "advanc", "emergi", "aes", "emes", "keepin", "four", "five", "three",
+                           "seven", "eight", "nine"})
+
+
+def _opening(text: str, s: int) -> bool:
+    """Whether the sentence at `s` opens its paragraph: only spaces between it and the text's start or a line break."""
+    before = text[:s].rstrip(" \t")
+    return not before or before.endswith("\n")
+
+
+@lru_cache(maxsize=4096)
+def _subject_words(text: str) -> tuple[str, ...]:
+    """A sentence's subject words in order (see `_subject`), each once."""
+    t = " ".join(text.split())
+    t = t[m.end():] if (m := _PARA_NUMBER.match(t)) else t
+    first = t.split(" ", 1)[0]
+    if not (len(first) > 1 and first.isupper()):    # an opening acronym ("CPI inflation …") stays a name
+        t = t[:1].lower() + t[1:]
+    out: list[str] = []
+    for w in _WORD.findall(match_form(t).replace("-", " ")):
+        if not w.isalpha() or _MONTH_WORD.match(w):
+            continue
+        if w[0].isupper():                             # a name ("Japanese economy", "GVA", "Dr. Goyal"): what it's about
+            if len(w) < 2:
+                continue
+        elif len(w) < 4 or w in _FUNCTION:
+            continue
+        w = w.lower()
+        stem = (w[:-1] if w.endswith("s") and len(w) > 4 else w)[:SUBJECT_STEM]
+        if stem not in _SUBJECT_STOP and stem not in out:
+            out.append(stem)
+    return tuple(out)
+
+
+def _subject(text: str) -> frozenset[str]:
+    """A sentence's subject: its content words (`_content`; hyphenated ones split, and names too) cut to their first
+    SUBJECT_STEM letters, without its paragraph number and with its first letter in lower case, so its opening word counts
+    ("Fuel inflation …") and a word's other forms match ("increase", "increases"); words that say little about what a
+    sentence is about (`_SUBJECT_STOP`) aside."""
+    return frozenset(_subject_words(text))
+
+
+def _heads(a: str, b: str, common: frozenset[str] | set[str] = frozenset()) -> bool:
+    """Whether two sentences' first SUBJECT_HEAD subject words, leaving out the `common` ones, share one: what each is
+    about first ("Fuel inflation …", "In the fuel group, inflation …")."""
+    x, y = [w for w in _subject_words(a) if w not in common], [w for w in _subject_words(b) if w not in common]
+    return bool(set(x[:SUBJECT_HEAD]) & set(y[:SUBJECT_HEAD]))
+
+
+_REGION = re.compile(r"\b(?:US|U\.S\.|United States|UK|EMEs?|AEs?|emerging market|advanced economies|Japan|Japanese|China"
+                     r"|Chinese|euro area|Euro area|Germany|German|Brazil|Brazilian|Russia|Russian|South Africa|India|Indian"
+                     r"|domestic)\b")
+_REGION_OF = {"U.S.": "US", "United States": "US", "EME": "EMEs", "emerging market": "EMEs", "AE": "AEs",
+              "advanced economies": "AEs", "Japanese": "Japan", "Chinese": "China", "Euro area": "euro area",
+              "German": "Germany", "Brazilian": "Brazil", "Russian": "Russia", "Indian": "India", "domestic": "India"}
+
+
+def _regions(text: str) -> set[str]:
+    """The economies a sentence names ("the US", "EMEs", "Japan", "domestic" as India)."""
+    return {_REGION_OF.get(m, m) for m in _REGION.findall(text)}
+
+
+def _shared(a: str, b: str, weight: dict[str, float] | None = None) -> tuple[float, int]:
+    """The share of the smaller subject (`_subject`) that the other sentence's has (by `weight` when given: a word's weight,
+    1 for a word it lacks), and how many words they share."""
+    x, y = _subject(a), _subject(b)
+    if not x or not y:
+        return 0.0, 0
+
+    def w(z: set[str]) -> float:
+        return sum((weight or {}).get(t, 1.0) for t in z)
+    return w(x & y) / min(w(x), w(y)), len(x & y)
+
+
+def _likeness(a: str, b: str) -> float:
+    """The redline's own likeness of two sentences (ft.engines.document.diff: difflib's ratio over their lower-cased words)."""
+    x, y = [w.lower() for w in text_words(a)], [w.lower() for w in text_words(b)]
+    return SequenceMatcher(None, x, y, autojunk=False).ratio() if x and y else 0.0
+
+
+def _minor(old_text: str, new_text: str) -> bool:
+    """A change of a word or two that changes no meaning ("These decisions are" to "This decision is"): at most
+    MINOR_MAX_WORDS words differ, dates and connectives aside (`_gist`), and each is a `_MINOR_WORDS` word or another form of
+    a word on the other side. A name, a figure or any other word is never minor."""
+    a, b = _gist(old_text), _gist(new_text)
+    if not a or not b:
+        return False
+    gone, came = [], []
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if tag != "equal":
+            gone += a[i1:i2]
+            came += b[j1:j2]
+    if not gone and not came or len(gone) + len(came) > MINOR_MAX_WORDS:
+        return False
+
+    def ok(w: str, other: list[str]) -> bool:
+        return w in _MINOR_WORDS or any(_stem_match(w, x) for x in other)
+    return all(ok(w, came) for w in gone) and all(ok(w, gone) for w in came)
+
+
+def _list_item(text: str, s: int) -> str | None:
+    """'decisions' for an item of an RBI resolution's list of decisions (a lower-case opening after a line ending "decided
+    to:", with no paragraph closing in between), 'list' for another list's item, None for a sentence."""
+    if not text[s:s + 1].islower() or not _opening(text, s):
+        return None
+    colon = text.rfind(":", 0, s)
+    if colon < 0 or re.search(r"\.[ \t]*\n", text[colon:s]) or not text[colon + 1:s].startswith(("\n", " \n")):
+        return None
+    line = text[text.rfind("\n", 0, colon) + 1:colon + 1]
+    return "decisions" if _DECISIONS_LEAD.search(line) else "list"
+
+
+@dataclass(eq=False)
+class _One:
+    """One sentence of a change (`_counterparts`)."""
+    span: tuple[int, int]
+    para: int                          # its ¶ (block) number in its document
+    gap: int                           # the stretch between two sentences the redline keeps or pairs that it lies in
+    opening: bool                      # it opens its paragraph
+    text: str
+
+
+def _counterparts(segments: dict, old: Doc, new: Doc, kind_of) -> list[list]:
+    """v25's changes from the redline, as [old spans, new spans] (see DIFF_COUNTERPART_FROM).
+    - The redline's own changed pairs stand. A pair whose sides aren't on one subject (`_same_topic`) is two changes, each
+      alone; a pair whose side ends with a colon (a list's lead-in) joins the next pair (its first item).
+    - Its unpaired removed and added sentences pair only with their counterparts, best first (`_shared`'s share): the same
+      sentence, moved (at least PAIR_MIN alike, anywhere); else a removed and an added sentence in the same stretch between
+      two sentences the redline keeps or pairs, or in paragraphs the redline aligns (never in paragraphs it aligns with
+      others), an opening only with an opening, on one subject (SUBJECT_SAME and the constants after it). Openings pair
+      first, and paragraphs whose openings pair correspond, like the ones the redline aligns.
+    - A sentence next to one side of a change, in its paragraph, that the other side's sentences speak to (SUBJECT_SAME of
+      its subject words, two of them that the side's own sentences lack) more than any other sentence of the other
+      document's corresponding paragraphs, joins that side: a sentence split in two, or two merged.
+    - The rest stand alone, consecutive ones in a paragraph as one change (up to FALLBACK_RUN_MAX)."""
+    align_old: dict[int, set[int]] = {}
+    align_new: dict[int, set[int]] = {}
+    changes: list[list[list[_One]]] = []               # [old sentences, new sentences]
+    removed: list[_One] = []
+    added: list[_One] = []
+    gap = 0
+
+    def ones(p: dict, side: str, text: str) -> list[_One]:
+        paras = p.get(side + "_para", [])
+        return [_One(tuple(x), paras[i] if i < len(paras) else 0, gap, _opening(text, x[0]), text[x[0]:x[1]])
+                for i, x in enumerate(p.get(side, []))]
+
+    lead: list | None = None
+    every: list[str] = []
+    for p in segments.get("pairs", []):
+        kind = p.get("kind")
+        every += [old.text[s:e] for s, e in p.get("old", [])] + [new.text[s:e] for s, e in p.get("new", [])]
+        if kind in ("same", "changed"):
+            for a in p.get("old_para", []):
+                align_old.setdefault(a, set()).update(p.get("new_para", []))
+            for b in p.get("new_para", []):
+                align_new.setdefault(b, set()).update(p.get("old_para", []))
+            gap += 1
+        if kind == "changed":
+            o, n = ones(p, "old", old.text), ones(p, "new", new.text)
+            if lead is not None:                       # a list's lead-in and its first item: one change
+                lead[0] += o
+                lead[1] += n
+                lead = None
+                continue
+            change = [o, n]
+            changes.append(change)
+            if o[-1].text.rstrip().endswith(":") or n[-1].text.rstrip().endswith(":"):
+                lead = change
+            continue
+        lead = None
+        if kind == "removed":
+            removed += ones(p, "old", old.text)
+        elif kind == "added":
+            added += ones(p, "new", new.text)
+    for change in list(changes):
+        ot, nt = " ".join(x.text for x in change[0]), " ".join(x.text for x in change[1])
+        if not _same_topic(ot, nt) and not _trivial(ot, nt):
+            changes.remove(change)                     # paired by position, not by what they say: two, alone
+            removed += change[0]
+            added += change[1]
+            for x in change[0] + change[1]:
+                gap += 1
+                x.gap = -gap                           # each its own stretch: no other pairing but a moved sentence
+    df: Counter = Counter(w for t in every for w in _subject(t))
+    weight = {w: math.log(max(len(every), 2) / n) for w, n in df.items()}
+    common = {w for w, n in df.items()                # "inflation" in an RBI resolution
+              if n > SUBJECT_COMMON * len(every) and n >= SUBJECT_COMMON_MIN}
+
+    def regions_differ(x: str, y: str) -> bool:
+        a, b = _regions(x), _regions(y)
+        return bool(a and b and not a & b)
+
+    def correspond(r: _One, a: _One) -> bool | None:
+        """True for paragraphs the redline aligns, False for ones it aligns with others, None when not known."""
+        if align_old.get(r.para) and align_new.get(a.para):
+            return a.para in align_old[r.para]
+        return None
+
+    def years_differ(r: _One, a: _One) -> bool:
+        yr, ya = set(_FISCAL_YEAR.findall(r.text)), set(_FISCAL_YEAR.findall(a.text))
+        return bool(yr and ya and not yr & ya)
+
+    def same_subject(r: _One, a: _One, near: bool) -> bool:
+        if years_differ(r, a) or regions_differ(r.text, a.text):
+            return False                               # different financial years, or different economies
+        x, y = _subject(r.text), _subject(a.text)
+        share, count = _shared(r.text, a.text, None if near else weight)
+        if not count:
+            return False
+        if count < SUBJECT_SHARED:                     # a short sentence: all of its subject words
+            return (count == min(len(x), len(y)) and share >= SUBJECT_ALL
+                    and (r.opening or _heads(r.text, a.text, common)))
+        if not (r.opening or _heads(r.text, a.text, common)):
+            return False                               # what each is about first differs
+        strong, same = (SUBJECT_STRONG, SUBJECT_SAME) if near else (SUBJECT_FAR_STRONG, SUBJECT_FAR)
+        return share >= strong or (share >= same and kind_of(r.text) == kind_of(a.text))
+
+    paired: set[int] = set()
+    opened: set[tuple[int, int]] = set()              # paragraphs (old, new) whose openings pair
+
+    def match(tier_of) -> None:
+        cands = []
+        for i, r in enumerate(removed):
+            for j, a in enumerate(added):
+                if id(r) in paired or id(a) in paired:
+                    continue
+                t = tier_of(r, a)
+                if t is not None:
+                    cands.append((t, _shared(r.text, a.text)[0], i, j))
+        cands.sort(key=lambda c: (-c[0], -c[1], c[2], c[3]))
+        for _, _, i, j in cands:
+            r, a = removed[i], added[j]
+            if id(r) in paired or id(a) in paired:
+                continue
+            paired.update((id(r), id(a)))
+            changes.append([[r], [a]])
+            if r.opening and a.opening:
+                opened.add((r.para, a.para))
+
+    def first_pass(r: _One, a: _One) -> int | None:
+        if _likeness(r.text, a.text) >= PAIR_MIN and not years_differ(r, a) and not regions_differ(r.text, a.text):
+            return 3                                   # the same sentence, moved (and perhaps reworded)
+        known = correspond(r, a)
+        if known is False or (known is None and r.gap != a.gap) or r.opening != a.opening:
+            return None                                # another section, paragraphs aligned with others, or an
+        if r.opening:                                  # opening against a non-opening
+            if same_subject(r, a, bool(known)):
+                return 2
+            number = (m := _PARA_NUMBER.match(r.text)) and (n := _PARA_NUMBER.match(a.text)) and m.group() == n.group()
+            if (kind_of(r.text) == kind_of(a.text) and _shared(r.text, a.text)[1] >= OPENING_SHARED
+                    and (number or _heads(r.text, a.text, common))
+                    and not years_differ(r, a) and not regions_differ(r.text, a.text)):
+                return 2                               # two paragraphs' openings of one kind, sharing subject words
+            return None
+        return 1 if same_subject(r, a, bool(known)) else None
+
+    def second_pass(r: _One, a: _One) -> int | None:
+        if r.opening or a.opening or (r.para, a.para) not in opened:
+            return None                                # paragraphs whose openings paired correspond
+        return 1 if same_subject(r, a, True) else None
+
+    match(first_pass)
+    match(second_pass)
+
+    def near(x: _One, y: _One, side: int) -> bool:
+        r, a = (x, y) if side == 0 else (y, x)
+        return bool(correspond(r, a)) or (r.para, a.para) in opened or (correspond(r, a) is None and r.gap == a.gap)
+
+    # A sentence split in two (or two merged): see the docstring.
+    for side, mine, theirs_all, text in ((1, added, removed, new.text), (0, removed, added, old.text)):
+        grew = True
+        while grew:
+            grew = False
+            for x in mine:
+                if id(x) in paired:
+                    continue
+                mine_s = _subject(x.text)
+                for change in changes:
+                    have = change[side]
+                    if not mine_s or not have or not change[1 - side] or len(have) >= FALLBACK_RUN_MAX:
+                        continue
+                    before, after = x.span[1] <= have[0].span[0], x.span[0] >= have[-1].span[1]
+                    edge = have[0] if before else have[-1]
+                    between = text[x.span[1]:edge.span[0]] if before else text[edge.span[1]:x.span[0]]
+                    if not (before or after) or edge.para != x.para or between.strip():
+                        continue
+                    if before and x.opening and not change[1 - side][0].opening:
+                        continue                       # an opening joins only a side whose other side opens too
+                    if any(regions_differ(x.text, y.text) for y in change[1 - side]):
+                        continue                       # another economy
+                    theirs = set().union(*(_subject(y.text) for y in change[1 - side]))
+                    ours = set().union(*(_subject(y.text) for y in have))
+                    if len(mine_s & theirs) / len(mine_s) < SUBJECT_SAME or len((mine_s & theirs) - ours) < 2:
+                        continue
+                    best = max((len(mine_s & _subject(y.text)) / len(mine_s) for y in theirs_all
+                                if y not in change[1 - side] and near(x, y, side)), default=0.0)
+                    if best >= len(mine_s & theirs) / len(mine_s):
+                        continue                       # another sentence speaks to it as much
+                    change[side] = [x] + have if before else have + [x]
+                    paired.add(id(x))
+                    grew = True
+                    break
+
+    out: list[list] = []
+    for o, n in changes:
+        ot, nt = " ".join(x.text for x in o), " ".join(x.text for x in n)
+        if not _trivial(ot, nt):                       # a change only in dates, a paragraph number or a connective
+            out.append([[x.span for x in o], [x.span for x in n]])
+    out += [[[x.span], []] for x in removed if id(x) not in paired]
+    out += [[[], [x.span]] for x in added if id(x) not in paired]
+    for side, text in ((1, new.text), (0, old.text)):  # consecutive sentences alone: one change, up to a limit
+        alone = sorted((p for p in out if p[side] and not p[1 - side]), key=lambda p: min(s for s, _ in p[side]))
+        run: list = []
+        for p in alone:
+            gap_text = text[max(e for _, e in run[-1][side]):min(s for s, _ in p[side])] if run else "x"
+            if (run and len(run[-1][side]) < FALLBACK_RUN_MAX and not gap_text.strip() and "\n" not in gap_text
+                    and not _PARA_NO.match(text[min(s for s, _ in p[side]):])):        # one paragraph only
+                run[-1][side] = sorted(run[-1][side] + p[side])
+                out.remove(p)
+            else:
+                run.append(p)
+    return out
 
 
 def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], hi: int = 5, *,
-                     packed: bool = False, restated: bool = False) -> list[Bullet]:
+                     packed: bool = False, restated: bool = False, counterparts: bool = False,
+                     v1: list[tuple[int, int, int]] | None = None) -> list[Bullet]:
     """The fallback's bullets (see above): `prefer` holds a rejected reply's quotes as (document, text), in its order.
     `packed` (from v23, `DIFF_PACK_FROM`): the balance sheet's words rank before the stance's, and a bullet carries up to
     FALLBACK_PER_BULLET changes of one kind (`_pack`). `restated` (from v24, `DIFF_RESTATED_FROM`; with `packed`): a change
-    of the decision's other than the one shown that also states the stance is the stance."""
+    of the decision's other than the one shown that also states the stance is the stance. `counterparts` (from v25,
+    `DIFF_COUNTERPART_FROM`; with `packed` and `restated`): changes paired only with their counterparts (`_counterparts`),
+    the changes `v1` cites first (the target's v1 output's citations, as (document id, start, end)), a minor change last
+    (`_minor`), quotations without RBI paragraph numbers and list items labelled as such."""
     def kind_of(text: str) -> int:
         return _kind(text, packed=packed)
 
@@ -1802,7 +2209,9 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
         return " ".join(text[s:e] for s, e in spans)
 
     pairs: list[list] = []
-    for p in segments.get("pairs", []):
+    if counterparts:
+        pairs = _counterparts(segments, old, new, kind_of)
+    for p in [] if counterparts else segments.get("pairs", []):
         kind = p.get("kind")
         if kind not in ("changed", "added", "removed"):
             continue
@@ -1817,8 +2226,8 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
         if o or n:
             pairs.append([o, n])
     every_old = [(s, e) for p in segments.get("pairs", []) for s, e in (tuple(x) for x in p.get("old", []))]
-    removed = [p for p in pairs if p[0] and not p[1]]
-    for p in [p for p in pairs if p[1] and not p[0]]:  # an added sentence that rewords a removed one: one change
+    removed = [p for p in pairs if p[0] and not p[1]] if not counterparts else []
+    for p in [p for p in pairs if p[1] and not p[0] and not counterparts]:  # an added sentence that rewords a removed one
         mine = set().union(*(_pairs(new.text[s:e]) for s, e in p[1]))
         added = words(p[1], new.text)
         best, best_shared = None, -1.0
@@ -1835,7 +2244,7 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
             best[1] = p[1]
             pairs.remove(p)
             removed.remove(best)
-    for side, text in ((1, new.text), (0, old.text)):   # consecutive added (removed) sentences: one change, up to a limit
+    for side, text in ((1, new.text), (0, old.text)) if not counterparts else ():   # consecutive alone: one change
         alone = sorted((p for p in pairs if p[side] and not p[1 - side]), key=lambda p: min(s for s, _ in p[side]))
         run: list = []
         for p in alone:
@@ -1901,9 +2310,26 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
                 says[id(p)] = 0 if p[1] and _K_STANCE_PACKED.search(words(p[1], new.text)) else 1
         by_kind = sorted(unique, key=lambda p: (kind[id(p)], says[id(p)], rate[id(p)], preferred[id(p)], where(p)))
     after = sorted(unique, key=lambda p: (preferred[id(p)], kind[id(p)], where(p)))
+    first: set[int] = set()
+    later: set[int] = set()
+    last: set[int] = set()
+    if counterparts:
+        # From v25: the changes the target's v1 output cites first, and a minor change last (rule (c), change by change).
+        def cited(p) -> bool:
+            return any(d == doc and a < e and s < b for doc, spans in ((old.document_id, p[0]), (new.document_id, p[1]))
+                       for s, e in spans for d, a, b in v1 or ())
+        first = {id(p) for p in unique if cited(p)}
+        last = {id(p) for p in unique if p[0] and p[1] and _minor(words(p[0], old.text), words(p[1], new.text))}
+        later = {id(p) for p in unique if not (p[0] and p[1])}       # a sentence alone, after the pairs
+        tier = {id(p): 0 if id(p) in first else 3 if id(p) in last else 2 if id(p) in later else 1 for p in unique}
+        by_kind = sorted(unique, key=lambda p: (kind[id(p)], tier[id(p)], says[id(p)], rate[id(p)], preferred[id(p)],
+                                                where(p)))
+        after = sorted(unique, key=lambda p: (tier[id(p)], preferred[id(p)], kind[id(p)], where(p)))
+        later -= first
     if packed:
         said = {id(p): (" ".join(_undated(words(p[0], old.text))), " ".join(_undated(words(p[1], new.text)))) for p in unique}
-        bullets = _pack(by_kind, after, {id(p): kind[id(p)] for p in unique}, said, take, hi)
+        bullets = _pack(by_kind, after, {id(p): kind[id(p)] for p in unique}, said, take, hi, first=first, later=later,
+                        last=last)
     else:
         for k in range(FALLBACK_FIRST_KINDS):          # one of each kind first
             for p in by_kind:
@@ -1926,15 +2352,17 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
         parts = []
         for i, (o, n) in enumerate(changes):
             said = []
+            item = (_list_item(old.text, min(o)[0]) if o else None, _list_item(new.text, min(n)[0]) if n else None)
             if o:
-                q, spans = _side(old.text, o)
-                said.append(f'The previous {old.label} said: "{q}"')
+                q, spans = _side(old.text, o, bare=counterparts)
+                said.append(_said(f"The previous {old.label}", "listed", item[0] if counterparts else None, "said", q))
                 b.citations += [Cited(old.document_id, s, e, "redline") for s, e in spans]
             if n:
-                q, spans = _side(new.text, n)
-                said.append(f'The new {new.label} says: "{q}"')
+                q, spans = _side(new.text, n, bare=counterparts)
+                said.append(_said(f"The new {new.label}", "lists", item[1] if counterparts else None, "says", q))
                 b.citations += [Cited(new.document_id, s, e, "redline") for s, e in spans]
-            these = "these sentences" if len(o or n) > 1 else "this sentence"
+            what = "item" if counterparts and (item[0] or item[1]) else "sentence"
+            these = f"these {what}s" if len(o or n) > 1 else f"this {what}"
             if not o:
                 said.append(f"The previous {old.label} doesn't have {these}.")
             if not n:
@@ -1946,7 +2374,18 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
     return out
 
 
-def _pack(by_kind: list, after: list, kind: dict[int, int], said: dict[int, tuple[str, str]], take, hi: int) -> list[list]:
+def _said(who: str, lists: str, item: str | None, says: str, q: str) -> str:
+    """One side's label (from v25, a list item's is "listed among its decisions" or "listed", not "said")."""
+    if item == "decisions":
+        return f'{who} {lists} among its decisions: "{q}"'
+    if item == "list":
+        return f'{who} {lists}: "{q}"'
+    return f'{who} {says}: "{q}"'
+
+
+def _pack(by_kind: list, after: list, kind: dict[int, int], said: dict[int, tuple[str, str]], take, hi: int, *,
+          first: set[int] | frozenset = frozenset(), later: set[int] | frozenset = frozenset(),
+          last: set[int] | frozenset = frozenset()) -> list[list]:
     """The packed fallback's choice (v23 on, `fallback_bullets`): bullets as lists of changes, each holding up to
     FALLBACK_PER_BULLET changes of one kind. Here the inflation and growth projections are one kind, and the corridor rates
     join the decision's bullet (they move with it: "Consequently, the reverse repo rate … stands adjusted to …"), as v1 often
@@ -1984,14 +2423,25 @@ def _pack(by_kind: list, after: list, kind: dict[int, int], said: dict[int, tupl
             bullets.append([p])
         return True
 
+    for p in by_kind:                                  # from v25: the changes the v1 output cites first
+        if id(p) in first:
+            place(p)
     for name in FALLBACK_PACKED_ORDER[:FALLBACK_FIRST_KINDS]:     # one of each kind first
         for p in by_kind:
-            if kind[id(p)] == FALLBACK_KINDS.index(name) and place(p):
+            if kind[id(p)] == FALLBACK_KINDS.index(name) and id(p) not in later | last and place(p):
                 break
     for p in by_kind:                                  # then each bullet's next changes of its kind
-        place(p, open_new=False)
-    for p in after:                                    # then the slots left
-        place(p)
+        if id(p) not in later | last:
+            place(p, open_new=False)
+    for p in after:                                    # then the slots left (from v25: pairs, a sentence alone, a minor
+        if id(p) not in later | last:                  # change)
+            place(p)
+    for p in after:
+        if id(p) in later:
+            place(p)
+    for p in after:
+        if id(p) in last:
+            place(p)
     for g in list(bullets):                            # bullets to spare: a second change gets a bullet of its own
         while len(g) > 1 and len(bullets) < hi:
             bullets.append([g.pop()])

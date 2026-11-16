@@ -111,7 +111,7 @@ def test_v17_is_v16_plus_three_rules_with_v16s_schema_on_sonnet_and_v18_and_v19_
     assert summaries.DIFF_VERIFY_FROM == 17 and summaries.DIFF_FIT_FROM == 16
     v18 = load_prompt("statement_diff_summary", "v18")             # v17's text, marking the checks' revision before the judge
     v19 = load_prompt("statement_diff_summary", "v19")             # and again, marking the third run's revision
-    assert v18.text == V17.text == v19.text and PROMPT_VERSION["statement_diff_summary"] == "v24"   # v24: round 21
+    assert v18.text == V17.text == v19.text and PROMPT_VERSION["statement_diff_summary"] == "v25"   # v25: round 22
     assert load_schema("statement_diff_summary", "v19") == load_schema("statement_diff_summary", "v17")
     assert load_schema("statement_diff_summary", "v18") == load_schema("statement_diff_summary", "v17")
     assert summaries.diff_summary_request(NEW, OLD, D.segments, v18).model_id == SONNET
