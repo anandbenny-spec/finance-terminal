@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "answerable": {"type": "boolean", "description": "true if one SELECT over the views answers the question"},
+    "sql": {"anyOf": [{"type": "string"}, {"type": "null"}], "description": "the one SELECT statement, no semicolon, no comments; null when not answerable"},
+    "explanation": {"type": "string", "description": "one short sentence: what the query returns, or why the question can't be answered from the views"}
+  },
+  "required": ["answerable", "sql", "explanation"],
+  "additionalProperties": false
+}

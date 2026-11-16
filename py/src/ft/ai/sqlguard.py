@@ -7,7 +7,12 @@ from __future__ import annotations
 from pglast import ast, parse_sql, stream
 from pglast.parser import ParseError
 
-VIEWS = {"policy_meetings", "policy_votes", "policy_projections", "market_daily"}   # grows per module
+# Every `semantic` view sql_reader can select (K-04, #582): module 1's four, the Nifty 50 and Dow 30 company views, the rate
+# moves, the value chain, and the calls (0052). test_cmdbar_sql.py keeps this equal to the migrations and to the views
+# sql_reader can read, so a new view without an entry here, or an entry without a view, fails CI.
+VIEWS = {"policy_meetings", "policy_votes", "policy_projections", "market_daily",
+         "companies", "company_financials", "company_valuations", "rate_decision_moves", "value_chain",
+         "earnings_calls", "call_guidance"}
 FUNCS = {
     # aggregates and statistics
     "count", "sum", "avg", "min", "max", "stddev", "stddev_samp", "stddev_pop", "variance", "var_samp", "var_pop",
