@@ -155,7 +155,7 @@ class Task:
 
     def due(self, db, workflow: str, now: datetime | None = None) -> Due:
         if self.rules and workflow in self.rules:
-            return due_rules.evaluate(db, self.key, self.rules[workflow], now or due_rules.utcnow())
+            return due_rules.evaluate(db, self.key, self.rules[workflow], now or due_rules.utcnow(), workflow)
         # A task built without config (the runner's own tests): every min_interval, on the database's clock.
         last = db.execute("select max(finished_at) from ops.task_run where task_key=%s and status='success'",
                           (self.key,)).fetchone()[0]
