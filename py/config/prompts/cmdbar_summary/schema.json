@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": {"type": "string", "description": "one line answering the question from the rows"}
+  },
+  "required": ["summary"],
+  "additionalProperties": false
+}

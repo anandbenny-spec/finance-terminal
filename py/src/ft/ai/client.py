@@ -124,6 +124,12 @@ TASKS: dict[str, TaskSpec] = {
     # transcript sentence for "reason stated" and "an analyst asked". Both json, effort low.
     "kpi_check": TaskSpec("json", "low", 4_000, SONNET),
     "kpi_quote": TaskSpec("json", "low", 3_000),
+    # The command bar's data route (Spec 07 §4 steps 4 and 5a; K-04, #582), all json: the router (effort low, a short
+    # object), the text-to-SQL prompt (effort medium; its one retry after a guard rejection or database error names Sonnet
+    # 5.5 on the request) and the one-line summary of the rows (effort low). Real time only.
+    "cmdbar_router": TaskSpec("json", "low", 3_000),
+    "cmdbar_sql": TaskSpec("json", "medium", 8_000),
+    "cmdbar_summary": TaskSpec("json", "low", 3_000),
 }
 
 
