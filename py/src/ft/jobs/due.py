@@ -1,6 +1,12 @@
 """Due rules (Architecture 02 §1.3; Prompt 01 A2), as config/tasks.yaml names them.
 
-- `every <interval>`: since the task's last success, in any workflow.
+- `every <interval>`: in a scheduled workflow (`daily`, `weekly`, `watch`), since the task's last success **in a run
+  GitHub started on its schedule** (`ops.job_run.trigger = 'schedule'`). A manual run of any workflow (a `backfill`, a
+  `refresh`, or a `daily` or `weekly` started by hand) never stands in for the next scheduled one, so the schedule does
+  what it would have done without it (issue #386, the skip trap). No such success means due ("never succeeded in a
+  scheduled run"). Asked by any other workflow (a `refresh` keeping an NSE task's minimum interval, run.py's
+  `refresh_force`) or by no workflow, it counts a success in any run, as before: every fetch counts against that
+  interval. On dev, where nothing is scheduled, every manual `daily` or `weekly` therefore finds its interval tasks due.
 - `every <interval> or <catch-up>` (daily): that, or the named catch-up below applies. A catch-up that makes a daily
   task due carries no meeting: the daily runs its normal pass, which already takes any statement or resolution of the
   last 60 days that isn't stored.
@@ -31,6 +37,7 @@ from zoneinfo import ZoneInfo
 from ft.jobs.config import CATCH_UPS, every_interval, split_rule
 
 LEAD = timedelta(minutes=10)
+SCHEDULED = ("daily", "weekly", "watch")     # the workflows GitHub starts on a schedule (as ft/equity/guard.py's)
 
 
 @dataclass(frozen=True)
@@ -122,10 +129,17 @@ def meetings_on(db, day: date) -> list[Meeting]:
     return sorted(found, key=lambda m: m.release_at)
 
 
-def _last_success(db, task_key: str, workflow: str | None = None) -> datetime | None:
-    if workflow is None:
+def _last_success(db, task_key: str, workflow: str | None = None, *, scheduled: bool = False) -> datetime | None:
+    """The task's latest success: in any run; in `workflow`'s runs; or (`scheduled`) in runs GitHub started on a
+    schedule (ops.job_run.trigger = 'schedule', which run.py records for every cron start)."""
+    if workflow is None and not scheduled:
         return db.execute("select max(finished_at) from ops.task_run where task_key = %s and status = 'success'",
                           (task_key,)).fetchone()[0]
+    if scheduled:
+        return db.execute("""select max(t.finished_at) from ops.task_run t join ops.job_run j on j.id = t.job_run_id
+                              where t.task_key = %s and t.status = 'success' and j.trigger = 'schedule'
+                                and (%s::text is null or j.workflow = %s)""",
+                          (task_key, workflow, workflow)).fetchone()[0]
     return db.execute("""select max(t.finished_at) from ops.task_run t join ops.job_run j on j.id = t.job_run_id
                           where t.task_key = %s and t.status = 'success' and j.workflow = %s""",
                       (task_key, workflow)).fetchone()[0]
@@ -183,24 +197,26 @@ def _after_decision_document(db, task_key: str, now: datetime) -> Due:
     return Due(False, "; ".join(reasons) or "not a decision day")
 
 
-def evaluate(db, task_key: str, rule: str, now: datetime) -> Due:
-    """Is the task due under `rule` at `now` (aware)? `db` is the runner's control connection."""
+def evaluate(db, task_key: str, rule: str, now: datetime, workflow: str | None = None) -> Due:
+    """Is the task due under `rule` at `now` (aware)? `db` is the runner's control connection; `workflow` is the
+    workflow asking (Task.due names it): in a scheduled one an `every` rule counts only scheduled successes."""
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     if (interval := every_interval(rule)) is not None:
         _, extra = split_rule(rule)
-        last = _last_success(db, task_key)
+        scheduled = workflow in SCHEDULED
+        last = _last_success(db, task_key, scheduled=True) if scheduled else _last_success(db, task_key)
         if last is None:
-            return Due(True, "never succeeded")
-        age = now - last
-        d = Due(age >= interval, f"last success {age} ago (rule: {rule})")
+            return Due(True, "never succeeded in a scheduled run" if scheduled else "never succeeded")
+        age, what = now - last, "last scheduled success" if scheduled else "last success"
+        d = Due(age >= interval, f"{what} {age} ago (rule: {rule})")
         if d.due or extra is None:
             return d
         # The catch-up of a named rule makes the daily pass due, whatever the interval says. Only a catch-up counts: a
         # window that is open belongs to the watch. The pass carries no meeting: it is the daily's own, normal pass.
         c = evaluate(db, task_key, CATCH_UPS[extra], now)
         if c.due and c.catch_up:
-            return Due(True, c.reason + f" (last success {age} ago)", catch_up=True)
+            return Due(True, c.reason + f" ({what} {age} ago)", catch_up=True)
         return Due(False, f"{d.reason}; {c.reason}")
     if rule in BANKS:
         return _decision_day(db, BANKS[rule], now)
