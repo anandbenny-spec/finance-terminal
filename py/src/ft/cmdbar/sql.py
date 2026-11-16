@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from pglast import ast, parse_sql
+from pglast.enums.primnodes import SubLinkType
 
 from ft.ai import sqlguard
 from ft.ai.client import HAIKU, SONNET, AIUnavailable, CallError, Failed, Prompt, Request, load_prompt, load_schema
@@ -188,13 +189,20 @@ def retry_note(error_class: str) -> str:
             "if the views can't answer the question, say so.")
 
 
+_FILTER_SUBLINKS = frozenset({SubLinkType.EXISTS_SUBLINK, SubLinkType.ANY_SUBLINK, SubLinkType.ALL_SUBLINK,
+                               SubLinkType.ROWCOMPARE_SUBLINK})
+
+
 def constant_column(sql: str) -> bool:
     """True if any SELECT in the query lists a bare constant (or a cast of one) as a column, or reads a VALUES list: a value the
     query writes itself instead of reading it from a view. The guard allows constants (thresholds, dates, `round(x, 1)`), so
     this is the data route's own check after it: a query like `select 6.5 as repo_rate` would put a number the database
     didn't return in the rows (CLAUDE.md §1; decided by Claude under the standing delegation, 16 Nov 2026, #582: it only
     tightens; the first dev run wrote a company name as a constant column). A constant inside an expression (CASE, round,
-    arithmetic on a column) is a column of the data and passes."""
+    arithmetic on a column) is a column of the data and passes. So does a constant inside an EXISTS, IN, ANY, ALL or row
+    comparison subquery (`where exists (select 1 from …)`): those rows only filter and never reach the output, so only the
+    left-hand side of such a test is checked (16 Nov 2026, #582, on the takeover review). A scalar or ARRAY subquery is still
+    checked, since its value can be a column."""
     found = False
 
     def walk(node):
@@ -206,6 +214,9 @@ def constant_column(sql: str) -> bool:
                 walk(n)
             return
         if not isinstance(node, ast.Node):
+            return
+        if isinstance(node, ast.SubLink) and node.subLinkType in _FILTER_SUBLINKS:
+            walk(node.testexpr)
             return
         if isinstance(node, ast.SelectStmt):
             if node.valuesLists:

@@ -289,6 +289,9 @@ def test_guard_class_drops_the_detail():
     "select * from (select 25 as cut) t",
     "select bank from policy_meetings union all select 'ECB'",
     "select * from (values (6.5), (5.5)) as v(rate)",
+    "select bank, (select 6.5) as repo_rate from policy_meetings",
+    "select bank, array(select 'x') as a from policy_meetings",
+    "select bank from policy_meetings where exists (select 1) union all select 'ECB'",
 ])
 def test_a_query_that_writes_its_own_value_as_a_column_is_caught(sql):
     sqlguard.guard(sql)                                                  # the guard lets each through
@@ -301,6 +304,10 @@ def test_a_query_that_writes_its_own_value_as_a_column_is_caught(sql):
     "select case when policy_rate_change_bps < 0 then 'cut' else 'other' end as kind from policy_meetings",
     "select count(*) as n from policy_meetings where meeting_date >= date '2024-01-01'",
     "select coalesce(stance, 'n/a') as stance from policy_meetings",
+    "select bank, meeting_date from policy_meetings m where exists (select 1 from policy_votes v where v.bank = m.bank)",
+    "select bank from policy_meetings where bank in (select 'Fed' union all select 'RBI')",
+    "select bank from policy_meetings where policy_rate_change_bps < all (select 0)",
+    "select meeting_date from policy_meetings where meeting_date = (select max(meeting_date) from policy_meetings)",
 ])
 def test_constants_inside_expressions_and_filters_pass(sql):
     assert not s.constant_column(sql)
