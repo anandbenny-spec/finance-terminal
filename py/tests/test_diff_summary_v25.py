@@ -82,8 +82,8 @@ def test_a_pair_never_crosses_sections_and_the_headline_sentence_keeps_its_count
     segments, old, new = _docs(SECTIONS_OLD, SECTIONS_NEW)
     pairs = _pairs(_v25(segments, old, new, hi=10))
     headline = [p for p in pairs if p[0].startswith("Headline inflation softened")]
-    assert headline == [("Headline inflation softened to 5.1 per cent during January-February 2024, from 5.7 per cent in "
-                         "December.", headline[0][1])]
+    assert headline == [(("Headline inflation softened to 5.1 per cent during January-February 2024, from 5.7 per cent in "
+                         "December."), headline[0][1])]
     assert headline[0][1].startswith("Headline inflation has seen sequential moderation") and "4.8 per cent" in headline[0][1]
     for o, n in pairs:                                 # the global sentences pair only with the global sentences
         assert not (("treading down" in o) and ("Headline" in n or "Deflation in fuel" in n))
@@ -119,10 +119,10 @@ def test_an_opening_pairs_with_an_opening_and_fuel_with_fuel():
     opening = [n for o, n in pairs if o.startswith("CPI headline inflation rose")]
     fuel = [n for o, n in pairs if o.startswith("Fuel inflation remained elevated")]
     assert len(opening) == 1 and opening[0].startswith("CPI inflation fell sharply")
-    assert fuel == ["In the fuel group, inflation in LPG and firewood and chips prices fell and kerosene prices slipped into "
-                    "deflation."]
-    assert ("", "Food group inflation eased, with moderation in cereals, eggs, milk, fruits, meat and fish, spices and "
-                "prepared meals inflation and deepening of deflation in edible oils.") in pairs
+    assert fuel == [("In the fuel group, inflation in LPG and firewood and chips prices fell and kerosene prices slipped into "
+                    "deflation.")]
+    assert ("", ("Food group inflation eased, with moderation in cereals, eggs, milk, fruits, meat and fish, spices and "
+                "prepared meals inflation and deepening of deflation in edible oils.")) in pairs
 
 
 # mpc-2023-06-08 (round 21, close call 3): one sentence became two, and the second was shown as one the previous lacked.
