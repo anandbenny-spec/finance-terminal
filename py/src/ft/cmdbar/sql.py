@@ -16,7 +16,10 @@ own transaction: `BEGIN READ ONLY`, `SET LOCAL statement_timeout = '3s'` (and `s
 sets: stated again so the transaction pooler can't lose it), the query, `ROLLBACK`. `sql_reader` always logs in as itself
 (CLAUDE.md §4), over the transaction pooler, so the connection prepares no statements (`prepare_threshold=None`).
 
-**One retry**: after a guard rejection or a database error, one more request on Sonnet 5.5, told the error's class only (such
+**The data route's own check** (`constant_column`): a query that writes a value as a column (`select 6.5 as repo_rate`, a
+VALUES list) is refused like a guard rejection, since its rows would hold a number the database didn't return.
+
+**One retry**: after a guard rejection, the constant-column check or a database error, one more request on Sonnet 5.5, told the error's class only (such
 as "guard: relation not allowed" or "database: UndefinedColumn"), never the raw message. A second failure is "can't answer".
 Nothing returned here holds a raw error: `error_class` is one of those short classes.
 """
@@ -27,13 +30,16 @@ import time
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from pglast import ast, parse_sql
+from pglast.enums.primnodes import SubLinkType
+
 from ft.ai import sqlguard
 from ft.ai.client import HAIKU, SONNET, AIUnavailable, CallError, Failed, Prompt, Request, load_prompt, load_schema
 from ft.cmdbar import as_data, clean_question
 from ft.cmdbar import summary as summary_mod
 
 TASK = "cmdbar_sql"
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"          # v2 (16 Nov 2026): every column comes from a view (rule 6)
 FIRST_MODEL, RETRY_MODEL = HAIKU, SONNET
 STATEMENT_TIMEOUT = "3s"
 PLACEHOLDERS = ("{{VIEWS}}", "{{FUNCTIONS}}", "{{CASTS}}")
@@ -183,6 +189,53 @@ def retry_note(error_class: str) -> str:
             "if the views can't answer the question, say so.")
 
 
+_FILTER_SUBLINKS = frozenset({SubLinkType.EXISTS_SUBLINK, SubLinkType.ANY_SUBLINK, SubLinkType.ALL_SUBLINK,
+                               SubLinkType.ROWCOMPARE_SUBLINK})
+
+
+def constant_column(sql: str) -> bool:
+    """True if any SELECT in the query lists a bare constant (or a cast of one) as a column, or reads a VALUES list: a value the
+    query writes itself instead of reading it from a view. The guard allows constants (thresholds, dates, `round(x, 1)`), so
+    this is the data route's own check after it: a query like `select 6.5 as repo_rate` would put a number the database
+    didn't return in the rows (CLAUDE.md §1; decided by Claude under the standing delegation, 16 Nov 2026, #582: it only
+    tightens; the first dev run wrote a company name as a constant column). A constant inside an expression (CASE, round,
+    arithmetic on a column) is a column of the data and passes. So does a constant inside an EXISTS, IN, ANY, ALL or row
+    comparison subquery (`where exists (select 1 from …)`): those rows only filter and never reach the output, so only the
+    left-hand side of such a test is checked (16 Nov 2026, #582, on the takeover review). A scalar or ARRAY subquery is still
+    checked, since its value can be a column."""
+    found = False
+
+    def walk(node):
+        nonlocal found
+        if found:
+            return
+        if isinstance(node, (list, tuple)):
+            for n in node:
+                walk(n)
+            return
+        if not isinstance(node, ast.Node):
+            return
+        if isinstance(node, ast.SubLink) and node.subLinkType in _FILTER_SUBLINKS:
+            walk(node.testexpr)
+            return
+        if isinstance(node, ast.SelectStmt):
+            if node.valuesLists:
+                found = True
+                return
+            for t in node.targetList or ():
+                v = getattr(t, "val", None)
+                while isinstance(v, ast.TypeCast):
+                    v = v.arg
+                if isinstance(v, ast.A_Const):
+                    found = True
+                    return
+        for attr in node:
+            walk(getattr(node, attr))
+
+    walk(parse_sql(sql)[0].stmt)
+    return found
+
+
 def guard_class(e: sqlguard.Rejected) -> str:
     """The guard's reason without its detail: 'relation not allowed', not the relation's name."""
     return re.split(r"[:,]", str(e), maxsplit=1)[0].strip() or "rejected"
@@ -266,6 +319,11 @@ def answer_data(client, reader: Reader, question: str, prompt: Prompt, *, summar
         except sqlguard.Rejected as e:
             out.guard_verdict = "rejected"
             att.error_class = out.error_class = f"guard: {guard_class(e)}"
+            note = retry_note(out.error_class)
+            continue
+        if constant_column(guarded):
+            out.guard_verdict = "rejected"
+            att.error_class = out.error_class = "check: constant column"
             note = retry_note(out.error_class)
             continue
         out.guard_verdict = "accepted"

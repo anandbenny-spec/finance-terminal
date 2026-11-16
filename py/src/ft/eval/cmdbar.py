@@ -28,7 +28,8 @@ case, every request using its whole token cap and every SQL item retried on Sonn
 
 **Writes** one `ops.eval_run` and one `ops.eval_result` per item on dev, as `job_writer` (`JOB_DATABASE_URL`): counts, the
 query that ran and the summary line, never the rows. **Prints** annotations with ids, counts, classes and costs only: never a
-row, a summary or a figure from the data (the repository and its run logs are public: CLAUDE.md §4).
+row, a summary or a figure from the data (the repository and its run logs are public: CLAUDE.md §4). At most four: the run's
+price and golds, then one for all the items and one for the result (GitHub keeps only the first 10 notices of a step).
 """
 from __future__ import annotations
 
@@ -528,7 +529,6 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
                     r = score_router_item(it, None, type(e).__name__, cost, int((time.monotonic() - t0) * 1000))
             spent += r.cost_usd
             results.append(r)
-            out(annotation(f"item {r.id}", r.annotation()))
 
         if args.set == "cmdbar_sql":
             metrics = sql_metrics(results)
@@ -565,6 +565,9 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
         finally:
             if writer is None:
                 conn.close()
+        # One annotation for every item, then the result: GitHub keeps only the first 10 notices of a step, so one per item
+        # would drop the result of any split over 9 items (the 16 Nov dev run of cmdbar_router lost its last item and result).
+        out(annotation(f"{args.set} {args.split} items", [r.annotation() for r in results]))
         out(annotation(f"{args.set} {args.split} result", {"eval_run_id": run_id, "passed": passed, **metrics}))
         return 0
     finally:

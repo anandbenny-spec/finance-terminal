@@ -106,7 +106,7 @@ DOCS = [s.ViewDoc("companies", "One row per company.", (("company", "text", "Com
 
 def test_the_prompt_is_the_rules_the_views_and_the_guards_own_lists():
     p = s.sql_prompt(s.render_views(DOCS, ["Banks", "IT services"]))
-    assert p.task == "cmdbar_sql" and p.version == "v1" and "{{" not in p.text and "<!--" not in p.text
+    assert p.task == "cmdbar_sql" and p.version == s.PROMPT_VERSION == "v2" and "{{" not in p.text and "<!--" not in p.text
     assert "## companies\nOne row per company.\n- company (text): Company name." in p.text
     assert "The peer_group values: 'Banks'; 'IT services'." in p.text
     assert all(f in p.text for f in sqlguard.FUNCS) and all(c in p.text for c in sqlguard.CAST_TYPES)
@@ -115,7 +115,7 @@ def test_the_prompt_is_the_rules_the_views_and_the_guards_own_lists():
 
 
 def _examples() -> list[tuple[str, dict]]:
-    text = load_prompt("cmdbar_sql").text.split("# Worked examples", 1)[1].split("# Views", 1)[0]
+    text = load_prompt("cmdbar_sql", s.PROMPT_VERSION).text.split("# Worked examples", 1)[1].split("# Views", 1)[0]
     qs = re.findall(r'^Question: "(.+)"$', text, flags=re.MULTILINE)
     answers = [json.loads(line) for line in text.splitlines() if line.startswith("{")]
     assert len(qs) == len(answers) >= 5
@@ -126,7 +126,7 @@ def test_every_worked_example_passes_the_guard_and_one_is_unanswerable():
     for _, a in _examples():
         assert set(a) == {"answerable", "sql", "explanation"}
         if a["answerable"]:
-            assert sqlguard.guard(a["sql"]).endswith("LIMIT 200")
+            assert sqlguard.guard(a["sql"]).endswith("LIMIT 200") and not s.constant_column(a["sql"])
     assert any(not a["answerable"] for _, a in _examples())
 
 
@@ -278,3 +278,46 @@ def test_guard_class_drops_the_detail():
         with pytest.raises(sqlguard.Rejected) as e:
             sqlguard.guard(sql)
         assert s.guard_class(e.value) == cls
+
+
+# ------------------------------------------------------------------ the constant-column check
+@pytest.mark.parametrize("sql", [
+    "select 6.5 as repo_rate",
+    "select 'HDFC Bank' as company, count(*) as calls from earnings_calls where nse_symbol = 'HDFCBANK'",
+    "select '2025-12-05'::date as d, bank from policy_meetings",
+    "select null as x, bank from policy_meetings",
+    "select * from (select 25 as cut) t",
+    "select bank from policy_meetings union all select 'ECB'",
+    "select * from (values (6.5), (5.5)) as v(rate)",
+    "select bank, (select 6.5) as repo_rate from policy_meetings",
+    "select bank, array(select 'x') as a from policy_meetings",
+    "select bank from policy_meetings where exists (select 1) union all select 'ECB'",
+])
+def test_a_query_that_writes_its_own_value_as_a_column_is_caught(sql):
+    sqlguard.guard(sql)                                                  # the guard lets each through
+    assert s.constant_column(sql)
+
+
+@pytest.mark.parametrize("sql", [
+    GOOD_SQL,
+    "select round(policy_rate_pct, 1) as r, policy_rate_change_bps * -1 as cut from policy_meetings",
+    "select case when policy_rate_change_bps < 0 then 'cut' else 'other' end as kind from policy_meetings",
+    "select count(*) as n from policy_meetings where meeting_date >= date '2024-01-01'",
+    "select coalesce(stance, 'n/a') as stance from policy_meetings",
+    "select bank, meeting_date from policy_meetings m where exists (select 1 from policy_votes v where v.bank = m.bank)",
+    "select bank from policy_meetings where bank in (select 'Fed' union all select 'RBI')",
+    "select bank from policy_meetings where policy_rate_change_bps < all (select 0)",
+    "select meeting_date from policy_meetings where meeting_date = (select max(meeting_date) from policy_meetings)",
+])
+def test_constants_inside_expressions_and_filters_pass(sql):
+    assert not s.constant_column(sql)
+
+
+def test_a_constant_column_is_retried_on_sonnet_told_the_class_only():
+    fake = model({HAIKU: "select 6.5 as repo_rate", SONNET: GOOD_SQL})
+    rd = FakeReader(ROWS)
+    a = s.answer_data(claude(fake), rd, Q, PROMPT)
+    assert a.state == "answered" and a.models == [HAIKU, SONNET] and len(rd.ran) == 1
+    assert a.attempts[0].error_class == "check: constant column"
+    assert "check: constant column" in fake.requests[1]["messages"][0]["content"][-1]["text"]
+    assert "6.5" not in json.dumps(fake.requests[1])

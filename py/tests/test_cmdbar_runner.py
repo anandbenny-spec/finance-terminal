@@ -1,6 +1,7 @@
 """The command bar's gate runner (`ft/eval/cmdbar.py`; Spec 07 §6; K-04, #582) and `cmdbar-gates.yml`: the result-set match and
 its cross-currency check, the scores and the pass rules fixed in Spec 07 §6, the price check that sends nothing, the budget stop,
 the records, annotations that never hold a row or a summary, and a workflow that can reach dev only."""
+import json
 import re
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -229,13 +230,15 @@ def test_a_sent_dev_run_records_every_item_never_passes_and_logs_no_rows():
     items = ev.load_items("cmdbar_sql", "dev")
     assert code == 0 and len(wr.results) == len(items) and len(wr.runs) == 1
     eval_set, set_version, model, prompt_version, n, metrics, passed, notes = wr.runs[0]
-    assert (eval_set, set_version, model, prompt_version, n, passed) == ("cmdbar_sql", "f" * 40, "claude-haiku-5-5", "v1",
+    assert (eval_set, set_version, model, prompt_version, n, passed) == ("cmdbar_sql", "f" * 40, "claude-haiku-5-5", "v2",
                                                                          len(items), False)
     assert metrics.obj["split"] == "dev" and metrics.obj["complete"] and "not the gate" in notes
     assert metrics.obj["correct"] == len(items) - sum(1 for i in items if not i["answerable"])
     text = "\n".join(lines)
     assert SENTINEL not in text and "select company" not in text                # no row, summary or SQL in the log
-    assert text.count("title=item ") == len(items)
+    listed = [x for x in lines if x.startswith("::notice title=cmdbar_sql dev items::")]
+    assert len(listed) == 1 and [i["id"] for i in json.loads(listed[0].split("::", 2)[2])] == [i["id"] for i in items]
+    assert len([x for x in lines if x.startswith("::notice")]) <= 4                # GitHub keeps 10 notices a step
     stored = [p[3].obj for p in wr.results]
     assert all("summary" in s for s in stored if s["state"] == "answered")       # the private record keeps the line
 
