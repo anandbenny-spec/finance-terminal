@@ -230,7 +230,7 @@ def test_a_sent_dev_run_records_every_item_never_passes_and_logs_no_rows():
     items = ev.load_items("cmdbar_sql", "dev")
     assert code == 0 and len(wr.results) == len(items) and len(wr.runs) == 1
     eval_set, set_version, model, prompt_version, n, metrics, passed, notes = wr.runs[0]
-    assert (eval_set, set_version, model, prompt_version, n, passed) == ("cmdbar_sql", "f" * 40, "claude-haiku-5-5", "v1",
+    assert (eval_set, set_version, model, prompt_version, n, passed) == ("cmdbar_sql", "f" * 40, "claude-haiku-5-5", "v2",
                                                                          len(items), False)
     assert metrics.obj["split"] == "dev" and metrics.obj["complete"] and "not the gate" in notes
     assert metrics.obj["correct"] == len(items) - sum(1 for i in items if not i["answerable"])
