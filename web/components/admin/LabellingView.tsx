@@ -227,7 +227,7 @@ export function LabellingView() {
     return (
       <StateNote kind="unavailable">
         For the admin only.{" "}
-        <Link href="/admin" className="text-ink-1 underline">
+        <Link prefetch={false} href="/admin" className="text-ink-1 underline">
           Log in
         </Link>
       </StateNote>

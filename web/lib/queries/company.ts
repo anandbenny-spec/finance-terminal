@@ -4,8 +4,12 @@
 // price history, about 1,950 rows, is two pages joined). Cached for minutes like the screener. A failed header read leaves the
 // page in its error state (StateNote); a failed tab read holds back that tab only (#328); the reason goes to the server log only (Arch 02). Nothing here computes a figure.
 //
-// The promoter-holding read (view 0025, pushed by Anand) is the one read allowed to fail on its own: until the view
-// exists, the Financials tab says that holding isn't published yet and the rest of the page is unaffected.
+// The promoter-holding read (view 0025, pushed by Anand) is allowed to fail on its own: until the view
+// exists, the Financials tab says that holding isn't published yet and the rest of the page is unaffected. The segment-changes
+// reads (DD-02, #410: view 0038 and the field policy) fail on their own the same way: before 0038 is pushed, or when either read
+// fails, the panel holds back (no policy read is a hidden field) or says it couldn't load, and the rest of the tab is unaffected.
+// The KPI-table pilot's reads (DD-06, #514: view 0047, and the company's calls) are made for the 7 pilot companies only, and fail
+// on their own the same way; the calls are read only when the view returned a flag (none while equity.kpi_changes is hidden).
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cacheLife, cacheTag } from "next/cache";
 import { dateInZone } from "@/lib/format";
@@ -17,22 +21,27 @@ import type {
   CompanyRow,
   CompanyValuationRow,
   CorporateActionRow,
+  EarningsCallRow,
   FieldPolicyRow,
   ForecastRow,
+  KpiChangeRow,
   PeerCompRow,
   PromoterHoldingRow,
+  SegmentChangeRow,
   SeriesRow,
   ValuationScenarioRow,
 } from "@/lib/queries/api";
 import { indexesOf, readIndexMembers } from "@/lib/queries/equity";
 import { readFieldPolicy, readSeriesInfo, type PolicyDb } from "@/lib/queries/policy";
-import { readCallsTab, type CallsTabData } from "@/lib/queries/calls";
+import { readCallsTab, readCompanyCalls, type CallsTabData } from "@/lib/queries/calls";
 import { readRateTab, type RateTabData } from "@/lib/queries/rate";
 import { readAll } from "@/lib/queries/read";
+import { readValueChainOverview, type ValueChainOverviewData } from "@/lib/queries/valuechain";
 import { publicClient } from "@/lib/supabase/public";
 import type { TabId } from "@/lib/equity/company";
+import { isKpiPilot } from "@/lib/equity/kpi";
 import { IMF_CPI, IMF_GDP } from "@/lib/equity/valuation";
-import { IN_10Y } from "@/lib/policy/longrates";
+import { IN_10Y, US_10Y } from "@/lib/policy/longrates";
 
 export type CompanyDb = SupabaseClient<ApiDatabase, "api">;
 
@@ -83,6 +92,23 @@ export async function readFinancials(db: CompanyDb, slug: string): Promise<Compa
   );
 }
 
+/** The filed ends of a US company's quarters, years and balance sheets (US-06b, #564): what its Overview and Valuation
+ * dates are resolved against (components/company/us/filedDates.ts), so a 52/53-week filer's figure shows its filed end. */
+export type FiledEndRow = Pick<CompanyFinancialRow, "period_kind" | "period_end">;
+
+export async function readFiledEnds(db: CompanyDb, slug: string): Promise<FiledEndRow[]> {
+  return readAll<FiledEndRow>("api.company_financials ends", (from, to) =>
+    db
+      .from("company_financials")
+      .select("period_kind, period_end", { count: "exact" })
+      .eq("slug", slug)
+      .in("period_kind", ["quarter", "year", "instant"])
+      .order("period_kind")
+      .order("period_end")
+      .range(from, to),
+  );
+}
+
 export async function readActions(db: CompanyDb, slug: string): Promise<CorporateActionRow[]> {
   return readAll<CorporateActionRow>("api.company_corporate_actions", (from, to) =>
     db
@@ -100,6 +126,41 @@ export async function readPromoterHolding(db: CompanyDb, slug: string): Promise<
   return readAll<PromoterHoldingRow>("api.company_promoter_holding", (from, to) =>
     db.from("company_promoter_holding").select("*", { count: "exact" }).eq("slug", slug).order("as_of", { ascending: false }).range(from, to),
   );
+}
+
+/** The company's segment line-up changes (0038, #409): one row per flag, or one row with the state; none while the field is hidden. */
+export async function readSegmentChanges(db: CompanyDb, slug: string): Promise<SegmentChangeRow[]> {
+  return readAll<SegmentChangeRow>("api.segment_changes", (from, to) =>
+    db.from("segment_changes").select("*", { count: "exact" }).eq("company_slug", slug).order("change_no").range(from, to),
+  );
+}
+
+/** The KPI-table pilot's confirmed flags for the company (0047, #512): none while equity.kpi_changes is hidden or none is confirmed. */
+export async function readKpiChanges(db: CompanyDb, slug: string): Promise<KpiChangeRow[]> {
+  return readAll<KpiChangeRow>("api.kpi_changes", (from, to) =>
+    db
+      .from("kpi_changes")
+      .select("*", { count: "exact" })
+      .eq("company_slug", slug)
+      .order("period_end", { ascending: false })
+      .order("dict_key")
+      .range(from, to),
+  );
+}
+
+/** The pilot panel's reads (DD-06, #514): its flags, then the company's calls only when there is a flag to word. Each part null
+ * when its read failed; the calls undefined when not read. */
+export async function readKpiPanel(db: CompanyDb, slug: string): Promise<{ kpiChanges: KpiChangeRow[] | null; kpiCalls?: EarningsCallRow[] | null }> {
+  const kpiChanges = await readKpiChanges(db, slug).catch((error: unknown) => {
+    logFailure(`${slug} KPI changes`, error);
+    return null;
+  });
+  if (!kpiChanges || kpiChanges.length === 0) return { kpiChanges };
+  const kpiCalls = await readCompanyCalls(db, slug).catch((error: unknown) => {
+    logFailure(`${slug} KPI calls`, error);
+    return null;
+  });
+  return { kpiChanges, kpiCalls };
 }
 
 export async function readValuationRuns(db: CompanyDb, slug: string): Promise<CompanyValuationRow[]> {
@@ -136,12 +197,28 @@ export async function readImfForecasts(db: CompanyDb): Promise<ForecastRow[]> {
   );
 }
 
-export type OverviewData = { prices: CompanyPriceRow[]; metrics: CompanyMetricRow[]; peers: PeerCompRow[] };
+export type OverviewData = {
+  prices: CompanyPriceRow[];
+  metrics: CompanyMetricRow[];
+  peers: PeerCompRow[];
+  /** The value chain panel's reads (VC-06, #191); each part null when its read failed (view 0034 not pushed yet). Absent: not read. */
+  valueChain?: ValueChainOverviewData;
+  /** A US company's filed period ends (US-06b, #564), for the key figures' dates. Absent: not read (India). */
+  filed?: FiledEndRow[];
+};
 export type FinancialsData = {
   financials: CompanyFinancialRow[];
   metrics: CompanyMetricRow[];
   /** Null when the promoter-holding view can't be read (not pushed yet). */
   promoter: PromoterHoldingRow[] | null;
+  /** api.segment_changes for this company (DD-02, #410); null when its read failed (view 0038 not pushed yet). Absent: not read. */
+  segmentChanges?: SegmentChangeRow[] | null;
+  /** The field policies, for the segment-changes panel's gate; null or absent when not read, which holds the panel back. */
+  policies?: FieldPolicyRow[] | null;
+  /** api.kpi_changes for a pilot company (DD-06, #514); null when its read failed. Absent: not a pilot company, or not read. */
+  kpiChanges?: KpiChangeRow[] | null;
+  /** The company's calls, read only when kpiChanges has a flag; null when that read failed. */
+  kpiCalls?: EarningsCallRow[] | null;
 };
 
 export type ValuationData = {
@@ -152,6 +229,8 @@ export type ValuationData = {
   imf: ForecastRow[] | null;
   /** The IMF series' and the India 10-year's source lines; null when they can't be read. */
   series: SeriesRow[] | null;
+  /** A US company's filed period ends (US-06b, #564), for the assumptions' dates. Absent: not read (India). */
+  filed?: FiledEndRow[];
 };
 
 export type CompanyPageData =
@@ -191,7 +270,41 @@ export async function readCompanyExists(slug: string): Promise<boolean | null> {
   try {
     return (await readCompany(db, slug)) !== null;
   } catch (error) {
+    cacheLife("failedRead");
     logFailure(`${slug} existence`, error);
+    return null;
+  }
+}
+
+/** The company's name, for the browser tab's title (12 Nov 2026): null when no company has the slug or the read
+ * fails, and the page then keeps its plain title. */
+export async function readCompanyName(slug: string): Promise<string | null> {
+  "use cache";
+  cacheLife("minutesNoExpire");
+  cacheTag("equity", `company-${slug}`);
+  const db = publicClient();
+  if (!db) return null;
+  try {
+    return (await readCompany(db, slug))?.name ?? null;
+  } catch (error) {
+    cacheLife("failedRead");
+    logFailure(`${slug} name`, error);
+    return null;
+  }
+}
+
+/** The company's market, for the page's description (US-06, #405): null when no company has the slug or the read fails. */
+export async function readCompanyMarket(slug: string): Promise<"IN" | "US" | null> {
+  "use cache";
+  cacheLife("minutesNoExpire");
+  cacheTag("equity", `company-${slug}`);
+  const db = publicClient();
+  if (!db) return null;
+  try {
+    return (await readCompany(db, slug))?.market ?? null;
+  } catch (error) {
+    cacheLife("failedRead");
+    logFailure(`${slug} market`, error);
     return null;
   }
 }
@@ -212,9 +325,12 @@ export async function loadHeader(db: CompanyDb, slug: string) {
   return { company, actions, indexNames };
 }
 
-/** The reads of one tab, each whole or not at all. Throws on a failed read, except the few that may fail on their own (promoter holding, IMF). */
-export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: string): Promise<TabData> {
+/** The reads of one tab, each whole or not at all. Throws on a failed read, except the few that may fail on their own (promoter holding, IMF).
+ * A US company (US-06, #405; Spec 02A.1 §7) reads only what its page shows: no calls or rate-decision reads (those tabs don't apply),
+ * no value chain, promoter, segment-change or IMF India reads (Indian disclosures), and the 10-year Treasury's source line. */
+export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: string, market: "IN" | "US" = "IN"): Promise<TabData> {
   const data: TabData = { overview: null, financials: null, valuation: null, rates: null, calls: null };
+  if (market === "US") return loadUsTab(db, slug, tab, data);
   if (tab === "calls") {
     data.calls = await readCallsTab(db, slug, call);
   } else if (tab === "rate-decisions") {
@@ -235,62 +351,136 @@ export async function loadTab(db: CompanyDb, slug: string, tab: TabId, call?: st
     ]);
     data.valuation = { runs, scenarios, policies, imf, series };
   } else if (tab === "overview") {
-    const [prices, metrics, peers] = await Promise.all([readCompanyPrices(db, slug), readCompanyMetrics(db, slug), readPeers(db, slug)]);
-    data.overview = { prices, metrics, peers };
+    const [prices, metrics, peers, valueChain] = await Promise.all([
+      readCompanyPrices(db, slug),
+      readCompanyMetrics(db, slug),
+      readPeers(db, slug),
+      readValueChainOverview(db, slug),
+    ]);
+    data.overview = { prices, metrics, peers, valueChain };
   } else {
-    const [rows, metrics, promoter] = await Promise.all([
+    const [rows, metrics, promoter, segmentChanges, policies, kpi] = await Promise.all([
       readFinancials(db, slug),
       readCompanyMetrics(db, slug),
       readPromoterHolding(db, slug).catch((error: unknown) => {
         logFailure(`${slug} promoter holding`, error);
         return null;
       }),
+      readSegmentChanges(db, slug).catch((error: unknown) => {
+        logFailure(`${slug} segment changes`, error);
+        return null;
+      }),
+      readFieldPolicy(db as PolicyDb).catch((error: unknown) => {
+        logFailure(`${slug} field policy`, error);
+        return null;
+      }),
+      isKpiPilot(slug) ? readKpiPanel(db, slug) : Promise.resolve(null),
     ]);
-    data.financials = { financials: rows, metrics, promoter };
+    data.financials = { financials: rows, metrics, promoter, segmentChanges, policies, ...(kpi ?? {}) };
   }
   return data;
 }
 
-// The page is two cached reads and an uncached join (#328). A read that throws out of a `'use cache'` function is not stored
-// (Next 16), so a failure never outlives the database's recovery, and neither cached read needs a shorter cache profile
-// (lib/queries/cache-profiles.test.ts allows only the no-expiry ones). The header stays all-or-nothing; a failed tab read
-// costs that tab, not the page.
-async function readHeader(slug: string) {
+/**
+ * Whether a tab came back with a part that failed on its own (#499): one of the reads loadTab catches (a null part, or the calls
+ * tab's "error" states), each null only on a failure. readTab then caches the tab on the short `failedRead` profile, so the next
+ * request reads it again. A US company reads no promoter holding or IMF forecasts (null by design), so those count for India
+ * only; the Rate decisions tab's Nifty 50 source line is null both when absent and when its read failed, so it doesn't count.
+ */
+export function tabReadFailed(data: TabData, market: "IN" | "US"): boolean {
+  const { overview, financials, valuation, calls } = data;
+  const vc = overview?.valueChain;
+  if (vc && (vc.rows === null || vc.products === null || vc.policies === null)) return true;
+  if (financials && ((market === "IN" && financials.promoter === null) || financials.segmentChanges === null || financials.policies === null)) return true;
+  if (financials && (financials.kpiChanges === null || financials.kpiCalls === null)) return true;
+  if (valuation && (valuation.series === null || (market === "IN" && valuation.imf === null))) return true;
+  if (calls && (calls.guidance === null || calls.remarks === null || calls.results.state === "error" || calls.tone.state === "error")) return true;
+  return false;
+}
+
+/** A US company's tab reads (Spec 02A.1 §7). Earnings calls and rate decisions read nothing: the page says they don't apply.
+ * The Overview and Valuation tabs also read the filed period ends (US-06b, #564), whole or not at all like the tab's other reads. */
+async function loadUsTab(db: CompanyDb, slug: string, tab: TabId, data: TabData): Promise<TabData> {
+  if (tab === "overview") {
+    const [prices, metrics, peers, filed] = await Promise.all([readCompanyPrices(db, slug), readCompanyMetrics(db, slug), readPeers(db, slug), readFiledEnds(db, slug)]);
+    data.overview = { prices, metrics, peers, filed };
+  } else if (tab === "financials") {
+    const [rows, metrics] = await Promise.all([readFinancials(db, slug), readCompanyMetrics(db, slug)]);
+    data.financials = { financials: rows, metrics, promoter: null };
+  } else if (tab === "valuation") {
+    const [runs, scenarios, policies, series, filed] = await Promise.all([
+      readValuationRuns(db, slug),
+      readScenarios(db, slug),
+      readFieldPolicy(db as PolicyDb),
+      readSeriesInfo(db as PolicyDb, [US_10Y]).catch((error: unknown) => {
+        logFailure(`${slug} valuation series`, error);
+        return null;
+      }),
+      readFiledEnds(db, slug),
+    ]);
+    data.valuation = { runs, scenarios, policies, imf: null, series, filed };
+  }
+  return data;
+}
+
+// The page is two cached reads and an uncached join (#328). Neither cached read throws (#516): an error thrown out of a `'use cache'`
+// function is recorded for the whole render even when readCompanyPage catches it, and Next 16 then answers the prerendered route
+// with HTTP 500 (next/dist/server/app-render/app-render.js, prerenderAppPage: `response.digestErrorsMap`, which holds every error a
+// cache scope reported). That is how Reliance's Calls tab answered 500 on 13 Nov 2026 (09:32 and 18:09 IST) while the page itself
+// said "Couldn't load this panel". So each read keeps its failure as a value on the short `failedRead` profile (#499), and the next
+// request reads again. The header stays all-or-nothing; a failed tab read costs that tab, not the page. A tab returned with a part
+// that failed on its own (tabReadFailed) is cached on `failedRead` too; every other result keeps the no-expiry one
+// (lib/queries/cache-profiles.test.ts).
+export async function readHeader(slug: string): Promise<Read<Awaited<ReturnType<typeof loadHeader>> & { readAt: string }>> {
   "use cache";
   cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);
   const readAt = new Date().toISOString(); // read inside the cache, as lib/queries/overview.ts does
   const db = publicClient();
-  if (!db) throw new Error("NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
-  return { readAt, ...(await loadHeader(db, slug)) };
+  if (!db) return { ok: false, error: "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set" };
+  try {
+    return { ok: true, readAt, ...(await loadHeader(db, slug)) };
+  } catch (error) {
+    cacheLife("failedRead");
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
-async function readTab(slug: string, tab: TabId, call?: string): Promise<TabData> {
+async function readTab(slug: string, tab: TabId, call: string | undefined, market: "IN" | "US"): Promise<Read<{ data: TabData }>> {
   "use cache";
   cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);
   const db = publicClient();
-  if (!db) throw new Error("NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
-  return loadTab(db, slug, tab, call);
+  if (!db) return { ok: false, error: "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set" };
+  let data: TabData;
+  try {
+    data = await loadTab(db, slug, tab, call, market);
+  } catch (error) {
+    cacheLife("failedRead");
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  if (tabReadFailed(data, market)) cacheLife("failedRead");
+  return { ok: true, data };
 }
+
+/** A cached read's result: its value, or why it failed (for the log; never shown to a visitor). */
+type Read<T> = ({ ok: true } & T) | { ok: false; error: string };
 
 /** The page's reads for one tab. The header (company row, actions, index names) is all-or-nothing: if it fails, or no company has the slug, the result is `{ ok: false }`. A failed tab read gives `ok: true` with that tab's data null and `tabFailed` set. */
 export async function readCompanyPage(slug: string, tab: TabId, call?: string): Promise<CompanyPageData> {
-  let header: Awaited<ReturnType<typeof readHeader>>;
-  try {
-    header = await readHeader(slug);
-  } catch (error) {
-    logFailure(slug, error);
+  const header = await readHeader(slug);
+  if (!header.ok) {
+    logFailure(slug, header.error);
     return { ok: false, readAt: new Date().toISOString() };
   }
   const { readAt, company, actions, indexNames } = header;
   if (!company) return { ok: false, readAt };
   let data: TabData = { overview: null, financials: null, valuation: null, rates: null, calls: null };
   let tabFailed = false;
-  try {
-    data = await readTab(slug, tab, call);
-  } catch (error) {
-    logFailure(`${slug} ${tab} tab`, error);
+  const read = await readTab(slug, tab, call, company.market);
+  if (read.ok) data = read.data;
+  else {
+    logFailure(`${slug} ${tab} tab`, read.error);
     tabFailed = true;
   }
   return { ok: true, readAt, today: dateInZone(readAt, "Asia/Kolkata"), company, actions, indexNames, tab, ...data, tabFailed };

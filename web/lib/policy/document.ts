@@ -14,7 +14,7 @@
 //   · Press Release: 2026-2027/1361": issue #15, B6 part 2), so the title is shown without it and the source line
 //   carries it. The number is RBI's reference, quoted as the page prints it, not a figure for lib/format.ts.
 import { dateInZone, formatDate, type EventZone } from "@/lib/format";
-import { meetingHref } from "@/lib/policy/decisions";
+import { meetingHref, meetingTabHref } from "@/lib/policy/decisions";
 import type { AiCitationRow, AiOutputRow, DocumentRow } from "@/lib/queries/api";
 import type { Bank } from "@/lib/queries/policy";
 
@@ -116,7 +116,7 @@ function shownAt(o: AiOutputRow, documentId: number): string | null {
   if (o.task === "doc_summary") return o.document_id === documentId ? null : o.document_id !== null ? `/documents/${o.document_id}` : null;
   const meeting = meetingOf(o.event_slug);
   if (o.task === "statement_diff_summary") {
-    if (meeting) return `${meeting.href}?tab=changes`;
+    if (meeting) return meetingTabHref(meeting.bank, meeting.date, "changes");
     return o.document_id !== null && o.document_id !== documentId ? `/documents/${o.document_id}` : null;
   }
   return meeting?.href ?? null;

@@ -5,8 +5,8 @@ import { LATEST_FALLBACK, latestTarget } from "./latest";
 
 describe("latestTarget", () => {
   it("keeps a valid tab", () => {
-    expect(latestTarget("Fed", "2026-09-16", "changes")).toBe("/policy/fed/2026-09-16?tab=changes");
-    expect(latestTarget("RBI", "2026-10-07", "reaction")).toBe("/policy/rbi/2026-10-07?tab=reaction");
+    expect(latestTarget("Fed", "2026-09-16", "changes")).toBe("/policy/fed/2026-09-16/changes");
+    expect(latestTarget("RBI", "2026-10-07", "reaction")).toBe("/policy/rbi/2026-10-07/reaction");
   });
 
   it("drops a bad tab, and anything that isn't one, landing on the Overview", () => {

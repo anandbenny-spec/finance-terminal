@@ -268,7 +268,11 @@ check "A38 suppressing the BSE source changes nothing here (the test companies a
   "$(flip anon "update core.source set is_suppressed = true where key = 'bse'" "select count(*) from api.company_prices where slug like 'eq24-%'")" '^7$'
 
 ############################################################ semantic views (sql_reader)
-check "A39 sql_reader reads the three semantic views (the unpublished company is absent) and no equity table or api view" \
+# A39, A43: 0041 made the semantic views India-only (Spec 02A.1 §6) and set these two checks to 8, leaving out the published
+# US company eq24-us. From 0053 (#580; Anand, 15 Nov 2026, 23:25 IST, option A: US rows join the command bar's views once
+# published, and 0041's semantic-view check changes; Spec 07 N2) a published US company is in the three views again, so both
+# read 9 as before 0041. The unpublished company stays absent; run_tests_0053.sh holds the rule in full.
+check "A39 sql_reader reads the three semantic views (the unpublished company is absent; the published US one is in) and no equity table or api view" \
   "$(as_role sql_reader "select (select count(*) from semantic.companies where company like 'Eq24%')||'|'||(select count(*) from semantic.company_financials where company like 'Eq24%')||'|'||(select count(*) from semantic.company_valuations where company like 'Eq24%')")|$(as_role sql_reader "select count(*) from equity.company")|$(as_role sql_reader "select count(*) from api.screener")" \
   '^9\|2\|9\|ERROR:  permission denied[^|]*\|ERROR:  permission denied'
 check "A40 semantic.companies: identifiers, curated group, market, currency and the index names" \
@@ -304,7 +308,7 @@ check "A48 the test rows are gone" \
   "$(as_pg "select (select count(*) from core.entity where slug like 'eq24%')+(select count(*) from equity.price_daily)+(select count(*) from equity.company)+(select count(*) from equity.peer_group where key like 'eq24%')")" '^0$'
 check "A49 the field policy rows are as seeded (the flips were rolled back)" \
   "$(as_pg "select string_agg(field_key||'='||status, ' ' order by field_key) from core.field_policy where field_key like 'equity.%'")" \
-  '^equity\.beta=labelled equity\.brsr_values=hidden equity\.cost_of_debt=labelled equity\.dcf_scenario=hidden equity\.ebit_derived=labelled equity\.group_companies=hidden equity\.guidance_outcome=hidden equity\.implied_growth=hidden equity\.implied_roe=hidden equity\.nim_proxy=labelled equity\.peer_group=labelled equity\.rate_sensitivity=hidden equity\.remarks_change=hidden equity\.results_move=hidden equity\.roa=labelled equity\.rpt_counterparties=hidden equity\.segments=hidden$'
+  '^equity\.beta=labelled equity\.brsr_values=hidden equity\.cost_of_debt=labelled equity\.dcf_scenario=hidden equity\.ebit_derived=labelled equity\.group_companies=hidden equity\.guidance_hit_rate=hidden equity\.guidance_outcome=hidden equity\.implied_growth=hidden equity\.implied_roe=hidden equity\.kpi_changes=hidden equity\.nim_proxy=labelled equity\.peer_group=labelled equity\.rate_sensitivity=hidden equity\.remarks_change=hidden equity\.results_move=hidden equity\.roa=labelled equity\.rpt_counterparties=hidden equity\.segment_changes=hidden equity\.segments=hidden$'
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

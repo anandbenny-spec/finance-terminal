@@ -5,7 +5,8 @@ evaluations and, later, the live API service.
 Messages API call and returns the reply with its usage and cost.
 - Settings per task (`TASKS`): Haiku 5.5 by default; effort `low` for summaries and extraction; `max_tokens` with
   headroom for adaptive thinking, which counts towards it (8,000 for summaries, 4,000 for extraction). No
-  `temperature`, `top_p` or `top_k`, and no assistant prefill.
+  `temperature`, `top_p` or `top_k`, and no assistant prefill. A request may name its own effort and `max_tokens`
+  (`Request.effort`, `Request.max_tokens`): `call_summary` v11 does (`ft/ai/call_summary.py`, `EFFORT_OF`).
 - Two output routes (§1.2): `citations` sends the documents as plain-text document blocks with citations on;
   `json` sends them without citations and asks for a JSON schema through `output_config.format`. The API refuses a
   request that combines the two, so a request is one or the other.
@@ -73,10 +74,15 @@ CONFIG = Path(__file__).resolve().parents[3] / "config"
 PRICES = CONFIG / "ai_prices.yaml"
 PROMPTS = CONFIG / "prompts"
 
-HAIKU, SONNET = "claude-haiku-5-5", "claude-sonnet-5-5"
+HAIKU, SONNET, OPUS = "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"
+# `output_config.effort` as the API docs list it for Opus 5.5 (platform.claude.com/docs/build-with-claude/effort, read 10 Nov 2026):
+# all five levels; the default is `medium` there, so `high` is a real step up, not the same as leaving the setting out. Only a request's
+# own `effort` (below) is checked against this: the tasks' own settings are `low` and `medium`.
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 MAX_REQUEST_TOKENS = 100_000          # CLAUDE.md §6; Architecture 03 §1.1
 CHARS_PER_TOKEN = 3.0                 # a deliberate over-estimate (English runs about 4 characters a token)
 REQUEST_OVERHEAD_TOKENS = 1_500       # citations' own system additions, document framing
+IMAGE_TOKENS = 2_000                  # a deliberate over-estimate for one full-page render (KPI/2B image pages)
 RETRY_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504, 529})
 CREATE_RETRY_STATUS = frozenset({429, 503, 529})   # a batch create the API refused: safe to send again
 CREATE_REFUSED = frozenset({400, 401, 403, 404, 413, 422, 429, 503, 529})   # a create these answer didn't happen
@@ -110,6 +116,14 @@ TASKS: dict[str, TaskSpec] = {
     # The tone of a call's management passages (Spec 02B §5.7; 2B-12): the json route, effort medium (a judgement, like
     # hawk/dove). One score per passage, up to about 60 passages, and up to three quotes: 8,000 with room for thinking.
     "call_tone": TaskSpec("json", "medium", 8_000),
+    # The KPI metrics one page of a results press release, fact sheet or data sheet states (the KPI-table pilot, DD-04,
+    # #512; Plan 05 §1.3; Data Audit 10 §6): the json route, effort low, 6,000 for thinking plus up to about 40 items.
+    "kpi_extraction": TaskSpec("json", "low", 6_000),
+    # The KPI pilot's flags (DD-05 part 2, #513): Sonnet 5.5's check of each flag against the pages it rests on (Data Audit 10
+    # §8 finding 1's second pass; up to 10 flags a request, three enum answers each), and Haiku's pick, by id, of a candidate
+    # transcript sentence for "reason stated" and "an analyst asked". Both json, effort low.
+    "kpi_check": TaskSpec("json", "low", 4_000, SONNET),
+    "kpi_quote": TaskSpec("json", "low", 3_000),
 }
 
 
@@ -261,16 +275,30 @@ def load_schema(task: str, version: str | None = None, *, root: Path = PROMPTS) 
 
 @dataclass(frozen=True)
 class Source:
-    """A document (or a segment of one) sent with a request. Citations map back to the document through seg_start."""
+    """A document (or a segment of one) sent with a request. Citations map back to the document through seg_start.
+    A page with no text layer is sent as an image instead (2B/KPI's image pages, HDFC Bank): set `image_base64` and
+    `image_media_type` (e.g. 'image/png') and leave `text` empty; an image source never carries citations (the json
+    route only), so it is used only where citations aren't needed."""
     document_id: int
     text: str                         # what is sent: the canonical text, or the segment [seg_start, seg_start+len)
     title: str                        # shown to the model; never cited
     seg_start: int = 0
     context: str | None = None        # shown to the model; never cited
+    image_base64: str | None = None   # a page image, base64, instead of text (no text layer)
+    image_media_type: str | None = None   # e.g. 'image/png'
+
+    def __post_init__(self):
+        if (self.image_base64 is None) != (self.image_media_type is None):
+            raise ValueError("an image source needs both image_base64 and image_media_type")
+
+    @property
+    def is_image(self) -> bool:
+        return self.image_base64 is not None
 
     @property
     def text_sha256(self) -> str:
-        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
+        data = self.image_base64 if self.is_image else self.text
+        return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -283,19 +311,29 @@ class Request:
     schema: dict | None = None        # the json route's JSON schema
     note: str | None = None           # a retry's note: its own last block, so the prefix before it stays cached
     route: str | None = None          # 'citations' | 'json': this request's route where it isn't the task's (call_summary v6)
+    effort: str | None = None         # this request's `output_config.effort` where it isn't the task's (call_summary v11, #178)
+    max_tokens: int | None = None     # this request's `max_tokens` where it isn't the task's (call_summary v11, #178)
 
     def __post_init__(self):
         if self.task not in TASKS:
             raise ValueError(f"{self.task} isn't a task the wrapper runs")
         if self.prompt.task != self.task:
             raise ValueError(f"prompt for {self.prompt.task}, request for {self.task}")
+        if self.effort is not None and self.effort not in EFFORTS:
+            raise ValueError(f"{self.task}: effort {self.effort!r} isn't one of {', '.join(EFFORTS)}")
+        if self.max_tokens is not None and self.max_tokens <= 0:
+            raise ValueError(f"{self.task}: max_tokens must be positive, not {self.max_tokens}")
         if (self.spec.route == "json") != (self.schema is not None):
             raise ValueError(f"{self.task}: the json route needs a schema, the citations route none")
 
     @property
     def spec(self) -> TaskSpec:
+        """The task's settings, with this request's route, effort and `max_tokens` where it names its own. The input hash
+        (`_canonical`) and the guard's worst case (`_worst_case`) read them from here, so a changed setting is a new input."""
         base = TASKS[self.task]
-        return replace(base, route=self.route) if self.route and self.route != base.route else base
+        own = {k: v for k, v in (("route", self.route), ("effort", self.effort), ("max_tokens", self.max_tokens))
+               if v and v != getattr(base, k)}
+        return replace(base, **own) if own else base
 
     @property
     def model_id(self) -> str:
@@ -306,8 +344,18 @@ class Request:
                 "prompt_sha256": self.prompt.sha256, "route": self.spec.route, "effort": self.spec.effort,
                 "max_tokens": self.spec.max_tokens, "instruction": self.instruction, "note": self.note,
                 "schema": self.schema,
-                "sources": [{"document_id": s.document_id, "seg_start": s.seg_start, "title": s.title,
-                             "context": s.context, "text_sha256": s.text_sha256} for s in self.sources]}
+                "sources": [self._canonical_source(s) for s in self.sources]}
+
+    @staticmethod
+    def _canonical_source(s: Source) -> dict:
+        """One source's part of the input hash. `image_media_type` is added for an image source only, so a text request
+        hashes exactly as it did before image sources existed (#512: PR #522 added the key to every source, which changed
+        every task's hash, so an open batch's replies were collected as stale and every retry restarted at attempt 1)."""
+        out = {"document_id": s.document_id, "seg_start": s.seg_start, "title": s.title, "context": s.context,
+               "text_sha256": s.text_sha256}
+        if s.is_image:
+            out["image_media_type"] = s.image_media_type
+        return out
 
     @property
     def input_sha256(self) -> bytes:
@@ -319,7 +367,10 @@ class Request:
             len(s.text) + len(s.title) + len(s.context or "") for s in self.sources)
         if self.schema is not None:
             chars += len(json.dumps(self.schema))
-        return math.ceil(chars / CHARS_PER_TOKEN) + REQUEST_OVERHEAD_TOKENS
+        n = math.ceil(chars / CHARS_PER_TOKEN) + REQUEST_OVERHEAD_TOKENS
+        # A page image costs roughly IMAGE_TOKENS tokens (a full-page render at the API's tile rate); a deliberate
+        # over-estimate so the guard's worst case never undercounts an image page.
+        return n + IMAGE_TOKENS * sum(1 for s in self.sources if s.is_image)
 
     def params(self, *, batch: bool = False) -> dict:
         """The Messages API parameters: real time, or a batch request's `params`, which are the same but uncached
@@ -327,6 +378,14 @@ class Request:
         cite = self.spec.route == "citations"
         content: list[dict] = []
         for s in self.sources:
+            if s.is_image:
+                if cite:
+                    raise ValueError("an image source can't be cited: use the json route")
+                if s.context:
+                    content.append({"type": "text", "text": f"{s.title} — {s.context}"})
+                content.append({"type": "image",
+                                "source": {"type": "base64", "media_type": s.image_media_type, "data": s.image_base64}})
+                continue
             block = {"type": "document", "source": {"type": "text", "media_type": "text/plain", "data": s.text},
                      "title": s.title}
             if s.context:

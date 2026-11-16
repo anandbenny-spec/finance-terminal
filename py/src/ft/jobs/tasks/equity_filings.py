@@ -80,7 +80,7 @@ class EquityFilings(DocumentJob):
         companies = f.db.execute(
             """select c.entity_id, e.slug, e.name, c.nse_symbol, c.fy_end_month, c.listed_on
                  from equity.company c join core.entity e on e.id = c.entity_id
-                where c.nse_symbol is not null order by e.slug""").fetchall()
+                where c.nse_symbol is not null and e.market = 'IN' order by e.slug""").fetchall()
         today = ctx.now.astimezone(fl.INDIA).date()
         start = fl.window_start(ctx.now, ctx.since)
         end = min(ctx.until or today, today)

@@ -114,7 +114,7 @@ class EquityPrices(Task):
         f, db = ctx.fetcher, ctx.fetcher.db
         companies = {r[0]: Company(*r) for r in db.execute(
             """select c.entity_id, e.slug, c.price_exchange, c.listed_on
-                 from equity.company c join core.entity e on e.id = c.entity_id order by e.slug""").fetchall()}
+                 from equity.company c join core.entity e on e.id = c.entity_id where e.market = 'IN' order by e.slug""").fetchall()}
         by_isin: dict[str, int] = {}
         by_code: dict[str, int] = {}
         symbols: dict[str, list[tuple[int, date | None, date | None]]] = {}

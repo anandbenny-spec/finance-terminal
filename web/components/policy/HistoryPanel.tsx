@@ -49,7 +49,7 @@ export function HistoryPanel({ rows, stanceLabel, footer, refresh }: { rows: His
         header: "Date",
         sortValue: (r) => r.date,
         cell: (r) => (
-          <Link href={r.href} className="font-mono text-ink-1 underline">
+          <Link prefetch={false} href={r.href} className="font-mono text-ink-1 underline">
             {formatTableDate(r.date)}
           </Link>
         ),

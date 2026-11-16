@@ -8,7 +8,7 @@
 // - Titles and dates go through lib/policy/decisions.ts and lib/format.ts; only the machine dates (pubDate,
 //   lastBuildDate) are written here, in RFC 822 as the format requires.
 import { formatDate } from "@/lib/format";
-import { decisionLine, meetingHref, rateVoteLine } from "@/lib/policy/decisions";
+import { decisionLine, meetingTabHref, rateVoteLine } from "@/lib/policy/decisions";
 import type { PolicyMeetingRow, PolicyVoteRow } from "@/lib/queries/api";
 import type { Bank } from "@/lib/queries/policy";
 import { SITE_NAME, SITE_TAGLINE } from "@/lib/site";
@@ -71,7 +71,7 @@ function itemOf(m: PolicyMeetingRow, votes: readonly PolicyVoteRow[], origin: UR
   const when = `Decided ${formatDate(m.decision_date)}.`;
   return {
     title: `${m.bank}: ${line}`,
-    link: new URL(`${meetingHref(m.bank as Bank, m.decision_date)}?tab=changes`, origin).toString(),
+    link: new URL(meetingTabHref(m.bank as Bank, m.decision_date, "changes"), origin).toString(),
     guid: guidOf(m.slug),
     pubDate: pubDate(m),
     description: vote ? `${when} ${vote}` : when,

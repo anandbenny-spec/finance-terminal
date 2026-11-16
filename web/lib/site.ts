@@ -3,8 +3,11 @@
 
 export const SITE_NAME = "Finance Terminal";
 
-/** The one-line positioning (Brief §12, decided by Anand on 28 Oct 2026, 08:49 IST). */
-export const SITE_TAGLINE = "An AI research terminal for Indian markets and the Fed–RBI policy cycle.";
+/**
+ * The one-line positioning (Brief §12, decided by Anand on 28 Oct 2026, 08:49 IST), reworded when the US slice (the Dow
+ * 30) went live (Anand, 11 Nov 2026, about 17:52 IST: Plan 05 §0.4 item 3; US-09, #408).
+ */
+export const SITE_TAGLINE = "An AI research terminal for Indian and US markets and the Fed–RBI policy cycle.";
 export const SITE_DESCRIPTION = `${SITE_TAGLINE} Informational only, not investment advice.`;
 
 /** The line under the name on the preview image: what this link shows today (module 1). */

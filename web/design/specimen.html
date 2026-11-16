@@ -156,6 +156,15 @@ h1{font:600 22px/28px var(--sans);margin:0}
 a.para{font:12px var(--mono);color:var(--ink-3);text-decoration:none;white-space:nowrap}
 a.para:hover{color:var(--ink-1)}
 .minih{font:500 13px/18px var(--sans);margin:14px 0 6px}
+.vcf{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:12px;align-items:center}
+.vcf h4{font:500 12px/16px var(--sans);color:var(--ink-2);margin:0 0 8px}
+.vcf ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.vcf li{background:var(--raised);border:1px solid var(--line-strong);border-radius:4px;padding:8px 12px}
+.vcf li small{display:block;font:var(--meta);color:var(--ink-2)}.vcf li span{display:block;font:var(--data);color:var(--ink-1)}
+.vcf .co{border:1px solid var(--series-2);border-radius:4px;padding:8px 12px;background:var(--panel)}.vcf .co b{font:600 13px/18px var(--sans)}
+.vcf .co p{margin:4px 0 0;display:flex;justify-content:space-between;gap:12px;font:var(--data)}
+.vcf .ar{color:var(--ink-3);display:flex;justify-content:center}.vcf .ar svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2}
+@media (max-width:760px){.vcf{grid-template-columns:1fr}.vcf .ar svg{transform:rotate(90deg)}}
 .nums td{height:30px}
 .nums td,.nums th{white-space:normal;padding:4px 8px}
 .nums td:last-child{white-space:nowrap}
@@ -772,6 +781,32 @@ LIMIT 200</pre></details>
         </div>
       </section>
 
+    </div></section>
+    <section class="sec" aria-labelledby="h-vc"><h2 class="sech" id="h-vc">Value chain <small>ValueChainFlow: Anand's choice, 29 Oct 2026 (Spec 02B §12.7)</small></h2>
+    <div class="grid">
+      <section class="panel s12">
+        <div class="ph"><h2>Value chain</h2><span class="tag">As reported by the company</span><div class="act"><button class="ib" aria-label="View as table"><svg class="i"><use href="#table"/></svg></button></div></div>
+        <p class="desc" style="padding:0 12px">Where do the company's inputs come from, how does it reach its customers, and how much of that runs through its own group?</p>
+        <div class="pb">
+          <p class="desc">FY 2025-26 · Standalone, as reported in the BRSR</p>
+          <div class="vcf">
+            <div><h4>Suppliers</h4><ul>
+              <li><small>Inputs from within India</small><span>90.4%</span></li>
+              <li><small>Inputs from MSMEs and small producers</small><span>9.7%</span></li>
+              <li><small>Purchases through trading houses</small><span>Filed as 0</span></li></ul></div>
+            <div class="ar" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h16M14 6l6 6-6 6"/></svg></div>
+            <div class="co"><b>Example Motors</b><p><span>Vehicles</span><span>70%</span></p><p><span>Farm equipment</span><span>22.4%</span></p><p><span>Services</span><span>5%</span></p></div>
+            <div class="ar" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h16M14 6l6 6-6 6"/></svg></div>
+            <div><h4>Customers</h4><ul>
+              <li><small>Sales through dealers and distributors</small><span>96.2%</span><small>4,480 dealers and distributors</small></li>
+              <li><small>Exports, share of turnover</small><span>Not reported</span></li></ul></div>
+          </div>
+          <div style="margin-top:12px"><h4 style="font:500 12px/16px var(--sans);color:var(--ink-2);margin:0 0 8px">Within the group</h4>
+            <p class="mono" style="margin:0">Purchases from related parties 9.8% · Sales to related parties 13.2%</p></div>
+          <p class="desc" style="margin-top:8px">As reported by the company; not verified by this site. Arrows are all one width: the figures carry the values. No colour on a share or a change.</p>
+        </div>
+        <div class="pf"><span>Source: the company's BRSR, filed on NSE · Filed 4 Jul 2026 · <a href="#">Official source ↗</a> · <a href="#">Years, group and peers ›</a></span><span class="t">Checked 20 Oct, 06:41 IST</span></div>
+      </section>
     </div></section>
     <section class="sec" aria-labelledby="h-hist"><h2 class="sech" id="h-hist">History</h2>
     <div class="grid">

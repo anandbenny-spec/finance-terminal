@@ -62,12 +62,18 @@ export type PanelFreshness = { text: string; delayed: boolean };
  * last successes (never fresher than the least recent part); `delayed` when any of them isn't current (its last
  * run failed, or its runs stopped), so the panel shows "Update delayed" and keeps its last good data. With no
  * freshness rows read, only the data's own date is claimed.
+ *
+ * `checkedTasks` limits which of `tasks` set the "checked" time (default: all of them), as `summarise`'s does
+ * (#263, Anand, 3 Nov 2026; extended to /policy's header and "Where rates stand" by #440, Review 05 finding 5):
+ * when none of `tasks` is in it, every task counts. "Checked" still shows only when every task in `tasks` has a
+ * last success, and `delayed` still looks at every task in `tasks`.
  */
 export function panelFreshness(
   rows: readonly TaskFreshnessRow[] | null,
   tasks: readonly string[],
   dataTo: string | null,
   now: Instant,
+  checkedTasks: readonly string[] = tasks,
 ): PanelFreshness {
   const parts = dataTo ? [`Data to ${formatDate(dataTo)}`] : [];
   if (rows === null) return { text: parts.join(" · "), delayed: false };
@@ -75,7 +81,10 @@ export function panelFreshness(
   const delayed = tasks.some((t) => taskState(byKey.get(t)) !== "current");
   const successes = tasks.map((t) => byKey.get(t)?.last_success_at).filter((t): t is string => Boolean(t));
   if (successes.length === tasks.length && successes.length > 0) {
-    const oldest = successes.reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b));
+    const counted = tasks.filter((t) => checkedTasks.includes(t));
+    const oldest = (counted.length > 0 ? counted : tasks)
+      .map((t) => byKey.get(t)!.last_success_at!)
+      .reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b));
     parts.push(`checked ${formatCheckedTime(oldest, now)}`);
   }
   return { text: parts.join(" · "), delayed };

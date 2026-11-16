@@ -21,7 +21,7 @@ LINES: list[Line] = [
     ("Moderator", "moderator", ("Moderator: Good day and welcome to the Acme Limited Q2 FY27 earnings conference call. "
                                 "I now hand the conference over to Mr. Rao.")),
     ("Ravi Rao", "management", ("Ravi Rao: Thank you. Revenue from operations grew 12.5 per cent to 4,500 crore in Q2 FY27. "
-                                "EBITDA margin was 21.3 per cent.")),
+                                "EBITDA margin was 21.3 per cent. We are glad to take your questions after these remarks.")),
     ("Meera Iyer", "management", ("Meera Iyer: Our order book stands at 9,200 crore. Demand in the export market remains "
                                   "soft because of weak freight rates. We plan capital expenditure of 800 crore this year.")),
     ("Moderator", "moderator", "Moderator: The first question is from Anil Shah of Orbit Securities."),

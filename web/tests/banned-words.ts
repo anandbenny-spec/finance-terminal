@@ -21,3 +21,15 @@ export function bannedWordsIn(text: string): string[] {
   for (const m of text.matchAll(re)) found.add(m[1].toLowerCase());
   return [...found];
 }
+
+// Spec 02B §12.7 (VC-06, #191): the words the value chain card never uses in the site's own text. A share is a fact the company
+// filed, not a verdict. Scanned beside the 2A list (`bannedWordsIn`); the company's filed text (a product's name, a counterparty, a
+// relationship) is left out of the scan, since it is quoted as filed.
+export const VALUE_CHAIN_BANNED = /\b(dependent|risky|concentrated risk|exposure|red flag|good|bad)\b/i;
+
+/** The words banned on the value chain card found in `text`, lower-cased, each once: §12.7's list plus the 2A list. */
+export function bannedValueChainWordsIn(text: string): string[] {
+  const found = new Set<string>(bannedWordsIn(text));
+  for (const m of text.matchAll(new RegExp(VALUE_CHAIN_BANNED.source, "gi"))) found.add(m[1].toLowerCase());
+  return [...found];
+}

@@ -75,8 +75,8 @@ def first_management(claim: str, quotes: list[str]):
 # --------------------------------------------------------------------------------------------------- the route and the request
 def test_prompts_from_v6_take_the_structured_route_and_v1_to_v5_the_citations_route():
     assert [route_of(f"v{n}") for n in range(1, 6)] == ["citations"] * 5
-    assert [route_of(v) for v in ("v6", "v7", "v8", "v9", "v10")] == ["json"] * 5 and cs.JSON_FROM == 6
-    assert eca.PROMPT_VERSION[cs.TASK] == "v9" and route_of(eca.PROMPT_VERSION[cs.TASK]) == "json"
+    assert [route_of(v) for v in ("v6", "v7", "v8", "v9", "v10", "v11")] == ["json"] * 6 and cs.JSON_FROM == 6
+    assert eca.PROMPT_VERSION[cs.TASK] == "v11" and route_of(eca.PROMPT_VERSION[cs.TASK]) == "json"
     assert TASKS["call_summary"].route == "citations"          # the task's own route is unchanged: a request asks for the json one
 
 

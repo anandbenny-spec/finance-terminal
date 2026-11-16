@@ -9,10 +9,16 @@ import { activeHref, NAV, POLICY_DAY_GROUP, visibleGroups, type NavGroup } from 
 const FED_VS_RBI_SECTIONS = [
   { href: "/policy#where-rates-stand", label: "Where rates stand" },
   { href: "/policy#latest-decisions", label: "Latest decisions" },
+  { href: "/policy#statement-changes", label: "Statement changes" },
+  { href: "/policy#votes-over-time", label: "Votes over time" },
+  { href: "/policy#language-timeline", label: "Wording over time" },
   { href: "/policy#history", label: "History" },
   { href: "/policy/fed/latest?tab=changes", label: "FOMC: what changed" },
   { href: "/policy/rbi/latest?tab=changes", label: "MPC: what changed" },
 ];
+
+/** Screener's one section link (#575; Anand, 15 Nov 2026, 17:18 IST): the sector rate-decision page. */
+const SCREENER_SECTIONS = [{ href: "/screener/rate-decisions", label: "Sectors on decision days" }];
 
 /** Every link a visitor or the admin can click in the menu: the items and their section links. */
 const allLinks = NAV.flatMap((g) => g.items.flatMap((i) => [i.href, ...(i.sections ?? []).map((s) => s.href)]));
@@ -36,10 +42,11 @@ describe("sidebar", () => {
     ]);
   });
 
-  it("gives Fed vs RBI its five section links, in this order, and no other item any", () => {
+  it("gives Fed vs RBI its eight section links and Screener its one, in this order, and no other item any", () => {
     const items = NAV.flatMap((g) => g.items);
     expect(items.find((i) => i.href === "/policy")?.sections).toEqual(FED_VS_RBI_SECTIONS);
-    expect(items.filter((i) => i.href !== "/policy").every((i) => i.sections === undefined)).toBe(true);
+    expect(items.find((i) => i.href === "/screener")?.sections).toEqual(SCREENER_SECTIONS);
+    expect(items.filter((i) => i.href !== "/policy" && i.href !== "/screener").every((i) => i.sections === undefined)).toBe(true);
     // the admin sees the same section links as a visitor
     const policyItems = (isAdmin: boolean) => visibleGroups(isAdmin).flatMap((g) => g.items).find((i) => i.href === "/policy");
     expect(policyItems(true)?.sections).toEqual(policyItems(false)?.sections);
@@ -58,6 +65,7 @@ describe("sidebar", () => {
       "/policy",
       ...FED_VS_RBI_SECTIONS.map((s) => s.href),
       "/screener",
+      ...SCREENER_SECTIONS.map((s) => s.href),
       "/earnings",
       "/workspace/policy-day",
       "/about",
@@ -75,7 +83,7 @@ describe("sidebar", () => {
     }
   });
 
-  it("points every section link at a live target: a section the page has, or a /latest route that exists", () => {
+  it("points every section link at a live target: a section the page has, a /latest route, or a built page", () => {
     const sectionIds = POLICY_SECTION_LIST.map((s) => s.id);
     const subLinks = NAV.flatMap((g) => g.items.flatMap((i) => i.sections ?? []));
     for (const { href } of subLinks) {
@@ -83,6 +91,11 @@ describe("sidebar", () => {
       if (hash !== undefined) {
         expect(path).toBe("/policy");
         expect(sectionIds).toContain(hash);
+        continue;
+      }
+      if (!href.includes("?") && !href.includes("/latest")) {
+        const file = fileURLToPath(new URL(`../../app${href}/page.tsx`, import.meta.url));
+        expect(existsSync(file), `${file} must exist`).toBe(true);
         continue;
       }
       const latest = /^\/policy\/(fed|rbi)\/latest\?tab=changes$/.exec(href);

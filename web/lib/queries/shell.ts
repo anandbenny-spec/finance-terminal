@@ -7,8 +7,10 @@
 // (visitors never see errors: Arch 02). The numbers are the database's; nothing here computes or invents one.
 import { cacheLife, cacheTag } from "next/cache";
 import type { NextMeetingRow, SeriesLatestRow, SeriesRow, TaskFreshnessRow } from "@/lib/queries/api";
+import { readFieldPolicy } from "@/lib/queries/policy";
 import { readAll } from "@/lib/queries/read";
 import { publicClient } from "@/lib/supabase/public";
+import { tourShown } from "@/lib/tour";
 
 export type Read<T> = ({ ok: true } & T) | { ok: false };
 
@@ -39,6 +41,7 @@ export async function readTape(): Promise<Read<{ latest: SeriesLatestRow[]; seri
     ]);
     return { ok: true, latest, series };
   } catch (error) {
+    cacheLife("failedRead");
     return failed("tape", error);
   }
 }
@@ -61,6 +64,7 @@ export async function readNextMeetings(): Promise<Read<{ meetings: NextMeetingRo
     );
     return { ok: true, meetings };
   } catch (error) {
+    cacheLife("failedRead");
     return failed("next meetings", error);
   }
 }
@@ -83,6 +87,27 @@ export async function readFreshness(): Promise<Read<{ tasks: TaskFreshnessRow[];
     // When the rows were read: the checked time's year is worked out against it (Design 01 §3).
     return { ok: true, tasks, readAt: new Date().toISOString() };
   } catch (error) {
+    cacheLife("failedRead");
     return failed("freshness", error);
+  }
+}
+
+/**
+ * Whether the guided tour is published (#91): `site.guided_tour` in api.field_policy with status shown or labelled. No
+ * row, a failed read or no key all mean hidden (fails closed). Hidden is the answer, never an error, so the shell
+ * shows nothing for it.
+ */
+export async function readTourShown(): Promise<boolean> {
+  "use cache";
+  cacheLife("minutesNoExpire");
+  cacheTag("shell", "field-policy");
+  const db = publicClient();
+  if (!db) return false;
+  try {
+    return tourShown(await readFieldPolicy(db));
+  } catch (error) {
+    cacheLife("failedRead");
+    failed("tour field policy", error);
+    return false;
   }
 }

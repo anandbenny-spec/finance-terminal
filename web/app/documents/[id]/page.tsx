@@ -5,7 +5,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { StateNote } from "@/components/data/StateNote";
+import { PageLoading } from "@/components/data/PageLoading";
 import { DocumentPage } from "@/components/policy/DocumentPage";
 import { documentTitle, parseDocumentId, parseSpan } from "@/lib/policy/document";
 import { readDocumentPage } from "@/lib/queries/document";
@@ -29,7 +29,7 @@ async function Document({ params, searchParams }: Props) {
 
 export default function Page(props: Props) {
   return (
-    <Suspense fallback={<StateNote kind="empty">Loading the document…</StateNote>}>
+    <Suspense fallback={<PageLoading>Loading the document…</PageLoading>}>
       <Document {...props} />
     </Suspense>
   );

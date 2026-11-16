@@ -9,7 +9,7 @@ import { AIBlock } from "@/components/ai/AIBlock";
 import { Cited } from "@/components/ai/CitationChip";
 import { DecisionLine } from "@/components/ai/DecisionLine";
 import { Gated, type FieldPolicies } from "@/components/data/Gated";
-import { Panel } from "@/components/data/Panel";
+import { Panel, type PanelSpan } from "@/components/data/Panel";
 import { StateNote } from "@/components/data/StateNote";
 import { PendingVote } from "@/components/policy/PendingVote";
 import { FEEDS } from "@/lib/feeds";
@@ -34,12 +34,15 @@ export function PolicyCard({
   policies,
   now,
   footer,
+  span = 6,
 }: {
   bank: Bank;
   latest: LatestDecision | null;
   policies: FieldPolicies | null;
   now: string;
   footer: ReactNode;
+  /** The card's width on the 12-column grid: 6 beside the other bank's card (/policy), 8 on Policy Day. */
+  span?: PanelSpan;
 }) {
   const fed = bank === "Fed";
   const m = latest?.meeting ?? null;
@@ -50,7 +53,7 @@ export function PolicyCard({
       qualifier={date ? <span className="text-meta text-ink-3">{formatDate(date)}</span> : undefined}
       subtitle={fed ? "What did the Fed just decide, and why?" : "What did the RBI just decide, and why?"}
       market={fed ? "US" : "IN"}
-      span={6}
+      span={span}
       footer={footer}
       refresh={fed ? FEEDS.policyLatestFed : FEEDS.policyLatestRbi}
     >
@@ -99,10 +102,10 @@ export function PolicyCard({
         )}
       </div>
       <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-data">
-        <Link href={meetingHref(bank, m.decision_date)} className="text-ink-1 underline">
+        <Link prefetch={false} href={meetingHref(bank, m.decision_date)} className="text-ink-1 underline">
           {fed ? "FOMC meeting" : `MPC meeting${m.meeting_no ? ` no. ${m.meeting_no}` : ""}`}, {formatDate(m.decision_date)}
         </Link>
-        <Link href={meetingTabHref(bank, m.decision_date, "changes")} className="text-ink-1 underline">
+        <Link prefetch={false} href={meetingTabHref(bank, m.decision_date, "changes")} className="text-ink-1 underline">
           What changed
         </Link>
         {officialUrl && (

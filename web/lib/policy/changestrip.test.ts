@@ -61,8 +61,8 @@ describe("buildChangeStrips", () => {
   });
 
   it("links each bar to its meeting's What changed tab", () => {
-    expect(fed.bars[0].href).toBe("/policy/fed/2026-01-28?tab=changes");
-    expect(rbi.bars[1].href).toBe("/policy/rbi/2026-04-08?tab=changes");
+    expect(fed.bars[0].href).toBe("/policy/fed/2026-01-28/changes");
+    expect(rbi.bars[1].href).toBe("/policy/rbi/2026-04-08/changes");
   });
 
   it("counts a meeting with no stored comparison instead of drawing a zero", () => {

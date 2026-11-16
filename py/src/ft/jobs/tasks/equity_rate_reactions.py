@@ -156,7 +156,7 @@ class EquityRateReactions(Task):
         nse = tx.execute("select id from core.source where key = 'nse'").fetchone()[0]
         companies = tx.execute(
             """select c.entity_id, e.slug from equity.company c join core.entity e on e.id = c.entity_id
-                where e.slug like %s order by e.slug""", (self.slug_prefix + "%",)).fetchall()
+                where e.slug like %s and e.market = 'IN' order by e.slug""", (self.slug_prefix + "%",)).fetchall()
         wanted: dict[tuple, tuple[Reaction, int]] = {}
         if events:
             lo = min(e.anchor.starts_at for e in events).date() - timedelta(days=SEARCH_DAYS + 3)

@@ -30,6 +30,11 @@ const html = (policies: FieldPolicyRow[], data = rows) =>
   );
 
 describe("ScreenerView", () => {
+  it("carries the guided tour's target on the table panel (#91)", () => {
+    expect(html(SHOWN)).toContain('data-tour="screener-table"');
+    expect(html([], [])).toContain('data-tour="screener-table"'); // and with no rows
+  });
+
   it("orders the index buttons numerically: 50, 100, 200", () => {
     const members = ["nifty-200", "nifty-100", "nifty-50"].map((slug) => ({ index_slug: slug, index_name: `Nifty ${slug.slice(6)}` }) as IndexMemberRow);
     const idx = indexesOf(members);
@@ -47,6 +52,9 @@ describe("ScreenerView", () => {
     expect(out).toContain("−4.1%");
     expect(out).toContain("down 4.1 percent");
     expect(out).toContain('href="/companies/tcs"');
+  });
+  it("underlines each company name as a link, with its target unchanged (R05-7)", () => {
+    expect(html([])).toMatch(/<a[^>]*class="[^"]*\bunderline\b[^"]*"[^>]*href="\/companies\/tcs"|<a[^>]*href="\/companies\/tcs"[^>]*class="[^"]*\bunderline\b/);
   });
   it("reads an empty cell as Held with its reason, N/A with its reason, or a dash with a label, never blank", () => {
     const out = html([]);

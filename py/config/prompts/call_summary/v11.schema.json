@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "bullets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "list": {"type": "string", "enum": ["management", "analysts", "unknown"], "description": "The list the bullet belongs to"},
+          "text": {"type": "string", "description": "The bullet: one sentence of your own words. It never copies a sentence or part of a sentence from the transcript; a short qualifier of the speaker's (about six words at most) may be kept exactly, only where it is inside this bullet's own quote"},
+          "quotes": {"type": "array", "items": {"type": "string", "description": "A passage of one turn that states the bullet's point, copied exactly from the transcript"}, "description": "A management or unknown bullet: exactly one passage (one sentence, or two that follow each other, from one turn). An analysts bullet: one to three passages (the question and, if it directly follows, management's answer)"}
+        },
+        "required": ["list", "text", "quotes"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["bullets"],
+  "additionalProperties": false
+}

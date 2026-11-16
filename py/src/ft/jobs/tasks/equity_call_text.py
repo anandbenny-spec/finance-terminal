@@ -235,6 +235,7 @@ class EquityCallText(Task):
                      from equity.earnings_call ec
                      join core.event ev on ev.id = ec.event_id
                      left join core.document d on d.id = ec.transcript_document_id
+                    where ec.entity_id in (select id from core.entity where market = 'IN')
                     order by ev.slug""").fetchall():
             if reason is not None:
                 out.held.append(f"{slug} ({reason})")                 # held: not analysed, not published
@@ -272,7 +273,9 @@ class EquityCallText(Task):
             try:
                 call.analysis = turns.analyse(ct.extracted, ct.labels)
                 call.text = ct.extracted.text
-                call.chunks = chunk_text(ct.extracted, speakers="call", marks=call.analysis.marks)
+                # the text with its blocks cut where a turn opens inside a paragraph (#542): the same text, `ct.extracted`'s
+                # own blocks for a call without an inline label
+                call.chunks = chunk_text(call.analysis.doc, speakers="call", marks=call.analysis.marks)
             except ValueError as e:
                 call.problem = "turns" if "turn" in str(e) else "chunks"
                 continue

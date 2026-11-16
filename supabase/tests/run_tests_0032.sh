@@ -132,7 +132,9 @@ check "G02 the scored outcome loads $OUT_OUT" "$(as_pg "select count(*) from equ
 SUM=ai.call_summary
 FIG=ai.guidance_extraction
 OUTC=equity.guidance_outcome
-SHOWN="$(POL $SUM shown); $(POL $FIG labelled); $(POL $OUTC labelled)"
+# 0048 (#532): the hit rates also wait for equity.guidance_hit_rate, so "gates shown" flips that key too (setup only; no assertion
+# changed; the old definitions in 0032_old_views.sql ignore the key).
+SHOWN="$(POL $SUM shown); $(POL $FIG labelled); $(POL $OUTC labelled); $(POL equity.guidance_hit_rate labelled)"
 HID="$(POL $SUM hidden); $(POL $FIG hidden); $(POL $OUTC hidden)"
 SUMONLY="$(POL $SUM labelled); $(POL $FIG hidden); $(POL $OUTC hidden)"
 FIGONLY="$(POL $SUM hidden); $(POL $FIG labelled); $(POL $OUTC hidden)"

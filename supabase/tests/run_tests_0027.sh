@@ -112,7 +112,9 @@ check "G02 the test rows load (guidance, outcomes, calls, an unpublished call)" 
   "$SETUP_OUT" '^(BEGIN|CREATE TABLE|INSERT 0 [0-9]+|UPDATE [0-9]+|DO|COMMIT|[[:space:]])*$'
 
 CG="select count(*) from api.call_guidance where company_slug like 'ec27-%'"
-BOTH="$(POL ai.guidance_extraction labelled); $(POL equity.guidance_outcome labelled)"
+# 0048 (#532): the hit rates and the columns that need a complete list of targets also wait for equity.guidance_hit_rate, so
+# "both released" now flips that key too. A setup change only: no assertion here changed (the precedent of Spec 02B.1 C4 test 5).
+BOTH="$(POL ai.guidance_extraction labelled); $(POL equity.guidance_outcome labelled); $(POL equity.guidance_hit_rate labelled)"
 
 ############################################################ the table
 check "T01 RLS is on for equity.guidance_outcome, with job_writer_all and read_published" \

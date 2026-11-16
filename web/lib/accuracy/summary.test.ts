@@ -64,6 +64,11 @@ describe("dataTo", () => {
     expect(dataTo([row("policy", "30d", "loads", 1), { ...row("policy", "all", "loads", 1), as_of: "2026-10-31T01:00:00+00:00" }])).toBe("2026-10-31");
     expect(dataTo([])).toBeNull();
   });
+  it("dates the instant in IST: 18:30 UTC is already the next day, 18:29 UTC is not", () => {
+    const at = (as_of: string) => dataTo([{ ...row("policy", "30d", "loads", 1), as_of }]);
+    expect(at("2026-11-11T18:30:00+00:00")).toBe("2026-11-12");
+    expect(at("2026-11-11T18:29:00+00:00")).toBe("2026-11-11");
+  });
 });
 
 describe("evalRunLines", () => {
@@ -75,6 +80,16 @@ describe("evalRunLines", () => {
     expect(evalRunLines(evals, formatTableDate)).toEqual([
       { key: "retrieval|m|recall_at_8", evalSet: "Retrieval", metric: "Recall at 8", value: "0.91", items: "40", date: "25 Oct 2026" },
       { key: "policy_stance|m|accuracy", evalSet: "Policy stance", metric: "Accuracy", value: "0.93", items: "60", date: "20 Oct 2026" },
+    ]);
+  });
+  it("dates a run in IST, keeping the newest-first order", () => {
+    const runs: EvalSummaryRow[] = [
+      { ...evals[0], run_at: "2026-11-11T18:29:00+00:00" },
+      { ...evals[1], run_at: "2026-11-11T18:30:00+00:00" },
+    ];
+    expect(evalRunLines(runs, (d) => d).map((l) => [l.evalSet, l.date])).toEqual([
+      ["Retrieval", "2026-11-12"],
+      ["Policy stance", "2026-11-11"],
     ]);
   });
 });

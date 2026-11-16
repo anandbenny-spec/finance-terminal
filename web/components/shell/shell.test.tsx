@@ -157,21 +157,32 @@ describe("Sidebar (#147)", () => {
     expect(text(out)).toContain("About and privacy");
   });
 
-  it("nests Fed vs RBI's five section links in a list inside its item, 28 px rows with no icon", () => {
+  it("nests Fed vs RBI's eight section links in a list inside its item, 28 px rows with no icon", () => {
     const nested = /Fed vs RBI<\/span><\/a><ul[^>]*>([\s\S]*?)<\/ul><\/li>/.exec(out);
     expect(nested).not.toBeNull();
     const links = [...nested![1].matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[1], m[2]]);
     expect(links).toEqual([
       ["/policy#where-rates-stand", "Where rates stand"],
       ["/policy#latest-decisions", "Latest decisions"],
+      ["/policy#statement-changes", "Statement changes"],
+      ["/policy#votes-over-time", "Votes over time"],
+      ["/policy#language-timeline", "Wording over time"],
       ["/policy#history", "History"],
       ["/policy/fed/latest?tab=changes", "FOMC: what changed"],
       ["/policy/rbi/latest?tab=changes", "MPC: what changed"],
     ]);
     expect(nested![1]).not.toContain("<svg");
-    expect(nested![1].match(/ h-7 /g)).toHaveLength(5);
-    expect(nested![1].match(/ pl-9\.5 /g)).toHaveLength(5); // the item's border, padding, icon and gap: labels line up
+    expect(nested![1].match(/ h-7 /g)).toHaveLength(8);
+    expect(nested![1].match(/ pl-9\.5 /g)).toHaveLength(8); // the item's border, padding, icon and gap: labels line up
     expect(nested![1]).not.toContain("aria-current");
+  });
+
+  it("nests Screener's link to the sector rate-decision page the same way (#575)", () => {
+    const nested = /Screener<\/span><\/a><ul[^>]*>([\s\S]*?)<\/ul><\/li>/.exec(out);
+    expect(nested).not.toBeNull();
+    const links = [...nested![1].matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[1], m[2]]);
+    expect(links).toEqual([["/screener/rate-decisions", "Sectors on decision days"]]);
+    expect(nested![1]).not.toContain("<svg");
   });
 
   it("marks only the top-level item current, never a section link", () => {

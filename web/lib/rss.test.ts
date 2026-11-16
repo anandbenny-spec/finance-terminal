@@ -45,7 +45,7 @@ describe("feedItems", () => {
 
   it("links to the meeting's What changed tab, absolute", () => {
     const [item] = feedItems([meeting({})], [], ORIGIN);
-    expect(item.link).toBe("https://finance-terminal.example/policy/fed/2026-09-17?tab=changes");
+    expect(item.link).toBe("https://finance-terminal.example/policy/fed/2026-09-17/changes");
   });
 
   it("describes the Fed vote with its dissenters, and no more", () => {

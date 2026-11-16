@@ -13,6 +13,7 @@ import { Gated } from "@/components/data/Gated";
 import { PageHeader } from "@/components/data/PageHeader";
 import { Panel } from "@/components/data/Panel";
 import { SourceLine } from "@/components/data/SourceLine";
+import { PageLoading } from "@/components/data/PageLoading";
 import { StateNote } from "@/components/data/StateNote";
 import { Foot } from "@/components/policy/PanelFoot";
 import { NOT_A_FORECAST, RATE_GATE, WINDOWS, rateSources, statRows, windowOf, type WindowKey } from "@/lib/equity/rate";
@@ -39,7 +40,7 @@ function WindowToggle({ window }: { window: WindowKey }) {
       <span>Move over</span>
       <div role="group" className="flex overflow-hidden rounded-md border border-line">
         {WINDOWS.map((w) => (
-          <Link
+          <Link prefetch={false}
             key={w.id}
             href={sectorHref(w.id)}
             aria-current={w.id === window ? "page" : undefined}
@@ -125,7 +126,7 @@ async function Sectors({ searchParams }: { searchParams: Promise<{ window?: stri
 
 export default function Page(props: PageProps<"/screener/rate-decisions">) {
   return (
-    <Suspense fallback={<StateNote kind="empty">Loading the peer groups…</StateNote>}>
+    <Suspense fallback={<PageLoading>Loading the peer groups…</PageLoading>}>
       <Sectors searchParams={props.searchParams} />
     </Suspense>
   );

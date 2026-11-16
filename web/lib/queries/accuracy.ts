@@ -48,6 +48,7 @@ export async function readQualitySummary(): Promise<Read<{ rows: QualitySummaryR
   try {
     return { ok: true, rows: await loadQualitySummary(db) };
   } catch (error) {
+    cacheLife("failedRead");
     return failed("quality summary", error);
   }
 }
@@ -61,6 +62,7 @@ export async function readEvalSummary(): Promise<Read<{ rows: EvalSummaryRow[] }
   try {
     return { ok: true, rows: await loadEvalSummary(db) };
   } catch (error) {
+    cacheLife("failedRead");
     return failed("eval summary", error);
   }
 }

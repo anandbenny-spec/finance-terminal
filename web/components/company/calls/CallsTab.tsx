@@ -6,7 +6,11 @@
 // page: tests/banned-words.ts. The pages are India only, so no market edge. Server-rendered; the tables are client components.
 import type { ReactNode } from "react";
 import { AIBlock } from "@/components/ai/AIBlock";
+import { KeyChanges } from "@/components/ai/KeyChanges";
 import { CallsTable, FiguresTable, GuidanceTable } from "@/components/company/calls/CallTables";
+import { ResultsMoveTable } from "@/components/company/calls/ResultsMoveTable";
+import { RemarksStrip } from "@/components/company/calls/RemarksStrip";
+import { TonePanel } from "@/components/company/calls/TonePanel";
 import { TabError } from "@/components/company/TabError";
 import { Gated, fieldPolicy } from "@/components/data/Gated";
 import { Panel } from "@/components/data/Panel";
@@ -30,10 +34,24 @@ import {
   partialLine,
   summaryLists,
 } from "@/lib/equity/calls";
-import { GUIDANCE_HELD, guidanceGroups, hitRate, unattributedLine } from "@/lib/equity/guidance";
+import {
+  NO_RESULTS_LINK,
+  RESULTS_FIELD,
+  RESULTS_NOT_A_FORECAST,
+  RESULTS_TASKS,
+  leftOutLine,
+  moveLines,
+  latestCloseShown,
+  releaseNote,
+  resultsSources,
+  rowsOfCall,
+} from "@/lib/equity/resultsMoves";
+import { companyHref } from "@/lib/equity/company";
+import { REMARKS_FIELD, REMARKS_HELD, newSpeakerNote, remarksBars, remarksKeyChanges, remarksSource, similarityText, wordsChangedText } from "@/lib/equity/remarks";
+import { GUIDANCE_HELD, GUIDANCE_INCOMPLETE, HIT_RATE_FIELD, HIT_RATE_HELD, guidanceGroups, hitRate, unattributedLine } from "@/lib/equity/guidance";
 import { PREVIEW_FEEDS } from "@/lib/feeds";
 import { dateInZone, formatDate } from "@/lib/format";
-import type { EarningsCallRow, TaskFreshnessRow } from "@/lib/queries/api";
+import type { EarningsCallRow, RemarksChangeRow, TaskFreshnessRow } from "@/lib/queries/api";
 import type { CompanyPageData } from "@/lib/queries/company";
 
 type Ok = Extract<CompanyPageData, { ok: true }>;
@@ -83,7 +101,11 @@ function Summary({ data, call, now }: { data: NonNullable<Ok["calls"]>; call: Ea
 
 const GUIDANCE_OUTCOME_FIELD = "equity.guidance_outcome";
 
-/** Company › Guidance record (2B-19b, #267; Spec 02B §8): did the company deliver the measurable targets management gave? Words, never colour. */
+/**
+ * Company › Guidance record (2B-19b, #267; Spec 02B §8): did the company deliver the measurable targets management gave? Words, never
+ * colour. Outcomes show once equity.guidance_outcome does; the hit rate and the columns that need a call's list of targets to be
+ * complete (first stated, the latest statement's revision, in the rate) wait for equity.guidance_hit_rate (#532, migration 0048).
+ */
 function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<Ok["calls"]>; name: string; companyName: string; foot: ReactNode }) {
   const g = data.guidance;
   const open = (f: string) => {
@@ -91,6 +113,7 @@ function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<O
     return p !== null && p.status !== "hidden";
   };
   const released = g !== null && open(FIGURES_FIELD) && open(GUIDANCE_OUTCOME_FIELD);
+  const rateOpen = released && open(HIT_RATE_FIELD);
   const outcomePolicy = fieldPolicy(data.policies, GUIDANCE_OUTCOME_FIELD);
   // g is null when the record's own reads failed (#328): the panel says so and the rest of the tab renders.
   const groups = g ? guidanceGroups(g.rows, g.citations, g.pages) : { scored: [], other: [] };
@@ -100,7 +123,7 @@ function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<O
     <Panel
       title="Guidance record"
       titleId="panel-guidance-record"
-      subtitle={`When ${name}'s management gave measurable targets, did the company deliver them?`}
+      subtitle={`When ${name}'s management gave measurable targets, did the company deliver them?${released ? ` ${GUIDANCE_INCOMPLETE}` : ""}`}
       qualifier={released ? <Qualifier>{outcomePolicy?.status === "labelled" && outcomePolicy.label ? `${AI_EXTRACTED}, ${outcomePolicy.label}` : AI_EXTRACTED}</Qualifier> : undefined}
       variant="flush"
       footer={foot}
@@ -112,17 +135,114 @@ function GuidanceRecord({ data, name, companyName, foot }: { data: NonNullable<O
       ) : (
         <>
           <div className="p-3">
-            {rate.kind === "rate" ? (
+            {!rateOpen ? (
+              <StateNote kind="held">{HIT_RATE_HELD}</StateNote>
+            ) : rate.kind === "rate" ? (
               <Stat label="Delivered of scored targets" value={rate.value} context={rate.context} asOf={rate.asOf} />
             ) : (
               <StateNote kind="empty">{rate.note}</StateNote>
             )}
             {line && <p className="mt-3 text-data text-ink-2">{line}</p>}
           </div>
-          {groups.scored.length > 0 && <GuidanceTable rows={groups.scored} caption={`${companyName}: guidance targets scored as delivered or missed`} />}
-          {groups.other.length > 0 && <GuidanceTable rows={groups.other} caption={`${companyName}: guidance targets pending or not scored`} />}
+          {groups.scored.length > 0 && <GuidanceTable rows={groups.scored} caption={`${companyName}: guidance targets scored as delivered or missed`} withRate={rateOpen} />}
+          {groups.other.length > 0 && <GuidanceTable rows={groups.other} caption={`${companyName}: guidance targets pending or not scored`} withRate={rateOpen} />}
           {groups.scored.length === 0 && groups.other.length === 0 && <Note>No guidance targets are published for this company yet.</Note>}
         </>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * Company › Results and the first move (#471; Spec 02B §5.12): how the stock moved around this call's results, against the
+ * Nifty 50. Nothing at all while the field is hidden, so the tab is as it was; a failed read holds back only this panel.
+ */
+function ResultsMoves({ data, call, freshness, now }: { data: NonNullable<Ok["calls"]>; call: EarningsCallRow; freshness: TaskFreshnessRow[] | null; now: string }) {
+  const policy = fieldPolicy(data.policies, RESULTS_FIELD);
+  if (!policy || policy.status === "hidden") return null;
+  const rows = data.results.state === "ok" ? rowsOfCall(data.results.rows, call.call_slug) : [];
+  const lines = moveLines(rows);
+  const out = leftOutLine(lines);
+  return (
+    <Panel
+      title="Results and the first move"
+      titleId="panel-call-results-move"
+      subtitle={`How did the stock move after the ${call.fiscal_label} results, against the Nifty 50?`}
+      qualifier={policy.status === "labelled" && policy.label ? <Qualifier>{policy.label}</Qualifier> : undefined}
+      variant="flush"
+      footer={<Foot sources={resultsSources(rows, data.results.state === "ok" ? data.results.niftyAttribution : null)} tasks={RESULTS_TASKS} dataTo={latestCloseShown(rows)} freshness={freshness} now={now} />}
+    >
+      {data.results.state === "error" ? (
+        <Note kind="error">Couldn&apos;t load this panel. Try again.</Note>
+      ) : lines.length === 0 ? (
+        <Note>{NO_RESULTS_LINK}</Note>
+      ) : (
+        <>
+          <ResultsMoveTable lines={lines} caption={`${call.fiscal_label}: the stock's move after the results, against the Nifty 50`} />
+          <div className="flex flex-col gap-1 border-t border-line px-3 py-2 text-meta text-ink-2">
+            <p>{releaseNote(rows)}</p>
+            {out && <p>{out}</p>}
+            <p>{RESULTS_NOT_A_FORECAST}. Price moves exclude dividends; the excess is the company&apos;s move minus the Nifty 50&apos;s over the same closes.</p>
+          </div>
+        </>
+      )}
+    </Panel>
+  );
+}
+
+/** Call › Opening remarks (2B-19d, #388; Spec 02B §5.13, §8): how much of management's opening wording changed against the previous quarter's. Derived, not AI; words, never colour. */
+function OpeningRemarks({
+  data,
+  call,
+  companySlug,
+  name,
+  foot,
+}: {
+  data: NonNullable<Ok["calls"]>;
+  call: EarningsCallRow;
+  companySlug: string;
+  name: string;
+  foot: ReactNode;
+}) {
+  const policy = fieldPolicy(data.policies, REMARKS_FIELD);
+  const released = policy !== null && policy.status !== "hidden";
+  const row: RemarksChangeRow | null = data.remarks?.find((r) => r.call_slug === call.call_slug) ?? null;
+  const speakers = row ? newSpeakerNote(row) : null;
+  const strip = data.remarks ? remarksBars(data.remarks, (slug) => companyHref(companySlug, "calls", slug)) : null;
+  return (
+    <Panel
+      title="Opening remarks"
+      titleId="panel-call-remarks"
+      subtitle={`How much did the wording of ${name}'s opening remarks change from the previous quarter's call?`}
+      qualifier={released && policy?.status === "labelled" && policy.label ? <Qualifier>{policy.label}</Qualifier> : undefined}
+      footer={foot}
+    >
+      {!released ? (
+        <StateNote kind="held">{REMARKS_HELD}</StateNote>
+      ) : !data.remarks ? (
+        <StateNote kind="error">Couldn&apos;t load this panel. Try again.</StateNote>
+      ) : !row ? (
+        <StateNote kind="empty">No comparison with an earlier call&apos;s opening remarks is published for this call.</StateNote>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <Stat
+            label="Wording unchanged"
+            value={similarityText(row)}
+            context={`${wordsChangedText(row)}, against the ${row.base_fiscal_label} opening remarks`}
+            asOf="Numbers in the text are masked before comparing."
+          />
+          {speakers && <p className="text-data text-ink-1">{speakers}</p>}
+          {strip && <RemarksStrip bars={strip.bars} withoutBar={strip.withoutBar} total={strip.total} companyName={name} />}
+          <KeyChanges
+            model={remarksKeyChanges(row.pairs, {
+              now: remarksSource(call, row.fiscal_label),
+              before: remarksSource(data.calls.find((c) => c.call_slug === row.base_call_slug), row.base_fiscal_label),
+            })}
+            before={{ href: companyHref(companySlug, "calls", row.base_call_slug), date: row.base_fiscal_label }}
+            now={{ href: companyHref(companySlug, "calls", row.call_slug), date: row.fiscal_label }}
+            limit={5}
+          />
+        </div>
       )}
     </Panel>
   );
@@ -142,7 +262,7 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
     const w = calls.latest;
     return (
       <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-12">
-        <Panel title="Earnings calls" titleId="panel-calls" subtitle="Which earnings calls are published for this company?" footer={foot(null)}>
+        <Panel title="Earnings calls" titleId="panel-calls" tour="company-calls" subtitle="Which earnings calls are published for this company?" footer={foot(null)}>
           <StateNote kind="empty">
             {NO_TRANSCRIPT}
             {w?.window_from && w.window_to ? ` between ${formatDate(w.window_from)} and ${formatDate(w.window_to)}` : ""}.
@@ -167,17 +287,25 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
       <FiguresTable rows={rowsOf} caption={caption} figureHeader={figureHeader} empty={empty} />
     );
   const name = company.short_name ?? company.name;
+  const remarksReleased = (fieldPolicy(calls.policies, REMARKS_FIELD)?.status ?? "hidden") !== "hidden";
 
   return (
     <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-12">
       <Panel
         title="Earnings calls"
         titleId="panel-calls"
+        tour="company-calls"
         subtitle={`Which of ${name}'s earnings calls are published, and what is each one's status?`}
         variant="flush"
         footer={foot(rows[0] ?? null)}
       >
-        <CallsTable rows={rows} companySlug={company.slug} selected={call.call_slug} caption={`${company.name}: published earnings calls, newest first`} />
+        <CallsTable
+          rows={rows}
+          companySlug={company.slug}
+          selected={call.call_slug}
+          caption={`${company.name}: published earnings calls, newest first`}
+          remarks={remarksReleased && calls.remarks ? new Map(calls.remarks.map((r) => [r.call_slug, r])) : undefined}
+        />
       </Panel>
 
       <Panel
@@ -192,6 +320,10 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
 
       {stored && (
         <>
+          <TonePanel tone={calls.tone} policies={calls.policies} call={call} name={name} companyName={company.name} now={now} foot={foot(call)} />
+
+          <OpeningRemarks data={calls} call={call} companySlug={company.slug} name={name} foot={foot(call)} />
+
           <Panel
             title="Guidance given on this call"
             titleId="panel-call-guidance"
@@ -250,6 +382,8 @@ export function CallsTab({ data, freshness }: { data: Ok; freshness: TaskFreshne
           )}
         </>
       )}
+
+      <ResultsMoves data={calls} call={call} freshness={freshness} now={now} />
 
       <GuidanceRecord data={calls} name={name} companyName={company.name} foot={foot(call)} />
     </div>

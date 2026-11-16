@@ -25,7 +25,22 @@ export type TaskKey =
   | "equity.call_transcripts"
   | "equity.call_text"
   | "equity.calls_ai"
-  | "site.quality_summary";
+  | "equity.results_reactions"
+  | "equity.segment_changes"
+  | "equity.kpi_tables"
+  | "equity.brsr"
+  | "equity.related_parties"
+  | "site.quality_summary"
+  // The US slice (lane U; Spec 02A.1 §5): its own tasks, never shared with India's.
+  | "us.universe"
+  | "us.prices"
+  | "us.corporate_actions"
+  | "us.filings"
+  | "us.valuation_inputs"
+  | "us.metrics"
+  | "us.beta"
+  | "us.valuation"
+  | "us.snapshot";
 
 /** Live surfaces and their feeding tasks. */
 export const FEEDS = {
@@ -61,6 +76,10 @@ export const FEEDS = {
   valuation: ["equity.valuation_inputs", "equity.valuation", "equity.prices", "equity.statements", "equity.metrics", "equity.beta"],
   // The Rate decisions tab and the sector view (2A-25): decision-day moves and rate cycles, from the stored reactions.
   rateSensitivity: ["equity.rate_reactions", "policy.rate_cycles"],
+  // The Overview tab's "Value chain" panel and the /companies/[slug]/value-chain sub-page (VC-06, #191): the BRSR values, products and
+  // group companies, and the related-party and segment rows read from the stored results filings. Moved in from PREVIEW_FEEDS on
+  // 12 Nov 2026, once production's runs of both tasks had left a freshness row; the panels stay behind their four field policies.
+  valueChain: ["equity.brsr", "equity.related_parties"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 
 export type Surface = keyof typeof FEEDS;
@@ -96,6 +115,19 @@ export function liveTasks(feeds: Record<string, readonly TaskKey[]> = FEEDS): Ta
 export const PREVIEW_FEEDS = {
   // The company page's Earnings calls tab (2B-19): transcripts found, their text and turns, and the AI summary and figures.
   calls: ["equity.call_transcripts", "equity.call_text", "equity.calls_ai"],
+  // The Financials tab's "Segment changes" panel (DD-02, #410), hidden behind equity.segment_changes until DD-03's judge passes it
+  // and Anand flips it; it moves into FEEDS once production's run of equity.segment_changes has left a freshness row.
+  segmentChanges: ["equity.segment_changes"],
+  // The Financials tab's KPI-table pilot panel (DD-06, #514), for the 7 pilot companies only, hidden behind equity.kpi_changes until
+  // DD-07's judge confirms its flags and Anand flips it; it moves into FEEDS once production's run has left a freshness row (the
+  // task is hand-run only, so it may stay a preview: a task with no schedule would read as stale in the status bar).
+  kpiChanges: ["equity.kpi_tables"],
+  // The US slice's pages (US-06, #405; Spec 02A.1 §7): the screener's US view and the US company page, unpublished until Anand's
+  // flip after US-08's judge passes; each moves into FEEDS once production's runs (US-07) have left a freshness row for its tasks.
+  usScreener: ["us.universe", "us.prices", "us.filings", "us.metrics", "us.beta"],
+  usScreenerImplied: ["us.universe", "us.prices", "us.filings", "us.metrics", "us.beta", "us.valuation", "us.snapshot"],
+  usCompany: ["us.universe", "us.prices", "us.filings", "us.metrics", "us.beta"],
+  usValuation: ["us.valuation_inputs", "us.valuation", "us.prices", "us.filings", "us.metrics", "us.beta"],
 } as const satisfies Record<string, readonly TaskKey[]>;
 
 export type PreviewSurface = keyof typeof PREVIEW_FEEDS;

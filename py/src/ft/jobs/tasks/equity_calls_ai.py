@@ -47,10 +47,12 @@ our copy of the transcript. The stored output, its citations and its checks are 
 is v6 plus a rule that a guidance verb ("reiterated", "raised", "cut" and the like) is in a bullet only if its quote says so; v8 (the v8 round,
 8 Nov 2026) adds four rules (a speaker's hedge stays a hedge, a recalled target is not a fresh expectation, no weight word the
 speaker did not use, a cause applies only to the part it was attached to) and a check in code (`ft/ai/call_summary.py`,
-`firm_verb_problem`); **v9, the current one (#178, the v9 round, 8 Nov 2026), adds three rules (a change announced for a later date
+`firm_verb_problem`); v9 (#178, the v9 round, 8 Nov 2026) adds three rules (a change announced for a later date
 stays in the future, an exclusion stays with its figure, an extent word the speaker used stays) and a second check in code
-(`extent_word_problem`).** A call whose summary is a published v5, v6, v7 or v8 is asked for again under v9 and keeps that summary
-unless the v9 reply is published.
+(`extent_word_problem`); **v11, the current one on this branch (#178, the Opus round, 10 Nov 2026), is v9's text plus the Fable review's
+picks, written by Opus 5.5 at effort high** (one passage per claim, five word checks, prompt rules, a closing self-check, the required
+lists stated plainly: `ft/ai/call_summary.py`, `MODEL_OF`, `STRICT_FROM`). A call whose summary is a published v5 to v9 (or a v10 of
+the Sonnet round, on dev) is asked for again under v11 and keeps that summary unless the v11 reply is published.
 
 **Copied text (2B-11c, #301).** A summary bullet may not carry the transcript's own words: `ft/ai/call_summary.py`'s rule cuts a
 copied end off a new reply's bullet before anything is stored, and fails a bullet that copies anywhere else (the usual retry
@@ -66,6 +68,44 @@ variable `CALLS_AI_TASK` (the backfill workflow's `calls_ai_task` input) is `bot
 `call_summary` or `guidance_extraction`. The limit applies to what a run *asks for* (and to the summaries' re-check, which an
 extraction-only run skips); the open batches of an earlier run are still read for both tasks. `--task` was taken by the runner's
 task key, so the option has its own name.
+
+**The extraction's re-run (#511, 2B-15d; the #445 pattern, decided by Claude under the standing delegation of 24 Oct 2026; #533,
+2B-15f, 14 Nov 2026: the re-run's version is v6, whose replies are checked with `ge.V6_RULES`' rules, and v1's as before).**
+`PROMPT_VERSION` keeps `guidance_extraction` at v1 for every scheduled run, so production's weekly asks for nothing new. A
+backfill limited to the extraction (`CALLS_AI_TASK=guidance_extraction`) with `CALLS_AI_GUIDANCE_RERUN` (the backfill workflow's
+`guidance_rerun` input) set to `all` sends `GUIDANCE_RERUN_VERSION` for each call whose published extraction was made with
+another version, and for nothing else: no call without a published extraction, no summary, no tone. `price` does the same
+choice and builds the same requests, then sends nothing and needs no key: the `guidance_rerun` check reports the requests,
+their estimated input tokens and the worst case (the run estimate's rule: one retry each at the batch price). A re-run reply
+supersedes the published output only when it passes every check in code and holds at least one item, as any extraction does
+(`_store_guidance`); a reply that finds nothing stays a `no_targets` draft and a rejected one stays rejected, and in both cases
+the old output stays published. The old output and its rows stay, superseded (`CLAUDE.md` §3). A call still published at an
+earlier round's version (`GUIDANCE_RERUN_EARLIER`: v5 on dev) is taken by the re-run and left alone by every other run. Only the projects in
+`GUIDANCE_RERUN_TARGETS` take it: dev, until #533 part 3 adds production with Anand's dated OK. A published or `no_targets`
+output of `GUIDANCE_RERUN_VERSION` counts as done for a later run of either version, so neither re-asks it. A batch still open
+when the poll ends is collected by a run with the same input (another run would store it as stale).
+
+**The re-run of the calls whose turns changed (#554, 2B-09c; #542's step 8).** A call is asked for again only when it lacks a
+published output of the current prompt version, so a change to a call's turns or roles (#542, PR #551: an inline generic label
+opens a turn) reaches no output already published on it. A backfill limited to one task (`CALLS_AI_TASK`: `call_summary`,
+`guidance_extraction` or `call_tone`) with `CALLS_AI_TURNS_RERUN` (the backfill workflow's `turns_rerun` input) set to `all` asks
+again, at the task's current prompt version, for each call whose published output of that version was made from another input
+than the one the call gives now: the request built from the call as it is now (and its retry, where the stored first attempt was
+retried with a note: `_next_step`) has another `input_sha256` than the output's (`_turns_choice`). Every request reads the turns
+(the extraction's and the structured summary's marker lines, the citations route's roster, the tone's management passages), so a
+call whose turns didn't change builds the same request and is never chosen. A call with no published output of the version is
+looked at through its final outputs of that version, a `no_targets` draft or a rejection, and is chosen when none of them was made
+from an input the call gives now (Anand, 15 Nov 2026, about 19:10 IST: the three extractions that found nothing and NTPC's newest
+call's summary, rejected twice, on the calls #542 changed); a reply that passes then publishes, superseding an older version's
+output if the call shows one. Counted and never chosen: an output of another version (dev's extractions are v6, #533), an output
+with no input hash, a call that can't be asked for now (no longer eligible, no turns, a role-held call's tone). A run in which
+every output of the version looked at would be chosen is refused before
+anything is sent: that is a changed prompt file or request format, which changes every input, not turns (decided by Claude under
+the standing delegation of 24 Oct 2026; the alternative, sending them, would re-ask calls whose turns didn't change). Refused
+too, before anything is sent: any workflow but a backfill, a run not limited to one task, and a run with #511's re-run or a tone
+set. `price` makes the same choice and builds the same requests, then sends nothing and needs no key. A reply supersedes the
+published output only when it passes every check (an extraction's: and holds an item), as any reply does; otherwise the old
+output stays published, and its rows with it. Dev and production both take it (production on Anand's dated OK on its price).
 
 **Limits (§5.5).** A transcript whose request is estimated above 60,000 tokens is skipped with a warning naming it
 (`calls_too_long`); the wrapper itself refuses anything over 100,000.
@@ -94,6 +134,10 @@ Checks, B blocking, W warning:
 - (W) `calls_too_long`: transcripts skipped for their length, named;
 - (W) `ai_spend`, `ai_available`, `batches`: as `policy.ai_batch`'s;
 - (W) `call_summaries`, `call_guidance`: what the run found and did (counts; always pass).
+- (W) `guidance_rerun`: on a re-run of the extraction (#511), the outputs it chose by id, and its price or its outcomes.
+- (W) `turns_rerun`: on a re-run of the calls whose turns changed (#554), the outputs it chose (ids and event slugs; those of calls
+  with no published output of the version also apart), what it left and why, and its price or its outcomes; blocking when the run
+  was refused (every output of the version would have been chosen).
 """
 from __future__ import annotations
 
@@ -130,12 +174,21 @@ from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
 from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TARGETS
 
+# call_summary v11 runs on Opus 5.5 at effort high (ft/ai/call_summary.py, MODEL_OF), about 40 times Haiku's price
+# (config/ai_prices.yaml). Anand decided on 10 Nov 2026, 19:09 IST that the summaries ship as labelled paraphrases with their
+# quotes in view (#178), so v11 is merged to main (#370 part 2a, with his OK in the session, 11 Nov 2026). A run with no date
+# window asks for each company's newest call only (#370, `summary_scope`), and §7's $5 run estimate still holds about 10 calls a run.
 # call_tone v3 on Haiku 5.5 passed the tone gate's second round (#175; 10 Nov 2026: 25 of 30 on earnings_tone_2, no reversals), so
 # it is the tone prompt. v1 (Haiku) and v2 (v1's text on Sonnet) failed the first set; v4 and v5 (v3's text on Sonnet and Opus) were
 # never needed. A tone run is still opt-in (CALLS_AI_TASK=call_tone): no scheduled run asks for tone.
-PROMPT_VERSION = {cs.TASK: "v9", ge.TASK: "v1", ct.TASK: "v3"}
+PROMPT_VERSION = {cs.TASK: "v11", ge.TASK: "v1", ct.TASK: "v3"}
 IST = "Asia/Kolkata"
 SHOWN = 12
+GUIDANCE_RERUN_VERSION = "v6"       # #533 (2B-15f): the round's version, sent only by the re-run (module docstring); #511's was v5
+GUIDANCE_RERUN_EARLIER = ("v5",)    # earlier rounds' versions: dev still holds published v5 outputs (`_calls`, `ge_done`)
+GUIDANCE_RERUN_ENV = "CALLS_AI_GUIDANCE_RERUN"   # empty or 'none' (the default) | 'price' | 'all'
+GUIDANCE_RERUN_TARGETS = ("dev",)   # #533 part 3 adds 'production', with Anand's dated OK on its price
+TURNS_RERUN_ENV = "CALLS_AI_TURNS_RERUN"   # empty or 'none' (the default) | 'price' | 'all': the calls whose turns changed (#554)
 ONLY_ENV = "CALLS_AI_TASK"            # both (the default) | call_summary | guidance_extraction | call_tone: limits what a run asks for (#302)
 TONE_SET_ENV = "CALLS_AI_TONE_SET"    # empty (the default) | earnings_tone: a tone-only run limited to that evaluation set's calls (#175)
 _SETS_DIR = Path(__file__).resolve().parents[4] / "config" / "eval" / "sets"
@@ -161,6 +214,48 @@ def only_task(env=None) -> str | None:
     if v not in ("both", cs.TASK, ge.TASK, ct.TASK):
         raise ValueError(f"{ONLY_ENV} must be both, {cs.TASK} or {ge.TASK} (or {ct.TASK}), not {v!r}")
     return None if v == "both" else v
+
+
+def guidance_rerun(workflow: str, target: str, only: str | None, env=None) -> str | None:
+    """The extraction's re-run a run asks for (`CALLS_AI_GUIDANCE_RERUN`, #511): None for none (empty or 'none', what every
+    scheduled run has), 'price' (choose and price, send nothing) or 'all'. Given to any workflow but a backfill, to a run not
+    limited to the extraction, or on a project outside `GUIDANCE_RERUN_TARGETS`, it stops the run before anything is sent."""
+    v = ((os.environ if env is None else env).get(GUIDANCE_RERUN_ENV) or "").strip()
+    if v in ("", "none"):
+        return None
+    if v not in ("price", "all"):
+        raise ValueError(f"{GUIDANCE_RERUN_ENV} must be none, price or all, not {v!r}")
+    if workflow != "backfill":
+        raise ValueError(f"{GUIDANCE_RERUN_ENV}: the re-run of {ge.TASK} runs only in a backfill, not {workflow!r}")
+    if only != ge.TASK:
+        raise ValueError(f"{GUIDANCE_RERUN_ENV} needs {ONLY_ENV}={ge.TASK}")
+    if target not in GUIDANCE_RERUN_TARGETS:
+        raise ValueError(f"{GUIDANCE_RERUN_ENV}: the re-run to {GUIDANCE_RERUN_VERSION} runs on "
+                         f"{', '.join(GUIDANCE_RERUN_TARGETS)} only, not {target!r} (#533 part 3)")
+    return v
+
+
+def turns_rerun(workflow: str, only: str | None, env=None) -> str | None:
+    """The re-run of the calls whose turns changed (`CALLS_AI_TURNS_RERUN`, #554): None for none (empty or 'none', what every
+    scheduled run has), 'price' (choose and price, send nothing) or 'all'. Given to any workflow but a backfill, to a run not
+    limited to one task, or together with #511's re-run or a tone set, it stops the run before anything is sent. Any project
+    takes it: it sends the task's current prompt version, so no prompt changes (production's run needs Anand's dated OK)."""
+    e = os.environ if env is None else env
+    v = (e.get(TURNS_RERUN_ENV) or "").strip()
+    if v in ("", "none"):
+        return None
+    if v not in ("price", "all"):
+        raise ValueError(f"{TURNS_RERUN_ENV} must be none, price or all, not {v!r}")
+    if workflow != "backfill":
+        raise ValueError(f"{TURNS_RERUN_ENV}: the re-run of the calls whose turns changed runs only in a backfill, not {workflow!r}")
+    if only is None:
+        raise ValueError(f"{TURNS_RERUN_ENV} needs {ONLY_ENV} set to one task: {cs.TASK}, {ge.TASK} or {ct.TASK}")
+    if (e.get(GUIDANCE_RERUN_ENV) or "").strip() not in ("", "none"):
+        raise ValueError(f"{TURNS_RERUN_ENV} and {GUIDANCE_RERUN_ENV} don't run together: one asks the current version again, "
+                         f"the other {GUIDANCE_RERUN_VERSION}")
+    if (e.get(TONE_SET_ENV) or "").strip():
+        raise ValueError(f"{TURNS_RERUN_ENV} and {TONE_SET_ENV} don't run together: the re-run chooses its own calls")
+    return v
 
 
 def tone_set_documents(only: str | None, target: str, env=None) -> list[int] | None:
@@ -216,11 +311,11 @@ class Work:
 
     def check(self, req: Request, reply: Reply):
         if self.task == ge.TASK:
-            return ge.check(ge.answer_of(reply), self.call, self.metrics)
+            return ge.check(ge.answer_of(reply), self.call, self.metrics, version=req.prompt.version)
         if self.task == ct.TASK:
             return ct.check(ct.answer_of(reply), self.passages)
         if req.spec.route == "json":                      # the summary's structured route (prompts from v6)
-            return cs.check_json(cs.answer_of(reply), self.call)
+            return cs.check_json(cs.answer_of(reply), self.call, version=req.prompt.version)
         return cs.check(reply, req.sources, self.call.turns, role_held=self.call.role_held)
 
 
@@ -235,6 +330,10 @@ class Fetched(RunState):
     until: date | None = None
     only: str | None = None                                  # the one task this run asks for (None: both), #302
     summaries: str = ALL                                     # which calls it asks a summary for: NEWEST or ALL (#370)
+    rerun: str | None = None                                 # the extraction's re-run (#511): None, 'price' or 'all'
+    rerun_record: dict | None = None                         # what the re-run chose and priced (ids and counts only)
+    turns: str | None = None                                 # the re-run of the calls whose turns changed (#554): None, 'price' or 'all'
+    turns_record: dict | None = None                         # what it chose, left and priced (ids, slugs and counts only)
 
 
 @dataclass
@@ -274,6 +373,10 @@ class EquityCallsAi(BatchSteps, Task):
     def __init__(self):
         self._last: Fetched | None = None
         self._echo = EchoRun()
+        self._ge_version: str | None = None    # the extraction's version this run asks for: the re-run's, or PROMPT_VERSION's
+
+    def ge_version(self) -> str:
+        return self._ge_version or PROMPT_VERSION.get(ge.TASK, "")
 
     def due(self, db, workflow: str, now=None) -> Due:
         return equity_due(db, self.key, workflow, super().due(db, workflow, now), requires=self.requires)
@@ -299,11 +402,17 @@ class EquityCallsAi(BatchSteps, Task):
         extraction and tone targets are unchanged. Without `lacking` it changes nothing, so a late result for an older call
         (a backfill's batch collected by the next `weekly`) still finds its target."""
         where = ["ev.status = 'stored'", "ev.is_published", "ec.status_reason is null", "d.is_published",
-                 "d.chunked_at is not null", "(es.id is null or not es.is_suppressed)", "not ds.is_suppressed"]
+                 "d.chunked_at is not null", "(es.id is null or not es.is_suppressed)", "not ds.is_suppressed", "n.market = 'IN'"]
         guidance = ge.TASK in PROMPT_VERSION            # a task with no prompt version listed isn't asked for
         tone = tone and ct.TASK in PROMPT_VERSION
         newest_only = newest_only and lacking
-        args: list = [PROMPT_VERSION[cs.TASK], PROMPT_VERSION.get(ge.TASK, ""), PROMPT_VERSION.get(ct.TASK, "")]   # the lateral's placeholders come first
+        # The extraction is done for a call with a published (or `no_targets`) output of the version this run asks for, or of the
+        # re-run's version (#511: a call re-run to it is never asked again by a run of the older version). An earlier round's
+        # version counts as done too, except for the re-run itself, which is what takes such a call to the current version
+        # (#533: without this an ordinary run on dev would ask v1 again for every call still published at v5).
+        earlier = () if self._ge_version else GUIDANCE_RERUN_EARLIER
+        ge_done = sorted({self.ge_version(), GUIDANCE_RERUN_VERSION, *earlier}) if guidance else [""]
+        args: list = [PROMPT_VERSION[cs.TASK], ge_done, PROMPT_VERSION.get(ct.TASK, "")]   # the lateral's placeholders come first
         if lacking:
             summarised = "(f.has_summary or not f.is_newest)" if newest_only else "f.has_summary"   # nothing to ask on an older call
             done = f"{summarised} and f.has_extraction" if guidance else summarised
@@ -332,7 +441,7 @@ class EquityCallsAi(BatchSteps, Task):
                     select exists (select 1 from core.ai_output o where o.task = 'call_summary' and o.document_id = d.id
                                       and o.status = 'published' and o.prompt_version = %s) as has_summary,
                            exists (select 1 from core.ai_output o where o.task = 'guidance_extraction' and o.document_id = d.id
-                                      and o.prompt_version = %s
+                                      and o.prompt_version = any(%s)
                                       and (o.status = 'published' or (o.status = 'draft' and o.status_reason = 'no_targets')))
                              as has_extraction,
                            exists (select 1 from core.ai_output o where o.task = 'call_tone' and o.document_id = d.id
@@ -366,7 +475,7 @@ class EquityCallsAi(BatchSteps, Task):
                 chunks.setdefault(did, []).append(ct.Chunk(no, a, b))
         tone_schema = load_schema(ct.TASK, PROMPT_VERSION[ct.TASK]) if tone else None
         metrics = self.metrics or ge.load_metrics()
-        schema = load_schema(ge.TASK, PROMPT_VERSION[ge.TASK]) if guidance else None
+        schema = load_schema(ge.TASK, self.ge_version()) if guidance else None
         summary_schema = (load_schema(cs.TASK, PROMPT_VERSION[cs.TASK])
                           if cs.route_of(PROMPT_VERSION[cs.TASK]) == "json" else None)     # v1-v5 have none
         out = []
@@ -397,11 +506,21 @@ class EquityCallsAi(BatchSteps, Task):
         db = ctx.fetcher.db
         f = Fetched("batch", budget=batch.monthly_budget(db), month_spend=batch.month_spend(db), since=ctx.since,
                     until=ctx.until, only=only_task(), summaries=summary_scope(ctx.since, ctx.until))
+        f.turns = turns_rerun(ctx.workflow, f.only)                     # None unless a backfill asks for #554's re-run
+        f.rerun = guidance_rerun(ctx.workflow, ctx.target, f.only)     # None unless a dev backfill asks for #511's re-run
+        self._ge_version = GUIDANCE_RERUN_VERSION if f.rerun else None
         prompts = {t: load_prompt(t, v) for t, v in PROMPT_VERSION.items()}
+        if ge.TASK in prompts:                                          # a task with no prompt version listed isn't asked for
+            prompts[ge.TASK] = load_prompt(ge.TASK, self.ge_version())
         doc_ids = tone_set_documents(f.only, ctx.target)    # None unless a tone-only run on dev names an evaluation set (#175)
-        works = [w for w in self._calls(db, doc_ids=doc_ids, since=ctx.since, until=ctx.until, skipped=f.no_guidance,
-                                        tone=f.only == ct.TASK, newest_only=f.summaries == NEWEST)
-                 if (f.only is None and w.task != ct.TASK) or f.only == w.task]       # tone only when the run is limited to it
+        if f.rerun:
+            doc_ids, f.rerun_record = self._rerun_documents(db, ctx.since, ctx.until)
+        if f.turns:                                         # #554: the calls whose request changed, at the current version
+            works, f.turns_record = self._turns_choice(db, f.only, prompts, ctx.since, ctx.until)
+        else:
+            works = [w for w in self._calls(db, doc_ids=doc_ids, since=ctx.since, until=ctx.until, skipped=f.no_guidance,
+                                            tone=f.only == ct.TASK, newest_only=f.summaries == NEWEST)
+                     if (f.only is None and w.task != ct.TASK) or f.only == w.task]   # tone only when the run is limited to it
         f.wanted = sum(1 for w in works if w.task == cs.TASK)
         f.wanted_guidance = sum(1 for w in works if w.task == ge.TASK)
         for w in works:
@@ -410,10 +529,131 @@ class EquityCallsAi(BatchSteps, Task):
                 f.too_big.append((w, est))                      # §5.5: skipped with a warning naming it
             else:
                 f.targets.append(w)
+        if f.rerun == "price":                              # #511: the price of the re-run; nothing is sent, no key is read
+            f.rerun_record.update(self._rerun_price(f, prompts))
+            return f
+        if f.turns == "price":                              # #554: the same, for the calls whose turns changed
+            f.turns_record.update(self._rerun_price(f, prompts, f.only))
+            return f
         # Weekly, refresh and backfill all use the Batch API: submitted, polled for up to 15 minutes, otherwise
         # collected by the next run. The open batches of an earlier run are read first, even with nothing new to ask.
         self._batch_path(ctx, f, prompts, poll=BATCH_POLL_SECONDS)
         return f
+
+    def _rerun_documents(self, db, since: date | None, until: date | None) -> tuple[list[int], dict]:
+        """The re-run's calls (#511): those whose published extraction was made with a version other than
+        `GUIDANCE_RERUN_VERSION` (within a backfill's window, and the tests' scope), and the record of the choice: ids and
+        counts only."""
+        where = ["o.task = %s", "o.status = 'published'", "o.scope = ''"]
+        args: list = [ge.TASK]
+        if self.scope is not None:
+            where.append("ev.slug = any(%s)"); args.append(sorted(self.scope))
+        if since is not None:
+            where.append(f"(ec.filed_at at time zone '{IST}')::date >= %s"); args.append(since)
+        if until is not None:
+            where.append(f"(ec.filed_at at time zone '{IST}')::date <= %s"); args.append(until)
+        rows = db.execute(f"""select o.document_id, o.id, o.prompt_version
+                                from core.ai_output o
+                                join equity.earnings_call ec on ec.transcript_document_id = o.document_id
+                                join core.event ev on ev.id = ec.event_id
+                               where {' and '.join(where)}
+                               order by o.document_id""", args).fetchall()
+        older = [(doc_id, out_id, v) for doc_id, out_id, v in rows if v != GUIDANCE_RERUN_VERSION]
+        record = {"task": ge.TASK, "version": GUIDANCE_RERUN_VERSION, "published": len(rows), "older": len(older),
+                  "older_by_version": dict(sorted(Counter(v for *_, v in older).items())),
+                  "outputs": [out_id for _, out_id, _ in older]}
+        return [doc_id for doc_id, *_ in older], record
+
+    def _turns_choice(self, db, task: str, prompts, since: date | None, until: date | None) -> tuple[list[Work], dict]:
+        """#554's choice: the targets of `task` whose published output of the current prompt version was made from another
+        input than the one the call gives now (within a backfill's window, and the tests' scope), and the record of the choice:
+        output ids, event slugs and counts only. The input is compared through `_next_step`, which builds the first attempt and,
+        where the stored first attempt was retried with a note, the retry: an output published by the retry matches it. An
+        output with no input hash is never chosen (nothing shows its input changed).
+
+        A call with no published output of the current version is looked at through its final ones of that version (Anand,
+        15 Nov 2026, about 19:10 IST): a `no_targets` draft (an extraction that found nothing) or a rejection. It is chosen
+        when none of them was made from an input the call gives now, so a call whose turns didn't change matches its own
+        answered requests and is never chosen. If every output looked at would be chosen, none is: the record says why and the
+        `turns_rerun` check fails (module docstring)."""
+        version = PROMPT_VERSION[task]
+        final = ("(o.status = 'published' or (o.prompt_version = %s and (o.status = 'rejected' "
+                 "or (o.status = 'draft' and o.status_reason = 'no_targets'))))")
+        where = ["o.task = %s", final, "o.scope = ''"]
+        args: list = [task, version]
+        if self.scope is not None:
+            where.append("ev.slug = any(%s)"); args.append(sorted(self.scope))
+        if since is not None:
+            where.append(f"(ec.filed_at at time zone '{IST}')::date >= %s"); args.append(since)
+        if until is not None:
+            where.append(f"(ec.filed_at at time zone '{IST}')::date <= %s"); args.append(until)
+        rows = db.execute(f"""select o.document_id, o.id, o.prompt_version, o.input_sha256, ev.slug, o.status
+                                from core.ai_output o
+                                join equity.earnings_call ec on ec.transcript_document_id = o.document_id
+                                join core.event ev on ev.id = ec.event_id
+                               where {' and '.join(where)}
+                               order by o.document_id, o.id""", args).fetchall()
+        published = [r for r in rows if r[5] == "published"]
+        current = [r for r in published if r[2] == version]
+        with_current = {r[0] for r in current}
+        finals: dict[int, list] = {}                       # a call with no published output of the version: its final ones
+        for r in rows:
+            if r[5] != "published" and r[0] not in with_current:
+                finals.setdefault(r[0], []).append(r)
+        works = {w.document_id: w for w in self._calls(db, doc_ids=sorted(with_current | finals.keys()), lacking=False,
+                                                       tone=task == ct.TASK) if w.task == task}
+
+        def inputs(w: Work) -> set[bytes]:
+            return {req.input_sha256 for _, req, _ in self._next_step(db, w, prompts[task]).built}
+
+        chosen: list[tuple[Work, int]] = []
+        unchanged, no_hash, cannot, unpublished = 0, [], [], []
+        for doc_id, out_id, _, sha, slug, _ in current:
+            w = works.get(doc_id)
+            if w is None:                                  # not eligible now, no turns or fiscal-year end, a role-held tone
+                cannot.append(f"{slug} (output {out_id})")
+            elif sha is None:
+                no_hash.append(f"{slug} (output {out_id})")
+            elif bytes(sha) in inputs(w):
+                unchanged += 1
+            else:
+                chosen.append((w, out_id))
+        for doc_id, outs in finals.items():
+            out_id, slug = outs[-1][1], outs[-1][4]        # named by its latest final output
+            hashes = {bytes(r[3]) for r in outs if r[3] is not None}
+            w = works.get(doc_id)
+            if w is None:
+                cannot.append(f"{slug} (output {out_id})")
+            elif not hashes:
+                no_hash.append(f"{slug} (output {out_id})")
+            elif hashes & inputs(w):                       # one of its answered requests is the call's input now
+                unchanged += 1
+            else:
+                chosen.append((w, out_id))
+                unpublished.append(slug)
+        chosen.sort(key=lambda c: c[0].document_id)
+        record = {"task": task, "version": version, "published": len(published), "current_version": len(current),
+                  "without_published": len(finals),
+                  "other_versions": dict(sorted(Counter(r[2] for r in published if r[2] != version).items())),
+                  "unchanged": unchanged, "changed": len(chosen), "outputs": [o for _, o in chosen],
+                  "calls": [w.slug for w, _ in chosen], "calls_without_published": sorted(unpublished),
+                  "cannot_ask": cannot, "no_input_hash": no_hash, "refused": None}
+        if chosen and not unchanged:
+            record["refused"] = (f"every one of the {len(chosen)} {task} {version} outputs looked at has another "
+                                 "input: a changed prompt file or request format, not turns; nothing is sent")
+            return [], record
+        return [w for w, _ in chosen], record
+
+    def _rerun_price(self, f: Fetched, prompts, task: str = ge.TASK) -> dict:
+        """What the re-run would send, priced by the run estimate's rule (each request's worst case at the batch price, plus a
+        retry each at worst), without sending anything. `task`: the extraction for #511's re-run, the run's task for #554's."""
+        reqs = [w.request(prompts[w.task]) for w in f.targets if w.task == task]
+        worst = sum((self._worst_case(r, batch=True) for r in reqs), Decimal(0))
+        return {"mode": "price", "requests": len(reqs), "too_long": len(f.too_big),
+                "estimated_input_tokens": sum(r.estimated_tokens() for r in reqs),
+                "worst_case_usd": str(worst.quantize(Decimal("0.0001"))),
+                "run_estimate_usd": str((2 * worst).quantize(Decimal("0.0001"))),
+                "run_limit_usd": str(self.run_limit()), "sent": 0}
 
     # ------------------------------------------------------------------ storing a billed reply (one transaction)
     def _store(self, tx, w: Work, call: Call, task_run_id: int, retry_note: str | None) -> None:
@@ -866,7 +1106,8 @@ class EquityCallsAi(BatchSteps, Task):
             "claude": f.unavailable, "skipped_targets": [o.work.target for o in f.outcomes if o.status == "skipped"],
             "budget_stopped": f.stopped == "budget"}), blocking=False))
         out.append(batches_check(f))
-        scope = ("each company's newest call only (no window named, #370)" if f.summaries == NEWEST
+        scope = ("the calls whose turns changed (#554's re-run)" if f.turns
+                 else "each company's newest call only (no window named, #370)" if f.summaries == NEWEST
                  else "every call in the run's window")
         out.append(Check("call_summaries", True,
                          f"{f.wanted} calls lacked a published summary at the start; this run: "
@@ -874,6 +1115,12 @@ class EquityCallsAi(BatchSteps, Task):
                          + f"; summaries asked for: {scope}", blocking=False))
         out += self._guidance_checks(tx, f)
         out += self._tone_checks(tx, f)
+        if f.turns is not None:                            # #554: what the re-run chose, priced or did (ids, slugs and counts)
+            counts = Counter(state(o) for o in f.outcomes if o.work.task == f.only)
+            done = {**(f.turns_record or {}), "mode": f.turns,
+                    "outcomes": dict(sorted(counts.items())) if f.turns == "all" else {}}
+            refused = done.get("refused") is not None
+            out.append(Check("turns_rerun", not refused, json.dumps(done, separators=(",", ":")), blocking=refused))
         return out
 
     def _tone_checks(self, tx, f: Fetched) -> list[Check]:
@@ -956,7 +1203,7 @@ class EquityCallsAi(BatchSteps, Task):
                     problem = f"its quote isn't inside one turn whose role is {role}"
                 elif role == "unknown" and not ge.passes_content_test(quote):
                     problem = "its quote fails the content test of the separate list"
-                elif not ge.figures_ok(quote, metric, kind, value, low, high):
+                elif not ge.figures_ok(quote, metric, kind, value, low, high, v6=chk.v6):      # the version's own reader (#533)
                     problem = "a figure isn't in its quote"
                 else:
                     continue
@@ -982,6 +1229,10 @@ class EquityCallsAi(BatchSteps, Task):
                          f"{f.wanted_guidance} calls lacked their extraction at the start; this run: "
                          + (", ".join(f"{n} {s}" for s, n in sorted(counts.items())) or "nothing to do") + skipped,
                          blocking=False))
+        if f.rerun is not None:                            # #511: what the re-run chose, priced or did (ids and counts only)
+            done = {**(f.rerun_record or {}), "mode": f.rerun,
+                    "outcomes": dict(sorted(counts.items())) if f.rerun == "all" else {}}
+            out.append(Check("guidance_rerun", True, json.dumps(done, separators=(",", ":")), blocking=False))
         return out
 
     # ------------------------------------------------------------------ alerts (after the load)
