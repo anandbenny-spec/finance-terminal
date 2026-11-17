@@ -126,6 +126,57 @@ def test_the_cross_currency_check_fails_only_money_compared_across_currencies():
               (0,)) is None                                                    # one row's own ratio
 
 
+# Round 2's sql-r2-x07 answer as the model wrote it (dev run 50, 17 Nov 2026): its rows matched the gold, and it failed only
+# because its 12-month percent change, computed from each index's own two levels, read as money.
+R2_X07 = ("WITH latest AS (SELECT series_name, max(date) AS latest_date FROM market_daily WHERE series_name IN ('Sensex', "
+          "'Nasdaq Composite') AND value IS NOT NULL GROUP BY series_name), ago AS (SELECT l.series_name, l.latest_date, "
+          "max(m.date) AS ago_date FROM latest AS l INNER JOIN market_daily AS m ON m.series_name = l.series_name AND m.date <= "
+          "l.latest_date - CAST('12 months' AS interval) AND m.value IS NOT NULL GROUP BY l.series_name, l.latest_date) "
+          "SELECT l.series_name, m1.market, m1.currency, a.ago_date, m0.value AS ago_value, l.latest_date, m1.value AS "
+          "latest_value, round((m1.value / m0.value - 1) * 100, 2) AS change_pct_12m FROM latest AS l INNER JOIN ago AS a ON "
+          "a.series_name = l.series_name INNER JOIN market_daily AS m1 ON m1.series_name = l.series_name AND m1.date = "
+          "l.latest_date INNER JOIN market_daily AS m0 ON m0.series_name = l.series_name AND m0.date = a.ago_date ORDER BY "
+          "change_pct_12m DESC")
+
+
+def test_a_ratio_of_one_companys_or_one_series_own_money_is_currency_neutral():
+    """Anand, 17 Nov 2026, 14:13 IST (#587, option A point 1): the same company or series on both sides of a ratio, by the
+    query's join keys (or one row's own columns), makes it currency-neutral; a ratio across companies or series is still money."""
+    cc = ev.money_comparison
+    one = (["c"], [], ())
+    # round 2's x07: ranked by a percent change of each index's own levels; its two levels shown beside, unmatched
+    cols = ["series_name", "market", "currency", "ago_date", "ago_value", "latest_date", "latest_value", "change_pct_12m"]
+    row = ("Sensex", "IN", "INR", date(2025, 11, 7), Decimal(1), date(2026, 11, 9), Decimal(2), Decimal("3.5"))
+    assert cc(R2_X07, cols, [row], (0, 7)) is None
+    # one row's own ratio, ranked: a margin
+    assert cc("select company, pat / revenue as margin from company_financials order by margin desc", *one) is None
+    assert cc("select company, round(100 * pat / revenue, 1) from company_financials order by 2 desc", *one) is None
+    assert cc("select avg(pat / revenue) from company_financials", *one) is None
+    # a window over one series' own rows (partitioned by its key), then ranked
+    assert cc("with d as (select series_name, date, value / lag(value) over (partition by series_key order by date) - 1 as "
+              "chg from market_daily where series_key in ('yf.^NSEI', 'yf.^GSPC')) select series_name, min(chg) as worst "
+              "from d group by series_name order by worst", *one) is None
+    # two views tied by an entity key, qualified or through USING with unqualified columns
+    assert cc("select v.company, f.revenue / v.market_cap as r from company_valuations v join company_financials f "
+              "on f.nse_symbol = v.nse_symbol order by r desc", *one) is None
+    assert cc("select company, revenue / market_cap as r from company_valuations join company_financials using (nse_symbol) "
+              "order by r desc", *one) is None
+    # still money: a ratio across companies or series, or one whose sides can't be placed
+    assert cc("select a.company, a.revenue / b.revenue as r from company_financials a join company_financials b "
+              "on a.market = b.market order by r", *one) == "orders_by_figure"
+    assert cc("with d as (select series_name, value / lag(value) over (order by date) - 1 as chg from market_daily) "
+              "select series_name, min(chg) as worst from d group by series_name order by worst", *one) == "orders_by_figure"
+    assert cc("select revenue / market_cap as r from company_valuations, company_financials order by r", *one) \
+        == "orders_by_figure"
+    assert cc("select company, market_cap / (select max(market_cap) from company_valuations) as share "
+              "from company_valuations order by share", *one) is not None
+    assert cc("select a.date, a.value / b.value as r from market_daily a join market_daily b on a.date = b.date "
+              "where a.series_key = 'yf.^NSEI' and b.series_key = 'yf.^GSPC'", ["date", "r"], [(date(2026, 1, 2), Decimal(4))],
+              (0,)) == "extra_numeric_column"
+    # and a sum of money across currencies still fails even inside a ratio
+    assert cc("select sum(pat) / sum(revenue) as margin from company_financials", *one) == "sums_money"
+
+
 def test_every_cross_currency_gold_passes_the_cross_currency_check():
     for it in ev.load_items("cmdbar_sql", "dev") + ev.load_items("cmdbar_sql", "test"):
         if it["cross_currency"] and it.get("gold_sql"):
