@@ -142,7 +142,8 @@ fallback (`summaries.DIFF_RESTATED_FROM`). v25 is v24's text again, marking roun
 round 21's verdict): the fallback pairs a removed and an added sentence only as each other's counterparts, shows a sentence
 split in two with its counterpart, ranks first the changes the target's v1 output cites (its stored citations, read in the
 fallback's transaction) and last a change that changes no meaning, quotes RBI paragraphs without their numbers and labels a
-list item as one (`summaries.DIFF_COUNTERPART_FROM`).
+list item as one (`summaries.DIFF_COUNTERPART_FROM`). v26 is v25's text again, marking round 23's (Anand, 17 Nov 2026, 07:06
+IST): a joined sentence of another kind stays its own change (`summaries.DIFF_KIND_JOIN_FROM`).
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -218,7 +219,7 @@ from ft.policy import rbi_resolution
 # v15 (Anand's pick of 13 Nov 2026, before 17:36 IST, after round 13): v14's text, with two false positives fixed
 # (summaries.DIFF_FP_FIX_FROM). v16 (Anand's decision of 14 Nov 2026, about 00:38 IST, after the judge failed round 14): v15's
 # text, with the grammar-fit, run-on and neighbour checks (summaries.DIFF_FIT_FROM).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v25", "stance_extraction": "v2",
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v26", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
@@ -975,6 +976,8 @@ class AiBatch(BatchSteps, Task):
                                                and o.prompt_version = 'v1' and o.status in ('published', 'superseded'))
                     order by c.citation_no""", (w.task, w.doc.document_id)).fetchall()]
         later = {"counterparts": True, "v1": v1} if version >= summaries.DIFF_COUNTERPART_FROM else {}
+        if version >= summaries.DIFF_KIND_JOIN_FROM:
+            later["kinds"] = True
         bullets = summaries.fallback_bullets(w.segments, w.base, w.doc, prefer, packed=version >= summaries.DIFF_PACK_FROM,
                                              restated=version >= summaries.DIFF_RESTATED_FROM, **later)
         if not bullets:

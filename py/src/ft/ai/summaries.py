@@ -80,7 +80,7 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
 DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
-                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET, "v23": SONNET, "v24": SONNET, "v25": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET, "v23": SONNET, "v24": SONNET, "v25": SONNET, "v26": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
 # (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
 # two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12); v14: v13 plus two rules, with one
 # more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14); v16: v15's
@@ -89,12 +89,12 @@ DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11":
 # text again, marking the third run's (a narrower "adds" check, the fallback's trivial changes and repeated sentences).
 # v20 to v22: v19's text again, marking rounds 17 to 19's revisions; v23: v22's text, marking round 20's packed fallback
 # (`DIFF_PACK_FROM`); v24: v23's text, marking round 21's (`DIFF_RESTATED_FROM`); v25: v24's text, marking round 22's
-# (`DIFF_COUNTERPART_FROM`).
+# (`DIFF_COUNTERPART_FROM`); v26: v25's text, marking round 23's (`DIFF_KIND_JOIN_FROM`).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
 DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium",
                   "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium", "v20": "medium", "v21": "medium", "v22": "medium", "v23": "medium", "v24": "medium",
-                  "v25": "medium"}
+                  "v25": "medium", "v26": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -220,6 +220,14 @@ DIFF_RESTATED_FROM = 24
 #   ("continue with the neutral monetary policy stance …", mpc-2025-04-09) instead of quoting it as a sentence.
 # Fallbacks of v24 or earlier keep their rules.
 DIFF_COUNTERPART_FROM = 25
+# From v26 (#445, round 23; Anand's decision of 17 Nov 2026, 07:06 IST): v25's text, and one of v25's rules in
+# `_counterparts` (`kinds`), from round 22's pre-check:
+# - a sentence joins another's change (split in two, or two merged) only when it is of that change's kind (`_kind`, on both
+#   sides' text): round 22's mpc-2022-09-30 joined "Dr. Ashima Goyal voted to increase the repo rate by 35 basis points." (a
+#   dissent) to the change of the vote on the policy repo rate (a decision), and the fallback's one decision change per output
+#   then left the dissent out;
+# Fallbacks of v25 or earlier keep their rules.
+DIFF_KIND_JOIN_FROM = 26
 
 
 def diff_json(version: str) -> bool:
@@ -1989,7 +1997,7 @@ class _One:
     text: str
 
 
-def _counterparts(segments: dict, old: Doc, new: Doc, kind_of) -> list[list]:
+def _counterparts(segments: dict, old: Doc, new: Doc, kind_of, *, kinds: bool = False) -> list[list]:
     """v25's changes from the redline, as [old spans, new spans] (see DIFF_COUNTERPART_FROM).
     - The redline's own changed pairs stand. A pair whose sides aren't on one subject (`_same_topic`) is two changes, each
       alone; a pair whose side ends with a colon (a list's lead-in) joins the next pair (its first item).
@@ -2158,6 +2166,8 @@ def _counterparts(segments: dict, old: Doc, new: Doc, kind_of) -> list[list]:
                         continue                       # an opening joins only a side whose other side opens too
                     if any(regions_differ(x.text, y.text) for y in change[1 - side]):
                         continue                       # another economy
+                    if kinds and kind_of(x.text) != kind_of(" ".join(y.text for y in change[0] + change[1])):
+                        continue                       # from v26: another kind (a dissent beside a vote) stays its own
                     theirs = set().union(*(_subject(y.text) for y in change[1 - side]))
                     ours = set().union(*(_subject(y.text) for y in have))
                     if len(mine_s & theirs) / len(mine_s) < SUBJECT_SAME or len((mine_s & theirs) - ours) < 2:
@@ -2194,14 +2204,15 @@ def _counterparts(segments: dict, old: Doc, new: Doc, kind_of) -> list[list]:
 
 def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], hi: int = 5, *,
                      packed: bool = False, restated: bool = False, counterparts: bool = False,
-                     v1: list[tuple[int, int, int]] | None = None) -> list[Bullet]:
+                     v1: list[tuple[int, int, int]] | None = None, kinds: bool = False) -> list[Bullet]:
     """The fallback's bullets (see above): `prefer` holds a rejected reply's quotes as (document, text), in its order.
     `packed` (from v23, `DIFF_PACK_FROM`): the balance sheet's words rank before the stance's, and a bullet carries up to
     FALLBACK_PER_BULLET changes of one kind (`_pack`). `restated` (from v24, `DIFF_RESTATED_FROM`; with `packed`): a change
     of the decision's other than the one shown that also states the stance is the stance. `counterparts` (from v25,
     `DIFF_COUNTERPART_FROM`; with `packed` and `restated`): changes paired only with their counterparts (`_counterparts`),
     the changes `v1` cites first (the target's v1 output's citations, as (document id, start, end)), a minor change last
-    (`_minor`), quotations without RBI paragraph numbers and list items labelled as such."""
+    (`_minor`), quotations without RBI paragraph numbers and list items labelled as such. `kinds` (from v26,
+    `DIFF_KIND_JOIN_FROM`; with `counterparts`): `_counterparts`' joining rule of round 23."""
     def kind_of(text: str) -> int:
         return _kind(text, packed=packed)
 
@@ -2210,7 +2221,7 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
 
     pairs: list[list] = []
     if counterparts:
-        pairs = _counterparts(segments, old, new, kind_of)
+        pairs = _counterparts(segments, old, new, kind_of, kinds=kinds)
     for p in [] if counterparts else segments.get("pairs", []):
         kind = p.get("kind")
         if kind not in ("changed", "added", "removed"):
