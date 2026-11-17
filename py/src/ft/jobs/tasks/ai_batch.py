@@ -143,7 +143,9 @@ round 21's verdict): the fallback pairs a removed and an added sentence only as 
 split in two with its counterpart, ranks first the changes the target's v1 output cites (its stored citations, read in the
 fallback's transaction) and last a change that changes no meaning, quotes RBI paragraphs without their numbers and labels a
 list item as one (`summaries.DIFF_COUNTERPART_FROM`). v26 is v25's text again, marking round 23's (Anand, 17 Nov 2026, 07:06
-IST): a joined sentence of another kind stays its own change (`summaries.DIFF_KIND_JOIN_FROM`).
+IST): a joined sentence of another kind stays its own change (`summaries.DIFF_KIND_JOIN_FROM`); and, after round 22's
+verdict, a v1 bullet's removed and added sentences are one change, and a change of the decision's kind that v1 states as its
+own is shown (`summaries.DIFF_V1_PAIRS_FROM`; the v1 citations are read with their bullets).
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -967,17 +969,23 @@ class AiBatch(BatchSteps, Task):
         prefer = [(q.get("document"), q.get("text")) for r in rows if isinstance(r, dict)
                   for q in (r.get("quotes") or []) if isinstance(q, dict) and isinstance(q.get("text"), str)]
         version = _vnum(call.request.prompt.version)
-        v1: list[tuple[int, int, int]] = []
+        v1: list[tuple[int, ...]] = []
         if version >= summaries.DIFF_COUNTERPART_FROM:   # the target's v1 output's citations: its changes rank first
-            v1 = [tuple(r) for r in tx.execute(
-                """select c.document_id, c.char_start, c.char_end from core.ai_citation c
+            v1 = [tuple(r) for r in tx.execute(          # from v26, with each one's bullet (its claim path's index)
+                """select c.document_id, c.char_start, c.char_end,
+                          coalesce((regexp_match(c.claim_path, '^/bullets/(\\d+)'))[1]::int, -1)
+                     from core.ai_citation c
                     where c.ai_output_id = (select min(o.id) from core.ai_output o
                                              where o.task = %s and o.document_id = %s and o.scope = ''
                                                and o.prompt_version = 'v1' and o.status in ('published', 'superseded'))
                     order by c.citation_no""", (w.task, w.doc.document_id)).fetchall()]
+            if version < summaries.DIFF_V1_PAIRS_FROM:
+                v1 = [r[:3] for r in v1]                 # v25 reads the citations alone
         later = {"counterparts": True, "v1": v1} if version >= summaries.DIFF_COUNTERPART_FROM else {}
         if version >= summaries.DIFF_KIND_JOIN_FROM:
             later["kinds"] = True
+        if version >= summaries.DIFF_V1_PAIRS_FROM:
+            later["v1_pairs"] = True
         bullets = summaries.fallback_bullets(w.segments, w.base, w.doc, prefer, packed=version >= summaries.DIFF_PACK_FROM,
                                              restated=version >= summaries.DIFF_RESTATED_FROM, **later)
         if not bullets:
