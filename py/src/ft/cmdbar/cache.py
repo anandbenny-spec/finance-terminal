@@ -6,9 +6,10 @@
   (the views come from the query that ran, so a cached entry is checked against its own views). `VIEW_TASKS` names the task-key
   prefixes behind each `semantic` view; a view it doesn't know counts every task, so a gap only invalidates more often. An
   answer that read no view (a page, "can't answer") has the version `static`, and only its expiry ends it.
-- **What is stored** (the route decides, `ft.cmdbar.route`): the final object of an answered data question, a page, and "that isn't in
-  this site's data" when the router or the data route said so.
-  Never a paused or limit state, a failure (the database down, a refused call), or a document answer before K-06.
+- **What is stored** (the route decides, `ft.cmdbar.route`): the final object of an answered data question, a page, "that isn't in
+  this site's data" when the router or the data route said so, and an answered document question (K-06), whose `data_version`
+  is the policy tasks' newest last success (`answer_version`: the documents it searched).
+  Never a paused or limit state, a failure (the database down, a refused call), or a document question "not found".
 A hit is served with no model call; it still counts against the visitor's hourly limit (§4 step 2) and is logged.
 """
 from __future__ import annotations
@@ -88,6 +89,22 @@ def data_version(views: list[str], freshness: dict[str, datetime]) -> str:
             prefixes = [""]                              # unknown: every task counts
             break
         prefixes.extend(VIEW_TASKS[view])
+    return _newest(prefixes, freshness)
+
+
+def _newest(prefixes: list[str] | tuple[str, ...], freshness: dict[str, datetime]) -> str:
     times = [t for task, t in freshness.items() if t is not None and task.startswith(tuple(prefixes))]
     return max(times).isoformat() if times else NONE
+
+
+# A document answer (K-06) reads Fed and RBI policy documents, which the policy tasks load and summarise.
+DOCUMENT_TASKS = ("policy.",)
+
+
+def answer_version(answer: dict, freshness: dict[str, datetime]) -> str:
+    """An answer's `data_version`: a document answer's is the policy tasks' newest last success (the documents it searched); any
+    other answer's follows the views its query read (`data_version`)."""
+    if answer.get("route") == "document":
+        return _newest(DOCUMENT_TASKS, freshness)
+    return data_version(views_read(answer.get("sql")), freshness)
 
