@@ -2356,11 +2356,12 @@ items:
     answerable: true
     gold_sql: |
       select company, market_rank
-      from (select company, rank() over (partition by market order by market_cap desc nulls last) as market_rank
-            from company_valuations) t
+      from (select company, rank() over (partition by market order by market_cap desc) as market_rank
+            from company_valuations
+            where market_cap is not null) t
     cross_currency: true
     ordered: false
-    notes: A rank within India and within the US (1 = the largest); market values in INR and USD are never ranked together. Only the rank is checked; a model may add the market and the value with its currency.
+    notes: A rank within India and within the US (1 = the largest); market values in INR and USD are never ranked together. Only the rank is checked; a model may add the market and the value with its currency. Gold fixed in round 4 (17 Nov 2026, Anand's answer A point 2 on #587; the K-11 judge told) to leave out companies with no market cap, as the set's other ranking golds do; it ranked them last before (run 55's x08 miss was this gold's, not the model's).
   - id: sql-r3-x09
     split: dev
     family: cross_currency
