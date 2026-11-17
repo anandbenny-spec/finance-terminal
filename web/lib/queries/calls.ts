@@ -130,7 +130,7 @@ async function readResults(db: Db, slug: string, policies: readonly FieldPolicyR
   const policy = policies.find((p) => p.field_key === RESULTS_FIELD);
   if (!policy || policy.status === "hidden") return { state: "hidden" };
   try {
-    // One after the other inside this panel's slot, so the tab's waves keep their peak of six (#516).
+    // One after the other, as every read of the tab is (#620).
     const rows = await readResultsMoves(db, slug);
     const niftyAttribution = await readNiftyAttribution(db);
     return { state: "ok", rows, niftyAttribution };
@@ -219,30 +219,29 @@ const HELD_RECORD: GuidanceRecordReads = { rows: [], rate: null, citations: [], 
  * when `withRate` (equity.guidance_hit_rate shown or labelled, #532): while that key is hidden the view has no rows, so nothing is asked.
  */
 export async function readGuidanceRecord(db: Db, slug: string, withRate = true): Promise<Pick<GuidanceRecordReads, "rows" | "rate">> {
-  const [rows, rates] = await Promise.all([
-    readAll<CallGuidanceRow>("api.call_guidance", (from, to) =>
-      db
-        .from("call_guidance")
-        .select(GUIDANCE_COLUMNS, { count: "exact" })
-        .eq("company_slug", slug)
-        .order("target_end", { ascending: false })
-        .order("metric")
-        .order("call_slug")
-        .order("citation_no")
-        .range(from, to),
-    ),
-    withRate
-      ? readAll<GuidanceHitRateRow>("api.guidance_hit_rates", (from, to) =>
-          db
-            .from("guidance_hit_rates")
-            .select("scope, scope_key, scope_label, delivered, missed, n, rate, first_stated_from, periods_to, outcome_label", { count: "exact" })
-            .eq("scope", "company")
-            .eq("scope_key", slug)
-            .order("scope_key")
-            .range(from, to),
-        )
-      : Promise.resolve([] as GuidanceHitRateRow[]),
-  ]);
+  // One read after the other (#620): the tab never has two of its reads in flight at once.
+  const rows = await readAll<CallGuidanceRow>("api.call_guidance", (from, to) =>
+    db
+      .from("call_guidance")
+      .select(GUIDANCE_COLUMNS, { count: "exact" })
+      .eq("company_slug", slug)
+      .order("target_end", { ascending: false })
+      .order("metric")
+      .order("call_slug")
+      .order("citation_no")
+      .range(from, to),
+  );
+  const rates = withRate
+    ? await readAll<GuidanceHitRateRow>("api.guidance_hit_rates", (from, to) =>
+        db
+          .from("guidance_hit_rates")
+          .select("scope, scope_key, scope_label, delivered, missed, n, rate, first_stated_from, periods_to, outcome_label", { count: "exact" })
+          .eq("scope", "company")
+          .eq("scope_key", slug)
+          .order("scope_key")
+          .range(from, to),
+      )
+    : [];
   return { rows, rate: rates[0] ?? null };
 }
 
@@ -264,19 +263,24 @@ async function readOutputs(db: Db, idList: readonly number[]): Promise<AiOutputR
 }
 
 /**
- * The tab's reads (§13.7), in three waves so a cold render never fires more than a few reads at once (#516; #465's cold-render
- * burst, which timed reads out together on 13 Nov 2026):
+ * The tab's reads (§13.7), in three waves (#516), and one read at a time (#620):
  *   1. the company's calls and the field policies, which every other read depends on;
  *   2. the selected call's figures, the opening-remarks rows, the guidance record, the results-day moves and the tone rows, each only
  *      while its field is released (a held field's panel says "held back" without data, so its view isn't read at all);
  *   3. one read each of the AI outputs (the summary's and the tone's), their citations and their pages, for every output the page
  *      quotes (the summary, the figures, the guidance record's rows, the tone).
+ * Why one at a time (#620, measured on dev as a visitor on 17 Nov 2026): a cold tab's reads cost about 0.45 to 0.75 s of database
+ * time in all, and wave 2 fired five of the dearest at once, so several tabs first-loaded together put 20 to 40 of them on the free
+ * plan's shared CPU and each passed the visitor role's 3 s limit waiting its turn. In series a tab adds one statement at a time and
+ * takes about as long as the sum of its reads. A failed figures read now also stops the tab before the rest of wave 2 starts, where
+ * the other reads used to keep running for nothing.
  * With no published call for the company, only wave 1 and the discovery window are read. A failed calls list or policy read, or a
  * failed read of the selected call's own summary, figures or their quotes, throws (the tab's error state); every other panel fails
  * on its own (#328).
  */
 export async function readCallsTab(db: Db, slug: string, call: string | undefined): Promise<CallsTabData> {
-  const [calls, policies] = await Promise.all([readCompanyCalls(db, slug), readFieldPolicy(db)]);
+  const calls = await readCompanyCalls(db, slug);
+  const policies = await readFieldPolicy(db);
   const selected = selectCall(calls, call);
   if (!selected) {
     const latest = await readAll<EarningsLatestRow>("api.earnings_latest", (from, to) =>
@@ -292,27 +296,29 @@ export async function readCallsTab(db: Db, slug: string, call: string | undefine
     return { calls, selected, policies, summary: null, figures: [], citations: [], pages: [], guidance, results: { state: "hidden" }, tone: { state: "hidden" }, remarks: [], latest: latest[0] ?? null };
   }
 
-  // Wave 2. The guidance record and the remarks fail on their own (#328): their views have timed out when the calls list had loaded fine.
-  const [figures, remarks, record, results, toneRows] = await Promise.all([
-    selected.figures_output_id !== null ? readCallFigures(db, slug, selected.call_slug) : Promise.resolve([]),
-    open(policies, REMARKS_FIELD) ? readRemarksChanges(db, slug).catch(failed(slug, "remarks changes", null)) : Promise.resolve([]),
-    guidanceRecordOpen(policies)
-      ? readGuidanceRecord(db, slug, guidanceHitRateOpen(policies)).catch(failed(slug, "guidance record", null))
-      : Promise.resolve(HELD_RECORD),
-    readResults(db, slug, policies),
-    toneOpen(policies) ? readCallTone(db, slug).catch(failed(slug, "tone", null)) : Promise.resolve(null),
-  ]);
+  // Wave 2, one read after the other (#620). The figures come first: they are the tab's own, so a failure throws before the rest
+  // starts. The guidance record and the remarks fail on their own (#328): their views have timed out when the calls list had loaded fine.
+  const figures = selected.figures_output_id !== null ? await readCallFigures(db, slug, selected.call_slug) : [];
+  const remarks = open(policies, REMARKS_FIELD) ? await readRemarksChanges(db, slug).catch(failed(slug, "remarks changes", null)) : [];
+  const record = guidanceRecordOpen(policies)
+    ? await readGuidanceRecord(db, slug, guidanceHitRateOpen(policies)).catch(failed(slug, "guidance record", null))
+    : HELD_RECORD;
+  const results = await readResults(db, slug, policies);
+  const toneRows = toneOpen(policies) ? await readCallTone(db, slug).catch(failed(slug, "tone", null)) : null;
   const toneId = toneRows?.find((r) => r.call_slug === selected.call_slug)?.ai_output_id ?? null;
 
-  // Wave 3: one read of each kind for every output the page quotes. The call's own outputs come first: if any of these reads fails
-  // while the call has a summary or figures, the tab fails (as before #516); with neither, only the record's and tone's panels do.
+  // Wave 3: one read of each kind for every output the page quotes, one after the other (#620). The call's own outputs come first:
+  // if any of these reads fails while the call has a summary or figures, the tab fails (as before #516); with neither, only the
+  // record's and tone's panels do.
   const callIds = ids([selected.summary_output_id, selected.figures_output_id]);
   const recordIds = record ? ids(record.rows.map((r) => r.ai_output_id)) : [];
   const quoted = ids([...callIds, ...recordIds, toneId]);
   const outputIds = ids([selected.summary_output_id, toneId]);
   let quotes: { outputs: AiOutputRow[]; citations: AiCitationRow[]; pages: CitationPageRow[] } | null;
   try {
-    const [outputs, citations, pages] = await Promise.all([readOutputs(db, outputIds), readOutputCitations(db, quoted), readOutputPages(db, quoted)]);
+    const outputs = await readOutputs(db, outputIds);
+    const citations = await readOutputCitations(db, quoted);
+    const pages = await readOutputPages(db, quoted);
     quotes = { outputs, citations, pages };
   } catch (error) {
     if (callIds.length > 0) throw error;
