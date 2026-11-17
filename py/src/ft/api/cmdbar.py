@@ -39,6 +39,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ft.ai.client import Client, Embedder, VoyageHTTP
 from ft.cmdbar import BadQuestion, clean_question
 from ft.cmdbar import route as route_mod
+from ft.cmdbar import sources as sources_mod
 from ft.cmdbar import sql as sql_mod
 from ft.cmdbar.log import LogRow
 
@@ -361,7 +362,7 @@ def verified_examples(rows) -> list[dict]:
         order = r.get("display_order")
         out.append({"question": r["question"], "module": r.get("module"),
                     "display_order": order if isinstance(order, int) and not isinstance(order, bool) else None,
-                    "answer": r.get("answer") if isinstance(r.get("answer"), dict) else None})
+                    "answer": sources_mod.fill(dict(r["answer"])) if isinstance(r.get("answer"), dict) else None})
     return sorted(out, key=lambda e: (e["display_order"] is None, e["display_order"] or 0))
 
 

@@ -70,7 +70,7 @@ def test_the_list_holds_every_example_checked_or_not_in_display_order(client):
     got = r.json()["examples"]
     assert [e["id"] for e in got] == [1, 2, 3, 4]                                   # malformed rows left out
     assert [e["verified"] for e in got] == [True, False, False, False]
-    assert got[0] == {**rows()[1]}
+    assert got[0] == {**rows()[1], "answer": {**ANSWER, "sources": []}}            # K-13: a stored answer gets its sources
     assert store.calls == [("cmdbar_examples_admin", {})]
 
 

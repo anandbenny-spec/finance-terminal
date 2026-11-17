@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 from ft.api import cmdbar as cmdbar_api
 from ft.api.admin_auth import require_admin
 from ft.cmdbar import route as route_mod
+from ft.cmdbar import sources as sources_mod
 
 NO_STORE = {"Cache-Control": "no-store"}
 MAX_BODY_CHARS = 500
@@ -69,7 +70,7 @@ def admin_rows(rows) -> list[dict]:
         out.append({"id": r["id"], "question": r["question"],
                     "module": r.get("module") if isinstance(r.get("module"), str) else None,
                     "display_order": order if isinstance(order, int) and not isinstance(order, bool) else None,
-                    "answer": r.get("answer") if isinstance(r.get("answer"), dict) else None,
+                    "answer": sources_mod.fill(dict(r["answer"])) if isinstance(r.get("answer"), dict) else None,
                     "data_version": r.get("data_version") if isinstance(r.get("data_version"), str) else None,
                     "verified": r.get("verified") is True,
                     "updated_at": r.get("updated_at") if isinstance(r.get("updated_at"), str) else None})
