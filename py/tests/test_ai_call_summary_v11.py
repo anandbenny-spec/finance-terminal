@@ -458,3 +458,47 @@ def test_every_new_reason_lands_in_its_accuracy_category(make, category):
     message = make()
     assert message, "the crafted bad reply produced no problem"
     assert categorise("rejected", message) == (category, True), message
+
+
+# ------------------------------------------------------------------------------------------------ #613 (2B-09c): an unclean cut fails from v11
+# A management passage of over 80 characters, copied word for word at a bullet's end after a lead-in of six words. Synthetic text only.
+PASSAGE = "Demand in the export market remains soft because of weak freight rates. We plan capital expenditure of 800 crore this year."
+UNCLEAN = f"Management described the outlook as follows {PASSAGE}"         # the lead-in ends without a clause end: 2249/6's kind
+CLEAN = f"Management described the outlook as follows: {PASSAGE}"
+
+
+def test_a_v11_bullet_cut_to_a_six_word_lead_in_that_ends_no_clause_fails_and_the_reply_takes_the_retry():
+    got = first(UNCLEAN, [PASSAGE])
+    assert got.bullets[0].problem == cs.UNCLEAN_CUT and not got.ok
+    assert got.bullets[0].text == UNCLEAN                                  # a failed bullet keeps its text as the reply gave it
+    assert [b.problem for b in got.bullets[1:]] == [None] * 4
+    work = eca.Work(cs.TASK, CALL, "slug", 0, 0, S11)
+    bad = work.check(work.request(V11), json_reply(answer(management=[(UNCLEAN, [PASSAGE])] + GOOD_MANAGEMENT[1:])))
+    assert not bad.ok and bad.bullets[0].problem == cs.UNCLEAN_CUT
+
+
+@pytest.mark.parametrize("version", [None, "v6", "v9", "v10"])
+def test_the_same_reply_under_an_earlier_version_passes_cut_as_before(version):
+    got = first(UNCLEAN, [PASSAGE], version=version)
+    assert got.ok and got.bullets[0].problem is None
+    assert got.bullets[0].text == "Management described the outlook as follows."
+
+
+def test_a_clean_cut_under_v11_passes_cut():
+    got = first(CLEAN, [PASSAGE])
+    assert got.ok and got.bullets[0].problem is None
+    assert got.bullets[0].text == "Management described the outlook as follows."
+    echo = cs.apply_echo(UNCLEAN, [PASSAGE], cs.summaries.match_form(TEXT))  # the flag the check reads, unchanged
+    assert echo.cut and not echo.clean and echo.problem is None
+
+
+def test_the_recheck_of_stored_outputs_still_counts_an_unclean_cut_and_fails_none():
+    start = TEXT.index(PASSAGE)
+    content = {"bullets": [{"text": UNCLEAN, "citations": [1], "section": "management"}]}
+    out = cs.recheck_content(content, {1: (start, start + len(PASSAGE))}, TEXT, cs.summaries.match_form(TEXT))
+    assert out.cut == [0] and out.unclean == [0] and out.failed == {} and out.verdict == "cut"
+    assert out.bullets[0]["text"] == "Management described the outlook as follows."
+
+
+def test_the_unclean_cut_reason_lands_in_the_format_category():
+    assert categorise("rejected", first(UNCLEAN, [PASSAGE]).bullets[0].problem) == ("format", True)
