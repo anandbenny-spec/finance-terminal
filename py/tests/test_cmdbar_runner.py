@@ -385,7 +385,7 @@ def test_the_price_check_is_dearer_in_its_worst_case_than_its_estimate():
     items = ev.load_items("cmdbar_sql", "dev")
     p = ev.price_run("cmdbar_sql", items, prompt, TODAY)
     assert Decimal(0) < p["estimate"] < p["worst_case"] < Decimal("0.20") * len(items)      # under 20 cents an item at worst
-    assert len(p["per_item_worst"]) == len(items) == 122                                   # 12, plus rounds 1's and 2's 55 each (#587)
+    assert len(p["per_item_worst"]) == len(items) == 177                   # 12, plus rounds 1's, 2's and 3's 55 each (#587)
 
 
 @pytest.mark.db
