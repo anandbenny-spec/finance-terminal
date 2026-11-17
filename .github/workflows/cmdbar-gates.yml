@@ -10,10 +10,10 @@
 # and stops before spend could pass `max_cost`. Annotations hold ids, counts, classes and costs only: never a row, a summary
 # line or a figure (this repository and its run logs are public: CLAUDE.md §4). `retrieval` (K-06, #584): with `send` off it only
 # prices the run and checks that sql_reader may call search_chunks; with `send` on each question goes through the document route
-# (voyage-4-lite, search_chunks over Fed and RBI policy documents only, the cited answer): recall within the top 8 is scored, and
+# (voyage-4 questions, search_chunks over Fed and RBI policy documents only, the cited answer): recall within the top 8 is scored, and
 # the answers' counts are recorded beside it. The Voyage key, like the model key, is present only on a run that sends.
-# `query_model` (retrieval only; K-10, #587): voyage-4 embeds the questions for Architecture 03 §0's comparison, recorded beside
-# the route's voyage-4-lite run and never as the gate.
+# `query_model` (retrieval only; K-10, #587): voyage-4-lite embeds the questions for Architecture 03 §0's comparison, recorded
+# beside the route's voyage-4 run (the route's model since 17 Nov 2026) and never as the gate.
 name: cmdbar-gates
 on:
   workflow_dispatch:
@@ -41,10 +41,10 @@ on:
         type: string
         default: "0.50"
       query_model:
-        description: 'retrieval only: the questions'' Voyage model (voyage-4-lite is the route''s; voyage-4 is the comparison run)'
+        description: 'retrieval only: the questions'' Voyage model (voyage-4 is the route''s; voyage-4-lite is the comparison run)'
         type: choice
-        options: [voyage-4-lite, voyage-4]
-        default: voyage-4-lite
+        options: [voyage-4, voyage-4-lite]
+        default: voyage-4
 concurrency:
   group: cmdbar-gates
   cancel-in-progress: false

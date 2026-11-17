@@ -11,7 +11,7 @@ words) as it starts. `ft.api.cmdbar` streams both as newline-delimited JSON.
    that reaches the router. Over either: the limit state, logged with `answered = false`.
 3. **Cache** (`ft.cmdbar.cache`): a valid entry is served with no model call.
 4. **Router**, then 5a **the data route** (K-04's `ft.cmdbar.sql.answer_data`, the code the gates measure), 5b **the document
-   route** (K-06's `ft.cmdbar.documents.answer_documents`: `voyage-4-lite`, `search_chunks` over Fed and RBI policy documents
+   route** (K-06's `ft.cmdbar.documents.answer_documents`: `voyage-4` questions, `search_chunks` over Fed and RBI policy documents
    only, an answer with native citations, every sentence without a verified citation dropped; none left: "Not found in the
    stored Fed and RBI documents."), 5c **a page** (checked against `api.search_index`), 5d **unsupported** ("That isn't in this
    site's data." and three suggested pages).
