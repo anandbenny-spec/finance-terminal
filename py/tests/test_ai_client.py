@@ -313,7 +313,7 @@ def test_embedder_sends_voyage_4_at_512_in_small_batches(monkeypatch):
         ("voyage-4", "document", 512, False)}
     assert len(got.vectors) == 7 and all(len(v) == 512 for v in got.vectors) and got.model == "voyage-4"
     Embedder(client=fake).embed_query("What did the RBI decide?")
-    assert fake.calls[-1]["model"] == "voyage-4-lite" and fake.calls[-1]["input_type"] == "query"
+    assert fake.calls[-1]["model"] == "voyage-4" and fake.calls[-1]["input_type"] == "query"   # since #587
 
 
 def test_embedder_retries_honour_retry_after_and_check_dimensions():

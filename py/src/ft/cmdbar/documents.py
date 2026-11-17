@@ -1,7 +1,7 @@
 """The document route (Spec 07 §4 step 5b, N3; Architecture 03 §1.2, §1.5, §1.6, §1.8; K-06, #584): a question about the Fed's or
 the RBI's documents, answered only from cited passages of them.
 
-1. **Retrieval.** The question is embedded with `voyage-4-lite` (`Embedder.embed_query`) and `semantic.search_chunks` is called as
+1. **Retrieval.** The question is embedded with `voyage-4` (`Embedder.embed_query`; `voyage-4-lite` until #587) and `semantic.search_chunks` is called as
    `sql_reader` with **`banks => '{fed,rbi}'`, `doc_types =>` the seven policy types and `k => 8`**, plus the router's dates
    (`search`). Those filters are fixed here, never taken from the router or the question (N3): an earnings-call transcript is
    never searched, even published and embedded (`search_chunks` itself would return it: it runs as `retrieval_owner`). A row
@@ -68,6 +68,13 @@ TASK = "cmdbar_answer"
 PROMPT_VERSION = "v1"
 MODEL = HAIKU
 K = 8
+# The first search_chunks call after a quiet spell can pass the 3-second limit while dev's pages load (K-06's run 42, K-10's runs
+# 46 and 47: always a run's first query; the same question alone, warm, didn't). So a search cancelled by the timeout is run once
+# more, at the same limit: the cancelled one has warmed the cache. Every statement still stops at 3 s (no limit is raised), and
+# any other database error isn't retried. Decided by Claude under the standing delegation (17 Nov 2026, #587, on Anand's "a
+# warm-up, no rule change"): the alternative, a warm-up search whenever a connection opens, adds a search to every question.
+SEARCH_RETRY_KINDS = frozenset({"QueryCanceled"})
+SEARCH_ATTEMPTS = 2
 BANKS = router_mod.BANKS                    # ('fed', 'rbi'): core.entity slugs
 DOC_TYPES = router_mod.DOC_TYPES            # the seven policy types (Spec 07 N3)
 QUOTE_MAX = 400                             # code points (CLAUDE.md §1)
@@ -277,6 +284,7 @@ class DocAnswer:
     output_tokens: int = 0
     error_class: str | None = None
     ms: int = 0
+    searches: int = 0                                         # search_chunks calls: 2 when a timed-out first one was retried
 
     @property
     def kept(self) -> list[Sentence]:
@@ -343,14 +351,19 @@ def answer_documents(client, embedder, reader: sql_mod.Reader, question: str, *,
     except CallError as e:
         ans.error_class = f"embedding: {e.kind}"
         return done()
-    try:
-        ans.chunks, ans.foreign = search(reader, vector, q, date_from=date_from, date_to=date_to)
-    except sql_mod.QueryError as e:
-        ans.error_class = f"database: {e.kind}"
-        return done()
-    except sql_mod.ReaderDown:
-        ans.error_class = "database_unavailable"
-        return done()
+    while True:
+        ans.searches += 1
+        try:
+            ans.chunks, ans.foreign = search(reader, vector, q, date_from=date_from, date_to=date_to)
+            break
+        except sql_mod.QueryError as e:
+            if e.kind in SEARCH_RETRY_KINDS and ans.searches < SEARCH_ATTEMPTS:
+                continue                                          # a cold first search: once more, at the same 3 s limit
+            ans.error_class = f"database: {e.kind}"
+            return done()
+        except sql_mod.ReaderDown:
+            ans.error_class = "database_unavailable"
+            return done()
     if ans.foreign:
         ans.error_class = "retrieval: foreign document"           # logged; the answer goes on without those rows
     if not ans.chunks:

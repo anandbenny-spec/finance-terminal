@@ -96,6 +96,42 @@ def test_a_cross_currency_answer_that_orders_by_a_figure_or_adds_a_number_fails(
     assert ev.money_comparison("select 1", cols3, rows3, m(*CC_GOLD, cols3, rows3).mapping) is None
 
 
+def test_the_cross_currency_check_fails_only_money_compared_across_currencies():
+    """Anand's 1B (17 Nov 2026, #587): currency-neutral figures may be ranked across markets; money may not."""
+    cc = ev.money_comparison
+    one = (["c"], [], ())
+    # currency-neutral rankings and within-market ranks pass (run 45's x02, x05, x06 and x04 shapes)
+    assert cc("select company, currency, pe_ttm from company_valuations where nse_symbol = 'HDFCBANK' or ticker = 'JPM' "
+              "order by pe_ttm desc", *one) is None
+    assert cc("select company, ebit_margin from company_valuations order by ebit_margin desc limit 5", *one) is None
+    assert cc("select company, currency, market_cap, rk from (select company, market, currency, market_cap, row_number() "
+              "over (partition by market order by market_cap desc) as rk from company_valuations) t where rk <= 5 "
+              "order by market, rk", ["company", "currency", "market_cap", "rk"], [("a", "INR", Decimal(5), 1)], (0, 1, 2)) is None
+    assert cc("select company, currency, market_cap from company_valuations order by market, market_cap desc", *one) is None
+    assert cc("select currency, sum(market_cap) from company_valuations group by currency", *one) is None
+    assert cc("select company, revenue from company_financials where nse_symbol = 'TCS' order by revenue desc limit 1",
+              *one) is None
+    # money ranked, summed or compared across currencies fails
+    assert cc("select company, mc from (select company, market_cap as mc from company_valuations) t order by mc", *one) \
+        == "orders_by_figure"
+    assert cc("select series_name, value from market_daily where series_key in ('yf.^NSEI', 'yf.^DJI') order by value desc",
+              *one) == "orders_by_figure"
+    assert cc("select company, rank() over (order by market_cap desc) as r from company_valuations", *one) == "orders_by_figure"
+    assert cc("select sum(market_cap) from company_valuations", *one) == "sums_money"
+    assert cc("select max(market_cap) from company_valuations", *one) == "sums_money"
+    assert cc("select company, sum(revenue) over () as s from company_financials", *one) == "sums_money"
+    assert cc("select a.company, a.revenue - b.revenue as diff from company_financials a, company_financials b",
+              ["company", "diff"], [("x", Decimal(1))], (0,)) == "extra_numeric_column"
+    assert cc("select company, market_cap / pe_ttm as e from company_valuations", ["company", "e"], [("x", Decimal(1))],
+              (0,)) is None                                                    # one row's own ratio
+
+
+def test_every_cross_currency_gold_passes_the_cross_currency_check():
+    for it in ev.load_items("cmdbar_sql", "dev") + ev.load_items("cmdbar_sql", "test"):
+        if it["cross_currency"] and it.get("gold_sql"):
+            assert ev.money_comparison(it["gold_sql"], ["c"], [], ()) is None, it["id"]
+
+
 def _ans(state="answered", columns=(), rows=(), sql=None, models=("claude-haiku-5-5",), error=None):
     return sql_mod.DataAnswer(state, sql=sql, columns=list(columns), rows=list(rows), error_class=error,
                               summary="x" if state == "answered" else None, summary_grounded=state == "answered",
@@ -230,7 +266,7 @@ def test_a_sent_dev_run_records_every_item_never_passes_and_logs_no_rows():
     items = ev.load_items("cmdbar_sql", "dev")
     assert code == 0 and len(wr.results) == len(items) and len(wr.runs) == 1
     eval_set, set_version, model, prompt_version, n, metrics, passed, notes = wr.runs[0]
-    assert (eval_set, set_version, model, prompt_version, n, passed) == ("cmdbar_sql", "f" * 40, "claude-haiku-5-5", "v2",
+    assert (eval_set, set_version, model, prompt_version, n, passed) == ("cmdbar_sql", "f" * 40, "claude-haiku-5-5", "v4",
                                                                          len(items), False)
     assert metrics.obj["split"] == "dev" and metrics.obj["complete"] and "not the gate" in notes
     assert metrics.obj["correct"] == len(items) - sum(1 for i in items if not i["answerable"])
@@ -272,9 +308,10 @@ def test_the_cli_refuses_missing_secrets_and_unknown_items():
 
 def test_the_price_check_is_dearer_in_its_worst_case_than_its_estimate():
     prompt = sql_mod.sql_prompt(sql_mod.render_views(FakeReader().describe()[0]))
-    p = ev.price_run("cmdbar_sql", ev.load_items("cmdbar_sql", "dev"), prompt, TODAY)
-    assert Decimal(0) < p["estimate"] < p["worst_case"] < Decimal(3)
-    assert len(p["per_item_worst"]) == 12
+    items = ev.load_items("cmdbar_sql", "dev")
+    p = ev.price_run("cmdbar_sql", items, prompt, TODAY)
+    assert Decimal(0) < p["estimate"] < p["worst_case"] < Decimal("0.20") * len(items)      # under 20 cents an item at worst
+    assert len(p["per_item_worst"]) == len(items) == 67                                    # 12, plus round 1's 55 (#587)
 
 
 @pytest.mark.db
@@ -302,7 +339,7 @@ def test_the_workflow_is_manual_with_no_target_input():
     assert list(trigger) == ["workflow_dispatch"]
     assert set(trigger["workflow_dispatch"]["inputs"]) == {"set", "split", "items", "send", "max_cost", "query_model"}
     qm = trigger["workflow_dispatch"]["inputs"]["query_model"]                 # K-10 (#587): the route's model by default
-    assert qm["options"] == list(ev.QUERY_MODELS) and qm["default"] == "voyage-4-lite"
+    assert qm["options"] == list(ev.QUERY_MODELS) and qm["default"] == "voyage-4"
     assert trigger["workflow_dispatch"]["inputs"]["send"]["default"] is False
     assert wf["permissions"] == {"contents": "read"} and wf["concurrency"]["cancel-in-progress"] is False
 

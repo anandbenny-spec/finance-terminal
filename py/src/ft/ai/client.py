@@ -28,7 +28,8 @@ Messages API call and returns the reply with its usage and cost.
 - `Request.input_sha256` hashes the model, task, prompt (version and text), settings, documents and instruction:
   ops.ai_request keys on it, so an unchanged input is never sent twice.
 
-**Voyage** (`Embedder`): `voyage-4` for documents and `voyage-4-lite` for questions (one embedding space), 512
+**Voyage** (`Embedder`): `voyage-4` for documents and for questions (one embedding space; questions moved from `voyage-4-lite`
+on Anand's answer of 17 Nov 2026, #587, after the retrieval gate found `voyage-4` better: Architecture 03 §0), 512
 dimensions (stored as halfvec). The endpoint comes from the key: an unscoped MongoDB Atlas model API key ('al-…') goes
 to https://ai.mongodb.com/v1, a Voyage key to https://api.voyageai.com/v1 (voyageai 0.5.0's
 `util.get_default_base_url`; Anand, 23 Oct 2026). Retries honour `Retry-After` the same way.
@@ -649,7 +650,7 @@ class Client:
 
 
 # ---------------------------------------------------------------------------------------------- embeddings
-DOC_MODEL, QUERY_MODEL, DIMENSION = "voyage-4", "voyage-4-lite", 512
+DOC_MODEL, QUERY_MODEL, DIMENSION = "voyage-4", "voyage-4", 512   # questions: voyage-4 since 17 Nov 2026 (#587)
 EMBED_MAX_TEXTS = 128
 EMBED_MAX_TOKENS = 100_000            # per request, estimated (voyage-4 allows far more; this keeps requests small)
 
@@ -729,7 +730,7 @@ def _vector(v) -> list[float]:
 
 
 class Embedder:
-    """Voyage embeddings: documents with voyage-4, questions with voyage-4-lite, 512 dimensions. `client` is a
+    """Voyage embeddings: documents and questions with voyage-4, 512 dimensions. `client` is a
     VoyageHTTP (or a test double with the same `embed`); without one, the key is `api_key` or VOYAGE_API_KEY."""
 
     def __init__(self, api_key: str | None = None, *, client=None, sleep: Callable[[float], None] = time.sleep,
@@ -802,7 +803,7 @@ class Embedder:
         return Embedded(vectors, tokens, DOC_MODEL, requests)
 
     def embed_query(self, text: str) -> list[float]:
-        """A question, with voyage-4-lite (the command bar's retrieval; Architecture 03 §1.5)."""
+        """A question, with `QUERY_MODEL` (voyage-4: the command bar's retrieval; Architecture 03 §0 and §1.5; #587)."""
         r = self._embed([text], QUERY_MODEL, "query")
         return r.embeddings[0]
 
