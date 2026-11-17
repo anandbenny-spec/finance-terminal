@@ -3,28 +3,34 @@
 // The command bar's answer states (K-07, #585; Design 01 §4.6, word for word; Spec 07 §4, §7): a data answer (its summary marked
 // "AI summary", a dense DataTable, "Show SQL" with a copy button, a footer with the view it read and the time taken), a page
 // found, Can't answer (with suggested pages), Not found (documents), Limit reached (also the paused state) and the client's own
-// error state. Never a raw error, a run id or a task name (CLAUDE.md §4). A document answer's citation chips and phone sheet
-// are K-08's (#586); until then its sentences carry plain [n] markers into the documents listed under them, with no links.
+// error state. Never a raw error, a run id or a task name (CLAUDE.md §4). A document answer's sentences carry CitationChips
+// (K-08, #586): a popover on a fine pointer, a bottom sheet on touch, and never a link to RBI's pages (CLAUDE.md §1).
 import Link from "next/link";
 import { Check, Copy, Sparkles } from "lucide-react";
 import { useState } from "react";
+import { Cited } from "@/components/ai/CitationChip";
 import { DataTable, type Column } from "@/components/data/DataTable";
 import { StateNote } from "@/components/data/StateNote";
 import {
   AI_SUMMARY,
   CANT_TEXT,
+  CITED_DOCUMENTS,
   ERROR_TEXT,
   NOT_FOUND_TEXT,
   PAUSED_TEXT,
   SUGGESTED_PAGES,
+  documentAnswer,
+  documentLine,
+  documentPage,
   formatCell,
   isAiSummary,
+  isFedDocument,
   rowMarket,
   type Answer,
   type Cell,
   type PageLink,
 } from "@/lib/cmdbar";
-import { formatDate, formatDurationMs } from "@/lib/format";
+import { formatDurationMs } from "@/lib/format";
 
 /** The sparkle and "AI summary" (Design 01 §1.10): every AI line in the box carries it. */
 export function AiMark() {
@@ -41,7 +47,7 @@ function Pages({ pages, onNavigate }: { pages: readonly PageLink[]; onNavigate: 
     <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-ui">
       {pages.map((p) => (
         <li key={p.href}>
-          <Link prefetch={false} href={p.href} onClick={onNavigate} className="text-ink-1 underline">
+          <Link prefetch={false} href={p.href} onClick={onNavigate} className="inline-flex min-h-6 items-center text-ink-1 underline">
             {p.title}
           </Link>
         </li>
@@ -120,30 +126,49 @@ function DataAnswer({ answer, now }: { answer: Answer; now: string }) {
   );
 }
 
-function DocumentAnswer({ answer }: { answer: Answer }) {
+/**
+ * A document answer (K-08, #586; Design 01 §1.10, §4.5, §4.6): each sentence with its `CitationChip`s (the popover on a fine
+ * pointer, a bottom sheet on touch), then the documents they cite. A Fed document links to its official source; an RBI document
+ * is named by its title, date and press-release number, never linked to RBI's pages (CLAUDE.md §1). Each title opens the
+ * document on this site.
+ */
+function DocumentAnswer({ lines, documents, ms, onNavigate }: ReturnType<typeof documentAnswer> & { ms: number; onNavigate: () => void }) {
   return (
     <div className="space-y-2">
       <AiMark />
-      <ul className="space-y-1.5 text-ui text-ink-1">
-        {answer.citations.map((c, i) => (
+      <ul className="space-y-1.5 text-ui break-words text-ink-1">
+        {lines.map((l, i) => (
           <li key={i}>
-            {c.text}{" "}
-            <span className="font-mono text-meta whitespace-nowrap text-ink-2">
-              {[...new Set(c.refs.map((r) => r.document))].map((d) => `[${d + 1}]`).join("")}
-            </span>
+            <Cited text={l.text} citations={l.citations} />
           </li>
         ))}
       </ul>
-      <ol className="space-y-1 border-t border-line pt-2 text-meta text-ink-2">
-        {answer.documents.map((d, i) => (
-          <li key={i}>
-            [{i + 1}] {d.bank} · {d.title}
-            {d.date ? ` · ${formatDate(d.date)}` : ""}
-            {d.press_release ? ` · Press release ${d.press_release}` : ""}
-          </li>
-        ))}
-      </ol>
-      <p className="font-mono text-meta text-ink-3">{formatDurationMs(answer.ms)}</p>
+      <div className="border-t border-line pt-2">
+        <p className="text-meta text-ink-3">{CITED_DOCUMENTS}</p>
+        <ul className="text-meta text-ink-2">
+          {documents.map((d, i) => {
+            const page = documentPage(d);
+            const official = isFedDocument(d) ? d.source_url : null;
+            return (
+              <li key={i} className="flex min-h-6 flex-wrap items-center gap-x-3 break-words">
+                {page ? (
+                  <Link prefetch={false} href={page} onClick={onNavigate} className="min-w-0 py-1 text-ink-1 underline">
+                    {documentLine(d)}
+                  </Link>
+                ) : (
+                  <span className="min-w-0 py-1">{documentLine(d)}</span>
+                )}
+                {official && (
+                  <a href={official} className="py-1 text-ink-1 underline" rel="noreferrer" target="_blank">
+                    Official source ↗
+                  </a>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      <p className="font-mono text-meta text-ink-3">{formatDurationMs(ms)}</p>
     </div>
   );
 }
@@ -169,7 +194,12 @@ export function AnswerView({ answer, now, onNavigate }: { answer: Answer; now: s
       }
       break;
     case "answered":
-      if (answer.route === "document" && answer.citations.length > 0) return <DocumentAnswer answer={answer} />;
+      if (answer.route === "document") {
+        const doc = documentAnswer(answer);
+        // No sentence with a chip left: nothing uncited is shown, and the answer is the route's own "not found".
+        if (doc.lines.length === 0) return <StateNote kind="empty">{NOT_FOUND_TEXT}</StateNote>;
+        return <DocumentAnswer {...doc} ms={answer.ms} onNavigate={onNavigate} />;
+      }
       if (answer.route === "data") return <DataAnswer answer={answer} now={now} />;
       break;
   }

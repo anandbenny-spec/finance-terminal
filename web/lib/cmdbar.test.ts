@@ -1,20 +1,27 @@
 // lib/cmdbar.ts (K-07, #585): the gate, plain search's query and its count check, where each result goes, the answer stream and
-// its shape check, and how a data answer's cells are shown.
+// its shape check, and how a data answer's cells are shown. K-08 (#586): a document answer's chips and documents, and the keys
+// an answer keeps from cmdk's list.
 import { describe, expect, it, vi } from "vitest";
 import {
   CMDBAR_FIELD,
   ERROR_TEXT,
+  LIST_KEYS,
   SEARCH_PAGE,
   SUGGESTED_PAGES,
   askLabel,
   askQuestion,
   commandBarShown,
+  documentAnswer,
+  documentLine,
+  documentPage,
   fetchExamples,
   formatCell,
   groupHits,
   hitOf,
   isAiSummary,
+  isFedDocument,
   isShortcut,
+  keepAnswerKeys,
   officialLink,
   pageHits,
   pageHref,
@@ -304,5 +311,117 @@ describe("a data answer's cells", () => {
     expect(formatCell(true, "boolean", undefined, now)).toBe("Yes");
     expect(formatCell("Hold", "text", undefined, now)).toBe("Hold");
     expect(formatCell(null, "number", undefined, now)).toBe(NOT_AVAILABLE);
+  });
+});
+
+describe("a document answer's chips and documents (K-08, #586)", () => {
+  const FED = {
+    document_id: 41,
+    bank: "Fed",
+    label: "FOMC statement",
+    title: "Federal Reserve issues FOMC statement",
+    date: "2026-09-17",
+    event_slug: "fomc-2026-09-17",
+    press_release: null,
+    source_url: "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260917a.htm",
+  };
+  const RBI = {
+    document_id: 77,
+    bank: "RBI",
+    label: "MPC resolution",
+    title: "Resolution of the Monetary Policy Committee",
+    date: "2026-10-07",
+    event_slug: "mpc-2026-10-07",
+    press_release: "2026-2027/1234",
+    // Never sent by the route for an RBI document; a host that isn't RBI's still gets no link, because the bank is RBI's.
+    source_url: "https://example.org/rbi-mirror.pdf",
+  };
+  const LONG = `${"The Committee decided to keep the policy repo rate unchanged. ".repeat(6)}It also kept the stance.`;
+  const answer = parseAnswer({
+    route: "document",
+    state: "answered",
+    summary: "x",
+    columns: [],
+    rows: [],
+    sql: null,
+    citations: [
+      { text: "The Fed cut its target range by 25 bps.", refs: [{ document: 0, char_start: 100, char_end: 180, quote: "lower the target range by 1/4 percentage point" }] },
+      {
+        text: "The MPC kept the repo rate unchanged.",
+        refs: [
+          { document: 1, char_start: 10, char_end: 400, quote: LONG },
+          { document: 0, char_start: 100, char_end: 180, quote: "lower the target range by 1/4 percentage point" },
+        ],
+      },
+      { text: "A sentence whose only reference has no quote.", refs: [{ document: 1, char_start: 5, char_end: 9, quote: "  " }] },
+    ],
+    documents: [FED, RBI],
+    view: null,
+    pages: [],
+    ms: 3100,
+  });
+
+  it("keeps each document's id from the route, and none when it's missing or not a whole number", () => {
+    expect(answer.documents.map((d) => d.document_id)).toEqual([41, 77]);
+    const odd = parseAnswer({ ...answer, documents: [{ ...FED, document_id: "41" }, { ...RBI, document_id: -3 }] });
+    expect(odd.documents.map((d) => d.document_id)).toEqual([null, null]);
+    expect(documentPage(answer.documents[0])).toBe("/documents/41");
+    expect(documentPage({ document_id: null })).toBeNull();
+  });
+  it("numbers one chip per passage in the order first cited; a passage cited again keeps its number", () => {
+    const { lines } = documentAnswer(answer);
+    expect(lines.map((l) => l.citations.map((c) => c.no))).toEqual([[1], [2, 1]]);
+    expect(lines[1].citations[1]).toBe(lines[0].citations[0]);
+  });
+  it("drops a sentence left with no chip: nothing uncited is shown", () => {
+    const { lines } = documentAnswer(answer);
+    expect(lines.map((l) => l.text)).toEqual(["The Fed cut its target range by 25 bps.", "The MPC kept the repo rate unchanged."]);
+    expect(documentAnswer({ citations: [{ text: "x", refs: [{ document: 0, char_start: 0, char_end: 1, quote: "" }] }], documents: [FED] })).toEqual({ lines: [], documents: [] });
+  });
+  it("opens each passage in the document at its span, and links only a Fed document to its official source", () => {
+    const [fed, rbi] = [documentAnswer(answer).lines[0].citations[0], documentAnswer(answer).lines[1].citations[0]];
+    expect(fed.href).toBe("/documents/41?span=100-180#cited");
+    expect(fed.officialUrl).toBe(FED.source_url);
+    expect(fed.documentTitle).toBe("Fed · Federal Reserve issues FOMC statement · 17 Sep 2026");
+    expect(rbi.href).toBe("/documents/77?span=10-400#cited");
+    expect(rbi.officialUrl).toBeNull();
+    expect(rbi.documentTitle).toBe("RBI · Resolution of the Monetary Policy Committee · 7 Oct 2026 · Press release 2026-2027/1234");
+    const noId = documentAnswer({ citations: answer.citations, documents: [{ ...answer.documents[0], document_id: null }, answer.documents[1]] });
+    expect(noId.lines[0].citations[0].href).toBeNull();
+  });
+  it("cuts a long quote for the popover at a sentence boundary, at most 280 characters", () => {
+    const quote = documentAnswer(answer).lines[1].citations[0].quote;
+    expect([...quote].length).toBeLessThanOrEqual(280);
+    expect(quote).toMatch(/unchanged\. …$/);
+    expect(documentAnswer(answer).lines[0].citations[0].quote).toBe("lower the target range by 1/4 percentage point");
+  });
+  it("lists the cited documents in the order first cited, each by its bank, title, date and an RBI press-release number", () => {
+    const { documents } = documentAnswer(answer);
+    expect(documents.map((d) => d.document_id)).toEqual([41, 77]);
+    expect(documents.map(documentLine)).toEqual([
+      "Fed · Federal Reserve issues FOMC statement · 17 Sep 2026",
+      "RBI · Resolution of the Monetary Policy Committee · 7 Oct 2026 · Press release 2026-2027/1234",
+    ]);
+    expect(documentLine({ ...RBI, date: null, press_release: null })).toBe("RBI · Resolution of the Monetary Policy Committee");
+  });
+  it("knows a Fed document by its bank's name, and never the RBI's", () => {
+    expect(["Fed", "Federal Reserve", " fed "].map((bank) => isFedDocument({ bank }))).toEqual([true, true, true]);
+    expect(["RBI", "Reserve Bank of India", "Fedora"].map((bank) => isFedDocument({ bank }))).toEqual([false, false, false]);
+  });
+});
+
+describe("keepAnswerKeys: an answer keeps the keys cmdk's list takes (K-08)", () => {
+  it("stops Enter and the arrows before cmdk's handler, and lets Esc, Tab and ⌘K / Ctrl K through", () => {
+    for (const key of ["Enter", "ArrowDown", "ArrowUp", "Home", "End"]) {
+      const stop = vi.fn();
+      keepAnswerKeys({ key, stopPropagation: stop });
+      expect(stop, key).toHaveBeenCalledOnce();
+    }
+    for (const key of ["Escape", "Tab", "k", " "]) {
+      const stop = vi.fn();
+      keepAnswerKeys({ key, stopPropagation: stop });
+      expect(stop, key).not.toHaveBeenCalled();
+    }
+    expect([...LIST_KEYS].sort()).toEqual(["ArrowDown", "ArrowUp", "End", "Enter", "Home"]);
   });
 });
