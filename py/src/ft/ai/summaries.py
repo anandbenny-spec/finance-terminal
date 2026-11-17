@@ -80,7 +80,8 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
 DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
-                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET, "v23": SONNET, "v24": SONNET, "v25": SONNET, "v26": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET, "v23": SONNET, "v24": SONNET, "v25": SONNET, "v26": SONNET,
+                 "v27": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
 # (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
 # two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12); v14: v13 plus two rules, with one
 # more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14); v16: v15's
@@ -89,12 +90,13 @@ DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11":
 # text again, marking the third run's (a narrower "adds" check, the fallback's trivial changes and repeated sentences).
 # v20 to v22: v19's text again, marking rounds 17 to 19's revisions; v23: v22's text, marking round 20's packed fallback
 # (`DIFF_PACK_FROM`); v24: v23's text, marking round 21's (`DIFF_RESTATED_FROM`); v25: v24's text, marking round 22's
-# (`DIFF_COUNTERPART_FROM`); v26: v25's text, marking round 23's (`DIFF_KIND_JOIN_FROM`, `DIFF_V1_PAIRS_FROM`).
+# (`DIFF_COUNTERPART_FROM`); v26: v25's text, marking round 23's (`DIFF_KIND_JOIN_FROM`, `DIFF_V1_PAIRS_FROM`); v27: v26's
+# text, marking round 24's (`DIFF_V1_ALL_FROM`).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
 DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium",
                   "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium", "v20": "medium", "v21": "medium", "v22": "medium", "v23": "medium", "v24": "medium",
-                  "v25": "medium", "v26": "medium"}
+                  "v25": "medium", "v26": "medium", "v27": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -240,6 +242,20 @@ DIFF_KIND_JOIN_FROM = 26
 #   vote with the dissents (mpc-2022-09-30: the vote on the policy repo rate, from "unanimously voted" to five members, beside
 #   Dr. Goyal's 35 basis points), anything else as the stance (the guidance above).
 DIFF_V1_PAIRS_FROM = 26
+# From v27 (#445, round 24; Anand's decision of 16 Nov 2026, 22:50 IST, rounds 23 and 24 open; round 23's verdict, 17 Nov 2026,
+# 09:30 IST: mpc-2024-08-08 and mpc-2022-02-10 failed rule (c)): v26's text, and every change the target's v1 output cites is
+# shown (`_pack`'s `v1_of`): the v1-cited changes came first in v25 and v26, but within the packing's limits (5 bullets, 2
+# changes of one kind to a bullet), so when they needed more room than that, the last of them were left out (mpc-2024-08-08:
+# the core inflation reading, from 3.2 per cent in April to 3.1 per cent in May-June, which v1 (576) has; mpc-2022-02-10: the
+# first advance estimate of 9.2 per cent for 2021-22, and the global PMI). Now a v1-cited change that finds no room of its
+# kind goes to another bullet with room (the one with the fewest changes, then one of its kind, then the shortest), then to a
+# bullet holding up to FALLBACK_V1_PER_BULLET changes; the changes v1 doesn't cite take only the room left. And a sentence
+# only one document has goes beside the other document's side of a change that the same v1 bullet cites with it (`_pack`'s
+# `mate`), so the previous "projection for real GDP growth is retained at 9.5 per cent in 2021-22" and the new "first advance
+# estimates … placed India's real gross domestic product (GDP) growth at 9.2 per cent for 2021-22" (paired here with the
+# previous sentence on the NSO's data) are read together, as v1 (301) gives them. Fallbacks of v26 keep their rules.
+DIFF_V1_ALL_FROM = 27
+FALLBACK_V1_PER_BULLET = 4             # from v27: changes a bullet may carry so that every change v1 cites is shown
 
 
 def diff_json(version: str) -> bool:
@@ -2256,7 +2272,7 @@ def _v1_counterparts(segments: dict, old: Doc, new: Doc, changes: list[list], v1
 def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], hi: int = 5, *,
                      packed: bool = False, restated: bool = False, counterparts: bool = False,
                      v1: list[tuple[int, ...]] | None = None, kinds: bool = False,
-                     v1_pairs: bool = False) -> list[Bullet]:
+                     v1_pairs: bool = False, v1_all: bool = False) -> list[Bullet]:
     """The fallback's bullets (see above): `prefer` holds a rejected reply's quotes as (document, text), in its order.
     `packed` (from v23, `DIFF_PACK_FROM`): the balance sheet's words rank before the stance's, and a bullet carries up to
     FALLBACK_PER_BULLET changes of one kind (`_pack`). `restated` (from v24, `DIFF_RESTATED_FROM`; with `packed`): a change
@@ -2266,7 +2282,9 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
     bullet's index as a fourth), a minor change last (`_minor`), quotations without RBI paragraph numbers and list items
     labelled as such. `kinds` (from v26, `DIFF_KIND_JOIN_FROM`; with `counterparts`): `_counterparts`' joining rule of round
     23. `v1_pairs` (from v26, `DIFF_V1_PAIRS_FROM`; with `counterparts`): v1's counterparts are one change, and v1's own
-    changes of the decision's kind are shown (`_v1_counterparts`, and below)."""
+    changes of the decision's kind are shown (`_v1_counterparts`, and below). `v1_all` (from v27, `DIFF_V1_ALL_FROM`; with
+    `packed` and `counterparts`): every change v1 cites is shown, a sentence one document alone has beside one of the other's
+    that the same v1 bullet cites (`_pack`'s `v1_of` and `side`)."""
     def kind_of(text: str) -> int:
         return _kind(text, packed=packed)
 
@@ -2422,8 +2440,19 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
         later -= first
     if packed:
         said = {id(p): (" ".join(_undated(words(p[0], old.text))), " ".join(_undated(words(p[1], new.text)))) for p in unique}
+        v1_of: dict[int, frozenset[tuple[int, str]]] | None = None
+        side: dict[int, str] = {}
+        if counterparts and v1_all:
+            # From v27: the v1 bullets citing each change's sides (every change v1 cites is shown), and which document alone
+            # has it.
+            cited_by = _v1_bullets(v1 or [])
+            v1_of = {id(p): frozenset((k, s) for k, cites in cited_by.items()
+                                      for s, spans, doc in (("old", p[0], old.document_id), ("new", p[1], new.document_id))
+                                      if _hits(spans, doc, cites))
+                     for p in unique}
+            side = {id(p): "old" if p[0] and not p[1] else "new" if p[1] and not p[0] else "both" for p in unique}
         bullets = _pack(by_kind, after, {id(p): kind[id(p)] for p in unique}, said, take, hi, first=first, later=later,
-                        last=last)
+                        last=last, v1_of=v1_of, side=side)
     else:
         for k in range(FALLBACK_FIRST_KINDS):          # one of each kind first
             for p in by_kind:
@@ -2479,7 +2508,8 @@ def _said(who: str, lists: str, item: str | None, says: str, q: str) -> str:
 
 def _pack(by_kind: list, after: list, kind: dict[int, int], said: dict[int, tuple[str, str]], take, hi: int, *,
           first: set[int] | frozenset = frozenset(), later: set[int] | frozenset = frozenset(),
-          last: set[int] | frozenset = frozenset()) -> list[list]:
+          last: set[int] | frozenset = frozenset(), v1_of: dict[int, frozenset[tuple[int, str]]] | None = None,
+          side: dict[int, str] | None = None) -> list[list]:
     """The packed fallback's choice (v23 on, `fallback_bullets`): bullets as lists of changes, each holding up to
     FALLBACK_PER_BULLET changes of one kind. Here the inflation and growth projections are one kind, and the corridor rates
     join the decision's bullet (they move with it: "Consequently, the reverse repo rate … stands adjusted to …"), as v1 often
@@ -2492,7 +2522,14 @@ def _pack(by_kind: list, after: list, kind: dict[int, int], said: dict[int, tupl
     their kind with room or open one while slots are left. The decision is shown once, and no change whose previous or new
     words another chosen change already has (an RBI resolution states its stance in two paragraphs). Last, while there are
     fewer than `hi` bullets, a bullet's second change moves to a bullet of its own: packing is for coverage, so a target with
-    few changes keeps one change to a bullet."""
+    few changes keeps one change to a bullet.
+    From v27 (`DIFF_V1_ALL_FROM`), with `v1_of` (the v1 bullets citing each change's sides, as (bullet, "old" or "new"), by
+    id) and `side` ("old", "new" or "both": which document alone has the change): every change in `first` is shown. A sentence
+    one document alone has goes first to the bullet holding the other document's side that the same v1 bullet cites with it
+    (`mate`), and a change to the bullet holding such a sentence, then where `place` puts it; and when there is no room of
+    its kind and no bullet left to open, to the bullet other than the decision's with the fewest changes (then one of its
+    kind, then the shortest), below FALLBACK_PER_BULLET changes, then below FALLBACK_V1_PER_BULLET. When bullets are spare,
+    a change is never moved away from its mate."""
     decision, projections = FALLBACK_KINDS.index("decision"), FALLBACK_KINDS.index("projections")
     growth, corridor = FALLBACK_KINDS.index("growth projections"), FALLBACK_KINDS.index("corridor")
     bullets: list[list] = []
@@ -2517,9 +2554,54 @@ def _pack(by_kind: list, after: list, kind: dict[int, int], said: dict[int, tupl
             bullets.append([p])
         return True
 
+    def beside(p, c) -> bool:
+        """One document alone has `p`, and a v1 bullet that cites it cites `c`'s side in the other document and not its side
+        in `p`'s: what `p` became, or what it was (mpc-2022-02-10: the previous "retained at 9.5 per cent in 2021-22" and the
+        new "placed India's real gross domestic product (GDP) growth at 9.2 per cent for 2021-22", v1 (301) bullet 4)."""
+        if v1_of is None or side is None or side.get(id(p)) not in ("old", "new"):
+            return False
+        mine, theirs = v1_of.get(id(p), frozenset()), v1_of.get(id(c), frozenset())
+        s = side[id(p)]
+        o = "new" if s == "old" else "old"
+        return any((k, o) in theirs and (k, s) not in theirs for k, x in mine if x == s)
+
+    def mate(p, c) -> bool:
+        """From v27: `p` and `c` are two sides of what one v1 bullet compares (`beside`, either way round)."""
+        return beside(p, c) or beside(c, p)
+
+    def size(g) -> int:
+        return sum(len(w) for c in g for w in said[id(c)])
+
+    def put(p, g) -> bool:
+        """From v27: `p` into bullet `g`, past `place`'s kinds and limits (the decision once and no words twice still hold)."""
+        chosen = [c for b in bullets for c in b]
+        if kind[id(p)] == decision and any(kind[id(c)] == decision for c in chosen):
+            return False
+        if any(a and a == b for c in chosen for a, b in zip(said[id(c)], said[id(p)], strict=True)):
+            return False
+        if not take(p):
+            return False
+        g.append(p)
+        return True
+
+    def place_v1(p) -> None:
+        """From v27: a change v1 cites is shown (see above)."""
+        if any(put(p, g) for g in bullets if len(g) < FALLBACK_V1_PER_BULLET and any(mate(p, c) for c in g)):
+            return                                     # beside its other side, as v1 gives them
+        if place(p):
+            return
+        others = [g for g in bullets if group(g[0]) != decision]
+        for cap in (FALLBACK_PER_BULLET, FALLBACK_V1_PER_BULLET):
+            for g in sorted((g for g in others if len(g) < cap), key=lambda g: (len(g), group(g[0]) != group(p), size(g))):
+                if put(p, g):
+                    return
+
     for p in by_kind:                                  # from v25: the changes the v1 output cites first
         if id(p) in first:
-            place(p)
+            if v1_of is None:
+                place(p)
+            else:
+                place_v1(p)
     for name in FALLBACK_PACKED_ORDER[:FALLBACK_FIRST_KINDS]:     # one of each kind first
         for p in by_kind:
             if kind[id(p)] == FALLBACK_KINDS.index(name) and id(p) not in later | last and place(p):
@@ -2538,7 +2620,12 @@ def _pack(by_kind: list, after: list, kind: dict[int, int], said: dict[int, tupl
             place(p)
     for g in list(bullets):                            # bullets to spare: a second change gets a bullet of its own
         while len(g) > 1 and len(bullets) < hi:
-            bullets.append([g.pop()])
+            free = [c for c in g if not any(mate(c, d) for d in g if d is not c)]   # from v27: never away from its mate
+            if not free:
+                break
+            c = free[-1]
+            g[:] = [d for d in g if d is not c]
+            bullets.append([c])
     return bullets
 
 
