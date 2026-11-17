@@ -1,8 +1,9 @@
 """cmdbar.examples: the command bar's example chips, precomputed (Spec 07 §4 "Examples", §9 step 4; Architecture 03 §1.8; K-09, #588).
 
-**Ships disabled** (`enabled: false` in config/tasks.yaml): nothing runs on production until go-live, when enabling it is Anand's
-step on K-11's list (#590), with production's `sql_reader` connection as the GitHub secret `SQL_READER_DATABASE_URL`. The dev
-trial while it is disabled is this module's `main` (`cmdbar-gates.yml`'s `examples`), dev only.
+**Enabled** (`enabled: true` in config/tasks.yaml) by K-11a (#626) on Anand's OK of 17 Nov 2026 ("Yes, turn it on"): K-09 (#588)
+shipped it disabled; now production's `daily` asks the chips before K-11's flip (#590), with production's `sql_reader` connection
+as the GitHub secret `SQL_READER_DATABASE_URL`, so the admin can check each answer. A visitor sees a chip only once it is checked
+and the box is shown (Spec 07 §3). The dev trial is this module's `main` (`cmdbar-gates.yml`'s `examples`), dev only.
 
 The chips are config/cmdbar/examples.yaml. Each run, for each chip in display order:
 - **unchanged:** its stored answer is `answered` and its `data_version` hasn't moved: nothing is run or asked. The version is the
@@ -336,9 +337,9 @@ class CmdbarExamples(Task):
 
 # ---------------------------------------------------------------------------------------------- the dev trial
 def main(argv: list[str] | None = None, *, env: Mapping[str, str] | None = None) -> int:
-    """The task on **dev** while it is disabled (K-09's dev run; `cmdbar-gates.yml`'s `examples`): one `refresh` job run with
-    this task alone, forced, as `job_writer`. There is no production target: the task reaches production only through `daily`
-    once Anand enables it at go-live."""
+    """The task on **dev** (K-09's dev trial; `cmdbar-gates.yml`'s `examples`): one `refresh` job run with this task alone,
+    forced, as `job_writer`. There is no production target: the task reaches production only through `daily` (enabled by
+    K-11a, #626)."""
     from ft.jobs import config
     from ft.jobs.runner import JobRun, connect
 

@@ -14,10 +14,19 @@
 # the answers' counts are recorded beside it. The Voyage key, like the model key, is present only on a run that sends.
 # `query_model` (retrieval only; K-10, #587): voyage-4-lite embeds the questions for Architecture 03 §0's comparison, recorded
 # beside the route's voyage-4 run (the route's model since 17 Nov 2026) and never as the gate.
-# `examples` (K-09, #588) isn't a set: it is the dev trial of the task `cmdbar.examples` while it is disabled (`python -m
-# ft.jobs.tasks.cmdbar_examples --target dev`): one refresh job run on dev, recorded in ops.job_run and ops.task_run, that answers
-# the chips of config/cmdbar/examples.yaml through the route and stores them in ops.cmdbar_example, unchecked. `split`, `items`,
-# `max_cost` and `query_model` don't apply (the task holds its own run cap); with `send` off no model is asked (`ai_off`).
+# `examples` (K-09, #588) isn't a set: it is the dev trial of the task `cmdbar.examples` (`python -m
+# ft.jobs.tasks.cmdbar_examples --target dev`; enabled in daily since K-11a, #626): one refresh job run on dev, recorded in
+# ops.job_run and ops.task_run, that answers the chips of config/cmdbar/examples.yaml through the route and stores them in
+# ops.cmdbar_example, unchecked. `split`, `items`, `max_cost` and `query_model` don't apply (the task holds its own run cap);
+# with `send` off no model is asked (`ai_off`).
+# `questions` (K-11a, #626; for the K-11 judge's live injection attempts, #590 item 5) isn't a set either: the input `questions`
+# (one to five, separated by |, each at most 500 characters) reaches the script only as the environment variable
+# CMDBAR_QUESTIONS, never in the `run:` line. Each goes through the route's own steps 4 and 5 (`ft.cmdbar.route.answer`, as
+# `cmdbar.examples` asks its chips). With `send` off: the price only. With `send` on: one ops.eval_run (`cmdbar_questions`, never
+# passed) and one ops.eval_result per question on dev, stopping before spend could pass `max_cost`. Its annotations hold each
+# question's route, state, guard verdict and class, rows returned and cost, never the question, a summary, a row or the query.
+# The questions themselves show in the step's environment in this public run log: they are the asker's own words, so never
+# put anything private in them.
 name: cmdbar-gates
 on:
   workflow_dispatch:
@@ -25,7 +34,7 @@ on:
       set:
         description: The evaluation set
         type: choice
-        options: [cmdbar_sql, cmdbar_router, retrieval, examples]
+        options: [cmdbar_sql, cmdbar_router, retrieval, examples, questions]
         default: cmdbar_sql
       split:
         description: 'dev: prompt work (K-04, K-06); test: the gate (K-10) and the judge (K-11) only (Spec 07 N5)'
@@ -49,6 +58,10 @@ on:
         type: choice
         options: [voyage-4, voyage-4-lite]
         default: voyage-4
+      questions:
+        description: 'questions only: one to five free-text questions, separated by |, each at most 500 characters (dev; never a gate)'
+        type: string
+        default: ""
 concurrency:
   group: cmdbar-gates
   cancel-in-progress: false
@@ -75,6 +88,12 @@ jobs:
             uv run --locked python -m ft.jobs.tasks.cmdbar_examples --target dev --runner github --github-run-id "$GITHUB_RUN_ID" --git-sha "$GITHUB_SHA"
             exit $?
           fi
+          if [ "$SET" = "questions" ]; then
+            args=(--set questions --max-cost "$MAX_COST")
+            if [ "$SEND" = "true" ]; then args+=(--send); fi
+            uv run --locked python -m ft.eval.cmdbar "${args[@]}"
+            exit $?
+          fi
           args=(--set "$SET" --split "$SPLIT" --max-cost "$MAX_COST")
           if [ -n "$ITEMS" ]; then args+=(--items "$ITEMS"); fi
           if [ "$SEND" = "true" ]; then args+=(--send); fi
@@ -87,6 +106,9 @@ jobs:
           SEND: ${{ inputs.send }}
           MAX_COST: ${{ inputs.max_cost }}
           QUERY_MODEL: ${{ inputs.query_model }}
+          # The free-text questions reach the script only through this variable (it reads CMDBAR_QUESTIONS itself), never the
+          # `run:` line (CLAUDE.md §4).
+          CMDBAR_QUESTIONS: ${{ inputs.questions }}
           # Dev's databases only: sql_reader (transaction pooler) for the answers and the golds, job_writer for the records.
           SQL_READER_DATABASE_URL: ${{ secrets.DEV_SQL_READER_DATABASE_URL }}
           JOB_DATABASE_URL: ${{ secrets.DEV_JOB_DATABASE_URL }}

@@ -1,5 +1,5 @@
 """The command bar's example chips (K-09, #588; Spec 07 §4 "Examples", §9 step 4; Spec 01 §4.6): the chips file, the task
-`cmdbar.examples` (disabled until go-live; recomputes a chip only when its data_version moved; an answer that changes is
+`cmdbar.examples` (enabled since K-11a, #626; recomputes a chip only when its data_version moved; an answer that changes is
 unchecked), the route's steps 4 and 5 for an asker that isn't a visitor (`route.answer`), and the dev trial's guards."""
 import json
 from datetime import datetime, timedelta
@@ -55,7 +55,8 @@ def test_the_shipped_chips_are_spec_01s_plus_two_nifty_50_ones():
     assert ex.MIN_CHIPS <= len(chips) <= ex.MAX_CHIPS == 6
     qs = [c.question for c in chips]
     for spec01 in ("When did the RBI last change the repo rate, and by how much?",            # Spec 01 §4.6, chips 1, 2, 4, 6
-                   "How many FOMC dissents were there in each year since 2019?",
+                   # chip 2, reworded by K-11a (#626, 17 Nov 2026) so its answer covers each year it names
+                   "In which years since 2019 did FOMC members dissent, and how many dissents were there in each?",
                    "What did the RBI project for CPI inflation at its latest meeting?",
                    "What changed in the RBI's latest resolution?"):
         assert spec01 in qs
@@ -84,12 +85,13 @@ def test_a_chips_file_that_breaks_a_rule_is_refused(tmp_path, body, why):
 
 
 # ------------------------------------------------------------------ the task's configuration
-def test_the_task_is_registered_in_daily_and_ships_disabled():
+def test_the_task_is_registered_in_daily_and_enabled():
+    # K-09 (#588) shipped it disabled; K-11a (#626) enables it on Anand's OK (17 Nov 2026), so production's daily asks the chips
     from ft.jobs import config
     from ft.jobs.tasks import registry
     t = config.load()["cmdbar.examples"]
     assert registry()["cmdbar.examples"] is ex.CmdbarExamples
-    assert t.workflows == ("daily",) and not t.enabled and not t.uses_nse and not t.visitor_refreshable
+    assert t.workflows == ("daily",) and t.enabled and not t.uses_nse and not t.visitor_refreshable
     assert set(t.run_after) >= {"policy.reactions", "policy.ai_batch"}       # the day's data is in before a chip is asked
 
 
@@ -320,7 +322,7 @@ def test_the_trial_needs_the_job_writers_connection():
 
 def test_the_workflows_wire_the_trial_and_the_reader_secret():
     gates = (ROOT / ".github" / "workflows" / "cmdbar-gates.yml").read_text()
-    assert "options: [cmdbar_sql, cmdbar_router, retrieval, examples]" in gates
+    assert "options: [cmdbar_sql, cmdbar_router, retrieval, examples, questions]" in gates      # questions: K-11a (#626)
     assert "python -m ft.jobs.tasks.cmdbar_examples --target dev" in gates
     assert "- run: uv sync --locked --extra jobs" in gates               # the runner's fetcher needs curl_cffi (dev run 1, #588)
     daily = (ROOT / ".github" / "workflows" / "daily.yml").read_text()
