@@ -63,6 +63,9 @@ jobs:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           ANTHROPIC_API_KEY: ${{ inputs.ai != 'off' && secrets.ANTHROPIC_API_KEY || '' }}
           VOYAGE_API_KEY: ${{ inputs.ai != 'off' && secrets.VOYAGE_API_KEY || '' }}
+          # K-09 (#588): cmdbar.examples asks its chips through the command bar's route, whose queries run as sql_reader (the
+          # transaction pooler). The task is disabled until go-live; production's secret is Anand's step then (K-11, #590).
+          SQL_READER_DATABASE_URL: ${{ env.FT_TARGET == 'production' && secrets.SQL_READER_DATABASE_URL || env.FT_TARGET == 'dev' && secrets.DEV_SQL_READER_DATABASE_URL || '' }}
       # #263: after a successful production run, load the main pages a few times so the first real visitor gets the data
       # the run just stored (ops/warm-site.sh). It reads public pages and takes no secret.
       # It sits before the dead-man check, which stays the last step (py/tests/test_health.py), and can't fail the run:

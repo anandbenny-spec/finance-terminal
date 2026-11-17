@@ -240,3 +240,13 @@ cmdbar.log_retention:
   workflows: {daily: every 16 hours}
   overdue_after: 3 days
   uses_nse: false
+cmdbar.examples:
+  description: The command bar's example chips, answered again when the data they read has changed (each changed answer waits for the admin's check)
+  # K-09 (#588): disabled until the command bar's go-live (Spec 07 §3, §9); enabling it is Anand's step on K-11 (#590), with
+  # production's sql_reader connection as the GitHub secret SQL_READER_DATABASE_URL. The dev trial runs it while disabled
+  # (cmdbar-gates.yml, set `examples`). It runs after the policy tasks, so a chip reads the day's data.
+  workflows: {daily: every 16 hours}
+  run_after: [policy.reactions, policy.ai_batch, policy.rate_cycles]
+  overdue_after: 3 days
+  uses_nse: false
+  enabled: false

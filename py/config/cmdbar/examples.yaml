@@ -1,0 +1,29 @@
+# The command bar's example chips (Spec 07 §4 "Examples", §7's Empty state; Spec 01 §4.6; K-09, #588).
+#
+# The task `cmdbar.examples` (py/src/ft/jobs/tasks/cmdbar_examples.py) asks each one through the route's own steps 4 and 5 and
+# stores the answer in `ops.cmdbar_example`; the box shows only the answers the admin has marked checked (`verified`), in
+# `display_order`, and a click on a chip costs nothing. Four to six chips (Spec 07 §7): Spec 01 §4.6's chips 1, 2, 4 and 6 (the
+# document question) and two Nifty 50 ones. A question's wording is its key: rewording a chip makes a new row that the admin
+# checks again, and a chip taken out of this file is set unchecked, so visitors stop seeing it.
+#
+# Per chip: question (at most 500 characters, a data or document question, never one that ranks, sums or compares money
+# across currencies), module (`policy` or `equity`: the module it reads) and display_order (unique, from 1).
+examples:
+  - question: When did the RBI last change the repo rate, and by how much?
+    module: policy
+    display_order: 1
+  - question: Which Nifty 50 banks trade below one times book value?
+    module: equity
+    display_order: 2
+  - question: How many FOMC dissents were there in each year since 2019?
+    module: policy
+    display_order: 3
+  - question: What changed in the RBI's latest resolution?
+    module: policy
+    display_order: 4
+  - question: What are the five largest Nifty 50 companies by market capitalisation?
+    module: equity
+    display_order: 5
+  - question: What did the RBI project for CPI inflation at its latest meeting?
+    module: policy
+    display_order: 6
