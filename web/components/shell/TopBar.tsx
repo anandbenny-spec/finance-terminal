@@ -2,9 +2,10 @@
 // in Plex Mono 500 after an 8 px highlight square) · the command bar's slot, centred, at most 640 px · the admin badge.
 // At 320 px the admin's row is Menu 79 + wordmark 151 + badge 28 (icon only below sm) + two 12 px gaps + 32 px of padding
 // = 314 px (#147): a visitor's has room to spare; the word "Admin" returns at sm, and the gaps at 16 px.
-// The command bar itself is built 3–12 Nov (Spec 01 §6); until then its slot stays empty rather than showing a
-// search box that does nothing, and the mobile search button and ⌘K arrive with it.
+// The command bar (K-07, #585; Spec 07 §3) renders in its slot only while `site.command_bar` is published; until then the slot
+// stays empty, as it was, and the mobile search button and ⌘K arrive with it (components/cmdbar/).
 import Link from "next/link";
+import { CommandBarSlot } from "@/components/cmdbar/CommandBarSlot";
 import { AdminBadge } from "@/components/shell/admin";
 import { MobileNav } from "@/components/shell/MobileNav";
 
@@ -19,7 +20,7 @@ export function TopBar() {
         <span aria-hidden className="size-2 shrink-0 bg-highlight" />
         Finance Terminal
       </Link>
-      <div data-slot="command-bar" className="mx-auto hidden max-w-160 flex-1 md:block" />
+      <CommandBarSlot />
       <div className="ml-auto flex items-center justify-end md:ml-0 lg:min-w-50">
         <AdminBadge />
       </div>

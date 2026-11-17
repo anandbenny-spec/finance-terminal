@@ -10,6 +10,8 @@ import {
   NOT_AVAILABLE_LABEL,
   formatAxisChange,
   formatCountChangeWords,
+  formatDurationMs,
+  formatExactDecimal,
   formatFiledShare,
   formatPrintedValue,
   formatShareChangeWords,
@@ -431,5 +433,30 @@ describe("formatPrintedValue", () => {
     expect(formatPrintedValue(-0.4, "%")).toBe(`${MINUS}0.4%`);
     expect(formatPrintedValue(null, "%")).toBe(NOT_AVAILABLE);
     expect(formatPrintedValue(undefined, "people")).toBe(NOT_AVAILABLE);
+  });
+});
+
+describe("the command bar's cells (K-07, #585)", () => {
+  it("shows an exact decimal string as it came, grouped by its market", () => {
+    expect(formatExactDecimal("1234567.891", "IN")).toBe("12,34,567.891");
+    expect(formatExactDecimal("1234567.891", "US")).toBe("1,234,567.891");
+    expect(formatExactDecimal("1234567.891")).toBe("1234567.891");
+    expect(formatExactDecimal("123", "IN")).toBe("123");
+    expect(formatExactDecimal("1234", "IN")).toBe("1,234");
+    expect(formatExactDecimal("123456", "IN")).toBe("1,23,456");
+  });
+  it("never rounds or pads, and writes a true minus", () => {
+    expect(formatExactDecimal("0.12345678901234567890")).toBe("0.12345678901234567890");
+    expect(formatExactDecimal("5.50")).toBe("5.50");
+    expect(formatExactDecimal("-25", "US")).toBe(`${MINUS}25`);
+    expect(formatExactDecimal("-1234.5", "IN")).toBe(`${MINUS}1,234.5`);
+    expect(formatExactDecimal("1e-05")).toBe("1e-05");
+    expect(formatExactDecimal(null)).toBe(NOT_AVAILABLE);
+  });
+  it("says how long an answer took", () => {
+    expect(formatDurationMs(850)).toBe("850 ms");
+    expect(formatDurationMs(2400)).toBe("2.4 s");
+    expect(formatDurationMs(12345)).toBe("12.3 s");
+    expect(() => formatDurationMs(-1)).toThrow(RangeError);
   });
 });
