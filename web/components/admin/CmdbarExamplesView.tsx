@@ -133,7 +133,8 @@ export function CmdbarExamplesView() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
   const [notes, setNotes] = useState<Record<number, string>>({});
-  const [now, setNow] = useState(() => new Date().toISOString());
+  // The time the list was read (for "answer stored …"): set with each read, never during render (Next prerenders this page).
+  const [now, setNow] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -190,7 +191,7 @@ export function CmdbarExamplesView() {
           {loading ? "Reading…" : "Read again"}
         </button>
       </div>
-      {read?.examples ? (
+      {read?.examples && now ? (
         <ExampleList examples={read.examples} now={now} busy={busy} notes={notes} onMark={(e, v) => void mark(e, v)} />
       ) : loading || read === null ? (
         <StateNote kind="empty">Reading the example answers…</StateNote>
