@@ -523,7 +523,13 @@ def test_a_sent_free_text_run_answers_each_question_through_the_routes_own_steps
     assert not any(q[:20] in text for q in QS)
     listed = [x for x in lines if x.startswith("::notice title=questions items::")]
     shown = json.loads(listed[0].split("::", 2)[2])
-    assert [set(x) for x in shown] == [{"id", "route", "state", "guard", "guard_class", "rows", "cost_usd"}] * 4
+    assert [set(x) for x in shown] == [{"id", "route", "state", "guard", "guard_class", "rows", "cost_usd", "sources", "source_nse",
+                                        "latest", "pages"}] * 4
+    # K-13 (#630): the data answer's source lines are counted in the log and kept in the private record; nothing else carries any
+    assert shown[0]["sources"] == len(data["sources"]) >= 1 and [x["sources"] for x in shown[1:]] == [0, 0, 0]
+    assert all(isinstance(x["source_nse"], bool) and x["latest"] is False for x in shown)
+    assert all(line.startswith(("Source: ", "© ")) for line in data["sources"]) and "Source:" not in text
+    assert metrics.obj["data_answers_with_sources"] == 1 and metrics.obj["data_answers_without_sources"] == 0
     assert len([x for x in lines if x.startswith("::notice")]) <= 4
 
 
