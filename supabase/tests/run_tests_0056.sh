@@ -363,8 +363,11 @@ CPN="$(plan CP-NEW)"; CPO="$(plan CP-OLD)"
 check "P2b the 40-page transcript: the same 12 rows from both bodies (the plan checks' rows)" "$(get CPP)" '^0:12:12$'
 check "P3 citation_pages as a visitor: each page is one backward index probe on (document_id, char_start)" \
   "$(grep -c 'Index Scan Backward using transcript_page_document_id_char_start_key' <<<"$CPN")" '^2$'
-check "P4 citation_pages as a visitor: each page scan returns the one page it needs, and none is read and thrown away" \
-  "$(page_rows_per_scan "$CPN"):$(removed_on_pages "$CPN")" '^1:0$'
+P4="$(page_rows_per_scan "$CPN"):$(removed_on_pages "$CPN")"
+check "P4 citation_pages as a visitor: each page scan returns at most the one page it needs (an average a run, so 0 or 1), and none is read and thrown away (rows a scan, rows removed: $P4)" \
+  "$P4" '^[01]:0$'
+# On a failure, the page scans' own lines (plan text only: node, conditions, row counts), so CI's annotations show the plan's shape.
+[[ "$P4" =~ ^[01]:0$ ]] || awk '/on transcript_page/ { f = 1; print; next } /->/ { f = 0 } f' <<<"$CPN" | head -8 | sed 's/^ */FAIL  P4 plan: /'
 # The old body's waste shows as removed rows on its page scans (a nested-loop probe with a filter, as on dev) or as many rows per scan
 # (a merge or hash join reading every page, as on a small fixture); either counts.
 check "P5 control: 0035's body reads page rows it throws away for the same citations (removed by its scans' filter, or many rows a scan)" \
