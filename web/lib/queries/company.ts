@@ -257,56 +257,55 @@ function logFailure(what: string, error: unknown): void {
   console.error(`[company] ${what} read failed: ${error instanceof Error ? error.message : String(error)}`);
 }
 
-/** Whether a company has this slug: true or false, or null when the read failed (the page then shows its error state, not a 404). */
-export async function readCompanyExists(slug: string): Promise<boolean | null> {
+/**
+ * The company's api.companies row, read once per slug for the existence check, the tab's title and the description (#620): they
+ * were three cached reads of the same row, each its own request on a cold render. A cache fill already in flight for a key is
+ * waited on, not repeated, so concurrent callers share the one request. The row, null for an unknown slug, or the failure kept as
+ * a value on the short `failedRead` profile (#499); `null` client when this build has no Data API.
+ */
+async function readCompanyEntry(slug: string): Promise<{ ok: true; row: CompanyRow | null } | { ok: false; error: string; client: boolean }> {
   "use cache";
   cacheLife("minutesNoExpire");
   cacheTag("equity", `company-${slug}`);
   const db = publicClient();
-  if (!db) {
-    logFailure(`${slug} existence`, "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set");
-    return null;
-  }
+  if (!db) return { ok: false, error: "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY isn't set", client: false };
   try {
-    return (await readCompany(db, slug)) !== null;
+    return { ok: true, row: await readCompany(db, slug) };
   } catch (error) {
     cacheLife("failedRead");
-    logFailure(`${slug} existence`, error);
+    return { ok: false, error: error instanceof Error ? error.message : String(error), client: true };
+  }
+}
+
+/** Whether a company has this slug: true or false, or null when the read failed (the page then shows its error state, not a 404). */
+export async function readCompanyExists(slug: string): Promise<boolean | null> {
+  const entry = await readCompanyEntry(slug);
+  if (!entry.ok) {
+    logFailure(`${slug} existence`, entry.error);
     return null;
   }
+  return entry.row !== null;
 }
 
 /** The company's name, for the browser tab's title (12 Nov 2026): null when no company has the slug or the read
  * fails, and the page then keeps its plain title. */
 export async function readCompanyName(slug: string): Promise<string | null> {
-  "use cache";
-  cacheLife("minutesNoExpire");
-  cacheTag("equity", `company-${slug}`);
-  const db = publicClient();
-  if (!db) return null;
-  try {
-    return (await readCompany(db, slug))?.name ?? null;
-  } catch (error) {
-    cacheLife("failedRead");
-    logFailure(`${slug} name`, error);
+  const entry = await readCompanyEntry(slug);
+  if (!entry.ok) {
+    if (entry.client) logFailure(`${slug} name`, entry.error);
     return null;
   }
+  return entry.row?.name ?? null;
 }
 
 /** The company's market, for the page's description (US-06, #405): null when no company has the slug or the read fails. */
 export async function readCompanyMarket(slug: string): Promise<"IN" | "US" | null> {
-  "use cache";
-  cacheLife("minutesNoExpire");
-  cacheTag("equity", `company-${slug}`);
-  const db = publicClient();
-  if (!db) return null;
-  try {
-    return (await readCompany(db, slug))?.market ?? null;
-  } catch (error) {
-    cacheLife("failedRead");
-    logFailure(`${slug} market`, error);
+  const entry = await readCompanyEntry(slug);
+  if (!entry.ok) {
+    if (entry.client) logFailure(`${slug} market`, entry.error);
     return null;
   }
+  return entry.row?.market ?? null;
 }
 
 /** What one tab reads; exactly one field is set, the rest null. */
