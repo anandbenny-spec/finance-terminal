@@ -433,24 +433,29 @@ def test_a_published_embedded_transcript_chunk_is_never_retrieved_or_cited():
     """Spec 07 N3 and CLAUDE.md §1: the transcript is published, chunked and embedded with the question's own vector (so it would
     rank first), and holds the question's words; search_chunks without the filters returns it. The route's search never does,
     and an answer never cites it."""
+    import uuid
+
     import psycopg
     from conftest import dsn
+    tag = uuid.uuid4().hex[:10]                                               # slugs unique per run (event_type, slug)
     question = "Why did the Committee lower the target range for the federal funds rate?"
     vec = halfvec_literal(Embedder(client=FakeVoyage()).embed_query(question))
     transcript = "The Committee lower the target range question came up, and the CFO said the federal funds rate helps."
     statement = "The Committee decided to lower the target range for the federal funds rate. Inflation remains elevated."
     with psycopg.connect(dsn("postgres")) as db:
         ent = db.execute("""insert into core.entity (kind, slug, name, market, currency, is_published)
-                            values ('company', 'k06-test-co', 'K06 Test Ltd', 'IN', 'INR', true) returning id""").fetchone()[0]
+                            values ('company', %s, 'K06 Test Ltd', 'IN', 'INR', true) returning id""",
+                         (f"k06-co-{tag}",)).fetchone()[0]
         call = db.execute("""insert into core.event (event_type, entity_id, slug, title, starts_on, status, source_id, is_published)
-                             values ('earnings_call', %s, 'k06-test-co-call', 'K06 call', '2026-10-20', 'stored',
-                                     (select id from core.source where key = 'nse'), true) returning id""", (ent,)).fetchone()[0]
+                             values ('earnings_call', %s, %s, 'K06 call', '2026-10-20', 'stored',
+                                     (select id from core.source where key = 'nse'), true) returning id""",
+                          (ent, f"k06-co-{tag}-call")).fetchone()[0]
         meet = db.execute("""insert into core.event (event_type, entity_id, slug, title, starts_on, ends_on, occurs_at, status,
                                                      source_id, source_url, is_published)
-                             select 'policy_meeting', id, 'fomc-2031-01-29', 'FOMC, January 2031', '2031-01-28', '2031-01-29',
+                             select 'policy_meeting', id, %s, 'FOMC, January 2031', '2031-01-28', '2031-01-29',
                                     '2031-01-29 14:00 America/New_York', 'held', (select id from core.source where key = 'fed'),
                                     'https://www.federalreserve.gov/x', true
-                               from core.entity where slug = 'fed' returning id""").fetchone()[0]
+                               from core.entity where slug = 'fed' returning id""", (f"fomc-k06-{tag}",)).fetchone()[0]
         docs = {}
         for key, (doc_type, event, entity_sql, source, text) in {
                 "call": ("call_transcript", call, "%s", "company_web", transcript),
@@ -460,8 +465,8 @@ def test_a_published_embedded_transcript_chunk_is_never_retrieved_or_cited():
                                                published_at, char_count, text_sha256, chunked_at, is_published)
                     values (%s, {entity_sql}, %s, %s, (select id from core.source where key = %s), %s, 'https://example.com/k06',
                             now(), char_length(%s), sha256(convert_to(%s, 'UTF8')), now(), true) returning id""",
-                ((doc_type, ent, event, f"K06 {key}", source, f"k06-{key}", text, text) if key == "call"
-                 else (doc_type, event, f"K06 {key}", source, f"k06-{key}", text, text))).fetchone()[0]
+                ((doc_type, ent, event, f"K06 {key}", source, f"k06-{key}-{tag}", text, text) if key == "call"
+                 else (doc_type, event, f"K06 {key}", source, f"k06-{key}-{tag}", text, text))).fetchone()[0]
             db.execute("""insert into core.chunk (document_id, chunk_no, char_start, char_end, section, body)
                           values (%s, 0, 0, char_length(%s), null, %s)""", (docs[key], text, text))
             db.execute("""insert into core.chunk_embedding (document_id, chunk_no, model, embedding)
