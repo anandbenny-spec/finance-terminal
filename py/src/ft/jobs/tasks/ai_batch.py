@@ -155,7 +155,10 @@ reply that leaves one out, or quotes a side of a change of the stance without it
 reason before the second model is asked, and the fallback shows every one of them (`summaries.DIFF_MUST_FROM`). v29 is v28
 plus one sentence (Anand, 17 Nov 2026, about 14:10 IST: round 26 adds only what round 25's verdict names): each item of a
 list of decisions inside a listed change is reported and checked, and the fallback reads a corridor rate's sentence with its
-other side and places the changes v1 cites before v28's own (`summaries.DIFF_ROOM_FROM`).
+other side and places the changes v1 cites before v28's own (`summaries.DIFF_ROOM_FROM`). v30 is v29 plus one sentence
+(Anand, 17 Nov 2026, about 19:40 IST: round 27 fixes the cause a diagnosis finds): for two RBI resolutions, the votes and the
+committee's projections are paired by fact, read from each stored text by module 1's own readers (`diff_facts`), in the
+fallback, the list of changes to report and its check (`summaries.DIFF_FACTS_FROM`).
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -203,7 +206,7 @@ from ft.ai.client import (
     load_schema,
 )
 from ft.ai.summaries import Checked, Doc
-from ft.engines.document.text import ExtractError
+from ft.engines.document.text import ExtractError, sentence_spans
 from ft.jobs import due as due_rules
 from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
@@ -235,7 +238,9 @@ from ft.policy import rbi_resolution
 # listed in the request and checked (summaries.DIFF_MUST_FROM).
 # v29 (the same decision; round 25's verdict, 17 Nov 2026, 18:19 IST): v28 plus one sentence, the items of a list of decisions
 # checked, and the fallback's room (summaries.DIFF_ROOM_FROM).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v29", "stance_extraction": "v2",
+# v30 (Anand's decision of 17 Nov 2026, about 19:40 IST, after round 26's verdict; the diagnosis of 23:00 IST): v29 plus one
+# sentence, the votes and projections paired by fact (summaries.DIFF_FACTS_FROM).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v30", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
@@ -268,6 +273,44 @@ def _schema(task: str, version: str) -> dict:
     return load_schema(task, version)
 
 
+# From v30: a vote sentence's subject (`diff_facts`): the rate ("voted in favour of the decision" too), or the stance (a
+# member "voted against this part of the resolution", the part on the stance).
+_VOTE_RATE = re.compile(r"\brate\b|\bbasis points\b|\bbps\b|\bin favour of the decision\b", re.IGNORECASE)
+_VOTE_STANCE = re.compile(r"\bstance\b|\baccommodation\b|\bpart of the resolution\b", re.IGNORECASE)
+_POLICY_RATE = re.compile(r"(?<!reverse )\brepo rate\b|\bpolicy rate\b", re.IGNORECASE)
+
+
+def diff_facts(text: str) -> summaries.Facts:
+    """From v30 (`summaries.DIFF_FACTS_FROM`): an RBI resolution's votes and projections, read from its stored text by module
+    1's own readers (`rbi_resolution.read_votes`, `read_projections`), for the diff summary to pair by fact. A vote is each
+    sentence the vote reader reads as one (a member's, or the committee's), on the rate where it holds a rate vote the reader
+    found or names the rate, on the stance where it holds a stance vote or names the stance; never a list's lead-in
+    ("… unanimously decided to:") or the resolution's first statement of the policy rate, which is its decision ("the MPC
+    voted unanimously to keep the policy repo rate … unchanged", mpc-2026-10-07), paired as the decision is (`decision`: where
+    the other document's votes have no other side, they join the decision's change, `summaries._analyse`)."""
+    v = rbi_resolution.read_votes(text)
+    found_rate = [m.rate_span for m in v.named.values() if m.rate and m.rate_span] + [v.all_rate_span] * bool(v.all_rate_span)
+    found_stance = [m.stance_span for m in v.named.values() if m.stance and m.stance_span] + \
+        [v.all_stance_span] * bool(v.all_stance_span)
+    decision = next(((s, e) for s, e in sentence_spans(text) if _POLICY_RATE.search(text[s:e])), None)
+    rate: list[tuple[int, int]] = []
+    stance: list[tuple[int, int]] = []
+    for s, e in v.sentences:
+        t = text[s:e]
+        if t.rstrip().endswith(":") or (decision is not None and s < decision[1] and decision[0] < e):
+            continue
+        on_rate = any(a < e and s < b for a, b in found_rate) or bool(_VOTE_RATE.search(t))
+        on_stance = any(a < e and s < b for a, b in found_stance) or bool(_VOTE_STANCE.search(t))
+        if on_rate or not on_stance:
+            rate.append((s, e))
+        if on_stance:
+            stance.append((s, e))
+    projections = tuple((p.variable, p.target_label, str((p.value, p.low, p.high)), p.span)
+                        for p in rbi_resolution.read_projections(text)[0])
+    stated = tuple(x for x in v.sentences if decision is not None and x[0] < decision[1] and decision[0] < x[1])
+    return summaries.Facts(tuple(rate), tuple(stance), projections, stated)
+
+
 @dataclass
 class Work:
     """One target: a task on a document (for the diff summary, also its base and the redline; for the projection
@@ -287,16 +330,22 @@ class Work:
     # every output must report, read from them and the redline once (`musts`)
     v1: list | None = field(default=None, repr=False)
     _musts: dict | None = field(default=None, repr=False)
+    # statement_diff_summary from v30: the two documents' facts (`diff_facts`; the base's, then the document's) where both
+    # are RBI resolutions, else None
+    facts: tuple | None = field(default=None, repr=False)
 
     def musts(self, version: int = summaries.DIFF_MUST_FROM) -> list:
-        """The changes this target's output must report (`summaries.must_changes`), read once for each reading: v28's, and
-        from v29 (`summaries.DIFF_ROOM_FROM`) v29's."""
+        """The changes this target's output must report (`summaries.must_changes`), read once for each reading: v28's, from
+        v29 (`summaries.DIFF_ROOM_FROM`) v29's, and from v30 (`summaries.DIFF_FACTS_FROM`) v30's, with the facts."""
         room = version >= summaries.DIFF_ROOM_FROM
+        facts = self.facts if version >= summaries.DIFF_FACTS_FROM else None
+        key = (room, facts is not None)
         if self._musts is None:
             self._musts = {}
-        if room not in self._musts:
-            self._musts[room] = summaries.must_changes(self.segments, self.base, self.doc, self.v1 or [], room=room)
-        return self._musts[room]
+        if key not in self._musts:
+            self._musts[key] = summaries.must_changes(self.segments, self.base, self.doc, self.v1 or [], room=room,
+                                                      facts=facts)
+        return self._musts[key]
 
     @property
     def target(self) -> str:
@@ -348,7 +397,8 @@ class Work:
                 if c.ok and _vnum(req.prompt.version) >= summaries.DIFF_MUST_FROM:     # v28 on: the changes to report
                     v = _vnum(req.prompt.version)
                     c.problems += summaries.must_problems(c, self.musts(v), self.base, self.doc,
-                                                          room=v >= summaries.DIFF_ROOM_FROM)
+                                                          room=v >= summaries.DIFF_ROOM_FROM,
+                                                          facts=v >= summaries.DIFF_FACTS_FROM and self.facts is not None)
                 if c.ok and _vnum(req.prompt.version) >= summaries.DIFF_VERIFY_FROM:   # v17 on: the second model
                     if self.verify is None:
                         c.problems.append("not checked by a second model: no check was set up for this target")
@@ -580,6 +630,8 @@ class AiBatch(BatchSteps, Task):
             v1 = self._v1_citations(db, [w.document_id for w in work])
             for w in work:
                 w.v1 = v1.get(w.document_id, [])
+                if w.doc.doc_type == EXTRACTION_DOC_TYPE and w.base.doc_type == EXTRACTION_DOC_TYPE:
+                    w.facts = (diff_facts(w.base.text), diff_facts(w.doc.text))     # from v30: two RBI resolutions
         return work
 
     @staticmethod
@@ -1047,6 +1099,8 @@ class AiBatch(BatchSteps, Task):
             later["must"] = True
         if version >= summaries.DIFF_ROOM_FROM:
             later["room"] = True
+        if version >= summaries.DIFF_FACTS_FROM and w.facts is not None:
+            later["facts"] = w.facts
         bullets = summaries.fallback_bullets(w.segments, w.base, w.doc, prefer, packed=version >= summaries.DIFF_PACK_FROM,
                                              restated=version >= summaries.DIFF_RESTATED_FROM, **later)
         if not bullets:

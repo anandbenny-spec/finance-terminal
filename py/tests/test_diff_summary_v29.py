@@ -70,7 +70,7 @@ def test_v29_is_v28s_text_plus_one_sentence_and_is_current():
     added = "Where a listed change holds items of a list of decisions (the rates the committee set), report every one of those items."
     assert v29.version == "v29" and added in v29.text and added not in v28.text
     assert v29.text.replace(" " + added, "") == v28.text
-    assert PROMPT_VERSION["statement_diff_summary"] == "v29" and summaries.DIFF_ROOM_FROM == 29
+    assert PROMPT_VERSION["statement_diff_summary"] == "v30" and summaries.DIFF_ROOM_FROM == 29   # v30: round 27
     assert summaries.DIFF_MODEL_OF["v29"] == summaries.DIFF_MODEL_OF["v28"]
     assert summaries.DIFF_EFFORT_OF["v29"] == summaries.DIFF_EFFORT_OF["v28"]
     assert load_schema("statement_diff_summary", "v29") == load_schema("statement_diff_summary", "v28")
