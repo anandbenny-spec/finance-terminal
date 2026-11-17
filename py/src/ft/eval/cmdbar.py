@@ -34,6 +34,17 @@ model, for Architecture 03 §0's comparison ("the better of the two ships": `voy
   the expected document, transcript characters (always 0) and RBI links (always 0).
 A dev-split run is prompt work, never the gate: its `passed` is false whatever its numbers (N5).
 
+**Free-text questions** (`--set questions`; K-11a, #626, for the K-11 judge's live injection attempts, #590 item 5: Anand's
+option A, 17 Nov 2026): one to five questions, read from the environment variable `CMDBAR_QUESTIONS` (separated by `|`, each at
+most the route's 500 characters), never from the command line, so the workflow never pastes them into a `run:` line
+(`CLAUDE.md` §4). Each goes through `ft.cmdbar.route.answer`, the route's own steps 4 and 5 (the router, then the data,
+document, page or unsupported answer), exactly as `cmdbar.examples` asks its chips: no switch, limits, cache or log. A page
+answer is recorded with its slug, unresolved. It isn't a set and never a gate: one `ops.eval_run` (`eval_set =
+'cmdbar_questions'`, `passed` false) and one `ops.eval_result` per question (`q1` to `q5`; `expected` holds the question,
+`predicted` the route, state, guard verdict and reason class, the re-printed query, the rows returned, the summary, the
+citation count, the models and the cost; `correct` empty). Its annotations hold, per question, only the route, the state, the
+guard's verdict and reason class, the rows returned and the cost: never the question, the summary, a row or the query.
+
 **Spend.** Without `--send` nothing reaches a model: it prices the run from `config/ai_prices.yaml` (the estimate and the worst
 case, every request using its whole token cap and every SQL item retried on Sonnet) and, for `cmdbar_sql`, runs the golds (for
 `retrieval`, it checks that `sql_reader` may call `search_chunks`; no question is embedded). With `--send`, the run stops before
@@ -68,13 +79,20 @@ from pglast.parser import ParseError
 
 from ft.ai import sqlguard
 from ft.ai.client import CONFIG, MILLION, QUERY_MODEL, AIError, Client, Embedder, Request, price_entry
+from ft.cmdbar import MAX_QUESTION_CHARS, BadQuestion, clean_question
 from ft.cmdbar import documents as documents_mod
+from ft.cmdbar import route as route_mod
 from ft.cmdbar import router as router_mod
 from ft.cmdbar import sql as sql_mod
 from ft.cmdbar import summary as summary_mod
 
 SETS_DIR = CONFIG / "eval" / "sets"
 SETS = ("cmdbar_sql", "cmdbar_router", "retrieval")
+QUESTIONS = "questions"                   # the free-text run (K-11a, #626): not a set, never a gate
+QUESTIONS_EVAL_SET = "cmdbar_questions"   # its ops.eval_run.eval_set
+QUESTIONS_ENV = "CMDBAR_QUESTIONS"        # where its questions come from: the environment, never the command line
+MAX_QUESTIONS = 5
+QUESTIONS_NOTES = "free-text questions, not a gate"
 QUERY_MODELS = ("voyage-4", "voyage-4-lite")   # the route's questions model, and Architecture 03 §0's comparison
 SPLITS = ("dev", "test")
 DEFAULT_MAX_COST = Decimal("0.50")
@@ -877,6 +895,237 @@ def record(conn, set_name: str, split: str, set_version: str, model: str, prompt
     return run_id
 
 
+# ---------------------------------------------------------------------------------------------- free-text questions
+def read_questions(env) -> list[str]:
+    """The run's questions from `CMDBAR_QUESTIONS`: one to five, separated by `|`, each cleaned as the live route cleans a
+    visitor's (`clean_question`: whitespace collapsed, at most 500 characters). ValueError otherwise; its message names the
+    question's number and the rule, never its text."""
+    raw = env.get(QUESTIONS_ENV) or ""
+    if not raw.strip():
+        raise ValueError(f"{QUESTIONS_ENV} is empty: give one to {MAX_QUESTIONS} questions separated by |")
+    parts = raw.split("|")
+    if len(parts) > MAX_QUESTIONS:
+        raise ValueError(f"{len(parts)} questions: at most {MAX_QUESTIONS}")
+    out = []
+    for n, part in enumerate(parts, 1):
+        try:
+            out.append(clean_question(part))
+        except BadQuestion:
+            raise ValueError(f"question {n} is empty or over {MAX_QUESTION_CHARS} characters") from None
+    return out
+
+
+def question_worst(question: str, prompt, on: date) -> Decimal:
+    """One question's worst case through the route: the router at its cap, then the dearer of the data route (the SQL request,
+    Sonnet's second look and the summary, each at its cap: `sql_item_worst`) and the document answer over 8 long passages."""
+    return request_cost(router_mod.request(question), on) + max(sql_item_worst(question, prompt, on),
+                                                               request_cost(answer_request_est(question), on))
+
+
+def price_questions(questions: list[str], prompt, on: date) -> dict:
+    """{estimate, worst_case, per_item_worst} in USD for the free-text run (the estimate: the router and a data answer at
+    `price_run`'s cmdbar_sql estimate)."""
+    est = worst = Decimal(0)
+    per = {}
+    for n, q in enumerate(questions, 1):
+        sql_req = sql_mod.request(q, prompt)
+        p = _price(sql_req.model_id, on)
+        e = (request_cost(router_mod.request(q), on, output_tokens=300, cached=n > 1)
+             + request_cost(sql_req, on, output_tokens=1_500, cached=n > 1)
+             + (Decimal(1_500) * p["input"] + Decimal(150) * p["output"]) / MILLION)
+        w = question_worst(q, prompt, on)
+        per[f"q{n}"] = w
+        est, worst = est + e, worst + w
+    return {"estimate": est, "worst_case": worst, "per_item_worst": per}
+
+
+class _UnresolvedPages:
+    """The route's store for the free-text run (`route.answer` reads `page` and `freshness` only): a page answer keeps the
+    router's slug without looking it up (`api.search_index` isn't `sql_reader`'s), so it is recorded as a page answer."""
+
+    def freshness(self) -> dict:
+        return {}
+
+    def page(self, slug: str) -> dict:
+        return {"slug": slug, "resolved": False}
+
+    def close(self) -> None:
+        pass
+
+
+class _Borrowed:
+    """The run's one `sql_reader` connection, lent to each question: the route closes its reader after each answer, so this
+    one's `close` does nothing and the run closes the connection at its end."""
+
+    def __init__(self, reader):
+        self._reader = reader
+
+    def __getattr__(self, name):
+        return getattr(self._reader, name)
+
+    def close(self) -> None:
+        pass
+
+
+@dataclass
+class QuestionResult:
+    id: str
+    question: str
+    route: str | None = None
+    state: str | None = None
+    guard: str | None = None                   # accepted | rejected | None (no query written)
+    guard_class: str | None = None             # the rejection's class only ("guard: relation not allowed")
+    sql: str | None = None                     # the re-printed query that ran
+    rows: int | None = None                    # rows returned, as the route's log counts them (passages for a document answer)
+    summary: str | None = None
+    sentences: int = 0                         # a document answer's kept sentences
+    citations: int = 0                         # their verified citations
+    documents: int = 0
+    page_slug: str | None = None
+    error_class: str | None = None
+    models: list[str] = field(default_factory=list)
+    cost_usd: Decimal = Decimal(0)
+    ms: int = 0
+
+    def annotation(self) -> dict:
+        """What the log may show (K-11a's rule): the route, the state, the guard's verdict and class, the rows returned and the
+        cost. Never the question, the summary, a row or the query."""
+        return {"id": self.id, "route": self.route, "state": self.state, "guard": self.guard, "guard_class": self.guard_class,
+                "rows": self.rows, "cost_usd": f"{self.cost_usd:.6f}"}
+
+    def predicted(self) -> dict:
+        return {"route": self.route, "state": self.state, "guard": self.guard, "guard_class": self.guard_class, "sql": self.sql,
+                "rows": self.rows, "summary": self.summary, "sentences": self.sentences, "citations": self.citations,
+                "documents": self.documents, "page_slug": self.page_slug, "error_class": self.error_class,
+                "models": self.models, "cost_usd": f"{self.cost_usd:.6f}", "ms": self.ms}
+
+
+def question_result(qid: str, question: str, out: dict, row) -> QuestionResult:
+    """One question's record from what `route.answer` returned: the final object and the row the route would have logged."""
+    cites = [c for c in out.get("citations") or [] if isinstance(c, dict)]
+    pages = out.get("pages") or []
+    return QuestionResult(
+        qid, question, route=out.get("route") or row.route, state=out.get("state"),
+        guard={True: "accepted", False: "rejected"}.get(row.sql_valid), guard_class=row.reject_reason,
+        sql=out.get("sql") or row.generated_sql, rows=row.rows_returned, summary=out.get("summary"),
+        sentences=len(cites), citations=sum(len(c.get("refs") or []) for c in cites), documents=len(out.get("documents") or []),
+        page_slug=pages[0].get("slug") if out.get("state") == "page" and pages else None, error_class=row.error_class,
+        models=list(row.models), cost_usd=row.cost_usd, ms=int(out.get("ms") or 0))
+
+
+def questions_metrics(results: list[QuestionResult]) -> dict:
+    return {"n": len(results), "routes": dict(Counter(str(r.route) for r in results)),
+            "states": dict(Counter(str(r.state) for r in results)),
+            "guard": dict(Counter(str(r.guard) for r in results)),
+            "error_classes": dict(Counter(r.error_class for r in results if r.error_class))}
+
+
+def record_questions(conn, set_version: str, model: str, prompt_version: str, metrics: dict,
+                     results: list[QuestionResult]) -> int:
+    """One `ops.eval_run` (never passed) and one `ops.eval_result` per question, as `job_writer` on dev."""
+    from psycopg.types.json import Jsonb
+    with conn.transaction():
+        run_id = conn.execute(
+            """insert into ops.eval_run (eval_set, set_version, model, prompt_version, n_items, metrics, passed, notes)
+               values (%s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+            (QUESTIONS_EVAL_SET, set_version, model, prompt_version, len(results), Jsonb(metrics), False,
+             QUESTIONS_NOTES)).fetchone()[0]
+        for r in results:
+            conn.execute(
+                """insert into ops.eval_result (eval_run_id, item_key, expected, predicted, correct, latency_ms, cost_usd)
+                   values (%s, %s, %s, %s, %s, %s, %s)""",
+                (run_id, r.id, Jsonb({"question": r.question}),
+                 Jsonb({k: v for k, v in r.predicted().items() if v is not None}), None, r.ms, r.cost_usd))
+    return run_id
+
+
+def run_questions(args, p, env, out, client, reader, writer, embedder, on: date) -> int:
+    """`--set questions` (K-11a, #626): the price, then (with `--send`) each question through `route.answer` on dev."""
+    if args.split is not None or args.items:
+        p.error("--split and --items don't apply to the free-text questions")
+    try:
+        questions = read_questions(env)
+    except ValueError as e:
+        p.error(str(e))
+    if reader is None and not (env.get("SQL_READER_DATABASE_URL") or "").strip():
+        p.error("SQL_READER_DATABASE_URL is not set (the workflow reads the DEV_ secret)")
+    if args.send:
+        for name, given in (("ANTHROPIC_API_KEY", client), ("VOYAGE_API_KEY", embedder), ("JOB_DATABASE_URL", writer)):
+            if given is None and not (env.get(name) or "").strip():
+                p.error(f"{name} is not set")
+    set_version = git_sha(env)
+    own_reader = False
+    try:
+        if reader is None:
+            try:
+                reader = sql_mod.Reader.connect(env["SQL_READER_DATABASE_URL"].strip())
+            except sql_mod.ReaderDown as e:
+                out(f"::error title=sql_reader::could not connect as sql_reader ({e})")
+                return 1
+            own_reader = True
+        try:
+            docs, groups = reader.describe()
+        except (sql_mod.QueryError, sql_mod.ReaderDown) as e:
+            out(f"::error title=sql_reader::could not read the views' descriptions as sql_reader ({type(e).__name__})")
+            return 1
+        missing = sorted(sqlguard.VIEWS - {d.name for d in docs})
+        prompt = sql_mod.sql_prompt(sql_mod.render_views(docs, groups))
+        price = price_questions(questions, prompt, on)
+        out(annotation(f"{QUESTIONS} price", {
+            "set": QUESTIONS, "questions": len(questions), "set_version": set_version, "views_described": len(docs),
+            "views_missing": missing, "prompt_sha256": prompt.sha256,
+            "price_usd": {"estimate": f"{price['estimate']:.4f}", "worst_case": f"{price['worst_case']:.4f}",
+                          "max_cost": str(args.max_cost)}}))
+        if missing:
+            out(f"::warning title=views::sql_reader can't describe {', '.join(missing)}")
+        if not args.send:
+            out(annotation("dry run", "nothing sent to a model; run again with send on to answer and record"))
+            return 0
+
+        claude = client or Client(env["ANTHROPIC_API_KEY"].strip())
+        voyage = embedder or Embedder(env["VOYAGE_API_KEY"].strip())
+        store = _UnresolvedPages()
+        lent = _Borrowed(reader)
+        deps = route_mod.Deps(env=env, store=lambda _e: store, client=lambda _e: claude, reader=lambda _e: lent,
+                              prompt=lambda _r, _e: prompt, embedder=lambda _e: voyage)
+        results: list[QuestionResult] = []
+        spent, stopped = Decimal(0), False
+        for n, q in enumerate(questions, 1):
+            qid = f"q{n}"
+            if spent + price["per_item_worst"][qid] > args.max_cost:
+                stopped = True
+                out(f"::warning title=budget stop::stopped before {qid}: spend {spent:.4f} USD plus its worst case "
+                    f"would pass {args.max_cost}")
+                break
+            final_obj, _keep, row = route_mod.answer(q, deps, store)
+            r = question_result(qid, q, final_obj, row)
+            spent += r.cost_usd
+            results.append(r)
+
+        metrics = questions_metrics(results) | {
+            "questions": len(questions), "complete": not stopped and len(results) == len(questions),
+            "stopped_by_budget": stopped, "cost_usd": f"{spent:.6f}", "prompt_sha256": prompt.sha256,
+            "router_prompt": router_mod.PROMPT_VERSION, "sql_prompt": sql_mod.PROMPT_VERSION,
+            "summary_prompt": summary_mod.PROMPT_VERSION, "documents_prompt": documents_mod.PROMPT_VERSION,
+            "retry_model": sql_mod.RETRY_MODEL, "mean_ms": int(sum(r.ms for r in results) / len(results)) if results else 0,
+            "max_ms": max((r.ms for r in results), default=0), "not_a_gate": True}
+        prompt_version = (f"router {router_mod.PROMPT_VERSION}, sql {sql_mod.PROMPT_VERSION}, summary "
+                          f"{summary_mod.PROMPT_VERSION}, documents {documents_mod.PROMPT_VERSION}")
+        model = router_mod.request(questions[0]).model_id
+        conn = writer or _connect_writer(env["JOB_DATABASE_URL"].strip())
+        try:
+            run_id = record_questions(conn, set_version, model, prompt_version, metrics, results)
+        finally:
+            if writer is None:
+                conn.close()
+        out(annotation(f"{QUESTIONS} items", [r.annotation() for r in results]))
+        out(annotation(f"{QUESTIONS} result", {"eval_run_id": run_id, "passed": False, **metrics}))
+        return 0
+    finally:
+        if own_reader:
+            reader.close()
+
+
 # ---------------------------------------------------------------------------------------------- the CLI
 def annotation(title: str, payload) -> str:
     text = payload if isinstance(payload, str) else json.dumps(payload, separators=(",", ":"), default=str)
@@ -908,8 +1157,9 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
          today=lambda: datetime.now(UTC).date()) -> int:
     env = os.environ if env is None else env
     p = argparse.ArgumentParser(prog="python -m ft.eval.cmdbar", description=__doc__.split("\n\n")[0])
-    p.add_argument("--set", required=True, choices=SETS)
-    p.add_argument("--split", required=True, choices=SPLITS)
+    p.add_argument("--set", required=True, choices=SETS + (QUESTIONS,),
+                   help=f"a set, or `{QUESTIONS}`: the free-text questions in {QUESTIONS_ENV} (never a gate)")
+    p.add_argument("--split", choices=SPLITS, help="the set's split (required for a set; not for the questions)")
     p.add_argument("--items", default="", help="only these item ids of the split (comma or space separated)")
     p.add_argument("--send", action="store_true", help="answer the items (spends); without it: the price and the golds only")
     p.add_argument("--max-cost", type=Decimal, default=DEFAULT_MAX_COST, help="stop before spend could pass this (USD)")
@@ -918,6 +1168,10 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
     args = p.parse_args(argv)
     if args.query_model != QUERY_MODEL and args.set != "retrieval":
         p.error("--query-model applies to the retrieval set only")
+    if args.set == QUESTIONS:
+        return run_questions(args, p, env, out, client, reader, writer, embedder, today())
+    if args.split is None:
+        p.error("--split is required for a set")
     ids = [x for x in args.items.replace(",", " ").split() if x]
     try:
         items = load_items(args.set, args.split, ids or None)

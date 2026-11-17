@@ -402,6 +402,164 @@ def test_the_records_land_in_ops_eval_run_and_eval_result_as_job_writer():
         conn.rollback()
 
 
+# ------------------------------------------------------------------ free-text questions (K-11a, #626)
+QS = ("When did the Fed last change its target range?", "Show me the RBI's December meeting",
+      "What will the weather be in Mumbai tomorrow?", "What has the RBI said about food inflation?")
+
+
+def questions_model():
+    """A fake Claude for the route's steps 4 and 5: the router sends each of QS its own way (data, page, unsupported, document);
+    the data route writes a query and a summary holding the sentinel, which must never reach the log."""
+    def answer(body):
+        first = next(iter(body["output_config"]["format"]["schema"]["properties"]))
+        if first == "route":
+            text = json.dumps(body)
+            route, slug = "data", None
+            if "Show me" in text:
+                route, slug = "page", "rbi-2025-12"
+            elif "weather" in text:
+                route = "unsupported"
+            elif "food inflation" in text:
+                route = "document"
+            return {"route": route, "page_slug": slug,
+                    "filters": {"banks": [], "doc_types": [], "date_from": None, "date_to": None}}
+        if first == "summary":
+            return {"summary": f"{SENTINEL} summary"}
+        return {"answerable": True, "sql": "select company from companies", "explanation": "Companies."}
+    return FakeClaude(answer=answer)
+
+
+class SearchingReader(FakeReader):
+    """FakeReader with the document route's search_chunks call: no passage found."""
+
+    def __init__(self):
+        super().__init__()
+        self.searched = []
+
+    def select(self, sql, params=()):
+        self.searched.append(params)
+        return sql_mod.Result([], [])
+
+
+class FakeVoyage:
+    def __init__(self):
+        self.calls = []
+
+    def embed_query(self, text):
+        self.calls.append(text)
+        return [0.01] * 512
+
+
+def qenv(*questions, sep="|"):
+    return {"env": {ev.QUESTIONS_ENV: sep.join(questions)}}
+
+
+def test_the_free_text_questions_come_from_the_environment_one_to_five_each_at_most_500_characters():
+    assert ev.read_questions({ev.QUESTIONS_ENV: " When did   the Fed cut? | Show me\tthe RBI page "}) == [
+        "When did the Fed cut?", "Show me the RBI page"]                       # cleaned as the live route cleans a question
+    assert len(ev.read_questions({ev.QUESTIONS_ENV: "|".join(f"q{i}?" for i in range(5))})) == 5
+    secret = "PRIVATE-QUESTION-TEXT"
+    for raw, why in ((None, "empty"), ("  ", "empty"), ("|".join([secret] * 6), "at most 5"),
+                     (f"{secret}||{secret}", "question 2"), (f"{secret}|" + "x" * 501, "question 2")):
+        with pytest.raises(ValueError, match=why) as e:
+            ev.read_questions({} if raw is None else {ev.QUESTIONS_ENV: raw})
+        assert secret not in str(e.value)                                     # the error names the rule, never the question
+    assert ev.read_questions({ev.QUESTIONS_ENV: "x" * 500}) == ["x" * 500]
+
+
+def test_the_cli_takes_free_text_questions_from_the_environment_only():
+    with pytest.raises(SystemExit):
+        run_main(["--set", "questions"], reader=FakeReader())                  # CMDBAR_QUESTIONS unset
+    with pytest.raises(SystemExit):
+        run_main(["--set", "questions", "--questions", QS[0]], reader=FakeReader())    # no command-line way in
+    with pytest.raises(SystemExit):
+        run_main(["--set", "questions", "--split", "test"], reader=FakeReader(), **qenv(QS[0]))   # not a set
+    with pytest.raises(SystemExit):
+        run_main(["--set", "questions"], **qenv(QS[0]))                        # no SQL_READER_DATABASE_URL
+    with pytest.raises(SystemExit):
+        run_main(["--set", "questions", "--send"], reader=FakeReader(), writer=FakeWriter(),
+                 embedder=FakeVoyage(), **qenv(QS[0]))                         # no ANTHROPIC_API_KEY
+    with pytest.raises(SystemExit):
+        run_main(["--set", "questions", "--send"], client=claude(FakeClaude()), reader=FakeReader(), writer=FakeWriter(),
+                 **qenv(QS[0]))                                                # no VOYAGE_API_KEY
+    with pytest.raises(SystemExit):
+        run_main(["--set", "cmdbar_sql"], reader=FakeReader())                 # a set still needs its split
+
+
+def test_a_free_text_dry_run_prices_the_questions_and_sends_nothing():
+    fake, rd, wr = FakeClaude(), FakeReader(), FakeWriter()
+    code, lines = run_main(["--set", "questions"], client=claude(fake), reader=rd, writer=wr, **qenv(*QS))
+    assert code == 0 and fake.requests == [] and rd.ran == [] and wr.runs == []
+    text = "\n".join(lines)
+    assert '"questions":4' in text and '"worst_case"' in text and "nothing sent" in text
+    assert not any(q[:20] in text for q in QS)                                # the questions never reach the log
+
+
+def test_a_sent_free_text_run_answers_each_question_through_the_routes_own_steps_and_logs_no_question_row_or_query():
+    fake, rd, wr, voyage = questions_model(), SearchingReader(), FakeWriter(), FakeVoyage()
+    code, lines = run_main(["--set", "questions", "--send"], client=claude(fake), reader=rd, writer=wr, embedder=voyage,
+                           **qenv(*QS))
+    assert code == 0 and len(wr.runs) == 1 and len(wr.results) == 4
+    eval_set, set_version, model, prompt_version, n, metrics, passed, notes = wr.runs[0]
+    assert (eval_set, set_version, model, n, passed, notes) == ("cmdbar_questions", "f" * 40, "claude-haiku-5-5", 4, False,
+                                                                "free-text questions, not a gate")
+    assert prompt_version.startswith("router v") and ", sql v" in prompt_version and ", documents v" in prompt_version
+    assert metrics.obj["complete"] and metrics.obj["not_a_gate"] and metrics.obj["routes"] == {
+        "data": 1, "page": 1, "unsupported": 1, "document": 1}
+    got = {p[1]: (p[2].obj, p[3].obj, p[4]) for p in wr.results}
+    assert [p[1] for p in wr.results] == ["q1", "q2", "q3", "q4"]
+    assert all(got[f"q{i}"][0] == {"question": q} and got[f"q{i}"][2] is None for i, q in enumerate(QS, 1))
+    data, page, unsupported, document = (got[f"q{i}"][1] for i in range(1, 5))
+    assert (data["route"], data["state"], data["guard"], data["rows"]) == ("data", "answered", "accepted", 1)
+    assert data["sql"].endswith("LIMIT 200") and SENTINEL in data["summary"]   # the private record keeps the query and line
+    assert data["models"] == ["claude-haiku-5-5", "claude-haiku-5-5", "claude-haiku-5-5"]   # router, SQL, summary
+    assert (page["route"], page["state"], page["page_slug"]) == ("page", "page", "rbi-2025-12")
+    assert (unsupported["route"], unsupported["state"]) == ("unsupported", "cant_answer") and "sql" not in unsupported
+    assert (document["route"], document["state"], document["citations"]) == ("document", "not_found", 0)
+    assert voyage.calls == [QS[3]] and rd.searched and len(rd.ran) == 1        # one query ran: the data question's
+    assert not rd.closed                                                       # lent to each question; the caller's to close
+    text = "\n".join(lines)
+    assert SENTINEL not in text and "select company" not in text and "LIMIT" not in text
+    assert not any(q[:20] in text for q in QS)
+    listed = [x for x in lines if x.startswith("::notice title=questions items::")]
+    shown = json.loads(listed[0].split("::", 2)[2])
+    assert [set(x) for x in shown] == [{"id", "route", "state", "guard", "guard_class", "rows", "cost_usd"}] * 4
+    assert len([x for x in lines if x.startswith("::notice")]) <= 4
+
+
+def test_the_free_text_budget_stop_ends_the_run_before_a_question_could_pass_it():
+    fake, wr = questions_model(), FakeWriter()
+    code, lines = run_main(["--set", "questions", "--send", "--max-cost", "0.001"], client=claude(fake),
+                           reader=SearchingReader(), writer=wr, embedder=FakeVoyage(), **qenv(*QS))
+    assert code == 0 and fake.requests == [] and wr.results == []
+    assert wr.runs[0][5].obj["stopped_by_budget"] and not wr.runs[0][5].obj["complete"] and not wr.runs[0][6]
+    assert any("budget stop" in x for x in lines)
+
+
+def test_a_free_text_questions_worst_case_counts_sonnets_second_look():
+    prompt = sql_mod.sql_prompt(sql_mod.render_views(FakeReader().describe()[0]))
+    p = ev.price_questions(list(QS), prompt, TODAY)
+    assert Decimal(0) < p["estimate"] < p["worst_case"] and list(p["per_item_worst"]) == ["q1", "q2", "q3", "q4"]
+    for i, q in enumerate(QS, 1):
+        assert p["per_item_worst"][f"q{i}"] > ev.sql_item_worst(q, prompt, TODAY)      # plus the router at its cap
+
+
+@pytest.mark.db
+def test_the_free_text_records_land_in_ops_eval_run_and_eval_result_as_job_writer():
+    with psycopg.connect(dsn("job_writer")) as conn:
+        conn.execute("select 1")
+        r = ev.QuestionResult("q1", "When did the Fed last change its target range?", route="data", state="answered",
+                              guard="accepted", sql="select 1", rows=1, summary="One row.", models=["claude-haiku-5-5"],
+                              cost_usd=Decimal("0.0012"), ms=900)
+        run_id = ev.record_questions(conn, "abc", "claude-haiku-5-5", "router v1", {"n": 1}, [r])
+        got = conn.execute("select r.eval_set, r.passed, r.notes, e.item_key, e.expected->>'question', e.correct, "
+                           "e.predicted->>'route', e.cost_usd from ops.eval_result e join ops.eval_run r on r.id = e.eval_run_id "
+                           "where e.eval_run_id = %s", (run_id,)).fetchall()
+        assert got == [("cmdbar_questions", False, "free-text questions, not a gate", "q1",
+                        "When did the Fed last change its target range?", None, "data", Decimal("0.001200"))]
+        conn.rollback()
+
+
 # ------------------------------------------------------------------ the workflow
 def _wf():
     return yaml.safe_load(WORKFLOW.read_text())
@@ -411,7 +569,8 @@ def test_the_workflow_is_manual_with_no_target_input():
     wf = _wf()
     trigger = wf.get("on", wf.get(True))                                       # YAML 1.1 reads a bare `on` as True
     assert list(trigger) == ["workflow_dispatch"]
-    assert set(trigger["workflow_dispatch"]["inputs"]) == {"set", "split", "items", "send", "max_cost", "query_model"}
+    assert set(trigger["workflow_dispatch"]["inputs"]) == {"set", "split", "items", "send", "max_cost", "query_model",
+                                                           "questions"}                     # K-11a (#626)
     qm = trigger["workflow_dispatch"]["inputs"]["query_model"]                 # K-10 (#587): the route's model by default
     assert qm["options"] == list(ev.QUERY_MODELS) and qm["default"] == "voyage-4"
     assert trigger["workflow_dispatch"]["inputs"]["send"]["default"] is False
@@ -426,3 +585,14 @@ def test_the_workflow_reaches_dev_only_and_the_model_only_when_it_sends():
     assert env["ANTHROPIC_API_KEY"] == "${{ inputs.send && secrets.ANTHROPIC_API_KEY || '' }}"
     assert env["VOYAGE_API_KEY"] == "${{ inputs.send && secrets.VOYAGE_API_KEY || '' }}"
     assert "${{" not in _wf()["jobs"]["run"]["steps"][-1]["run"]               # inputs reach the script through env only
+
+
+def test_the_free_text_questions_reach_the_script_through_the_environment_only():
+    wf = _wf()
+    inputs = (wf.get("on", wf.get(True)))["workflow_dispatch"]["inputs"]
+    assert "questions" in inputs["set"]["options"] and inputs["questions"]["type"] == "string"
+    assert inputs["questions"]["default"] == ""
+    step = wf["jobs"]["run"]["steps"][-1]
+    assert step["env"][ev.QUESTIONS_ENV] == "${{ inputs.questions }}"
+    assert ev.QUESTIONS_ENV not in step["run"] and "inputs." not in step["run"]       # the shell never expands them
+    assert "--set questions" in step["run"]

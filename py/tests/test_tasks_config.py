@@ -31,9 +31,9 @@ def test_repo_config_loads():
     assert tasks["policy.calendar"].min_interval == timedelta(days=25)
     assert tasks["policy.fed_documents"].min_interval == timedelta(hours=16)
     assert tasks["policy.fed_documents"].overdue_after == timedelta(days=3)
-    # every task is enabled since Pass 1b built policy.reactions (#70), but for cmdbar.examples, which ships disabled until the
-    # command bar's go-live (K-09, #588; Spec 07 §3); `enabled: false` is honoured (below)
-    assert [k for k, t in tasks.items() if not t.enabled] == ["cmdbar.examples"]
+    # every task is enabled since Pass 1b built policy.reactions (#70); cmdbar.examples, which K-09 (#588) shipped disabled, is
+    # enabled since K-11a (#626, Anand's OK of 17 Nov 2026); `enabled: false` is still honoured (below)
+    assert [k for k, t in tasks.items() if not t.enabled] == []
 
 
 def with_reactions_disabled(tmp_path):
@@ -101,7 +101,8 @@ def test_build_tasks_configures_registered_classes_and_names_the_rest(tmp_path):
     fed = tasks[0]
     assert fed.workflows == ("daily", "watch") and fed.rules["watch"] == "fomc_decision_day"
     assert fed.run_after == ("policy.calendar",) and fed.min_interval == timedelta(hours=16)
-    assert sorted(missing) == ["cmdbar.log_retention", "crypto.coingecko_markets", "equity.beta", "equity.brsr", "equity.call_scores", "equity.call_text", "equity.call_transcripts", "equity.calls_ai", "equity.corporate_actions",
+    # cmdbar.examples is named since K-11a (#626) enabled it: a disabled task is neither built nor named
+    assert sorted(missing) == ["cmdbar.examples", "cmdbar.log_retention", "crypto.coingecko_markets", "equity.beta", "equity.brsr", "equity.call_scores", "equity.call_text", "equity.call_transcripts", "equity.calls_ai", "equity.corporate_actions",
                                "equity.filings", "equity.guidance_scores", "equity.kpi_tables",
                                "equity.metrics", "equity.prices", "equity.rate_reactions", "equity.related_parties", "equity.results_reactions", "equity.segment_changes",
                                "equity.shareholding", "equity.snapshot", "equity.statements", "equity.universe",

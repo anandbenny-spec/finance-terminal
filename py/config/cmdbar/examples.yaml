@@ -6,16 +6,21 @@
 # document question) and two Nifty 50 ones. A question's wording is its key: rewording a chip makes a new row that the admin
 # checks again, and a chip taken out of this file is set unchecked, so visitors stop seeing it.
 #
+# Reworded 17 Nov 2026 (K-11a, #626; decided by the K-11 judge under the standing delegation, after reading dev's answers):
+# chip 2 was "Which Nifty 50 banks trade below one times book value?" (0 rows on dev: no Nifty 50 bank's P/B is below 1), and
+# chip 3, Spec 01 §4.6's chip 2, was "How many FOMC dissents were there in each year since 2019?" (its answer lists only the
+# years that had a dissent, so it didn't answer "each year"). Both kept their display_order; each is a new row to check.
+#
 # Per chip: question (at most 500 characters, a data or document question, never one that ranks, sums or compares money
 # across currencies), module (`policy` or `equity`: the module it reads) and display_order (unique, from 1).
 examples:
   - question: When did the RBI last change the repo rate, and by how much?
     module: policy
     display_order: 1
-  - question: Which Nifty 50 banks trade below one times book value?
+  - question: Which Nifty 50 banks have the lowest price-to-book ratios?
     module: equity
     display_order: 2
-  - question: How many FOMC dissents were there in each year since 2019?
+  - question: In which years since 2019 did FOMC members dissent, and how many dissents were there in each?
     module: policy
     display_order: 3
   - question: What changed in the RBI's latest resolution?

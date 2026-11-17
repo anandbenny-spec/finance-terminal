@@ -242,11 +242,14 @@ cmdbar.log_retention:
   uses_nse: false
 cmdbar.examples:
   description: The command bar's example chips, answered again when the data they read has changed (each changed answer waits for the admin's check)
-  # K-09 (#588): disabled until the command bar's go-live (Spec 07 §3, §9); enabling it is Anand's step on K-11 (#590), with
-  # production's sql_reader connection as the GitHub secret SQL_READER_DATABASE_URL. The dev trial runs it while disabled
-  # (cmdbar-gates.yml, set `examples`). It runs after the policy tasks, so a chip reads the day's data.
+  # K-09 (#588) shipped it disabled; enabled by K-11a (#626) on Anand's OK of 17 Nov 2026, about 19:12 IST ("Yes, turn it on"),
+  # so production's daily asks the chips before K-11's flip (about $0.02 the first run, then only the chips whose data changed;
+  # at most RUN_CAP_USD a run; production's monthly switch counts it, Spec 07 N8). Its sql_reader connection is the GitHub
+  # secret SQL_READER_DATABASE_URL (set 17 Nov 2026, #588). A visitor sees a chip only once the admin has checked it and the
+  # box is shown (Spec 07 §3). The dev trial is cmdbar-gates.yml's set `examples`. It runs after the policy tasks, so a chip
+  # reads the day's data.
   workflows: {daily: every 16 hours}
   run_after: [policy.reactions, policy.ai_batch, policy.rate_cycles]
   overdue_after: 3 days
   uses_nse: false
-  enabled: false
+  enabled: true
