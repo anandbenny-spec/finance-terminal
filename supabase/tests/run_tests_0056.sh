@@ -316,6 +316,14 @@ SQL
 )"
 get() { grep "^$1|" <<<"$OUT" | head -1 | cut -d'|' -f2-; }
 plan() { sed -n "/^PLAN-$1-START/,/^PLAN-$1-END/p" <<<"$OUT"; }
+# Rows a scan of equity.transcript_page read and threw away: the "Rows Removed by Filter" lines of those scans' own nodes only (from a
+# node's line to the next node's "->"), never a neighbouring node's, whatever the plan's layout.
+removed_on_pages() { awk '/on transcript_page/ { f = 1; next } /->/ { f = 0 } f && /Rows Removed by Filter/ { n++ } END { print n + 0 }' <<<"$1"; }
+# The most page rows any scan of equity.transcript_page returned per execution ("actual rows", the per-loop figure), whatever the join
+# method: each of those rows carries a visitor's row-level check. A probe returns the one page it needs; the range join reads many.
+page_rows_per_scan() { awk '/on transcript_page/ && match($0, /actual rows=[0-9]+/) { v = substr($0, RSTART + 12, RLENGTH - 12) + 0; if (v > m) m = v } END { print m + 0 }' <<<"$1"; }
+# Page rows the page scans returned in all (actual rows x loops), for the control.
+pages_read() { awk '/on transcript_page/ && match($0, /actual rows=[0-9]+ loops=[0-9]+/) { split(substr($0, RSTART, RLENGTH), a, /[= ]/); n += a[3] * a[5] } END { print n + 0 }' <<<"$1"; }
 
 check "S00 the fixture loaded (six guidance rows with the duplicate, three outcomes, 26 citations with the plan transcript's 12)" "$(get SETUP)" '^6:3:26$'
 
@@ -355,10 +363,10 @@ CPN="$(plan CP-NEW)"; CPO="$(plan CP-OLD)"
 check "P2b the 40-page transcript: the same 12 rows from both bodies (the plan checks' rows)" "$(get CPP)" '^0:12:12$'
 check "P3 citation_pages as a visitor: each page is one backward index probe on (document_id, char_start)" \
   "$(grep -c 'Index Scan Backward using transcript_page_document_id_char_start_key' <<<"$CPN")" '^2$'
-check "P4 citation_pages as a visitor: no transcript page read and thrown away (no Rows Removed by Filter on a page scan)" \
-  "$(grep -A3 'transcript_page' <<<"$CPN" | grep -c 'Rows Removed by Filter')" '^0$'
-check "P5 control: 0035's body reads pages it throws away" \
-  "$(grep -A3 'transcript_page' <<<"$CPO" | grep -c 'Rows Removed by Filter')" '^[1-9][0-9]*$'
+check "P4 citation_pages as a visitor: each page scan returns the one page it needs, and none is read and thrown away" \
+  "$(page_rows_per_scan "$CPN"):$(removed_on_pages "$CPN")" '^1:0$'
+check "P5 control: 0035's body reads many page rows a scan for the same citations (and more in all than the probes)" \
+  "$(page_rows_per_scan "$CPO"):$(( $(pages_read "$CPO") > $(pages_read "$CPN") ))" '^([2-9]|[1-9][0-9]+):1$'
 
 check "V01 the same columns, names and types in order, as 0048's and 0035's bodies" "$(get COLS)" '^true:true$'
 check "V02 both views still security_invoker" "$(get OPTS)" '^call_guidance:security_invoker=true,citation_pages:security_invoker=true$'
