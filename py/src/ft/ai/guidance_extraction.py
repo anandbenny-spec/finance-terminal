@@ -35,6 +35,12 @@ retried once with a note, then rejected, as every extraction in `ft/ai/batch.py`
   metric (revenue, profit after tax, capex, net debt) takes `inr` or `other`, every other metric `pct`;
 - the period resolves through the company's fiscal-year end month (`period_dates`), or the item is `undated`; a target's period
   ends after the call date (else it is a reported figure and is dropped), a stated figure's on or before it;
+- **a figure pair isn't its own period** (#613, 2B-09c, every version; Anand's decision of 17 Nov 2026, 14:03 IST, after #542 part
+  2's output 2217, a margin band of 27 to 28 per cent stored as FY27 to FY28): a multi-year target that passes the period checks,
+  whose two figures are its first and last fiscal years (`figure_pair_is_years`: 27 or 2027 for FY27) and whose quote names no
+  year or period (`names_year`: no "FY27" or "F'27", no four-digit year, no "fiscal" or "year"; "year-on-year" is a growth basis
+  and doesn't count), is kept `undated`, with no period text, and counted in `moved` (`figure_pair_not_years`). A quote that
+  names a year keeps its period. Only a target the period checks keep is moved, so no item they drop is kept;
 - shape: a point, floor or ceiling has one figure, a range a low below its high, a direction none and a direction word; a
   statement that gives no exact figure ("mid-teens") has none and is `vague_figure`;
 - duplicates: within a call a second item with the same metric, period, basis, kind (targets) and growth basis and scope is
@@ -42,18 +48,21 @@ retried once with a note, then rejected, as every extraction in `ft/ai/batch.py`
   whatever the order. A duplicate keeps its row and its citation, and isn't shown.
 
 **The checks that came with prompt v6 (#533, 2B-15f; `V6_RULES`; Anand, 14 Nov 2026).** A reply to a version listed in `V6_RULES`
-is checked with three rules more, and replies to v1 to v5 exactly as before (production's v1 is untouched until #533 part 3):
+is checked with three rules more. Replies to v1 to v5 get the second of them too, since #613 (2B-09c; Anand's decision of 17 Nov
+2026, 14:03 IST, after #542 part 2's output 1053, a consolidated adjusted PAT stored and scored as `pat`; production extracts with
+v1), and are otherwise checked as before:
 - **figures are read by `quote_figures`**, which also reads a figure written against its currency code ("INR3,000 crore",
   "Rs.9,000 crore") and the second figure of a hyphenated range ("10%-12%", "400 crores-500 crores"). The shared reader
   (`citations._numbers`, built for the command bar's one-line answers) reads "INR3,000" as 000 and "-12%" as minus 12, so the
   figure check dropped a right item: 444 items in v5's dev run, 3.1 to 5.5 a call where the transcript writes figures that
   way against 0.5 elsewhere (#533's diagnosis). The rule itself is unchanged: every figure appears in the quote as written;
 - **a qualified measure isn't a filed metric** (`QUALIFIED`: constant currency, adjusted, underlying, normalised, excluding or
-  "ex-" an item, organic, like-for-like, pro forma, a contribution): a target under a listed metric key whose quote or
-  `metric_text` carries such a qualifier is moved to `other` (counted in `moved`), so it is never scored against the filed
-  figure (Spec 02B §5.10: `no_filed_figure`); a stated figure, which can't be `other`, is dropped (`qualified_stated`);
-- **"whole company" in `scope_text` is stored as no scope** (`WHOLE_COMPANY`): prompt v6 asks the model to decide the scope of
-  every item, and that answer means what null always meant.
+  "ex-" an item, organic, like-for-like, pro forma, a contribution), **for every version since #613**: a target under a listed
+  metric key whose quote or `metric_text` carries such a qualifier is moved to `other` (counted in `moved`), so it is never
+  scored against the filed figure (Spec 02B §5.10: `no_filed_figure`); a stated figure, which can't be `other`, is dropped
+  (`qualified_stated`);
+- **"whole company" in `scope_text` is stored as no scope** (`WHOLE_COMPANY`; v6 only): prompt v6 asks the model to decide the
+  scope of every item, and that answer means what null always meant.
 
 **Order, citations and rows.** Kept targets are ordered management first, then the separate list, each in document order; the
 stated figures follow, in document order. Each kept item has one citation, numbered in that order (targets, then stated
@@ -249,6 +258,14 @@ QUALIFIED = re.compile(
     r"\bconstant[\s-]+currency\b|\badjusted\b|\bunderlying\b|\bnormali[sz]ed\b|\bexcluding\b|\bex[\s-]+\w|\borganic(?:ally)?\b"
     r"|\blike[\s-]+for[\s-]+like\b|\bpro[\s-]?forma\b|\bcontribut\w*", re.IGNORECASE)
 _CC = re.compile(r"\bCC\b")                           # "in CC terms": upper case only ("150 cc" is an engine)
+# A figure pair read as fiscal years (#613, every version; the module notes): what in a quote names a year or a period.
+YEAR_NAMED = re.compile(
+    r"\bF(?:Y\s?['’\-]?\s?|['’]?)\d{2}(?:\d{2})?\b"          # FY27, FY 27, FY'27, FY-27, FY2027, F27, F'27
+    r"|\bFYs?\b"                                             # FY on its own ("this FY")
+    r"|\b(?:19|20)\d{2}\b"                                   # a four-digit year
+    r"|\bfiscals?\b|\byears?\b",                             # "fiscal", "year" ("financial year" included)
+    re.IGNORECASE)
+YEAR_ON_YEAR = re.compile(r"\byears?[\s-]+(?:on|over)[\s-]+years?\b", re.IGNORECASE)
 WHOLE_COMPANY = re.compile(
     r"(?:the\s+)?(?:(?:whole|entire|overall|total)\s+)?(?:company|group|business)(?:\s+as\s+a\s+whole|\s+overall|[\s-]+level|[\s-]+wide)?",
     re.IGNORECASE)
@@ -285,6 +302,20 @@ def is_qualified(quote: str, metric_text: str | None) -> bool:
 def whole_company(scope_text: str | None) -> bool:
     """`scope_text` that names the company as a whole (prompt v6's answer where the figure isn't about a part)."""
     return scope_text is not None and WHOLE_COMPANY.fullmatch(scope_text.strip()) is not None
+
+
+def figure_pair_is_years(low: Decimal | None, high: Decimal | None, start_fy: int | None, fy: int | None) -> bool:
+    """A range whose two figures are its own multi-year period's first and last fiscal years, each as a two-digit or a
+    four-digit year (27 or 2027 for FY27): the pair the model may have read as the period (#613)."""
+    if low is None or high is None or start_fy is None or fy is None:
+        return False
+    return low in (start_fy, start_fy % 100) and high in (fy, fy % 100)
+
+
+def names_year(quote: str) -> bool:
+    """The quote names a year or a period itself (`YEAR_NAMED`): "FY27", "F'28", a four-digit year, "financial year",
+    "fiscal" or "year". "Year-on-year" is a growth basis, not a period, so it doesn't count (`YEAR_ON_YEAR`)."""
+    return YEAR_NAMED.search(YEAR_ON_YEAR.sub(" ", quote)) is not None
 
 
 def passes_content_test(quote: str) -> bool:
@@ -331,7 +362,7 @@ class Checked:
     problems: list[str] = field(default_factory=list)       # a reply that isn't the schema's JSON: retried once, rejected
     drops: Counter = field(default_factory=Counter)         # items dropped, by `DROPS` key
     mapping: Counter = field(default_factory=Counter)       # quotes by how they were found (citation_integrity)
-    moved: Counter = field(default_factory=Counter)         # items kept with a field set by a v6 rule: `qualified_metric`, `whole_company`
+    moved: Counter = field(default_factory=Counter)         # items kept with a field set by a rule: `qualified_metric`, `figure_pair_not_years`, `whole_company` (v6)
     v6: bool = False                                        # the reply is to a version of `V6_RULES`
     hold: str | None = None                                 # never set: an extraction here is published or empty
 
@@ -456,16 +487,15 @@ def _common(raw: dict, where: Where, c: Checked, metrics: Metrics, *, target: bo
     if any(len(t) > MAX_AS_SAID for t in (metric_text, period_text, scope_text) if t is not None):
         c.drops["text_too_long"] += 1
         return None
-    if c.v6:
-        if whole_company(scope_text):
-            scope_text = None                                # prompt v6's "whole company": what null always meant
-            c.moved["whole_company"] += 1
-        if metric != "other" and is_qualified(where.quote, metric_text):
-            if not target:
-                c.drops["qualified_stated"] += 1             # a stated figure can't be `other`
-                return None
-            metric = "other"                                 # never scored against the filed figure (§5.10: no_filed_figure)
-            c.moved["qualified_metric"] += 1
+    if c.v6 and whole_company(scope_text):
+        scope_text = None                                    # prompt v6's "whole company": what null always meant
+        c.moved["whole_company"] += 1
+    if metric != "other" and is_qualified(where.quote, metric_text):          # every version since #613 (v6 only before)
+        if not target:
+            c.drops["qualified_stated"] += 1                 # a stated figure can't be `other`
+            return None
+        metric = "other"                                     # never scored against the filed figure (§5.10: no_filed_figure)
+        c.moved["qualified_metric"] += 1
     return {"quote": where.quote, "span": [where.start, where.end], "metric": metric, "metric_label": allowed[metric],
             "metric_text": metric_text, "unit": unit, "period_text": period_text, "basis": basis,
             "growth_basis": growth, "scope_text": scope_text}
@@ -527,6 +557,10 @@ def _target(raw, call: CallDoc, c: Checked, metrics: Metrics) -> dict | None:
         if dates[1] <= call.day:
             c.drops["period_over"] += 1
             return None
+        if pk == "multi_year" and figure_pair_is_years(low, high, start_fy, fy) and not names_year(where.quote):
+            pk, dates = "undated", None                      # the figures were read as the period (#613): the quote names none
+            item["period_text"] = None
+            c.moved["figure_pair_not_years"] += 1
     item.update({"kind": kind, "value": _fmt(value), "low": _fmt(low), "high": _fmt(high),
                  "direction": direction if kind == "direction" else None, "comparison": comparison,
                  "period_kind": pk, "target_start": dates[0].isoformat() if dates else None,
@@ -594,7 +628,8 @@ def not_scored_reason(t: dict) -> str | None:
 
 def check(answer, call: CallDoc, metrics: Metrics, *, version: str | None = None) -> Checked:
     """Check a reply against our copy of the transcript and its stored turns. `version` is the prompt version the reply
-    answers: one of `V6_RULES` adds that version's checks (the module notes); None, or an earlier one, checks as v1 always did."""
+    answers: one of `V6_RULES` adds that version's figure reader and "whole company" rule (the module notes); every version,
+    None included, gets the rest, the qualified-measure and figure-pair rules among them (#613)."""
     c = Checked(answer if isinstance(answer, dict) else None, v6=version in V6_RULES)
     if (not isinstance(answer, dict) or not isinstance(answer.get("targets"), list)
             or not isinstance(answer.get("stated_figures"), list)):
