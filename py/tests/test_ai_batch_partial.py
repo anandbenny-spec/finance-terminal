@@ -196,7 +196,7 @@ def test_the_warning_names_how_many_went_and_how_many_wait_under_the_run_limit()
 def test_a_monthly_switch_lower_than_the_run_limit_is_what_stops_sending_and_says_so():
     t, db = task(), Db()
     f = run(t, db, works(5), budget=Decimal("0.50"))          # five calls fit the $5, but the switch holds two requests
-    assert sent(f) == [4, 5] and f.stopped == "budget" and not f.limit_left    # the two newest
+    assert sent(f) == [1, 2] and f.stopped == "budget" and not f.limit_left    # under the limit the run's order holds, as before
     detail = json.loads(batch.spend_check(f, partial=True).detail)
     assert detail["stopped_by"] == ["monthly_switch"] and (detail["sent_requests"], detail["waiting_monthly_switch"]) == (2, 3)
     alerts = {a.dedupe_key.split(":")[0]: a for a in batch.spend_alerts(f, RUN_LIMIT_USD, partial=True)}

@@ -576,8 +576,6 @@ class BatchSteps:
             items.append((w, step, req, cid, self._worst_case(req, batch=True)))
         new = sum((self._new_cost(f, it) for it in items), Decimal(0))   # its retries, at worst, counted once per target
         limit = self.run_limit()
-        if self.partial_send:            # #373: the send order (this run's retries first), which the monthly switch's cut follows too
-            items.sort(key=lambda it: (self._new_cost(f, it) > 0, self._send_order(it[0], it[1])))
         if f.run_estimate + new > limit:
             if not self.partial_send:
                 f.run_estimate += new

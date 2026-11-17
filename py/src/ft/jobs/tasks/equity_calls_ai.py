@@ -116,9 +116,9 @@ summary). Where `policy.ai_batch` sends nothing when the total passes `RUN_LIMIT
 longest prefix that fits, in a fixed order (`_send_order`): the guidance extractions first, then the summaries, then the tone
 scores, then the retries (a target's second attempt in a later run); each group newest filing first. The rest get the outcome
 `budget`; they still lack an output, so the next run takes them, and a busy results week drains over a few weekly runs with
-no one splitting the backlog by hand. A run's own retries (already in its estimate) still go. The order of the checks is
-unchanged (AI available, then the run estimate, then the monthly switch, each request in the same order), and no run sends more
-than $5 of worst case. When the monthly switch (`ai_monthly_budget_usd`) is lower than what is left of the run limit, it is
+no one splitting the backlog by hand. A run's own retries (already in its estimate) still go. A run within the limit keeps its
+own order (filing order), as before; the send order is for a run over it. The order of the checks is unchanged (AI available,
+then the run estimate, then the monthly switch, request by request), and no run sends more than $5 of worst case. When the monthly switch (`ai_monthly_budget_usd`) is lower than what is left of the run limit, it is
 what stops sending: the `ai_spend` check names which stop left how many targets (`stopped_by`, `waiting_run_limit`,
 `waiting_monthly_switch`, `sent_requests`), and each alert raised (`ai_run_estimate`, `ai_budget:<month>`) gives its own counts.
 
