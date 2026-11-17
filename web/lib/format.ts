@@ -565,3 +565,33 @@ export function formatCountChangeWords(change: number | null | undefined): strin
   if (integer(change, "a count change") === 0) return "unchanged";
   return `${change > 0 ? "up" : "down"} ${digits(Math.abs(change), { decimals: 0, locale: "en-IN" })}`;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// The command bar (K-07, #585; Spec 07 §4, §7): a data answer's cells arrive as exact decimal strings (the route never
+// rounds: `ft.cmdbar.route.cell`), and the box shows each one exactly, so the figure a visitor reads is the row's figure.
+
+/**
+ * An exact decimal string as it came, grouped by its market and with a true minus: `"1234567.891"` → `12,34,567.891` (IN),
+ * `1,234,567.891` (US); with no market known, ungrouped (`1234567.891`). Nothing is rounded or padded. A string that isn't a
+ * plain decimal (an exponent, say) is shown as it came, with its minus made true.
+ */
+export function formatExactDecimal(value: string | null | undefined, market?: Market): string {
+  if (isMissing(value)) return NOT_AVAILABLE;
+  const m = /^(-?)(\d+)(\.\d+)?$/.exec(value.trim());
+  if (!m) return value.trim().replace(/^-/, MINUS);
+  const [, sign, whole, fraction = ""] = m;
+  let grouped = whole;
+  if (market === "US") grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  else if (market === "IN" && whole.length > 3) {
+    const head = whole.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",");
+    grouped = `${head},${whole.slice(-3)}`;
+  }
+  return `${sign ? MINUS : ""}${grouped}${fraction}`;
+}
+
+/** How long an answer took: `850` ms → `850 ms`; from a second, one decimal: `2400` → `2.4 s`. Whole milliseconds in. */
+export function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) throw new RangeError(`formatDurationMs: expected ms ≥ 0, got ${ms}`);
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${digits(ms / 1000, { decimals: 1, grouping: false })} s`;
+}
