@@ -1,6 +1,7 @@
 """The command bar's data route (Spec 07 §4 step 5a; Architecture 03 §1.7; K-04, #582): the guard's VIEWS equal to the semantic
 views (in the migrations and as sql_reader sees them), the prompt built from the views' comments, the read-only 3-second run as
-sql_reader, one Sonnet retry told the error's class only, and the summary kept only when its numbers are in the rows."""
+sql_reader, one Sonnet retry told the error's class only (or, since round 4 of #587, a second look at Haiku's "can't answer"),
+and the summary kept only when its numbers are in the rows."""
 import json
 import re
 from datetime import date
@@ -257,10 +258,72 @@ def test_a_second_failure_is_cant_answer_with_no_rows_no_query_and_no_raw_error(
 
 
 def test_an_unanswerable_question_runs_nothing():
+    """Since round 4 (#587, Anand's option A, 17 Nov 2026): Haiku's "can't answer" gets one second look on Sonnet, and Sonnet's
+    "can't answer" stands, so two requests and no query."""
     fake, rd = model(answerable=False), FakeReader(ROWS)
     a = s.answer_data(claude(fake), rd, "Will the RBI cut in December?", PROMPT)
     assert a.state == "unanswerable" and a.error_class is None and a.sql is None
-    assert rd.ran == [] and len(fake.requests) == 1 and a.explanation
+    assert rd.ran == [] and len(fake.requests) == 2 and a.explanation
+    assert a.models == [HAIKU, SONNET] and [x.error_class for x in a.attempts] == [None, None]
+
+
+def by_model(verdicts: dict, sql: str = GOOD_SQL):
+    """A fake Claude whose SQL reply depends on the model: `verdicts[model]` True (answer with `sql`) or False (can't answer)."""
+    def answer(body):
+        first = next(iter(body["output_config"]["format"]["schema"]["properties"]))
+        if first == "summary":
+            return {"summary": "The RBI cut by 25 basis points on 5 December 2025."}
+        ok = verdicts[body["model"]]
+        return {"answerable": ok, "sql": sql if ok else None, "explanation": f"{body['model']} says so."}
+    return answer
+
+
+def test_haikus_cant_answer_gets_one_second_look_on_sonnet_whose_answer_stands():
+    """Round 4 (#587; Spec 07 §4 step 5a widened by Anand, 17 Nov 2026, 15:33 IST): the same request, on Sonnet, with no note."""
+    fake, rd = FakeClaude(answer=by_model({HAIKU: False, SONNET: True})), FakeReader(ROWS)
+    a = s.answer_data(claude(fake), rd, Q, PROMPT)
+    assert a.state == "answered" and a.error_class is None and a.models == [HAIKU, SONNET]
+    assert a.sql == sqlguard.guard(GOOD_SQL) and rd.ran == [a.sql] and a.guard_verdict == "accepted"
+    first, second = fake.requests[0], fake.requests[1]
+    assert (first["model"], second["model"]) == (HAIKU, SONNET)
+    assert first["messages"] == second["messages"] and first["system"] == second["system"]     # no note: a fresh look
+    assert a.explanation == f"{SONNET} says so." and a.summary_grounded and len(fake.requests) == 3   # SQL, SQL, summary
+
+
+def test_sonnets_second_look_saying_cant_answer_stands():
+    fake, rd = FakeClaude(answer=by_model({HAIKU: False, SONNET: False})), FakeReader(ROWS)
+    a = s.answer_data(claude(fake), rd, Q, PROMPT)
+    assert a.state == "unanswerable" and a.error_class is None and rd.ran == [] and a.models == [HAIKU, SONNET]
+    assert a.explanation == f"{SONNET} says so."
+
+
+def test_the_second_looks_failed_query_gets_no_third_request():
+    """Sonnet was the one retry: its rejected query is "can't answer", with no further request."""
+    fake = FakeClaude(answer=by_model({HAIKU: False, SONNET: True}, sql="select * from core.event"))
+    rd = FakeReader(ROWS)
+    a = s.answer_data(claude(fake), rd, Q, PROMPT)
+    assert a.state == "cant_answer" and a.error_class == "guard: relation not allowed" and a.guard_verdict == "rejected"
+    assert len(fake.requests) == 2 and rd.ran == [] and a.sql is None and a.rows == []
+    fake = FakeClaude(answer=by_model({HAIKU: False, SONNET: True}))
+    a = s.answer_data(claude(fake), FakeReader(s.QueryError("UndefinedColumn")), Q, PROMPT)
+    assert a.state == "cant_answer" and a.error_class == "database: UndefinedColumn" and len(fake.requests) == 2
+
+
+@pytest.mark.parametrize("mode,cls", [("max_tokens", "model_output"), ("400", "ai_call")])
+def test_a_second_look_that_fails_leaves_haikus_verdict(mode, cls):
+    fake = FakeClaude(script=("ok", mode), answer=by_model({HAIKU: False, SONNET: True}))
+    a = s.answer_data(claude(fake), FakeReader(ROWS), Q, PROMPT)
+    assert a.state == "unanswerable" and a.error_class is None and a.sql is None
+    assert a.models == [HAIKU, SONNET] and a.attempts[1].error_class == cls and a.explanation == f"{HAIKU} says so."
+
+
+def test_a_guard_retry_on_sonnet_that_says_cant_answer_is_unanswerable_with_no_third_request():
+    fake = FakeClaude(answer=lambda body: (
+        {"summary": "x"} if next(iter(body["output_config"]["format"]["schema"]["properties"])) == "summary" else
+        {"answerable": body["model"] == HAIKU, "sql": "select * from core.event" if body["model"] == HAIKU else None,
+         "explanation": ""}))
+    a = s.answer_data(claude(fake), FakeReader(ROWS), Q, PROMPT)
+    assert a.state == "unanswerable" and a.models == [HAIKU, SONNET] and len(fake.requests) == 2
 
 
 def test_a_reply_that_stopped_early_is_cant_answer_without_a_retry():

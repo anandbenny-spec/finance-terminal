@@ -22,6 +22,13 @@ VALUES list) is refused like a guard rejection, since its rows would hold a numb
 **One retry**: after a guard rejection, the constant-column check or a database error, one more request on Sonnet 5.5, told the error's class only (such
 as "guard: relation not allowed" or "database: UndefinedColumn"), never the raw message. A second failure is "can't answer".
 Nothing returned here holds a raw error: `error_class` is one of those short classes.
+
+**A second look at "can't answer"** (Anand, 17 Nov 2026, 15:33 IST, #587's round 4, option A point 1; Spec 07 §4 step 5a
+widened): when Haiku says the views can't answer the question, the same request goes once to Sonnet 5.5, with no note, and
+Sonnet's verdict stands: its "can't answer" is the answer, and its query goes through the guard and the run as Haiku's would,
+with no further retry (Sonnet was the one retry). CLAUDE.md §6 allows Sonnet where an evaluation shows Haiku falls short: runs
+50, 53 and 55 refused answerable cross-currency questions. If that second request fails without a usable reply, Haiku's verdict
+stands. Only refusals reach Sonnet, so the cost is about one data question in ten.
 """
 from __future__ import annotations
 
@@ -308,6 +315,11 @@ def answer_data(client, reader: Reader, question: str, prompt: Prompt, *, summar
             stage(line)
     out = DataAnswer("cant_answer")
     note = None
+    second_look = False                                      # Haiku said "can't answer"; Sonnet is asking again
+
+    def first_verdict_stands() -> None:
+        """The second look itself failed (no usable reply): Haiku's "can't answer" stands; the attempt keeps its class."""
+        out.state, out.error_class, out.guard_verdict = "unanswerable", None, None
     for model in (FIRST_MODEL, RETRY_MODEL):
         req = request(question, prompt, model=model, note=note)
         try:
@@ -317,10 +329,14 @@ def answer_data(client, reader: Reader, question: str, prompt: Prompt, *, summar
         except Failed as e:                                  # billed: stopped at max_tokens, or refused
             out.attempts.append(Attempt(model, "model_output", e.reply.cost_usd))
             out.error_class = "model_output"
+            if second_look:
+                first_verdict_stands()
             break
         except CallError:                                    # not billed
             out.attempts.append(Attempt(model, "ai_call"))
             out.error_class = "ai_call"
+            if second_look:
+                first_verdict_stands()
             break
         att = _attempt(model, reply)
         out.attempts.append(att)
@@ -330,11 +346,18 @@ def answer_data(client, reader: Reader, question: str, prompt: Prompt, *, summar
             answer = None
         if not isinstance(answer, dict) or not isinstance(answer.get("answerable"), bool):
             att.error_class = out.error_class = "model_output"
+            if second_look:
+                first_verdict_stands()
             break
-        out.explanation = answer.get("explanation") if isinstance(answer.get("explanation"), str) else None
+        explanation = answer.get("explanation") if isinstance(answer.get("explanation"), str) else None
         if not answer["answerable"]:
-            out.state, out.error_class, out.guard_verdict = "unanswerable", None, None
+            out.state, out.error_class, out.guard_verdict, out.explanation = "unanswerable", None, None, explanation
+            if model == FIRST_MODEL:                         # one second look, on Sonnet, whose verdict stands (#587)
+                second_look, note = True, None
+                continue
             break
+        out.state, out.explanation = "cant_answer", explanation      # a query to try: an earlier "can't answer" no longer stands
+        second_look = False
         sql = answer.get("sql") if isinstance(answer.get("sql"), str) else ""
         try:
             guarded = sqlguard.guard(sql)
