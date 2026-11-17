@@ -103,18 +103,28 @@ def test_no_figure_from_a_row_is_in_the_files():
 
 # ------------------------------------------------------------------ cmdbar_sql
 def test_sql_splits_and_family_counts():
-    """Round 2 (17 Nov 2026, #587): the round 1 test items moved to dev (run 45 read them); the chips and 55 new items test."""
+    """Round 2 (17 Nov 2026, #587): the round 1 test items moved to dev (run 45 read them). Round 3 (17 Nov 2026, #587; Anand's
+    answer A): the round 2 test items moved to dev too (run 50 read them); the chips and 55 new items test."""
     assert Counter((i["split"], i["family"]) for i in SQL) == {
         ("test", "module1"): 16, ("test", "equity"): 25, ("test", "calls"): 10, ("test", "cross_currency"): 9,
-        ("dev", "module1"): 14, ("dev", "equity"): 30, ("dev", "calls"): 12, ("dev", "cross_currency"): 11,
+        ("dev", "module1"): 25, ("dev", "equity"): 55, ("dev", "calls"): 22, ("dev", "cross_currency"): 20,
     }
 
 
-def test_the_round_2_test_split_is_the_chips_and_new_items_only():
-    """No item run 45 scored stays in the test split except Spec 01's five chips (Spec 07 §6 keeps them there)."""
+def test_the_round_3_test_split_is_the_chips_and_new_items_only():
+    """No item run 45 or run 50 scored stays in the test split except Spec 01's five chips (Spec 07 §6 keeps them there)."""
     test = {i["id"] for i in SQL if i["split"] == "test"}
-    assert test - {f"sql-m0{n}" for n in range(1, 6)} == {i for i in test if i.startswith("sql-r2-")}
-    assert len(test) == 60 and all(i["split"] == "test" for i in SQL if i["id"].startswith("sql-r2-"))
+    assert test - {f"sql-m0{n}" for n in range(1, 6)} == {i for i in test if i.startswith("sql-r3-")}
+    assert len(test) == 60 and all(i["split"] == "test" for i in SQL if i["id"].startswith("sql-r3-"))
+    assert all(i["split"] == "dev" for i in SQL if i["id"].startswith("sql-r2-"))
+
+
+def test_the_round_3_questions_are_new():
+    """A round 3 question repeats no earlier question of the set (the test split measures questions the prompt work never read)."""
+    def norm(q: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", q.lower()).strip()
+    earlier = {norm(i["question"]) for i in SQL if not i["id"].startswith("sql-r3-")}
+    assert not [i["id"] for i in SQL if i["id"].startswith("sql-r3-") and norm(i["question"]) in earlier]
 
 
 def test_sql_has_at_least_eight_cross_currency_test_items():
