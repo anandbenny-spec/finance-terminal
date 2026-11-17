@@ -158,6 +158,7 @@ def test_a_failure_leaves_the_stored_answer_as_it_was(out, keep):
     old = ex.Stored(CHIP.question, a, "an older version", True)
     p = ex.plan_chip(CHIP, old, MOVED, ask=asked(out, keep), reread=lambda ans: False)
     assert p.outcome == "failed" and not p.write and p.cost == Decimal("0.004")
+    assert p.error_class == out["state"] and p.line() == f"  chip 1, failed, {out['state']}"     # a class, never an error's text
 
 
 def test_a_new_chip_is_stored_unchecked_and_a_cant_answer_has_no_version():
@@ -351,6 +352,8 @@ def test_the_load_stores_answers_unchecks_changed_and_removed_chips_and_visitors
             assert t.load(jw, run, None) >= 4
             checks = {c.name: c for c in t.checks(jw, run, None)}
         assert checks["chips"].passed and checks["reader"].passed and not checks["answers"].passed
+        assert json.loads(checks["answers"].detail) == {"rows_unchanged": 1, "changed": 1, "new": 1, "failed": 1,
+                                                        "failed_classes": {"4": None}}
         assert not checks["answers"].blocking and not checks["ai_spend"].blocking
         with psycopg.connect(dsn("postgres"), autocommit=True) as db:
             got = {q: (v, ok, a) for q, v, ok, a in db.execute(

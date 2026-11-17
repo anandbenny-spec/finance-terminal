@@ -28,7 +28,7 @@ The chips are config/cmdbar/examples.yaml. Each run, for each chip in display or
 `ops.task_run.ai_cost_usd`, which the monthly switch sums (N8). No Anthropic key: nothing is asked (`ai_off`).
 
 **Checks:** `reader` (blocking) that `SQL_READER_DATABASE_URL` is set; `chips` (blocking) that every chip in the file has its row
-and no chip outside it is checked; `answers` (informational) the outcome counts; `ai_spend` (informational) the run's cost.
+and no chip outside it is checked; `answers` (informational) the outcome counts, with each failed chip's error class; `ai_spend` (informational) the run's cost.
 What it prints (the run log is public: `CLAUDE.md` §4) is each chip's order, route, state, outcome and row count, never a row,
 a summary or a figure.
 """
@@ -148,10 +148,13 @@ class Plan:
     data_version: str | None = None
     reset: bool = False                  # set verified false (otherwise the row's own value stands, as the admin left it)
     cost: Decimal = Decimal(0)
+    error_class: str | None = None       # a failure's class (a short fixed word, never the raw error), for the run log
 
     def line(self) -> str:
         a = self.answer if self.write else None
         bits = [f"chip {self.chip.display_order}", self.outcome]
+        if self.error_class:
+            bits.append(self.error_class)
         if a:
             bits += [str(a.get("route")), str(a.get("state"))]
             if a.get("route") == "data" and isinstance(a.get("rows"), list):
@@ -224,7 +227,7 @@ def plan_chip(chip: Chip, old: Stored | None, freshness, *, ask, reread) -> Plan
     out, keep, row = got
     cost = row.cost_usd
     if not keep or out.get("state") == "paused":         # a failure: the stored answer stands, asked again next run
-        return Plan(chip, "failed", cost=cost)
+        return Plan(chip, "failed", cost=cost, error_class=row.error_class or str(out.get("state")))
     if prev is None:
         return Plan(chip, "new", write=True, answer=out, data_version=version_of(out, freshness), reset=True, cost=cost)
     if same_documents(prev, out):
@@ -324,7 +327,10 @@ class CmdbarExamples(Task):
         return [Check("reader", r.reader_set, "SQL_READER_DATABASE_URL is not set" if not r.reader_set else "set"),
                 Check("chips", have == len(questions) and stray == 0,
                       f"{have} of {len(questions)} chips stored, {stray} checked chips outside the file"),
-                Check("answers", trouble == 0, json.dumps({k: counts[k] for k in OUTCOMES if counts[k]}), blocking=False),
+                Check("answers", trouble == 0, json.dumps({**{k: counts[k] for k in OUTCOMES if counts[k]},
+                                                           **({"failed_classes": {str(p.chip.display_order): p.error_class
+                                                                                  for p in r.plans if p.outcome == "failed"}}
+                                                              if counts["failed"] else {})}), blocking=False),
                 Check("ai_spend", True, f"{r.cost.quantize(Decimal('0.000001'))} USD", blocking=False)]
 
 
