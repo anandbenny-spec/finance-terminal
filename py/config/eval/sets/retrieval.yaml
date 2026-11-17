@@ -14,6 +14,8 @@
 #   bank                  fed or rbi (the document's entity slug)
 #   doc_type              one of the seven
 #   event_slug            the meeting the document belongs to; with doc_type it names one published document
+#   spans                 (round 2 items, K-06's option B) instead of char_start and char_end: a list of [start, end]
+#                         pairs, every passage of the document that states the whole answer
 #   char_start, char_end  the expected passage in that document's text: Unicode code points, end exclusive (core.chunk's
 #                         offsets). The span covers the words that answer the question, so any chunk holding them counts
 #   notes                 what the passage says, in our words (no text from the document)
@@ -255,3 +257,47 @@ items:
     char_start: 15570
     char_end: 15580
     notes: The list of measures, the moratorium on term loans among them.
+  # ---------------------------------------------------------------- round 2 test items (17 Nov 2026, K-10's fix round, #587)
+  # K-06's span option B (Anand's answer of 17 Nov 2026 on #587): each lists in `spans` every passage of its document that
+  # states the whole answer, chosen from the document alone (every chunk of each was read, or searched for the answer's
+  # words), before any retrieval run on them. A hit is a returned chunk of the document overlapping any of the spans.
+  - id: ret-r2-01
+    split: test
+    question: What did the FOMC do with the federal funds rate in July 2023?
+    bank: fed
+    doc_type: fomc_statement
+    event_slug: fomc-2023-07-26
+    spans: [[619, 719]]
+    notes: The decision to raise the target range; the statement states it once.
+  - id: ret-r2-02
+    split: test
+    question: By how much did the RBI's MPC cut the repo rate in February 2025?
+    bank: rbi
+    doc_type: mpc_resolution
+    event_slug: mpc-2025-02-07
+    spans: [[436, 545], [4731, 4823]]
+    notes: The decision at the top of the resolution, and the vote in its rationale.
+  - id: ret-r2-03
+    split: test
+    question: Which MPC member had reservations about the stance in August 2022?
+    bank: rbi
+    doc_type: mpc_resolution
+    event_slug: mpc-2022-08-05
+    spans: [[6918, 7004], [7096, 7173]]
+    notes: The vote on the stance names the one member who did not join it, and the next sentence records his reservations.
+  - id: ret-r2-04
+    split: test
+    question: Who voted against the FOMC's December 2024 rate cut, and what did they want instead?
+    bank: fed
+    doc_type: fomc_statement
+    event_slug: fomc-2024-12-18
+    spans: [[2079, 2222]]
+    notes: The dissent and the range the dissenter preferred, in the voting paragraph.
+  - id: ret-r2-05
+    split: test
+    question: How did the MPC members vote on the repo rate in February 2025?
+    bank: rbi
+    doc_type: mpc_minutes
+    event_slug: mpc-2025-02-07
+    spans: [[2380, 2522], [6710, 6802], [7377, 7619]]
+    notes: The unanimous decision in the resolution, the unanimous vote in its rationale, and the voting table; each member's own statement gives only that member's vote.

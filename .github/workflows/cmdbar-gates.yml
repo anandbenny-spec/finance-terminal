@@ -10,8 +10,14 @@
 # and stops before spend could pass `max_cost`. Annotations hold ids, counts, classes and costs only: never a row, a summary
 # line or a figure (this repository and its run logs are public: CLAUDE.md §4). `retrieval` (K-06, #584): with `send` off it only
 # prices the run and checks that sql_reader may call search_chunks; with `send` on each question goes through the document route
-# (voyage-4-lite, search_chunks over Fed and RBI policy documents only, the cited answer): recall within the top 8 is scored, and
+# (voyage-4 questions, search_chunks over Fed and RBI policy documents only, the cited answer): recall within the top 8 is scored, and
 # the answers' counts are recorded beside it. The Voyage key, like the model key, is present only on a run that sends.
+# `query_model` (retrieval only; K-10, #587): voyage-4-lite embeds the questions for Architecture 03 §0's comparison, recorded
+# beside the route's voyage-4 run (the route's model since 17 Nov 2026) and never as the gate.
+# `examples` (K-09, #588) isn't a set: it is the dev trial of the task `cmdbar.examples` while it is disabled (`python -m
+# ft.jobs.tasks.cmdbar_examples --target dev`): one refresh job run on dev, recorded in ops.job_run and ops.task_run, that answers
+# the chips of config/cmdbar/examples.yaml through the route and stores them in ops.cmdbar_example, unchecked. `split`, `items`,
+# `max_cost` and `query_model` don't apply (the task holds its own run cap); with `send` off no model is asked (`ai_off`).
 name: cmdbar-gates
 on:
   workflow_dispatch:
@@ -19,7 +25,7 @@ on:
       set:
         description: The evaluation set
         type: choice
-        options: [cmdbar_sql, cmdbar_router, retrieval]
+        options: [cmdbar_sql, cmdbar_router, retrieval, examples]
         default: cmdbar_sql
       split:
         description: 'dev: prompt work (K-04, K-06); test: the gate (K-10) and the judge (K-11) only (Spec 07 N5)'
@@ -38,6 +44,11 @@ on:
         description: Stop before the run's spend in USD could pass this
         type: string
         default: "0.50"
+      query_model:
+        description: 'retrieval only: the questions'' Voyage model (voyage-4 is the route''s; voyage-4-lite is the comparison run)'
+        type: choice
+        options: [voyage-4, voyage-4-lite]
+        default: voyage-4
 concurrency:
   group: cmdbar-gates
   cancel-in-progress: false
@@ -56,12 +67,18 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: py/uv.lock
-      - run: uv sync --locked
+      # the jobs extra: `examples` runs a job task, whose run opens the job runner's fetcher (curl_cffi), as daily does
+      - run: uv sync --locked --extra jobs
       - name: Gate run
         run: |
+          if [ "$SET" = "examples" ]; then
+            uv run --locked python -m ft.jobs.tasks.cmdbar_examples --target dev --runner github --github-run-id "$GITHUB_RUN_ID" --git-sha "$GITHUB_SHA"
+            exit $?
+          fi
           args=(--set "$SET" --split "$SPLIT" --max-cost "$MAX_COST")
           if [ -n "$ITEMS" ]; then args+=(--items "$ITEMS"); fi
           if [ "$SEND" = "true" ]; then args+=(--send); fi
+          if [ "$SET" = "retrieval" ]; then args+=(--query-model "$QUERY_MODEL"); fi
           uv run --locked python -m ft.eval.cmdbar "${args[@]}"
         env:
           SET: ${{ inputs.set }}
@@ -69,6 +86,7 @@ jobs:
           ITEMS: ${{ inputs.items }}
           SEND: ${{ inputs.send }}
           MAX_COST: ${{ inputs.max_cost }}
+          QUERY_MODEL: ${{ inputs.query_model }}
           # Dev's databases only: sql_reader (transaction pooler) for the answers and the golds, job_writer for the records.
           SQL_READER_DATABASE_URL: ${{ secrets.DEV_SQL_READER_DATABASE_URL }}
           JOB_DATABASE_URL: ${{ secrets.DEV_JOB_DATABASE_URL }}

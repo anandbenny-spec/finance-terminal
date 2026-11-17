@@ -267,7 +267,7 @@ def live_client(env: Mapping[str, str]) -> Client:
 
 
 def live_embedder(env: Mapping[str, str]) -> Embedder:
-    """Voyage for the document route's question (`voyage-4-lite`), with the model client's short waits (K-06)."""
+    """Voyage for the document route's question (`QUERY_MODEL`, voyage-4), with the model client's short waits (K-06)."""
     return Embedder(client=VoyageHTTP(env["VOYAGE_API_KEY"].strip(), timeout=VOYAGE_TIMEOUT_S), retries=CLIENT_RETRIES,
                     max_wait=CLIENT_MAX_WAIT_S)
 

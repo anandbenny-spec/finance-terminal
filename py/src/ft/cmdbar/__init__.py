@@ -5,7 +5,7 @@ runner (`ft/eval/cmdbar.py`) share, so the gates measure the route's own code.
 - `sql`: the data route (§4 step 5a): the text-to-SQL prompt with the views' descriptions read from their COMMENTs, the guard,
   the read-only run as `sql_reader`, and one retry on Sonnet 5.5 told the error's class only.
 - `summary`: the one-line summary of the rows, kept only if every number in it is in the rows (`numbers_grounded`).
-- `documents`: the document route (§4 step 5b; K-06): `voyage-4-lite`, `search_chunks` over Fed and RBI policy documents only,
+- `documents`: the document route (§4 step 5b; K-06): `voyage-4` questions, `search_chunks` over Fed and RBI policy documents only,
   an answer with native citations, and only the sentences that carry a verified citation.
 
 Every model call goes through `ft/ai/client.py`. The question is data in every prompt, never instructions. Nothing here shows a

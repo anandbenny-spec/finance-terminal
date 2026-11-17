@@ -106,11 +106,26 @@ DOCS = [s.ViewDoc("companies", "One row per company.", (("company", "text", "Com
 
 def test_the_prompt_is_the_rules_the_views_and_the_guards_own_lists():
     p = s.sql_prompt(s.render_views(DOCS, ["Banks", "IT services"]))
-    assert p.task == "cmdbar_sql" and p.version == s.PROMPT_VERSION == "v2" and "{{" not in p.text and "<!--" not in p.text
+    assert p.task == "cmdbar_sql" and p.version == s.PROMPT_VERSION == "v7" and "{{" not in p.text and "<!--" not in p.text
     assert "## companies\nOne row per company.\n- company (text): Company name." in p.text
     assert "The peer_group values: 'Banks'; 'IT services'." in p.text
     assert all(f in p.text for f in sqlguard.FUNCS) and all(c in p.text for c in sqlguard.CAST_TYPES)
     assert "Never compare, rank, order, add, average" in p.text
+    # v3 and v4 (17 Nov 2026, #587): run 45's four miss classes, each a rule
+    assert "never refuse it because the money is in two currencies" in p.text and "GROUP BY market, currency" in p.text
+    assert "also the market column" in p.text and "Filter only on what the question states" in p.text
+    assert "leaves out rows whose ranking figure is null" in p.text
+    assert "answered with answerable true" in p.text and "there is no combined total" in p.text
+    # v5 (17 Nov 2026, #587): run 50's miss classes, each a rule
+    assert "worth more or valued higher by the market is answered the same way" in p.text
+    assert "is answered within each market" in p.text and "rank() over (partition by market" in p.text
+    assert "even when call_guidance holds a target on the same topic" in p.text
+    assert "returns that one row" in p.text and "one with none has no row" in p.text
+    # v6 (17 Nov 2026, #587): run 52's dev miss classes
+    assert "the most recent row that holds it" in p.text and "not the quarters or half-years" in p.text
+    # v7 (17 Nov 2026, #587): run 53's refusals of an Indian and a US company compared
+    assert "Never set it to false because a named Nifty 50 or Dow 30 company might be missing" in p.text
+    assert "hold the Nifty 50 (market IN) and the Dow 30 (market US) together" in p.text
     assert p.sha256 != s.sql_prompt(s.render_views(DOCS[:1])).sha256      # the descriptions are part of the prompt's hash
 
 

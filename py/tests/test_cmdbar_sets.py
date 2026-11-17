@@ -6,6 +6,7 @@ the guard's read-only, 3-second wrapper."""
 import re
 from collections import Counter
 from datetime import date
+from itertools import pairwise
 from pathlib import Path
 
 import psycopg
@@ -74,8 +75,8 @@ def test_ids_are_unique_within_and_across_the_sets():
     (SQL, {"id", "split", "family", "question", "answerable", "gold_sql", "cross_currency", "ordered", "notes"},
      {"id", "split", "family", "question", "answerable", "cross_currency", "ordered", "notes"}),
     (ROUTER, {"id", "split", "question", "route", "page_slug", "filters", "notes"}, {"id", "split", "question", "route", "notes"}),
-    (RETRIEVAL, {"id", "split", "question", "bank", "doc_type", "event_slug", "char_start", "char_end", "notes"},
-     {"id", "split", "question", "bank", "doc_type", "event_slug", "char_start", "char_end", "notes"}),
+    (RETRIEVAL, {"id", "split", "question", "bank", "doc_type", "event_slug", "char_start", "char_end", "spans", "notes"},
+     {"id", "split", "question", "bank", "doc_type", "event_slug", "notes"}),
 ], ids=["cmdbar_sql", "cmdbar_router", "retrieval"])
 def test_items_carry_only_their_fields(items, fields, required):
     """No other key, so no stored result, row or answer can ride along (Spec 07 N4: golds are SQL, never rows)."""
@@ -102,10 +103,28 @@ def test_no_figure_from_a_row_is_in_the_files():
 
 # ------------------------------------------------------------------ cmdbar_sql
 def test_sql_splits_and_family_counts():
+    """Round 2 (17 Nov 2026, #587): the round 1 test items moved to dev (run 45 read them). Round 3 (17 Nov 2026, #587; Anand's
+    answer A): the round 2 test items moved to dev too (run 50 read them); the chips and 55 new items test."""
     assert Counter((i["split"], i["family"]) for i in SQL) == {
         ("test", "module1"): 16, ("test", "equity"): 25, ("test", "calls"): 10, ("test", "cross_currency"): 9,
-        ("dev", "module1"): 3, ("dev", "equity"): 5, ("dev", "calls"): 2, ("dev", "cross_currency"): 2,
+        ("dev", "module1"): 25, ("dev", "equity"): 55, ("dev", "calls"): 22, ("dev", "cross_currency"): 20,
     }
+
+
+def test_the_round_3_test_split_is_the_chips_and_new_items_only():
+    """No item run 45 or run 50 scored stays in the test split except Spec 01's five chips (Spec 07 §6 keeps them there)."""
+    test = {i["id"] for i in SQL if i["split"] == "test"}
+    assert test - {f"sql-m0{n}" for n in range(1, 6)} == {i for i in test if i.startswith("sql-r3-")}
+    assert len(test) == 60 and all(i["split"] == "test" for i in SQL if i["id"].startswith("sql-r3-"))
+    assert all(i["split"] == "dev" for i in SQL if i["id"].startswith("sql-r2-"))
+
+
+def test_the_round_3_questions_are_new():
+    """A round 3 question repeats no earlier question of the set (the test split measures questions the prompt work never read)."""
+    def norm(q: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", q.lower()).strip()
+    earlier = {norm(i["question"]) for i in SQL if not i["id"].startswith("sql-r3-")}
+    assert not [i["id"] for i in SQL if i["id"].startswith("sql-r3-") and norm(i["question"]) in earlier]
 
 
 def test_sql_has_at_least_eight_cross_currency_test_items():
@@ -194,13 +213,15 @@ def test_router_page_slugs_and_filters():
 
 # ------------------------------------------------------------------ retrieval
 def test_retrieval_splits():
-    assert Counter(i["split"] for i in RETRIEVAL) == {"test": 20, "dev": 5}
+    """20 round 1 test items and 5 round 2 ones with span lists (K-10's fix round, #587), and 5 dev items."""
+    assert Counter(i["split"] for i in RETRIEVAL) == {"test": 25, "dev": 5}
+    assert sum("spans" in i for i in RETRIEVAL) == 5 and all(i["split"] == "test" for i in RETRIEVAL if "spans" in i)
 
 
 def test_retrieval_covers_both_banks_the_seven_types_and_the_years():
     test = [i for i in RETRIEVAL if i["split"] == "test"]
     assert {i["doc_type"] for i in test} == POLICY_DOC_TYPES
-    assert Counter(i["bank"] for i in test) == {"fed": 9, "rbi": 11}
+    assert Counter(i["bank"] for i in test) == {"fed": 11, "rbi": 14}
     years = {i["event_slug"].rsplit("-", 3)[1] for i in test}
     assert len(years) >= 6
 
@@ -216,11 +237,16 @@ def test_retrieval_items_are_policy_documents_only():
 
 
 def test_retrieval_spans_are_offsets():
+    """Either one char_start/char_end span or a `spans` list (K-06's option B), never both; each span ascending and apart."""
     seen = set()
     for i in RETRIEVAL:
-        s, e = i["char_start"], i["char_end"]
-        assert isinstance(s, int) and isinstance(e, int) and 0 <= s < e, i["id"]
-        key = (i["doc_type"], i["event_slug"], s)
+        assert ("spans" in i) != ("char_start" in i or "char_end" in i), i["id"]
+        spans = i["spans"] if "spans" in i else [[i["char_start"], i["char_end"]]]
+        assert spans and all(isinstance(x, list) and len(x) == 2 for x in spans), i["id"]
+        for s, e in spans:
+            assert isinstance(s, int) and isinstance(e, int) and 0 <= s < e, i["id"]
+        assert all(a[1] <= b[0] for a, b in pairwise(spans)), i["id"]
+        key = (i["doc_type"], i["event_slug"], spans[0][0])
         assert key not in seen, i["id"]
         seen.add(key)
 

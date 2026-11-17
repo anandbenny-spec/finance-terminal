@@ -96,6 +96,116 @@ def test_a_cross_currency_answer_that_orders_by_a_figure_or_adds_a_number_fails(
     assert ev.money_comparison("select 1", cols3, rows3, m(*CC_GOLD, cols3, rows3).mapping) is None
 
 
+def test_the_cross_currency_check_fails_only_money_compared_across_currencies():
+    """Anand's 1B (17 Nov 2026, #587): currency-neutral figures may be ranked across markets; money may not."""
+    cc = ev.money_comparison
+    one = (["c"], [], ())
+    # currency-neutral rankings and within-market ranks pass (run 45's x02, x05, x06 and x04 shapes)
+    assert cc("select company, currency, pe_ttm from company_valuations where nse_symbol = 'HDFCBANK' or ticker = 'JPM' "
+              "order by pe_ttm desc", *one) is None
+    assert cc("select company, ebit_margin from company_valuations order by ebit_margin desc limit 5", *one) is None
+    assert cc("select company, currency, market_cap, rk from (select company, market, currency, market_cap, row_number() "
+              "over (partition by market order by market_cap desc) as rk from company_valuations) t where rk <= 5 "
+              "order by market, rk", ["company", "currency", "market_cap", "rk"], [("a", "INR", Decimal(5), 1)], (0, 1, 2)) is None
+    assert cc("select company, currency, market_cap from company_valuations order by market, market_cap desc", *one) is None
+    assert cc("select currency, sum(market_cap) from company_valuations group by currency", *one) is None
+    assert cc("select company, revenue from company_financials where nse_symbol = 'TCS' order by revenue desc limit 1",
+              *one) is None
+    # money ranked, summed or compared across currencies fails
+    assert cc("select company, mc from (select company, market_cap as mc from company_valuations) t order by mc", *one) \
+        == "orders_by_figure"
+    assert cc("select series_name, value from market_daily where series_key in ('yf.^NSEI', 'yf.^DJI') order by value desc",
+              *one) == "orders_by_figure"
+    assert cc("select company, rank() over (order by market_cap desc) as r from company_valuations", *one) == "orders_by_figure"
+    assert cc("select sum(market_cap) from company_valuations", *one) == "sums_money"
+    assert cc("select max(market_cap) from company_valuations", *one) == "sums_money"
+    assert cc("select company, sum(revenue) over () as s from company_financials", *one) == "sums_money"
+    assert cc("select a.company, a.revenue - b.revenue as diff from company_financials a, company_financials b",
+              ["company", "diff"], [("x", Decimal(1))], (0,)) == "extra_numeric_column"
+    assert cc("select company, market_cap / pe_ttm as e from company_valuations", ["company", "e"], [("x", Decimal(1))],
+              (0,)) is None                                                    # one row's own ratio
+
+
+# Round 2's sql-r2-x07 answer as the model wrote it (dev run 50, 17 Nov 2026): its rows matched the gold, and it failed only
+# because its 12-month percent change, computed from each index's own two levels, read as money.
+R2_X07 = ("WITH latest AS (SELECT series_name, max(date) AS latest_date FROM market_daily WHERE series_name IN ('Sensex', "
+          "'Nasdaq Composite') AND value IS NOT NULL GROUP BY series_name), ago AS (SELECT l.series_name, l.latest_date, "
+          "max(m.date) AS ago_date FROM latest AS l INNER JOIN market_daily AS m ON m.series_name = l.series_name AND m.date <= "
+          "l.latest_date - CAST('12 months' AS interval) AND m.value IS NOT NULL GROUP BY l.series_name, l.latest_date) "
+          "SELECT l.series_name, m1.market, m1.currency, a.ago_date, m0.value AS ago_value, l.latest_date, m1.value AS "
+          "latest_value, round((m1.value / m0.value - 1) * 100, 2) AS change_pct_12m FROM latest AS l INNER JOIN ago AS a ON "
+          "a.series_name = l.series_name INNER JOIN market_daily AS m1 ON m1.series_name = l.series_name AND m1.date = "
+          "l.latest_date INNER JOIN market_daily AS m0 ON m0.series_name = l.series_name AND m0.date = a.ago_date ORDER BY "
+          "change_pct_12m DESC")
+
+
+# The same item answered with prompt v5 (dev run 52, 17 Nov 2026): the year-ago level comes from a LATERAL subquery tied to the
+# series by its own WHERE.
+R2_X07_LATERAL = ("WITH s AS (SELECT series_name, date, value, currency FROM market_daily WHERE (series_name ILIKE '%Sensex%' OR "
+                  "series_name ILIKE '%Nasdaq Composite%') AND value IS NOT NULL) SELECT l.series_name, l.latest_date, lv.currency, "
+                  "lv.value AS latest_value, p.base_date, p.value AS year_ago_value, round((lv.value / p.value - 1) * 100, 2) AS "
+                  "change_pct_12m FROM (SELECT series_name, max(date) AS latest_date FROM s GROUP BY series_name) AS l INNER JOIN "
+                  "s AS lv ON lv.series_name = l.series_name AND lv.date = l.latest_date INNER JOIN LATERAL (SELECT x.date AS "
+                  "base_date, x.value FROM s AS x WHERE x.series_name = l.series_name AND x.date <= l.latest_date - CAST('12 "
+                  "months' AS interval) ORDER BY x.date DESC LIMIT 1) AS p ON TRUE ORDER BY change_pct_12m DESC")
+
+
+def test_a_lateral_subquerys_correlation_ties_it_to_the_same_series():
+    cc = ev.money_comparison
+    cols = ["series_name", "latest_date", "currency", "latest_value", "base_date", "year_ago_value", "change_pct_12m"]
+    row = ("Sensex", date(2026, 11, 9), "INR", Decimal(2), date(2025, 11, 7), Decimal(1), Decimal("3.5"))
+    assert cc(R2_X07_LATERAL, cols, [row], (0, 6)) is None
+    # tied to nothing (no correlation on an entity key), or to another series: still money
+    untied = R2_X07_LATERAL.replace("x.series_name = l.series_name AND ", "")
+    assert cc(untied, cols, [row], (0, 6)) == "orders_by_figure"
+    other = R2_X07_LATERAL.replace("x.series_name = l.series_name", "x.series_name = 'Nifty 50'")
+    assert cc(other, cols, [row], (0, 6)) == "orders_by_figure"
+
+
+def test_a_ratio_of_one_companys_or_one_series_own_money_is_currency_neutral():
+    """Anand, 17 Nov 2026, 14:13 IST (#587, option A point 1): the same company or series on both sides of a ratio, by the
+    query's join keys (or one row's own columns), makes it currency-neutral; a ratio across companies or series is still money."""
+    cc = ev.money_comparison
+    one = (["c"], [], ())
+    # round 2's x07: ranked by a percent change of each index's own levels; its two levels shown beside, unmatched
+    cols = ["series_name", "market", "currency", "ago_date", "ago_value", "latest_date", "latest_value", "change_pct_12m"]
+    row = ("Sensex", "IN", "INR", date(2025, 11, 7), Decimal(1), date(2026, 11, 9), Decimal(2), Decimal("3.5"))
+    assert cc(R2_X07, cols, [row], (0, 7)) is None
+    # one row's own ratio, ranked: a margin
+    assert cc("select company, pat / revenue as margin from company_financials order by margin desc", *one) is None
+    assert cc("select company, round(100 * pat / revenue, 1) from company_financials order by 2 desc", *one) is None
+    assert cc("select avg(pat / revenue) from company_financials", *one) is None
+    # a window over one series' own rows (partitioned by its key), then ranked
+    assert cc("with d as (select series_name, date, value / lag(value) over (partition by series_key order by date) - 1 as "
+              "chg from market_daily where series_key in ('yf.^NSEI', 'yf.^GSPC')) select series_name, min(chg) as worst "
+              "from d group by series_name order by worst", *one) is None
+    # two views tied by an entity key, qualified or through USING with unqualified columns
+    assert cc("select v.company, f.revenue / v.market_cap as r from company_valuations v join company_financials f "
+              "on f.nse_symbol = v.nse_symbol order by r desc", *one) is None
+    assert cc("select company, revenue / market_cap as r from company_valuations join company_financials using (nse_symbol) "
+              "order by r desc", *one) is None
+    # still money: a ratio across companies or series, or one whose sides can't be placed
+    assert cc("select a.company, a.revenue / b.revenue as r from company_financials a join company_financials b "
+              "on a.market = b.market order by r", *one) == "orders_by_figure"
+    assert cc("with d as (select series_name, value / lag(value) over (order by date) - 1 as chg from market_daily) "
+              "select series_name, min(chg) as worst from d group by series_name order by worst", *one) == "orders_by_figure"
+    assert cc("select revenue / market_cap as r from company_valuations, company_financials order by r", *one) \
+        == "orders_by_figure"
+    assert cc("select company, market_cap / (select max(market_cap) from company_valuations) as share "
+              "from company_valuations order by share", *one) is not None
+    assert cc("select a.date, a.value / b.value as r from market_daily a join market_daily b on a.date = b.date "
+              "where a.series_key = 'yf.^NSEI' and b.series_key = 'yf.^GSPC'", ["date", "r"], [(date(2026, 1, 2), Decimal(4))],
+              (0,)) == "extra_numeric_column"
+    # and a sum of money across currencies still fails even inside a ratio
+    assert cc("select sum(pat) / sum(revenue) as margin from company_financials", *one) == "sums_money"
+
+
+def test_every_cross_currency_gold_passes_the_cross_currency_check():
+    for it in ev.load_items("cmdbar_sql", "dev") + ev.load_items("cmdbar_sql", "test"):
+        if it["cross_currency"] and it.get("gold_sql"):
+            assert ev.money_comparison(it["gold_sql"], ["c"], [], ()) is None, it["id"]
+
+
 def _ans(state="answered", columns=(), rows=(), sql=None, models=("claude-haiku-5-5",), error=None):
     return sql_mod.DataAnswer(state, sql=sql, columns=list(columns), rows=list(rows), error_class=error,
                               summary="x" if state == "answered" else None, summary_grounded=state == "answered",
@@ -230,7 +340,7 @@ def test_a_sent_dev_run_records_every_item_never_passes_and_logs_no_rows():
     items = ev.load_items("cmdbar_sql", "dev")
     assert code == 0 and len(wr.results) == len(items) and len(wr.runs) == 1
     eval_set, set_version, model, prompt_version, n, metrics, passed, notes = wr.runs[0]
-    assert (eval_set, set_version, model, prompt_version, n, passed) == ("cmdbar_sql", "f" * 40, "claude-haiku-5-5", "v2",
+    assert (eval_set, set_version, model, prompt_version, n, passed) == ("cmdbar_sql", "f" * 40, "claude-haiku-5-5", "v7",
                                                                          len(items), False)
     assert metrics.obj["split"] == "dev" and metrics.obj["complete"] and "not the gate" in notes
     assert metrics.obj["correct"] == len(items) - sum(1 for i in items if not i["answerable"])
@@ -272,9 +382,10 @@ def test_the_cli_refuses_missing_secrets_and_unknown_items():
 
 def test_the_price_check_is_dearer_in_its_worst_case_than_its_estimate():
     prompt = sql_mod.sql_prompt(sql_mod.render_views(FakeReader().describe()[0]))
-    p = ev.price_run("cmdbar_sql", ev.load_items("cmdbar_sql", "dev"), prompt, TODAY)
-    assert Decimal(0) < p["estimate"] < p["worst_case"] < Decimal(3)
-    assert len(p["per_item_worst"]) == 12
+    items = ev.load_items("cmdbar_sql", "dev")
+    p = ev.price_run("cmdbar_sql", items, prompt, TODAY)
+    assert Decimal(0) < p["estimate"] < p["worst_case"] < Decimal("0.20") * len(items)      # under 20 cents an item at worst
+    assert len(p["per_item_worst"]) == len(items) == 122                                   # 12, plus rounds 1's and 2's 55 each (#587)
 
 
 @pytest.mark.db
@@ -300,7 +411,9 @@ def test_the_workflow_is_manual_with_no_target_input():
     wf = _wf()
     trigger = wf.get("on", wf.get(True))                                       # YAML 1.1 reads a bare `on` as True
     assert list(trigger) == ["workflow_dispatch"]
-    assert set(trigger["workflow_dispatch"]["inputs"]) == {"set", "split", "items", "send", "max_cost"}
+    assert set(trigger["workflow_dispatch"]["inputs"]) == {"set", "split", "items", "send", "max_cost", "query_model"}
+    qm = trigger["workflow_dispatch"]["inputs"]["query_model"]                 # K-10 (#587): the route's model by default
+    assert qm["options"] == list(ev.QUERY_MODELS) and qm["default"] == "voyage-4"
     assert trigger["workflow_dispatch"]["inputs"]["send"]["default"] is False
     assert wf["permissions"] == {"contents": "read"} and wf["concurrency"]["cancel-in-progress"] is False
 

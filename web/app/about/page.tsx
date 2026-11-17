@@ -2,10 +2,12 @@
 // (decided by Anand, 22 Oct 2026), then says what is logged today (only what is true for this link: the command bar
 // isn't live, so no visitor questions are stored), the sources module 1 uses with their source lines, and how an
 // owner's objection is handled. Static text: it shows no figures, so the accuracy rule has nothing to check here.
-// RBI is named, never linked (CLAUDE.md §1). Update the "What is logged" section when the command bar lands.
+// RBI is named, never linked (CLAUDE.md §1). The command bar's paragraph in "What is logged" is CommandBarLogged (K-12, #589):
+// the "not live" paragraph until `site.command_bar` is published, then what the bar logs (Spec 07 §7).
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { CommandBarLogged } from "@/components/cmdbar/AboutLogged";
 import { PageHeader } from "@/components/data/PageHeader";
 import { Panel, PanelGrid } from "@/components/data/Panel";
 import { Section } from "@/components/data/SectionHeading";
@@ -85,10 +87,7 @@ export default function AboutPage() {
                 This site sets no cookies for visitors, has no visitor accounts and runs no analytics or advertising trackers. Only the
                 site&apos;s administrator logs in.
               </p>
-              <p>
-                The command bar is not live on this link, so no questions from visitors are collected or stored. This note is updated when
-                it goes live, because its logging will change what is stored.
-              </p>
+              <CommandBarLogged />
               <p>
                 The figures are read straight from the project&apos;s database, so your browser talks to the site and to its database
                 provider, Supabase. The site is hosted on Vercel. Like any web host, Vercel and Supabase may keep standard technical

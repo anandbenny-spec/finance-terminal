@@ -61,6 +61,10 @@ From v11 (`STRICT_FROM`, `strict_of`) a reply is also checked as follows, and an
   Fitted to the ten judged fails, so none is proof of a pass; B has the highest false-alarm rate and is the first to drop.
 - **The required lists are stated plainly** (pick 6): the request's instruction line says that a call whose roles are read must have at least
   three management and two analysts bullets, and that an analysts bullet's quote is the question; `ranges` is unchanged.
+- **A cut must leave a finished sentence** (#613, 2B-09c; Anand's decision of 17 Nov 2026, 14:03 IST, after #542 part 2): when the copied-text
+  rule below cuts a bullet and the lead-in doesn't end at a clause or sentence end (`Echo.clean` is false), the bullet fails (`UNCLEAN_CUT`)
+  and the reply takes the retry with a note. #542's judges found a six-word lead-in that named no topic (2249/6), which passed because six
+  words is exactly `MIN_CUT_WORDS`; #185's final-half judge reported two more (2176/1, 2171/6). A clean cut still passes, cut.
 
 **Copied text** (2B-11c, #301; `apply_echo`). Visitors see only the quotes of verified citations, never a transcript's text
 (`CLAUDE.md` §1), and the Earnings calls tab shows a bullet in full, so a bullet may not carry the transcript's own words
@@ -69,8 +73,9 @@ From v11 (`STRICT_FROM`, `strict_of`) a reply is also checked as follows, and an
 text. One that reaches the bullet's end (up to `ECHO_TAIL_CHARS` characters of punctuation or quotes may follow) is cut, where
 it starts, and the bullet stands on its lead-in with its citations unchanged (the quote function still shows the source,
 at most 400 characters); this repeats while the new end is a copied run. Copied text anywhere else, or a lead-in under
-`MIN_CUT_WORDS` words, or a figure that is no longer in the cited passages, fails the bullet ("copies transcript text").
-The same function re-checks the outputs stored before the rule (`equity.calls_ai`'s re-check, no AI). Module 1's summaries
+`MIN_CUT_WORDS` words, or a figure that is no longer in the cited passages, fails the bullet ("copies transcript text"); from
+v11, so does a cut whose lead-in doesn't end at a clause or sentence end (above). The same function re-checks the outputs stored
+before the rule (`equity.calls_ai`'s re-check, no AI), which counts the unclean cuts and fails none of them. Module 1's summaries
 don't use it.
 """
 from __future__ import annotations
@@ -147,6 +152,9 @@ CAUSE_TEXT = re.compile(r"\b(?:due to|because|driven by|linked|attribut\w*|owing
 CAUSE_QUOTE = re.compile(r"\b(?:because|due to|on account of|driven by|led by|owing to|thanks to|result of|reasons?|caused"      # C: the quote's side:
                          r"|attribut\w*|contribut\w*|impact\w*|helped|aided|supported by|primarily|mainly|largely|mostly"  # any one clears it
                          r"|partly|since|as a result|thereby|hence|which is why|that is why)\b", re.IGNORECASE)
+# A cut that leaves the lead-in short of a clause or sentence end (#613, 2B-09c; Anand's decision of 17 Nov 2026, 14:03 IST, after #542
+# part 2's output 2249/6): from v11 (`strict`) the bullet fails with this, so the reply takes the retry with a note. `Echo.clean` is the test.
+UNCLEAN_CUT = "copies transcript text (cutting the copied end leaves an unfinished sentence)"
 _TRAIL = " :;,-\u2014\u2013\"'\u201c\u201d\u2018\u2019\u2026"        # stripped from the end of a lead-in
 _CLAUSE_END = ".!?:;,\u2014\u2013"                          # a lead-in that ends on one of these ends at a clause or sentence
 
@@ -602,7 +610,8 @@ def _short(s: str, n: int = 100) -> str:
 def _json_bullet(raw, call: CallDoc, transcript: str, answers: set[int], mapping: Counter, *, strict: bool = False) -> Bullet:
     """One bullet of a structured reply: its quotes found in our copy of the transcript (each exactly once, in one place), then
     the rules every bullet gets: only figures its quoted passages hold, the role rules, and the copied-text rule on its text.
-    `strict` (prompts from v11, `STRICT_FROM`): also one quote (G) from one turn (F) for a management or unknown bullet, and checks A to E."""
+    `strict` (prompts from v11, `STRICT_FROM`): also one quote (G) from one turn (F) for a management or unknown bullet, checks A to E,
+    and a copied end cut only where the lead-in ends a clause or sentence (`UNCLEAN_CUT`, #613)."""
     if not isinstance(raw, dict):
         b = Bullet("")
         b.problem = "isn't the schema's object"
@@ -659,15 +668,18 @@ def _json_bullet(raw, call: CallDoc, transcript: str, answers: set[int], mapping
                      or one_line_answer_problem(kind, hit))
     if b.problem is None:
         e = apply_echo(text, passages, transcript)
-        b.problem, b.text = e.problem, (text if e.problem else e.text)
+        problem = e.problem
+        if problem is None and strict and e.cut and not e.clean:                 # an unfinished lead-in (#613)
+            problem = UNCLEAN_CUT
+        b.problem, b.text = problem, (text if problem else e.text)
     return b
 
 
 def check_json(answer, call: CallDoc, *, version: str | None = None) -> Checked:
     """Check a structured reply (`answer`: the reply's JSON) against our copy of the transcript and its stored turns. The same
     `Checked` as `check`'s, so a published output, its citations and its checks read the same on either route. `version`: the prompt
-    version that asked for it; from v11 (`STRICT_FROM`) a bullet also gets checks A to G, and an earlier version, or none, is checked
-    exactly as it was."""
+    version that asked for it; from v11 (`STRICT_FROM`) a bullet also gets checks A to G and fails an unclean cut (#613), and an earlier
+    version, or none, is checked exactly as it was."""
     mapping: Counter = Counter()
     strict = version is not None and strict_of(version)
     rows = answer.get("bullets") if isinstance(answer, dict) else None

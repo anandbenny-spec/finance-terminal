@@ -11,7 +11,7 @@ words) as it starts. `ft.api.cmdbar` streams both as newline-delimited JSON.
    that reaches the router. Over either: the limit state, logged with `answered = false`.
 3. **Cache** (`ft.cmdbar.cache`): a valid entry is served with no model call.
 4. **Router**, then 5a **the data route** (K-04's `ft.cmdbar.sql.answer_data`, the code the gates measure), 5b **the document
-   route** (K-06's `ft.cmdbar.documents.answer_documents`: `voyage-4-lite`, `search_chunks` over Fed and RBI policy documents
+   route** (K-06's `ft.cmdbar.documents.answer_documents`: `voyage-4` questions, `search_chunks` over Fed and RBI policy documents
    only, an answer with native citations, every sentence without a verified citation dropped; none left: "Not found in the
    stored Fed and RBI documents."), 5c **a page** (checked against `api.search_index`), 5d **unsupported** ("That isn't in this
    site's data." and three suggested pages).
@@ -259,6 +259,24 @@ def _ask(question, ip, user_agent, deps, store, emit, t0) -> dict:
     except Exception as e:                               # noqa: BLE001 - the answer stands; the server log notes it
         _note("log", e)
     return out
+
+
+def answer(question: str, deps: Deps, store: Store, emit: Callable[[str], None] = lambda line: None) \
+        -> tuple[dict, bool, LogRow]:
+    """Steps 4 and 5 alone, for an asker that isn't a visitor: the example chips' precompute (K-09, `cmdbar.examples`). The
+    router, then the data, document, page or unsupported route, exactly as `ask` runs them, with no switch, limits, cache or
+    log (those are for visitors; the task has its own spend rules). `store` answers `page` and `freshness` only. Returns the
+    final object, whether `ask` would cache it, and the row holding its route, models, tokens and cost (never written to
+    `ops.cmdbar_log`). Never raises: anything unforeseen is "can't answer", not cacheable, with the error class `internal`."""
+    a = _Ask(deps, store, LogRow("", question), deps.clock())
+    try:
+        out, keep = _dispatch(a, question, emit)
+    except Exception as e:                               # noqa: BLE001 - as `ask`: never a raw error
+        _note("answer", e)
+        a.row.error_class = "internal"
+        out, keep = final("cant_answer", summary=CANT_TEXT, pages=SUGGESTED_PAGES), False
+    out["ms"] = a.row.latency_ms = a.ms()
+    return out, keep, a.row
 
 
 def _limit(a: _Ask, which: str) -> dict:

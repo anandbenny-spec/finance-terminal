@@ -7,21 +7,24 @@ through the route's own code (`ft/cmdbar`) on dev and scores it with the rules S
 **Sets.** `cmdbar_sql`: each item's question goes through `ft.cmdbar.sql.answer_data` (prompt, guard, the read-only run as
 `sql_reader`, one Sonnet retry, the summary); its gold SQL goes through the same guard and runs on the same database
 (golds are SQL, never rows: N4). `cmdbar_router`: each question goes through `ft.cmdbar.router.route`. `retrieval` (K-06, #584):
-each question goes through `ft.cmdbar.documents.answer_documents`, the document route's own code (`voyage-4-lite`,
+each question goes through `ft.cmdbar.documents.answer_documents`, the document route's own code (`voyage-4` questions,
 `search_chunks` over Fed and RBI policy documents only with `k => 8`, then the cited answer), with no router filters (as the set
 says); the item's expected passage (its document and character span) is scored against the passages retrieval returned, and the
-answer's cited sentences are counted beside it.
+answer's cited sentences are counted beside it. `--query-model voyage-4-lite` (K-10, #587) embeds the questions with the other
+model, for Architecture 03 §0's comparison ("the better of the two ships": `voyage-4` did, so the route uses it since 17 Nov
+2026): recorded beside the route's run, never as the gate.
 
 **Scoring** (Spec 07 §6):
 - `cmdbar_sql`, result-set match: the model's rows equal the gold's as multisets of tuples on the gold's columns; each gold column
   is matched by one model column with equal values in every row (extra model columns allowed); numbers are equal at the gold's
   precision (each gold column's largest number of decimal places; half rounds up); row order counts only where the item says
   `ordered`. An unanswerable item is right only if the model says so. Cross-currency items are also wrong, whatever their rows,
-  if the answer could rank or compare money across currencies: an extra numeric column beside the matched ones (a ratio or a
-  difference), or an ORDER BY on a figure (decided by Claude under the standing delegation, 16 Nov 2026, #582: this only
-  tightens §6's "an answer that ranks, sums or compares money across currencies fails"; the alternative was the match alone,
-  which an ordered or ratio-carrying answer passes on dev, where no US company is published). Pass: at least 85%, and 100% of
-  the cross-currency items.
+  if the query ranks, sums or compares **money** across currencies (`money_comparison`: an ORDER BY or unpartitioned window on
+  money, an aggregate of money not grouped by market, company or series, or an extra column combining two rows' money). The
+  match alone would pass such an answer on dev, where no US company is published. Currency-neutral figures (ratios, margins,
+  growth, percent changes) may be ranked across markets (Anand's option 1B, 17 Nov 2026, #587, narrowing the 16 Nov 2026
+  version of #582 that failed any ORDER BY on a figure and any extra numeric column). Pass: at least 85%, and 100% of the
+  cross-currency items.
 - `cmdbar_router`, route accuracy; filter agreement is reported beside it where the gold states filters. Pass: at least 90%,
   and no unanswerable (`unsupported`) item routed to data or documents.
 - `retrieval`, recall within the top 8: an item is a hit when any returned passage of its document (bank, document type and
@@ -59,10 +62,12 @@ from pathlib import Path
 
 import yaml
 from pglast import ast, parse_sql, stream
+from pglast.enums.parsenodes import A_Expr_Kind
+from pglast.enums.primnodes import BoolExprType, SubLinkType
 from pglast.parser import ParseError
 
 from ft.ai import sqlguard
-from ft.ai.client import CONFIG, MILLION, AIError, Client, Embedder, Request, price_entry
+from ft.ai.client import CONFIG, MILLION, QUERY_MODEL, AIError, Client, Embedder, Request, price_entry
 from ft.cmdbar import documents as documents_mod
 from ft.cmdbar import router as router_mod
 from ft.cmdbar import sql as sql_mod
@@ -70,6 +75,7 @@ from ft.cmdbar import summary as summary_mod
 
 SETS_DIR = CONFIG / "eval" / "sets"
 SETS = ("cmdbar_sql", "cmdbar_router", "retrieval")
+QUERY_MODELS = ("voyage-4", "voyage-4-lite")   # the route's questions model, and Architecture 03 §0's comparison
 SPLITS = ("dev", "test")
 DEFAULT_MAX_COST = Decimal("0.50")
 SUMMARY_INPUT_TOKENS_EST = 2_500          # a summary request with 50 rows of a wide view, over-estimated
@@ -203,28 +209,365 @@ def rows_match(gold_cols: list[str], gold_rows: list[tuple], model_cols: list[st
     return Match(True, "match", found) if found is not None else Match(False, "rows")
 
 
-def money_comparison(model_sql: str, model_cols: list[str], model_rows: list[tuple], mapping: tuple[int, ...]) -> str | None:
-    """For a cross-currency item whose rows matched: a reason the answer could still rank or compare money across currencies
-    (an extra numeric column, or an ORDER BY on a figure), else None."""
-    matched = set(mapping)
-    for m in range(len(model_cols)):
-        if m not in matched and any(_is_num(r[m]) for r in model_rows):
-            return "extra_numeric_column"
-    if not model_rows:
+# The semantic views' money columns: amounts in the row's currency, plus market_daily's `value` (an index level is in its
+# index's currency; the view's comment forbids comparing levels across currencies). Ratios, multiples, margins, growth rates,
+# returns, yields, shares in percent, counts and dates are currency-neutral and absent. `call_guidance` and the other
+# India-only views can't mix currencies, so they add nothing here.
+MONEY_COLUMNS = frozenset({
+    # company_valuations
+    "price", "market_cap", "ev", "traded_value_median_3m",
+    # company_financials
+    "revenue", "other_income", "total_income", "employee_cost", "dna", "finance_cost", "total_expenses",
+    "share_of_associates", "pbt_before_exceptional", "exceptional", "pbt", "tax", "pat", "pat_owners", "pat_nci",
+    "eps_basic", "eps_diluted", "total_assets", "current_assets", "cash", "bank_balances_other", "current_investments",
+    "noncurrent_investments", "trade_receivables", "inventories", "total_equity", "equity_owners", "share_capital", "nci",
+    "borrowings_current", "borrowings_noncurrent", "lease_current", "lease_noncurrent", "trade_payables", "cfo", "cfi", "cff",
+    "capex", "dividends_paid", "paid_up_capital", "face_value", "interest_earned", "interest_expended", "operating_profit",
+    "provisions", "segment_assets_total", "deposits", "advances", "gross_premium", "net_premium", "assets_net",
+    "current_liabilities_provisions", "ebit_derived",
+    # market_daily
+    "value",
+})
+# The keys naming one company or one series. An equality on one of them between two row sources (`m0.series_name =
+# m1.series_name`, `v.nse_symbol = c.nse_symbol`) makes both sources the same company or series.
+ENTITY_KEYS = frozenset({"company", "short_name", "nse_symbol", "ticker", "isin", "bse_code", "cik", "series_name", "series_key",
+                         "subject_key", "subject_name"})
+# A partition, group, sort prefix or WHERE equality on one of these keeps every row of a group in one currency.
+ONE_CURRENCY_KEYS = ENTITY_KEYS | {"market", "currency"}
+_MONEY_AGGREGATES = frozenset({"sum", "avg", "min", "max", "stddev", "stddev_pop", "stddev_samp", "variance", "var_pop",
+                               "var_samp", "percentile_cont", "percentile_disc", "mode", "median"})
+_NOT_MONEY_FUNCS = frozenset({"count", "row_number", "rank", "dense_rank", "ntile", "percent_rank", "cume_dist"})
+_ARITHMETIC = frozenset({"+", "-", "*", "/"})
+_FILTER_SUBLINKS = frozenset({SubLinkType.EXISTS_SUBLINK, SubLinkType.ANY_SUBLINK, SubLinkType.ALL_SUBLINK,
+                              SubLinkType.ROWCOMPARE_SUBLINK})
+
+
+def _colname(node) -> str | None:
+    if isinstance(node, ast.ColumnRef) and isinstance(node.fields[-1], ast.String):
+        return node.fields[-1].sval
+    return None
+
+
+def _qualifier(node: ast.ColumnRef) -> str | None:
+    return node.fields[-2].sval if len(node.fields) > 1 and isinstance(node.fields[-2], ast.String) else None
+
+
+def _funcname(node: ast.FuncCall) -> str:
+    return node.funcname[-1].sval.lower()
+
+
+def _nodes(node, skip=lambda n: False):
+    """Every node under `node`, depth first, not descending into a node `skip` accepts (it is still yielded)."""
+    if isinstance(node, (list, tuple)):
+        for n in node:
+            yield from _nodes(n, skip)
+        return
+    if not isinstance(node, ast.Node):
+        return
+    yield node
+    if skip(node):
+        return
+    for attr in node:
+        yield from _nodes(getattr(node, attr), skip)
+
+
+def _equalities(node):
+    """The `a = b` terms among a condition's top-level AND terms."""
+    if node is None:
+        return
+    if isinstance(node, ast.BoolExpr) and node.boolop == BoolExprType.AND_EXPR:
+        for a in node.args:
+            yield from _equalities(a)
+    elif isinstance(node, ast.A_Expr) and node.kind == A_Expr_Kind.AEXPR_OP and node.name[-1].sval == "=":
+        yield node
+
+
+class _Scope:
+    """One SELECT's row sources (the alias of each FROM item) and which of them name the same company or series: those an
+    equality on one entity key ties together, in a JOIN's ON or USING, among the WHERE's top-level AND terms, or in a LATERAL
+    subquery's WHERE as its correlation (transitively: `m1 = l` and `m0 = l` on series_name make m1 and m0 one series)."""
+
+    def __init__(self, sel: ast.SelectStmt):
+        self.aliases: list[str] = []
+        self._parent: dict[str, str] = {}
+        conditions = [sel.whereClause]
+        for item in sel.fromClause or ():
+            self._add(item, conditions)
+        for cond in conditions:
+            for eq in _equalities(cond):
+                a, b = eq.lexpr, eq.rexpr
+                if (isinstance(a, ast.ColumnRef) and isinstance(b, ast.ColumnRef) and _colname(a) == _colname(b)
+                        and _colname(a) in ENTITY_KEYS):
+                    qa, qb = self.source(a), self.source(b)
+                    if qa is not None and qb is not None:
+                        self._union(qa, qb)
+
+    def _correlated(self, sub) -> set[str]:
+        """The sources of this SELECT that a (LATERAL) subquery in its FROM ties itself to: an equality on an entity key in the
+        subquery's WHERE between its own rows (all one company or series) and an earlier source (`x.series_name = l.series_name`)."""
+        if not isinstance(sub, ast.SelectStmt) or not sub.fromClause:
+            return set()
+        inner = _Scope(sub)
+        if not inner.aliases or not inner.same_entity(set(inner.aliases)):
+            return set()
+        out = set()
+        for eq in _equalities(sub.whereClause):
+            a, b = eq.lexpr, eq.rexpr
+            if not (isinstance(a, ast.ColumnRef) and isinstance(b, ast.ColumnRef) and _colname(a) == _colname(b)
+                    and _colname(a) in ENTITY_KEYS):
+                continue
+            for mine, theirs in ((a, b), (b, a)):
+                q = _qualifier(theirs)
+                if q is not None and q not in inner._parent and q in self._parent and inner.source(mine) is not None:
+                    out.add(q)
+        return out
+
+    def _add(self, item, conditions: list) -> list[str]:
+        tied: set[str] = set()
+        if isinstance(item, ast.RangeVar):
+            names = [item.alias.aliasname if item.alias else item.relname]
+        elif isinstance(item, ast.RangeSubselect):
+            names = [item.alias.aliasname] if item.alias else []
+            tied = self._correlated(item.subquery) if names else set()
+        elif isinstance(item, ast.JoinExpr):
+            left, right = self._add(item.larg, conditions), self._add(item.rarg, conditions)
+            names = left + right
+            if item.quals is not None:
+                conditions.append(item.quals)
+            if any(isinstance(u, ast.String) and u.sval in ENTITY_KEYS for u in item.usingClause or ()):
+                for a in left:
+                    for b in right:
+                        self._union(a, b)
+        else:
+            names = []
+        for n in names:
+            if n not in self._parent:
+                self.aliases.append(n)
+                self._parent[n] = n
+        for q in tied:
+            self._union(names[0], q)
+        return names
+
+    def _find(self, a: str) -> str:
+        while self._parent[a] != a:
+            a = self._parent[a]
+        return a
+
+    def _union(self, a: str, b: str) -> None:
+        self._parent[self._find(a)] = self._find(b)
+
+    def source(self, ref: ast.ColumnRef) -> str | None:
+        """The row source a column reference reads: its qualifier, or for an unqualified one the SELECT's only source (or any
+        source, when every source names the same company or series); None when that can't be told (refused, not guessed)."""
+        q = _qualifier(ref)
+        if q is not None:
+            return q if q in self._parent else None
+        if self.aliases and len({self._find(a) for a in self.aliases}) == 1:
+            return self.aliases[0]
         return None
+
+    def same_entity(self, sources: set) -> bool:
+        return None not in sources and len({self._find(s) for s in sources}) == 1
+
+
+def _money_sources(expr, money: set[str], scope: _Scope) -> set:
+    """The row sources of the money `expr` carries (None for one that can't be placed: a scalar subquery, a window that isn't
+    partitioned by one company or series, an outer reference). A window partitioned by an entity key (`lag(value) over
+    (partition by series_key order by date)`) reads the current row's own company or series, so it keeps its argument's source."""
+    out: set = set()
+
+    def walk(n):
+        if isinstance(n, (list, tuple)):
+            for x in n:
+                walk(x)
+            return
+        if not isinstance(n, ast.Node) or isinstance(n, ast.WindowDef):
+            return
+        if isinstance(n, ast.SubLink):
+            if n.subLinkType not in _FILTER_SUBLINKS and _value_refs(n.subselect, money):
+                out.add(None)
+            return
+        if isinstance(n, ast.FuncCall):
+            if _funcname(n) in _NOT_MONEY_FUNCS:
+                return
+            if n.over is not None and not any(_colname(p) in ENTITY_KEYS for p in n.over.partitionClause or ()):
+                if _value_refs(n.args, money):
+                    out.add(None)
+                return
+            walk(n.args)
+            walk(n.agg_order)
+            return
+        if _own_ratio(n, money, scope):
+            return                                            # a nested own ratio carries no money
+        if isinstance(n, ast.ColumnRef):
+            if _colname(n) in money:
+                out.add(scope.source(n))
+            return
+        for attr in n:
+            walk(getattr(n, attr))
+
+    walk(expr)
+    return out
+
+
+def _own_ratio(n, money: set[str], scope: _Scope | None) -> bool:
+    """`a / b` where both sides carry money of one company or one series (one row's own columns, or two sources an equality on
+    an entity key ties together): a margin, a growth rate, a percent change, so currency-neutral."""
+    if scope is None or not (isinstance(n, ast.A_Expr) and n.kind == A_Expr_Kind.AEXPR_OP and n.name[-1].sval == "/"):
+        return False
+    left, right = _money_sources(n.lexpr, money, scope), _money_sources(n.rexpr, money, scope)
+    return bool(left) and bool(right) and scope.same_entity(left | right)
+
+
+def _value_refs(expr, money: set[str], scope: _Scope | None = None) -> list[ast.ColumnRef]:
+    """The money column references whose value `expr` carries: not those that only order or partition a window, sit in a
+    count or a ranking function, filter in an EXISTS or IN subquery, or (given the SELECT's scope) sit in a ratio of one
+    company's or one series' own money (`_own_ratio`)."""
+    def skip(n):
+        return (isinstance(n, ast.WindowDef) or (isinstance(n, ast.FuncCall) and _funcname(n) in _NOT_MONEY_FUNCS)
+                or (isinstance(n, ast.SubLink) and n.subLinkType in _FILTER_SUBLINKS) or _own_ratio(n, money, scope))
+    out = []
+    for n in _nodes(expr, skip):
+        if isinstance(n, ast.FuncCall) and n.over is not None:
+            out.extend(_value_refs(n.args, money, scope))    # a window aggregate's argument carries its value
+            continue
+        if isinstance(n, ast.ColumnRef) and _colname(n) in money:
+            out.append(n)
+    return out
+
+
+def _selects(stmt):
+    """Every SELECT of the query with its scope, and its own output columns (not those of a nested SELECT)."""
+    for sel in (n for n in _nodes(stmt) if isinstance(n, ast.SelectStmt)):
+        yield sel, _Scope(sel), [t for t in sel.targetList or () if isinstance(t, ast.ResTarget) and t.val is not None]
+
+
+def _money_names(stmt) -> set[str]:
+    """MONEY_COLUMNS plus every alias, at any level of the query, whose expression carries money (to a fixed point). An alias
+    that is a ratio of one company's or one series' own money is currency-neutral, so it isn't one."""
+    names = set(MONEY_COLUMNS)
+    targets = [(t, scope) for _, scope, ts in _selects(stmt) for t in ts if t.name]
+    grew = True
+    while grew:
+        grew = False
+        for t, scope in targets:
+            if t.name not in names and _value_refs(t.val, names, scope):
+                names.add(t.name)
+                grew = True
+    return names
+
+
+def _pinned(sel: ast.SelectStmt) -> bool:
+    """True when the SELECT's WHERE holds `<one-currency key> = <constant>` among its top-level AND terms."""
+    w = sel.whereClause
+    terms = w.args if isinstance(w, ast.BoolExpr) and w.boolop == BoolExprType.AND_EXPR else (w,) if w is not None else ()
+    for t in terms:
+        if isinstance(t, ast.A_Expr) and t.kind == A_Expr_Kind.AEXPR_OP and t.name[-1].sval == "=":
+            sides = (t.lexpr, t.rexpr)
+            if any(_colname(x) in ONE_CURRENCY_KEYS for x in sides) and any(isinstance(x, ast.A_Const) for x in sides):
+                return True
+    return False
+
+
+def _key_expr(sel: ast.SelectStmt, node):
+    """A sort or group key: a position (`order by 2`) stands for that output column's expression."""
+    if isinstance(node, ast.A_Const) and isinstance(getattr(node, "val", None), ast.Integer):
+        i = node.val.ival - 1
+        tl = sel.targetList or ()
+        return tl[i].val if 0 <= i < len(tl) else None
+    return node
+
+
+def _one_currency(sel: ast.SelectStmt, keys) -> bool:
+    return any(_colname(_key_expr(sel, k)) in ONE_CURRENCY_KEYS for k in keys or ())
+
+
+def _sorts_money(sel: ast.SelectStmt, sort, money: set[str], scope: _Scope | None = None) -> bool:
+    """An ORDER BY that ranks money: a key carrying money with no one-currency key before it."""
+    for sb in sort or ():
+        node = _key_expr(sel, sb.node)
+        if node is None:
+            return True                                       # an unknown position: refuse rather than guess
+        if _colname(node) in ONE_CURRENCY_KEYS:
+            return False                                      # sorted within one market or company first
+        if _value_refs(node, money, scope) or _colname(node) in money:
+            return True
+    return False
+
+
+def _combines_money(expr, money: set[str], scope: _Scope | None = None) -> bool:
+    """Arithmetic, GREATEST or LEAST over money from two row sources (two table aliases, or a scalar subquery). A ratio of one
+    company's or one series' own money (`_own_ratio`) combines nothing across currencies, so it isn't looked into."""
+    for n in _nodes(expr, skip=lambda x: _own_ratio(x, money, scope)):
+        if _own_ratio(n, money, scope):
+            continue
+        if isinstance(n, ast.A_Expr) and n.kind == A_Expr_Kind.AEXPR_OP and n.name[-1].sval in _ARITHMETIC:
+            operands = (n.lexpr, n.rexpr)
+        elif isinstance(n, ast.MinMaxExpr):
+            operands = tuple(n.args or ())
+        else:
+            continue
+        sources = set()
+        for side in operands:
+            if isinstance(side, ast.SubLink) and _value_refs(side.subselect, money):
+                sources.add(("subquery", id(side)))
+            for ref in _value_refs(side, money, scope):
+                sources.add(("alias", _qualifier(ref)))
+        if len(sources) > 1:
+            return True
+    return False
+
+
+def money_comparison(model_sql: str, model_cols: list[str], model_rows: list[tuple], mapping: tuple[int, ...]) -> str | None:
+    """For a cross-currency item whose rows matched: a reason the answer still ranks, sums or compares **money** across
+    currencies (Spec 07 §6), else None. Money is `MONEY_COLUMNS` and any alias carrying it; currency-neutral figures (ratios,
+    multiples, margins, growth, returns, percent changes) may be ranked and compared across markets (`CLAUDE.md` §1).
+    - `orders_by_figure`: an ORDER BY (or a window's ORDER BY) on money, unless the SELECT is pinned to one market, company or
+      series by a WHERE equality, or a one-currency key comes first (`order by market, market_cap`), or the window is
+      partitioned by one (`partition by market`).
+    - `sums_money`: sum, avg, min, max (and the like) over money, unless grouped, partitioned or pinned by a one-currency key.
+    - `extra_numeric_column`: a numeric column beside the matched ones whose expression combines money from two row sources
+      (a difference of two companies' revenue), or whose expression can't be found in the query (refused rather than guessed).
+    Narrowed on Anand's answer (17 Nov 2026, #587; option 1B): the first version (16 Nov 2026, #582) failed any ORDER BY on a
+    figure and any extra numeric column, which failed answers ranking P/E or margins, and the set's own sql-x06 gold.
+    **A ratio of one company's or one series' own money is currency-neutral** (`_own_ratio`: both sides read the same row, or
+    two row sources an equality on `company`, `nse_symbol`, `ticker`, `series_name`, `series_key` or another entity key ties
+    together, so a percent change of one index between two dates or a margin is not money); a ratio across companies or series
+    still counts as money. Loosened with Anand's approval (17 Nov 2026, 14:13 IST, #587, point 1 of option A), after round 2's
+    sql-r2-x07 failed for ranking two indices' 12-month percent changes computed from their own levels; `CLAUDE.md` §1 counts
+    growth rates as currency-neutral."""
     try:
         stmt = parse_sql(model_sql)[0].stmt
     except ParseError:                                   # it passed the guard, so it parses; refuse if it doesn't
         return "orders_by_figure"
-    names = {c: i for i, c in enumerate(model_cols)}
-    for sb in getattr(stmt, "sortClause", None) or ():
-        node, idx = sb.node, None
-        if isinstance(node, ast.ColumnRef) and isinstance(node.fields[-1], ast.String):
-            idx = names.get(node.fields[-1].sval)
-        elif isinstance(node, ast.A_Const) and isinstance(getattr(node, "val", None), ast.Integer):
-            idx = node.val.ival - 1 if 0 < node.val.ival <= len(model_cols) else None
-        if idx is None or any(_is_num(r[idx]) for r in model_rows):
+    money = _money_names(stmt)
+    selects = list(_selects(stmt))
+    for sel, scope, _ in selects:
+        if sel.valuesLists or _pinned(sel):
+            continue
+        if _sorts_money(sel, sel.sortClause, money, scope):
             return "orders_by_figure"
+        grouped = _one_currency(sel, sel.groupClause)
+        for n in _nodes(sel.targetList, skip=lambda x: isinstance(x, (ast.SelectStmt, ast.SubLink))):
+            if isinstance(n, ast.FuncCall) and n.over is not None:
+                w = n.over
+                if _one_currency(sel, w.partitionClause):
+                    continue
+                if _sorts_money(sel, w.orderClause, money, scope):
+                    return "orders_by_figure"
+                if _funcname(n) in _MONEY_AGGREGATES and _value_refs(n.args, money, scope):
+                    return "sums_money"
+            elif (isinstance(n, ast.FuncCall) and _funcname(n) in _MONEY_AGGREGATES and _value_refs(n.args, money, scope)
+                  and not grouped):
+                return "sums_money"
+    targets = [(t, scope) for _, scope, ts in selects for t in ts]
+    matched = set(mapping)
+    for m in range(len(model_cols)):
+        if m in matched or not any(_is_num(r[m]) for r in model_rows):
+            continue
+        exprs = [(t.val, scope) for t, scope in targets if (t.name or _colname(t.val)) == model_cols[m]]
+        if not exprs or any(_combines_money(e, money, scope) for e, scope in exprs):
+            return "extra_numeric_column"
     return None
 
 
@@ -338,11 +681,20 @@ def score_router_item(item: dict, got: router_mod.Route | None, error_class: str
     return r
 
 
+def item_spans(item: dict) -> list[tuple[int, int]]:
+    """The item's expected passages: `spans` (round 2 items, K-06's option B: every passage of the document stating the whole
+    answer; Anand, 17 Nov 2026, #587) or the one `char_start`/`char_end` span of the round 1 items."""
+    if "spans" in item:
+        return [(int(a), int(b)) for a, b in item["spans"]]
+    return [(item["char_start"], item["char_end"])]
+
+
 def expected_rank(item: dict, chunks: list[documents_mod.Chunk]) -> int | None:
-    """The rank (1-based) of the first returned passage of the item's document that overlaps its span, or None."""
+    """The rank (1-based) of the first returned passage of the item's document that overlaps one of its spans, or None."""
     want = (item["bank"], item["doc_type"], item["event_slug"])
+    spans = item_spans(item)
     for n, c in enumerate(chunks, 1):
-        if (c.bank, c.doc_type, c.event_slug) == want and c.char_start < item["char_end"] and c.char_end > item["char_start"]:
+        if (c.bank, c.doc_type, c.event_slug) == want and any(c.char_start < e and c.char_end > st for st, e in spans):
             return n
     return None
 
@@ -532,6 +884,19 @@ def annotation(title: str, payload) -> str:
     return f"::notice title={title}::{esc}"
 
 
+class QueryModel:
+    """The retrieval set's questions embedded with another Voyage 4 model, for Architecture 03 §0's comparison ("the retrieval
+    evaluation also runs `voyage-4` questions: the better of the two ships"). It wraps an `Embedder` and changes only the
+    question's model: the dimension, input type and retries are the Embedder's. The route itself always embeds questions with
+    `QUERY_MODEL` (`voyage-4` since 17 Nov 2026); only this runner uses the wrapper."""
+
+    def __init__(self, embedder: Embedder, model: str):
+        self._embedder, self.model = embedder, model
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embedder._embed([text], self.model, "query").embeddings[0]
+
+
 def _connect_writer(dsn: str):
     import psycopg
     conn = psycopg.connect(dsn, autocommit=True, application_name="ft-cmdbar-gates")
@@ -548,7 +913,11 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
     p.add_argument("--items", default="", help="only these item ids of the split (comma or space separated)")
     p.add_argument("--send", action="store_true", help="answer the items (spends); without it: the price and the golds only")
     p.add_argument("--max-cost", type=Decimal, default=DEFAULT_MAX_COST, help="stop before spend could pass this (USD)")
+    p.add_argument("--query-model", choices=QUERY_MODELS, default=QUERY_MODEL,
+                   help="retrieval only: the Voyage model for the questions (the route's is voyage-4)")
     args = p.parse_args(argv)
+    if args.query_model != QUERY_MODEL and args.set != "retrieval":
+        p.error("--query-model applies to the retrieval set only")
     ids = [x for x in args.items.replace(",", " ").split() if x]
     try:
         items = load_items(args.set, args.split, ids or None)
@@ -583,6 +952,7 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
         if args.set == "retrieval":
             try:
                 info["search_chunks_executable"] = bool(reader.select(SEARCH_EXECUTABLE_SQL).rows[0][0])
+                info["query_model"] = args.query_model
             except (sql_mod.QueryError, sql_mod.ReaderDown) as e:
                 out(f"::error title=sql_reader::could not check search_chunks as sql_reader ({type(e).__name__})")
                 return 1
@@ -614,6 +984,8 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
         voyage = embedder
         if args.set == "retrieval" and voyage is None:
             voyage = Embedder(env["VOYAGE_API_KEY"].strip())
+        if args.set == "retrieval" and args.query_model != QUERY_MODEL:
+            voyage = QueryModel(voyage, args.query_model)
         results: list[ItemResult] = []
         spent, stopped = Decimal(0), False
         for it in items:
@@ -660,12 +1032,12 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
             metrics = retrieval_metrics(results)
             met = retrieval_rule_met(metrics)
             prompt_version, model = documents_mod.PROMPT_VERSION, documents_mod.MODEL
-            metrics |= {"embedding_model": "voyage-4-lite", "k": documents_mod.K, "banks": list(documents_mod.BANKS),
+            metrics |= {"embedding_model": args.query_model, "k": documents_mod.K, "banks": list(documents_mod.BANKS),
                         "doc_types": list(documents_mod.DOC_TYPES)}
 
             def expected_of(r: ItemResult) -> dict:
                 it = next(i for i in items if i["id"] == r.id)
-                return {k: it[k] for k in ("bank", "doc_type", "event_slug", "char_start", "char_end")}
+                return {**{k: it[k] for k in ("bank", "doc_type", "event_slug")}, "spans": [list(x) for x in item_spans(it)]}
         else:
             metrics = router_metrics(results)
             met = router_rule_met(metrics)
@@ -675,12 +1047,15 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
                 it = next(i for i in items if i["id"] == r.id)
                 return {"route": it["route"], **({"filters": it["filters"]} if it.get("filters") else {})}
         complete = not stopped and len(results) == len(items)
-        passed = args.split == "test" and met and complete
+        comparison = args.set == "retrieval" and args.query_model != QUERY_MODEL     # not the route's model: never the gate
+        passed = args.split == "test" and met and complete and not comparison
         metrics |= {"split": args.split, "gate_rule": GATE[args.set], "rule_met": met, "complete": complete,
                     "stopped_by_budget": stopped, "cost_usd": f"{spent:.6f}", "set_file_sha256": info["set_file_sha256"],
                     "mean_ms": int(sum(r.ms for r in results) / len(results)) if results else 0,
                     "max_ms": max((r.ms for r in results), default=0)}
         notes = ("dev split: prompt work, not the gate (Spec 07 N5)" if args.split == "dev"
+                 else f"test split: questions embedded with {args.query_model}, a comparison beside the route's {QUERY_MODEL}, "
+                      "not the gate (Architecture 03 §0)" if comparison
                  else "test split: the gate run (Spec 07 §6)")
         conn = writer or _connect_writer(env["JOB_DATABASE_URL"].strip())
         try:

@@ -6,10 +6,12 @@
 // 2026 extension, module 2's shipped pages (the Nifty 50 screener and company pages) and, since 5 Nov 2026, the earnings-call lines (the calls tab and
 // /earnings); and, since 5 Nov 2026, the guidance record's line; and, since the US slice went live on 14 Nov 2026, the
 // Dow 30's section (US-09, #408), naming its judge by model, never Anand (Plan 05 §5). RBI is named, never linked
-// (CLAUDE.md §1).
+// (CLAUDE.md §1). The command bar's section (K-12, #589; Spec 07 §7) sits before the limitations and renders only while
+// `site.command_bar` is published (components/cmdbar/MethodologyLines.tsx): until then the page is unchanged.
 import type { Metadata } from "next";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
+import { CommandBarMethodology } from "@/components/cmdbar/MethodologyLines";
 import { PageHeader } from "@/components/data/PageHeader";
 import { Panel, PanelGrid } from "@/components/data/Panel";
 import { Section } from "@/components/data/SectionHeading";
@@ -169,17 +171,20 @@ export default function MethodologyPage() {
       </Section>
 
       {BLOCKS.map((b) => (
-        <Section key={b.id} id={b.id} title={b.title}>
-          <PanelGrid>
-            <Panel title={b.panel} titleId={`${b.id}-title`} variant="columns">
-              <div className="space-y-3 text-ink-2">
-                {b.paragraphs.map((p, i) => (
-                  <p key={i}>{p}</p>
-                ))}
-              </div>
-            </Panel>
-          </PanelGrid>
-        </Section>
+        <Fragment key={b.id}>
+          {b.id === "limits" && <CommandBarMethodology />}
+          <Section id={b.id} title={b.title}>
+            <PanelGrid>
+              <Panel title={b.panel} titleId={`${b.id}-title`} variant="columns">
+                <div className="space-y-3 text-ink-2">
+                  {b.paragraphs.map((p, i) => (
+                    <p key={i}>{p}</p>
+                  ))}
+                </div>
+              </Panel>
+            </PanelGrid>
+          </Section>
+        </Fragment>
       ))}
     </>
   );

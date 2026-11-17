@@ -90,7 +90,7 @@ def test_retrieval_reads_fed_and_rbi_policy_documents_only_with_k_8_and_the_rout
                          "rbi_governor_statement", "rbi_presconf_transcript"]
     assert "call_transcript" not in doc_types and vec.startswith("[") and vec.count(",") == 511
     assert "banks => %s::text[]" in d.SEARCH_SQL and "doc_types => %s::text[]" in d.SEARCH_SQL and "k => %s" in d.SEARCH_SQL
-    assert [c.document_id for c in got] == [11] and foreign == 0 and vo.calls[0]["model"] == "voyage-4-lite"
+    assert [c.document_id for c in got] == [11] and foreign == 0 and vo.calls[0]["model"] == "voyage-4"
 
 
 def test_a_row_that_isnt_a_fed_or_rbi_policy_document_never_reaches_the_model_or_the_visitor():
@@ -276,6 +276,8 @@ def test_failures_are_cant_answer_with_their_class_and_no_key_passes_through():
     got = d.answer_documents(claude(fake), voyage()[0], Down(), QUESTION)
     assert got.state == "cant_answer" and got.error_class == "database: QueryCanceled"
 
+    assert got.searches == 2                                  # the timeout is retried once, then it is "can't answer"
+
     fake = FakeClaude(script=("max_tokens",), reply=lambda docs, mode: both_cited(docs))
     got = d.answer_documents(claude(fake), voyage()[0], FakeReader(passages=[FED, RBI]), QUESTION)
     assert got.state == "cant_answer" and got.error_class == "model_output" and got.cost_usd > 0
@@ -285,6 +287,28 @@ def test_failures_are_cant_answer_with_their_class_and_no_key_passes_through():
                            FakeReader(passages=[FED]), QUESTION)
     with pytest.raises(AIUnavailable):
         d.answer_documents(claude(FakeClaude(script=("402",))), voyage()[0], FakeReader(passages=[FED]), QUESTION)
+
+
+def test_a_search_cancelled_by_the_timeout_is_run_once_more_and_other_database_errors_are_not():
+    """The cold first search (K-10, #587): one more try at the same 3-second limit, never a longer one."""
+    class ColdOnce(FakeReader):
+        def select(self, sql, params):
+            if not self.searched:
+                self.searched.append(params)
+                raise s.QueryError("QueryCanceled")
+            return super().select(sql, params)
+    fake = answering(both_cited)
+    reader = ColdOnce(passages=[FED, RBI])
+    got = d.answer_documents(claude(fake), voyage()[0], reader, QUESTION)
+    assert got.state == "answered" and got.searches == 2 and len(reader.searched) == 2 and got.error_class is None
+
+    class Broken(FakeReader):
+        def select(self, sql, params):
+            self.searched.append(params)
+            raise s.QueryError("UndefinedFunction")
+    reader = Broken()
+    got = d.answer_documents(claude(fake), voyage()[0], reader, QUESTION)
+    assert (got.state, got.error_class, got.searches, len(reader.searched)) == ("cant_answer", "database: UndefinedFunction", 1, 1)
 
 
 # ------------------------------------------------------------------ the route's document branch
@@ -367,6 +391,15 @@ def test_the_expected_passage_is_found_by_document_and_overlapping_span():
     assert ev.expected_rank({**ITEM, "event_slug": "mpc-2024-12-06"}, chunks(FED, RBI)) is None
 
 
+def test_a_span_list_item_is_a_hit_when_any_of_its_spans_overlaps_a_returned_passage():
+    """K-06's option B for round 2's items (#587): every passage stating the answer is listed; any one overlapping counts."""
+    base = {k: v for k, v in ITEM.items() if k not in ("char_start", "char_end")}
+    assert ev.expected_rank({**base, "spans": [[5000, 5010], [1210, 1220]]}, chunks(FED, RBI)) == 2
+    assert ev.expected_rank({**base, "spans": [[5000, 5010], [6000, 6010]]}, chunks(FED, RBI)) is None
+    assert ev.item_spans({**base, "spans": [[1, 2], [3, 4]]}) == [(1, 2), (3, 4)] and ev.item_spans(ITEM) == [
+        (ITEM["char_start"], ITEM["char_end"])]
+
+
 def _ret(rank, foreign=0):
     return ev.ItemResult("i", rank is not None, "hit" if rank else "miss", rank=rank, foreign=foreign)
 
@@ -411,6 +444,34 @@ def test_the_retrieval_dry_run_sends_nothing_and_a_sent_run_scores_records_and_l
     assert item_key == "ret-dev04" and expected["event_slug"] == "mpc-2024-10-09" and predicted["retrieved"] == [[11, 0], [22, 3]]
     text = "\n".join(lines)
     assert "SENTINEL" not in text and "neutral" not in text and "rbi.org.in" not in text
+
+
+def test_the_query_model_comparison_embeds_with_the_other_model_and_is_never_recorded_as_the_gate():
+    """Architecture 03 §0: the retrieval evaluation also runs the other model's questions (K-10, #587). Only the questions' model
+    changes, the run says which model it used, and a comparison run is never `passed`; the route embeds with voyage-4."""
+    from test_cmdbar_runner import FakeWriter, run_main
+    fake = answering(both_cited)
+    emb, vo = voyage()
+    wr = FakeWriter()
+    code, lines = run_main(["--set", "retrieval", "--split", "test", "--send", "--items", "ret-t01", "--query-model",
+                            "voyage-4-lite"], client=claude(fake), reader=RetrievalReader(), writer=wr, embedder=emb)
+    assert code == 0 and [(c["model"], c["input_type"], c["output_dimension"]) for c in vo.calls] == [("voyage-4-lite", "query", 512)]
+    metrics, passed, notes = wr.runs[0][5:]
+    assert metrics.obj["embedding_model"] == "voyage-4-lite" and passed is False and "comparison" in notes
+    assert '"query_model":"voyage-4-lite"' in lines[0]
+
+    emb, vo = voyage()                                       # the default is the route's own model
+    wr = FakeWriter()
+    code, _ = run_main(["--set", "retrieval", "--split", "test", "--send", "--items", "ret-t01"], client=claude(fake),
+                       reader=RetrievalReader(), writer=wr, embedder=emb)
+    assert code == 0 and [c["model"] for c in vo.calls] == ["voyage-4"] and wr.runs[0][5].obj["embedding_model"] == "voyage-4"
+    assert "comparison" not in wr.runs[0][7]
+
+
+def test_the_query_model_option_is_refused_outside_the_retrieval_set():
+    from test_cmdbar_runner import run_main
+    with pytest.raises(SystemExit):
+        run_main(["--set", "cmdbar_router", "--split", "test", "--query-model", "voyage-4-lite"])
 
 
 def test_the_retrieval_price_is_cents_and_its_worst_case_above_its_estimate():
