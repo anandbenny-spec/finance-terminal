@@ -72,6 +72,7 @@ from itertools import pairwise
 from ft.ai.citations import map_api_citation
 from ft.ai.client import HAIKU, SONNET, Prompt, Reply, Request, Source, TextPart, load_schema
 from ft.engines.document.diff import PAIR_MIN
+from ft.engines.document.text import sentence_spans as text_sentences
 from ft.engines.document.text import words as text_words
 
 BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
@@ -81,7 +82,7 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
 DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
                  "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET, "v23": SONNET, "v24": SONNET, "v25": SONNET, "v26": SONNET,
-                 "v27": SONNET, "v28": SONNET, "v29": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+                 "v27": SONNET, "v28": SONNET, "v29": SONNET, "v30": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
 # (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
 # two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12); v14: v13 plus two rules, with one
 # more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14); v16: v15's
@@ -93,12 +94,13 @@ DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11":
 # (`DIFF_COUNTERPART_FROM`); v26: v25's text, marking round 23's (`DIFF_KIND_JOIN_FROM`, `DIFF_V1_PAIRS_FROM`); v27: v26's
 # text, marking round 24's (`DIFF_V1_ALL_FROM`); v28: v27 plus four rules and a list of the changes to report, with the
 # coverage check (`DIFF_MUST_FROM`, round 25); v29: v28 plus a sentence on lists of decisions, with the fallback's room
-# (`DIFF_ROOM_FROM`, round 26).
+# (`DIFF_ROOM_FROM`, round 26); v30: v29 plus a sentence on setting like beside like, with the facts (`DIFF_FACTS_FROM`,
+# round 27).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
 DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium",
                   "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium", "v20": "medium", "v21": "medium", "v22": "medium", "v23": "medium", "v24": "medium",
-                  "v25": "medium", "v26": "medium", "v27": "medium", "v28": "medium", "v29": "medium"}
+                  "v25": "medium", "v26": "medium", "v27": "medium", "v28": "medium", "v29": "medium", "v30": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -298,6 +300,27 @@ DIFF_MUST_FROM = 28
 #   request shows each sentence of a change up to MUST_SHOW_WORDS words, as it says (v28 cut a side's sentences together).
 # All are tightenings; fallbacks and replies of v28 or earlier keep their rules.
 DIFF_ROOM_FROM = 29
+# From v30 (#445, round 27; Anand's decision of 17 Nov 2026, about 19:40 IST: round 27 starts with a diagnosis, and the build
+# fixes the cause the failures share). Rounds 22 to 26 each failed an RBI target on rule (c): a change shown from one side
+# only, or its old side set beside the wrong new sentence (round 26: mpc-2025-02-07's previous vote on the rate beside the new
+# vote on the stance; mpc-2019-12-05's previous Q2 inflation figure beside the new H2 projection). The diagnosis (#445,
+# 17 Nov 2026, 23:00 IST) found the cause: what sits beside what was decided by word overlap, and nothing knew which fact a
+# sentence states, while an RBI resolution is rewritten almost whole each meeting. So, for two RBI resolutions (`Facts`, read
+# from each stored text by `resolution_facts`, this task's own reading of what module 1's readers read, so that a request
+# changes only with this task's version):
+# - the votes and the committee's own projections are paired by fact first (`_fact_changes`): every changed sentence holding
+#   a member's or the committee's vote, against the other document's (the vote on the rate and the vote on the stance apart
+#   where both documents state them apart), and every changed sentence holding a CPI inflation, or a GDP growth, projection,
+#   against the other document's; their sentences are taken out of what pairs by words, each fact change is one change of its
+#   fact's kind, never split across bullets, and always on the list of changes to report;
+# - a sentence a v1 bullet cites with a fact's sentence isn't set beside it (`_v1_counterparts`, `_corridor_mates`, the mates
+#   of `_must_of` and of `_pack`), and the projections to report are the facts' (a recap of an earlier projection is reported
+#   only where v1 cites it);
+# - on the model's route the list shows a fact change's sentences whole (not cut at MUST_SHOW_WORDS), and one bullet must
+#   quote both sides of each (a vote's every sentence), and each document's figure for a period both give and whose figure
+#   changed, previous beside new (`must_problems`).
+# All are tightenings; fallbacks and replies of v29 or earlier keep their rules, and a Fed pair is read as in v29.
+DIFF_FACTS_FROM = 30
 
 
 def diff_json(version: str) -> bool:
@@ -2302,18 +2325,19 @@ def _hits(spans, doc_id: int, cites: list[tuple[int, int, int]]) -> bool:
 
 
 def _v1_counterparts(segments: dict, old: Doc, new: Doc, changes: list[list], v1: list[tuple[int, ...]],
-                     said: dict[int, str]) -> None:
+                     said: dict[int, str], *, skip: set[int] | frozenset = frozenset()) -> None:
     """From v26 (`DIFF_V1_PAIRS_FROM`): where one v1 bullet cites a sentence of exactly one change that only the previous
     document has and of exactly one that only the new one has, both on one topic (the redline's, where both have one), the two
-    are one change, in place in `changes`. `said` gets the merged change's sentences that v1 cites, by its id: its kind."""
+    are one change, in place in `changes`. `said` gets the merged change's sentences that v1 cites, by its id: its kind. From
+    v30, a change in `skip` (a fact change, by id) is neither of the two: a v1 bullet often reports two changes."""
     topic: dict[tuple[int, int], str | None] = {}
     for p in segments.get("pairs", []):
         for side, key in ((0, "old"), (1, "new")):
             for s, _ in p.get(key) or []:
                 topic[(side, s)] = p.get("topic")
     for _, cites in sorted(_v1_bullets(v1).items()):
-        olds = [p for p in changes if p[0] and not p[1] and _hits(p[0], old.document_id, cites)]
-        news = [p for p in changes if p[1] and not p[0] and _hits(p[1], new.document_id, cites)]
+        olds = [p for p in changes if p[0] and not p[1] and id(p) not in skip and _hits(p[0], old.document_id, cites)]
+        news = [p for p in changes if p[1] and not p[0] and id(p) not in skip and _hits(p[1], new.document_id, cites)]
         if len(olds) != 1 or len(news) != 1:
             continue
         o, n = olds[0], news[0]
@@ -2342,6 +2366,7 @@ class _Changes:
     later: set
     last: set
     v1_said: dict
+    facts: dict = field(default_factory=dict)          # from v30: the fact changes (`_Fact`) by id
 
 
 def _where(p) -> tuple[int, int]:
@@ -2366,14 +2391,14 @@ def _instruments(text: str) -> set[str]:
     return out
 
 
-def _corridor_mates(changes: list[list], old: Doc, new: Doc) -> None:
+def _corridor_mates(changes: list[list], old: Doc, new: Doc, *, skip: set[int] | frozenset = frozenset()) -> None:
     """From v29 (`DIFF_ROOM_FROM`): a change only one document has, naming a corridor rate, joins the side of the one change
     with both sides next to it (only spaces and line breaks between them) whose other side names that rate and whose own side
     doesn't (in place in `changes`): what the rate was
     and what it became, read together (mpc-2020-03-27: the new "further, … the reverse repo rate … stands reduced by 90 basis
     points to 4.0 per cent" joins the new "accordingly, the … (MSF) rate and the Bank Rate stand reduced …", answering the
     previous "Consequently, the reverse repo rate … remains unchanged at 4.90 per cent and the … (MSF) rate … at 5.40 per
-    cent")."""
+    cent"). From v30, a change in `skip` (a fact change, by id) neither joins nor takes another."""
     texts = (old.text, new.text)
 
     def next_to(a: list, b: list, text: str) -> bool:
@@ -2381,12 +2406,12 @@ def _corridor_mates(changes: list[list], old: Doc, new: Doc) -> None:
         return any(not text[min(e, x):max(e, x)].strip() for _, e in a for x, _ in b) or \
             any(not text[min(e, x):max(e, x)].strip() for _, e in b for x, _ in a)
 
-    for p in [p for p in changes if bool(p[0]) != bool(p[1])]:
+    for p in [p for p in changes if bool(p[0]) != bool(p[1]) and id(p) not in skip]:
         s = 0 if p[0] else 1
         mine = _instruments(_words(p[s], texts[s]))
         if not mine:
             continue
-        hosts = [c for c in changes if c is not p and c[0] and c[1] and next_to(p[s], c[s], texts[s])
+        hosts = [c for c in changes if c is not p and id(c) not in skip and c[0] and c[1] and next_to(p[s], c[s], texts[s])
                  and mine & _instruments(_words(c[1 - s], texts[1 - s])) - _instruments(_words(c[s], texts[s]))]
         if len(hosts) != 1:
             continue                                   # none, or more than one: it stays alone
@@ -2394,23 +2419,231 @@ def _corridor_mates(changes: list[list], old: Doc, new: Doc) -> None:
         changes[:] = [c for c in changes if c is not p]
 
 
+# ---- v30's facts (`DIFF_FACTS_FROM`; `_fact_changes`, `fallback_bullets`' and `must_changes`' `facts`)
+@dataclass(frozen=True)
+class Facts:
+    """What one RBI resolution's stored text states (`resolution_facts`): the sentences of its votes on the rate and on the
+    stance (a member's, or the committee's "unanimously"/"all members"), its own projections as (variable 'cpi' or 'gdp',
+    period label, figure, span of the period and its figure; a sentence whose periods can't be read as one with an empty
+    label), and its decision's statement where that is a vote. A recap of an earlier projection isn't one."""
+    rate_votes: tuple[tuple[int, int], ...] = ()
+    stance_votes: tuple[tuple[int, int], ...] = ()
+    projections: tuple[tuple[str, str, str, tuple[int, int]], ...] = ()
+    decision: tuple[tuple[int, int], ...] = ()          # its decision's statement, where that is a vote ("the MPC voted …")
+
+
+# From v30: the facts' reading (`resolution_facts`), this task's own, so a request changes only with this task's version (a
+# request is sent again when its input changes: module 1's readers may improve, and the summaries must not follow them).
+# A vote sentence (as module 1's vote reader finds them), on the rate or the stance by its words; never a list's lead-in or
+# the resolution's first sentence naming the policy rate, its decision ("the MPC voted unanimously to keep …").
+_FACT_VOTE = re.compile(r"\bvot(?:ed|es|ing)\b|\bunanimous(?:ly)?\b|\bof the view that the stance\b|\bexpressed reservations\b"
+                        r"|\ball\s+(?:the\s+)?members\b[^.]*\bdecided\b|\bwere of the view\b", re.IGNORECASE)
+_FACT_VOTE_RATE = re.compile(r"\brate\b|\bbasis points\b|\bbps\b|\bin favour of the decision\b", re.IGNORECASE)
+_FACT_VOTE_STANCE = re.compile(r"\bstance\b|\baccommodation\b|\bpart of the resolution\b", re.IGNORECASE)
+_FACT_POLICY_RATE = re.compile(r"(?<!reverse )\brepo rate\b|\bpolicy rate\b", re.IGNORECASE)
+# A projection sentence: the committee's own, in the present tense (`_own_projection`, never a recap or a ratio to GDP), of
+# CPI inflation (not core, food or fuel inflation alone) or of GDP growth; its periods and their figures.
+_FACT_CORE = re.compile(r"\b(?:core|food|fuel)\s+inflation\b|\bexcluding\b|\bGVA\b|\bgross value added\b", re.IGNORECASE)
+_FACT_FY = r"(?:19|20)\d\d\s?[-–]\s?\d\d"
+_FACT_PERIOD = re.compile(rf"\b(?P<q>Q[1-4]|H[12])\b(?:\s?:\s?(?P<fy1>{_FACT_FY}))?|(?<![\d.])(?P<fy>{_FACT_FY})\b")
+_FACT_FIGURE = r"(?:\(\s?[-−]\s?\)\s?|[-−])?\d+(?:\.\d+)?(?:\s?[-–]\s?\d+(?:\.\d+)?|\s+to\s+\d+(?:\.\d+)?)?\s*per\s*cent"
+_FACT_AFTER = re.compile(r"\s*(?:,\s*)?(?:(?:is|are|has been|have been)\s+)?(?:now\s+)?(?:(?:projected|revised|retained|placed|"
+                         rf"expected)(?:\s+\w+)??\s+)?(?:(?:to\s+be|at|to)\s+)(?:the\s+range\s+of\s+)?(?P<f>{_FACT_FIGURE})",
+                         re.IGNORECASE)
+_FACT_BEFORE = re.compile(rf"(?P<f>{_FACT_FIGURE})\s+(?:for|in)\s+(?:the\s+)?$", re.IGNORECASE)
+_FACT_EACH = re.compile(rf"^\s*(?:,\s*|and\s+|;\s*and\s+)(?:Q[1-4]|H[12])\s+at\s+(?P<f>{_FACT_FIGURE})\s+each\b", re.IGNORECASE)
+
+
+def _fy(text: str) -> str:
+    """A financial year as "2024-25"."""
+    a, b = re.split(r"\s?[-–]\s?", text.strip())
+    return f"{a}-{b}"
+
+
+def _periods(t: str, s: int) -> list[tuple[str, str, tuple[int, int]]]:
+    """A projection sentence's periods (`t` starting at `s` in its document) with their figures: (label, figure, span of the
+    period and its figure); a quarter or half without its year takes the sentence's year named before it (else after it). A
+    period whose figure can't be read is left out."""
+    found = list(_FACT_PERIOD.finditer(t))
+    out = []
+    for i, m in enumerate(found):
+        if m["fy"]:
+            label = "FY " + _fy(m["fy"])
+        else:
+            year = m["fy1"] or next((x["fy"] or x["fy1"] for x in reversed(found[:i]) if x["fy"] or x["fy1"]), None) or \
+                next((x["fy"] or x["fy1"] for x in found[i + 1:] if x["fy"] or x["fy1"]), None)
+            if not year:
+                continue
+            label = f"{m['q']} {_fy(year)}"
+        stop = found[i + 1].start() if i + 1 < len(found) else len(t)
+        stop = min(stop, *(k for k in (t.find(";", m.end()),) if k >= 0), len(t))
+        start = found[i - 1].end() if i else 0
+        f = None
+        if (a := _FACT_AFTER.match(t, m.end(), stop)) is not None:
+            f, span = a["f"], (m.start(), a.end("f"))
+        elif (b := _FACT_BEFORE.search(t, start, m.start())) is not None:
+            f, span = b["f"], (b.start("f"), m.end())
+        elif (e := _FACT_EACH.match(t[m.end():])) is not None:           # "Q3 and Q4 at 6.5 per cent each"
+            f, span = e["f"], (m.start(), m.end() + e.end("f"))
+        if f is not None:
+            figure = " ".join(re.sub(r"\s?[-–]\s?", "-", f.lower()).split())
+            out.append((label, figure, (s + span[0], s + span[1])))
+    return out
+
+
+def resolution_facts(text: str) -> Facts:
+    """From v30 (`DIFF_FACTS_FROM`): an RBI resolution's votes and its own projections, read from its stored text by this
+    task's reading (above): `ai_batch` gives them for two RBI resolutions."""
+    sentences = text_sentences(text)
+    decision = next(((a, b) for a, b in sentences if _FACT_POLICY_RATE.search(text[a:b])), None)
+    rate, stance, projections, stated = [], [], [], []
+    for a, b in sentences:
+        t = text[a:b]
+        if _FACT_VOTE.search(t) and not t.rstrip().endswith(":"):
+            if (a, b) == decision:
+                stated.append((a, b))
+            else:
+                on_rate, on_stance = bool(_FACT_VOTE_RATE.search(t)), bool(_FACT_VOTE_STANCE.search(t))
+                if on_rate or not on_stance:
+                    rate.append((a, b))
+                if on_stance:
+                    stance.append((a, b))
+        if _own_projection(t) and not _K_RECAP.search(t) and not _K_RATIO.search(t):
+            plain = _FACT_CORE.sub(" ", t)             # CPI inflation, or GDP growth: whichever the sentence names first
+            inflation, growth = re.search(r"\binflation\b", plain, re.IGNORECASE), re.search(r"\bGDP\b|\bgrowth\b", plain)
+            var = ("gdp" if growth.start() < inflation.start() else "cpi") if inflation and growth else \
+                "cpi" if inflation else "gdp" if growth else None
+            if var is not None:
+                projections += [(var, label, figure, span) for label, figure, span in _periods(t, a)] or \
+                    [(var, "", "", (a, b))]
+    return Facts(tuple(rate), tuple(stance), tuple(projections), tuple(stated))
+
+
+FACT_NAMES = {"votes": "The votes", "rate vote": "The vote on the policy rate", "stance vote": "The vote on the stance",
+              "cpi": "The CPI inflation projections", "gdp": "The real GDP growth projections"}
+_FACT_KIND = {"votes": "dissent", "rate vote": "dissent", "stance vote": "dissent", "cpi": "projections",
+              "gdp": "growth projections"}
+
+
+@dataclass(eq=False)
+class _Fact:
+    """One fact change (`_fact_changes`): its change as [old spans, new spans], its fact ('votes', 'rate vote', 'stance vote',
+    'cpi', 'gdp'; facts sharing a sentence are joined under the first), and its periods: (label, old span, new span) for each
+    period both documents project with different figures."""
+    change: list
+    fact: str
+    periods: tuple = ()
+
+    @property
+    def why(self) -> str:
+        return "projection" if self.fact in ("cpi", "gdp") else "vote"
+
+    @property
+    def kind(self) -> str:
+        return _FACT_KIND[self.fact]
+
+
+def _fact_changes(segments: dict, old: Doc, new: Doc, facts: tuple[Facts, Facts]) -> list[_Fact]:
+    """From v30: the changes of the votes and of the projections, paired by fact (see DIFF_FACTS_FROM). A fact's sentences are
+    the redline's sentences overlapping one of its spans; a change holds each document's changed ones (a sentence both
+    documents have word for word isn't a change). The votes are one fact, or the vote on the rate and the vote on the stance
+    apart where each document states each and no sentence states both. A change only in dates, a paragraph number or a
+    connective is none."""
+    old_all, new_all = sentence_spans(segments)
+    old_ch, new_ch = (set(x) for x in changed_spans(segments))
+    fo, fn = facts
+
+    def sents(every: list[tuple[int, int]], spans) -> set[tuple[int, int]]:
+        return {x for x in every for s, e in spans if x[0] < e and s < x[1]}
+
+    groups: list[tuple[str, set, set]] = []
+    ro, so = sents(old_all, fo.rate_votes), sents(old_all, fo.stance_votes)
+    rn, sn = sents(new_all, fn.rate_votes), sents(new_all, fn.stance_votes)
+    if ro and so and rn and sn and not ro & so and not rn & sn:
+        groups += [("rate vote", ro, rn), ("stance vote", so, sn)]
+    elif ro | so or rn | sn:
+        groups.append(("votes", ro | so, rn | sn))
+    for var in ("cpi", "gdp"):
+        po = sents(old_all, [p[3] for p in fo.projections if p[0] == var])
+        pn = sents(new_all, [p[3] for p in fn.projections if p[0] == var])
+        if po or pn:
+            groups.append((var, po, pn))
+    joined: list[list] = []                             # facts sharing a sentence: one change, under the first
+    for name, o, n in groups:
+        into = next((g for g in joined if g[1] & o or g[2] & n), None)
+        if into is None:
+            joined.append([name, set(o), set(n), [name]])
+        else:
+            into[1] |= o
+            into[2] |= n
+            into[3].append(name)
+    out: list[_Fact] = []
+    taken: tuple[set, set] = (set(), set())
+    for name, o, n, names in joined:
+        o, n = sorted((o & old_ch) - taken[0]), sorted((n & new_ch) - taken[1])
+        if not o and not n or o and n and _trivial(_words(o, old.text), _words(n, new.text)):
+            continue
+        taken[0].update(o)
+        taken[1].update(n)
+        periods = []
+        for var in ("cpi", "gdp"):
+            if var not in names:
+                continue
+            mine = {p[1]: p for p in fo.projections if p[0] == var}
+            for p in fn.projections:                   # a period both project, its figure changed, in this change
+                q = mine.get(p[1])
+                if (p[0] == var and q is not None and q[2] != p[2]
+                        and (sents(old_all, [q[3]]) & set(o) or sents(new_all, [p[3]]) & set(n))):
+                    periods.append((p[1], q[3], p[3]))
+        out.append(_Fact([o, n], name, tuple(periods)))
+    return out
+
+
 def _analyse(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], *, packed: bool = False,
              restated: bool = False, counterparts: bool = False, v1: list[tuple[int, ...]] | None = None,
-             kinds: bool = False, v1_pairs: bool = False, room: bool = False) -> _Changes:
+             kinds: bool = False, v1_pairs: bool = False, room: bool = False,
+             facts: tuple[Facts, Facts] | None = None) -> _Changes:
     """The fallback's changes and their kinds and ranks (`fallback_bullets`, whose arguments these are); from v28 the
-    changes every output must report are read from it too (`must_changes`)."""
+    changes every output must report are read from it too (`must_changes`). From v30 (`facts`, with `counterparts`), the
+    changes of the votes and projections are paired by fact first, and their sentences pair with nothing else
+    (`_fact_changes`)."""
     def kind_of(text: str) -> int:
         return _kind(text, packed=packed)
 
     words = _words
     pairs: list[list] = []
     v1_said: dict[int, str] = {}                       # from v26: a change v1's counterparts made: the sentences v1 cites
+    fact: dict[int, _Fact] = {}                        # from v30: the fact changes by id
     if counterparts:
         pairs = _counterparts(segments, old, new, kind_of, kinds=kinds)
+        if facts is not None:
+            found = _fact_changes(segments, old, new, facts)
+            taken = ({x for f in found for x in f.change[0]}, {x for f in found for x in f.change[1]})
+            rest = []
+            for p in pairs:                            # a fact's sentences pair with nothing else
+                o = [x for x in p[0] if tuple(x) not in taken[0]]
+                n = [x for x in p[1] if tuple(x) not in taken[1]]
+                if not o and not n:
+                    continue
+                if o and n and (len(o), len(n)) != (len(p[0]), len(p[1])) and _trivial(words(o, old.text),
+                                                                                      words(n, new.text)):
+                    continue                           # what is left changes only in dates or a connective
+                rest.append([o, n])
+            for f in list(found):                      # a document whose only vote on the rate is its decision's statement
+                gone = [i for i in (0, 1) if not f.change[i]]
+                if f.fact not in ("votes", "rate vote") or len(gone) != 1 or not facts[gone[0]].decision:
+                    continue
+                e = gone[0]
+                host = next((p for p in rest if any(a < y and x < b for a, b in p[e] for x, y in facts[e].decision)), None)
+                if host is not None:                   # the other's votes join the decision, set against it
+                    host[1 - e] = sorted(host[1 - e] + f.change[1 - e])
+                    found.remove(f)
+            pairs = rest + [f.change for f in found]
+            fact = {id(f.change): f for f in found}
         if v1_pairs:
-            _v1_counterparts(segments, old, new, pairs, v1 or [], v1_said)
+            _v1_counterparts(segments, old, new, pairs, v1 or [], v1_said, skip=set(fact))
         if room:
-            _corridor_mates(pairs, old, new)
+            _corridor_mates(pairs, old, new, skip=set(fact))
     for p in [] if counterparts else segments.get("pairs", []):
         kind = p.get("kind")
         if kind not in ("changed", "added", "removed"):
@@ -2481,6 +2714,9 @@ def _analyse(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], 
     # From v23, the decision whose new sentence gives the rate first (mpc-2020-03-27: "reduce the policy repo rate … by 75 basis
     # points to 4.40 per cent" before "All members voted for a reduction in the policy repo rate").
     rate = {id(p): 0 if not packed or kind[id(p)] or _K_FIGURE_RATE.search(words(p[1], new.text)) else 1 for p in unique}
+    for p in unique:                                   # from v30: a fact change is of its fact's kind, and says it
+        if id(p) in fact:
+            kind[id(p)], says[id(p)], rate[id(p)] = FALLBACK_KINDS.index(fact[id(p)].kind), 0, 0
     by_kind = sorted(unique, key=lambda p: (kind[id(p)], says[id(p)], rate[id(p)], preferred[id(p)], where(p)))
     if packed and restated:
         # From v24: the decision is shown once, and another change of the decision's that also states the stance is the stance
@@ -2538,14 +2774,15 @@ def _analyse(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], 
                                                 where(p)))
         after = sorted(unique, key=lambda p: (tier[id(p)], preferred[id(p)], kind[id(p)], where(p)))
         later -= first
-    return _Changes(unique, kind, says, rate, preferred, by_kind, after, first, later, last, v1_said)
+    return _Changes(unique, kind, says, rate, preferred, by_kind, after, first, later, last, v1_said,
+                    {i: f for i, f in fact.items() if any(id(p) == i for p in unique)})
 
 
 def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], hi: int = 5, *,
                      packed: bool = False, restated: bool = False, counterparts: bool = False,
                      v1: list[tuple[int, ...]] | None = None, kinds: bool = False,
                      v1_pairs: bool = False, v1_all: bool = False, must: bool = False,
-                     room: bool = False) -> list[Bullet]:
+                     room: bool = False, facts: tuple[Facts, Facts] | None = None) -> list[Bullet]:
     """The fallback's bullets (see above): `prefer` holds a rejected reply's quotes as (document, text), in its order.
     `packed` (from v23, `DIFF_PACK_FROM`): the balance sheet's words rank before the stance's, and a bullet carries up to
     FALLBACK_PER_BULLET changes of one kind (`_pack`). `restated` (from v24, `DIFF_RESTATED_FROM`; with `packed`): a change
@@ -2561,9 +2798,12 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
     change an output must report is shown too (`must_changes`), whether v1 cites it or not, and a sentence one document alone
     has sits beside the other document's of the same kind that `must_changes` reads as its other side. `room` (from v29,
     `DIFF_ROOM_FROM`; with `must`): a corridor rate's sentence alone joins its other side (`_corridor_mates`), the changes v1
-    cites are placed before the ones only `must_changes` adds, and a ratio to GDP is no projection (`_must_of`)."""
+    cites are placed before the ones only `must_changes` adds, and a ratio to GDP is no projection (`_must_of`). `facts`
+    (from v30, `DIFF_FACTS_FROM`; with `room`, for two RBI resolutions: each one's `Facts`): the votes and the projections
+    are paired by fact (`_fact_changes`), placed with the decision and v1's changes, and set beside nothing a v1 bullet cites
+    with them."""
     a = _analyse(segments, old, new, prefer, packed=packed, restated=restated, counterparts=counterparts, v1=v1,
-                 kinds=kinds, v1_pairs=v1_pairs, room=room)
+                 kinds=kinds, v1_pairs=v1_pairs, room=room, facts=facts if counterparts else None)
     unique, kind, preferred = a.unique, a.kind, a.preferred
     first, later, last = set(a.first), set(a.later), set(a.last)
     words, where = _words, _where
@@ -2584,6 +2824,8 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
         v1_of: dict[int, frozenset[tuple[int, str]]] | None = None
         side: dict[int, str] = {}
         v1_cited = set(a.first) if room else None       # from v29: v1's changes are placed before v28's own
+        if v1_cited is not None:
+            v1_cited |= set(a.facts)                    # from v30: and the fact changes with them
         if counterparts and v1_all:
             # From v27: the v1 bullets citing each change's sides (every change v1 cites is shown), and which document alone
             # has it.
@@ -2591,12 +2833,13 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
             v1_of = {id(p): frozenset((k, s) for k, cites in cited_by.items()
                                       for s, spans, doc in (("old", p[0], old.document_id), ("new", p[1], new.document_id))
                                       if _hits(spans, doc, cites))
+                     if id(p) not in a.facts else frozenset()     # from v30: a fact change is set beside nothing
                      for p in unique}
             side = {id(p): "old" if p[0] and not p[1] else "new" if p[1] and not p[0] else "both" for p in unique}
             if must:
                 # From v28: the changes every output must report are shown as v1's are, and a lone sentence's other side
                 # (`_Must.mate`) sits beside it, as if one v1 bullet cited both (a key below v1's bullet indexes).
-                for m in _must_of(a, old, new, v1 or [], room=room):
+                for m in _must_of(a, old, new, v1 or [], room=room, facts=bool(a.facts) or facts is not None):
                     first.add(id(m.change))
                     later.discard(id(m.change))
                     last.discard(id(m.change))
@@ -2668,6 +2911,7 @@ class _Must:
     why: str                           # 'decision', 'vote', 'stance', 'projection' or 'v1'
     kind: str                          # its FALLBACK_KINDS name
     mate: list | None = None           # a sentence alone: the other document's sentence alone of its kind that answers it
+    fact: _Fact | None = None          # from v30: a fact change's
 
 
 @dataclass(frozen=True)
@@ -2680,6 +2924,8 @@ class Must:
     why: str
     kind: str
     group: str | None = None
+    fact: str | None = None            # from v30 (`DIFF_FACTS_FROM`): a fact change's fact ('votes', 'rate vote', …, 'cpi')
+    periods: tuple = ()                # from v30: (label, old span, new span) of each period both project, figure changed
 
 
 def _names_only(old_text: str, new_text: str) -> bool:
@@ -2693,6 +2939,7 @@ def _names_only(old_text: str, new_text: str) -> bool:
     return bool(a and b) and all(w[:1].isupper() or w.lower() in _NAME_WORDS for w in differ)
 
 
+_K_RECAP = re.compile(r"\b(?:was|were)\s+(?:projected|placed|revised|retained)\b", re.IGNORECASE)  # v30: an earlier projection
 _K_RATIO = re.compile(r"\bper\s*cent\s+of\s+(?:the\s+)?(?:GDP|GVA)\b|\bfiscal deficit\b|\bcurrent account\b", re.IGNORECASE)
 
 
@@ -2702,7 +2949,8 @@ def _own_projection(t: str) -> bool:
                 and not _K_OTHERS_PROJECTION.search(t))
 
 
-def _must_of(a: _Changes, old: Doc, new: Doc, v1: list[tuple[int, ...]], *, room: bool = False) -> list[_Must]:
+def _must_of(a: _Changes, old: Doc, new: Doc, v1: list[tuple[int, ...]], *, room: bool = False,
+             facts: bool = False) -> list[_Must]:
     """The changes every output must report, from the fallback's reading (`_analyse`, with v26's rules), in its first pass's
     order: the decision once (the first of its kind); every change of the stance or forward guidance, and of the vote's split
     (a dissent, or unanimity on one side only); every change with a sentence giving the committee's own growth or inflation
@@ -2710,7 +2958,10 @@ def _must_of(a: _Changes, old: Doc, new: Doc, v1: list[tuple[int, ...]], *, room
     (`_minor`) or only of names (`_names_only`); a change only in dates is no change already. A sentence one document alone
     has, of one of those kinds, gets the other document's sentence alone of its kind as its mate, the one sharing most of its
     words, so its other side is reported with it. From v29 (`room`), a sentence giving a ratio to GDP (the fiscal deficit,
-    the current account) is left out of the projection's reading (`DIFF_ROOM_FROM`)."""
+    the current account) is left out of the projection's reading (`DIFF_ROOM_FROM`). From v30 (`facts`, two RBI
+    resolutions), every fact change is one to report (`_fact_changes`), with no mate, and another change is one to report
+    for a projection only where a sentence of it projects in the present tense (core inflation's, which the facts leave out),
+    never for a recap of an earlier projection ("CPI inflation was projected at …"), unless v1 cites it (`DIFF_FACTS_FROM`)."""
     decision, stance, dissent = (FALLBACK_KINDS.index(k) for k in ("decision", "stance", "dissent"))
     cites = [c[:3] for c in v1]
     out: list[_Must] = []
@@ -2720,6 +2971,10 @@ def _must_of(a: _Changes, old: Doc, new: Doc, v1: list[tuple[int, ...]], *, room
         if p[0] and p[1] and (_minor(o, n) or _names_only(o, n)):
             continue
         k = a.kind[id(p)]
+        if id(p) in a.facts:                           # from v30: a fact change, always
+            f = a.facts[id(p)]
+            out.append(_Must(p, f.why, f.kind, fact=f))
+            continue
         sides = [t for t in (o, n) if t]
         why = None
         if k == decision:
@@ -2730,7 +2985,11 @@ def _must_of(a: _Changes, old: Doc, new: Doc, v1: list[tuple[int, ...]], *, room
         if why is None and p[0] and p[1] and _K_VOTE.search(o) and _K_VOTE.search(n) and (
                 bool(_K_UNANIMOUS.search(o)) != bool(_K_UNANIMOUS.search(n))):
             why = "vote"                               # unanimous on one side only (mpc-2022-09-30, round 22)
-        if room:                                       # from v29: never a sentence giving a ratio to GDP
+        if facts:                                      # from v30: the projections are the facts', and another one only in
+            projection = any(_own_projection(x) and not _K_RECAP.search(x)  # the present tense (core inflation's), never
+                             for t, spans in ((old.text, p[0]), (new.text, p[1]))  # a recap of an earlier one
+                             for x in (t[s:e] for s, e in spans) if not _K_RATIO.search(x))
+        elif room:                                     # from v29: never a sentence giving a ratio to GDP
             projection = any(_own_projection(" ".join(t[s:e] for s, e in spans if not _K_RATIO.search(t[s:e])))
                              for t, spans in ((old.text, p[0]), (new.text, p[1])))
         else:
@@ -2741,7 +3000,7 @@ def _must_of(a: _Changes, old: Doc, new: Doc, v1: list[tuple[int, ...]], *, room
             why = "v1"
         if why is not None:
             out.append(_Must(p, why, FALLBACK_KINDS[k]))
-    lone = [m for m in out if m.why != "v1" and bool(m.change[0]) != bool(m.change[1])]
+    lone = [m for m in out if m.why != "v1" and m.fact is None and bool(m.change[0]) != bool(m.change[1])]
     for m in lone:
         if m.mate is not None:
             continue
@@ -2759,14 +3018,16 @@ def _must_of(a: _Changes, old: Doc, new: Doc, v1: list[tuple[int, ...]], *, room
 
 
 def must_changes(segments: dict, old: Doc, new: Doc, v1: list[tuple[int, ...]] | None = None, *,
-                 room: bool = False) -> list[Must]:
+                 room: bool = False, facts: tuple[Facts, Facts] | None = None) -> list[Must]:
     """From v28 (`DIFF_MUST_FROM`): the changes every output must report (`_must_of`), read as the v28 fallback reads the
     redline; `v1` the target's v1 output's citations as `fallback_bullets` takes them. `room` (from v29, `DIFF_ROOM_FROM`):
-    read as the v29 fallback reads it."""
+    read as the v29 fallback reads it. `facts` (from v30, `DIFF_FACTS_FROM`; two RBI resolutions' `Facts`): as the v30
+    fallback reads it, each fact change with its fact and periods."""
     a = _analyse(segments, old, new, [], packed=True, restated=True, counterparts=True, v1=v1 or [], kinds=True,
-                 v1_pairs=True, room=room)
-    return [Must(tuple(m.change[0]), tuple(m.change[1]), m.why, m.kind, "decision" if m.why == "decision" else None)
-            for m in _must_of(a, old, new, v1 or [], room=room)]
+                 v1_pairs=True, room=room, facts=facts)
+    return [Must(tuple(m.change[0]), tuple(m.change[1]), m.why, m.kind, "decision" if m.why == "decision" else None,
+                 m.fact.fact if m.fact else None, m.fact.periods if m.fact else ())
+            for m in _must_of(a, old, new, v1 or [], room=room, facts=facts is not None)]
 
 
 def _shown(text: str, spans, *, each: bool = False) -> str:
@@ -2777,34 +3038,97 @@ def _shown(text: str, spans, *, each: bool = False) -> str:
     return " ".join(words[:MUST_SHOW_WORDS]) + (" …" if len(words) > MUST_SHOW_WORDS else "")
 
 
+def _whole(text: str, spans) -> str:
+    """A fact change's side as the request lists it (from v30): its sentences whole, each as the document has it (an RBI
+    paragraph number too, as `_shown` shows it)."""
+    return " ".join(" ".join(text[s:e].split()) for s, e in sorted(spans))
+
+
 def must_text(must: list[Must], old_text: str, new_text: str, *, each: bool = False) -> str:
     """The request's list of the changes to report (v28 on), after the changed sentences; from v29 (`each`), each sentence
-    shown up to MUST_SHOW_WORDS words."""
+    shown up to MUST_SHOW_WORDS words; from v30 (a `Must` with a `fact`), a fact change's sentences whole, named by its fact,
+    with the periods whose figures to set side by side."""
     lines = []
     decision = [m for m in must if m.group == "decision"]
+    facts = any(m.fact for m in must)
     for m in must:
         if m.group == "decision" and m is not decision[0]:
             continue
-        if m.old and m.new:
-            line = f'Previous: "{_shown(old_text, m.old, each=each)}" New: "{_shown(new_text, m.new, each=each)}"'
-        elif m.old:
-            line = f'Removed (only the previous document has it): "{_shown(old_text, m.old, each=each)}"'
+        if m.fact:
+            o, n = _whole(old_text, m.old), _whole(new_text, m.new)
         else:
-            line = f'Added (only the new document has it): "{_shown(new_text, m.new, each=each)}"'
-        lines.append(("- The decision: " if m.group == "decision" else "- ") + line)
+            o, n = _shown(old_text, m.old, each=each), _shown(new_text, m.new, each=each)
+        if m.old and m.new:
+            line = f'Previous: "{o}" New: "{n}"'
+        elif m.old:
+            line = f'Removed (only the previous document has it): "{o}"'
+        else:
+            line = f'Added (only the new document has it): "{n}"'
+        if m.fact:
+            periods = (" (set each document's figure for " + ", ".join(label for label, _, _ in m.periods)
+                       + " side by side)") if m.periods else ""
+            head = f"- {FACT_NAMES.get(m.fact, m.fact)}{periods}, in one bullet, previous beside new: "
+        else:
+            head = "- The decision: " if m.group == "decision" else "- "
+        lines.append(head + line)
     if not lines:
         return ""
+    shown = ("a sentence is shown up to its first " + str(MUST_SHOW_WORDS) + " words"
+             + (", and a vote's or a projection's sentences whole" if facts else ""))
     return ("Each of these changes must be reported in a bullet, with what each document says where both are given "
-            "(a sentence is shown up to its first " + str(MUST_SHOW_WORDS) + " words):\n" + "\n".join(lines))
+            "(" + shown + "):\n" + "\n".join(lines))
 
 
-def must_problems(c: Checked, must: list[Must], old: Doc, new: Doc, *, room: bool = False) -> list[str]:
+def _form_map(text: str) -> tuple[str, list[int]]:
+    """`text` in `match_form`, with each character's index in `text` (from v30: where a quotation sits)."""
+    chars: list[str] = []
+    idx: list[int] = []
+    for i, ch in enumerate(text.translate(_STRAIGHT)):
+        if ch.isspace():
+            if chars and chars[-1] != " ":
+                chars.append(" ")
+                idx.append(i)
+            continue
+        chars.append(ch)
+        idx.append(i)
+    if chars and chars[-1] == " ":
+        chars.pop()
+        idx.pop()
+    return "".join(chars), idx
+
+
+def _quoted_spans(b: Bullet, doc: Doc) -> list[tuple[int, int]]:
+    """From v30: where in `doc` a bullet's quotations sit: each stretch it puts in quotation marks, found in a sentence of
+    `doc` that it cites (a json-route citation is its whole sentence, so the quotation says which words it gives)."""
+    quotes = {q.strip() for q in _QUOTED.findall(match_form(b.text)) if _WORD.search(q)}
+    out = []
+    for x in b.citations:
+        if x.document_id != doc.document_id:
+            continue
+        formed, idx = _form_map(doc.text[x.start:x.end])
+        fold = len(formed.lower()) == len(formed)       # case aside, where lower case keeps the length
+        low = formed.lower() if fold else formed
+        for q in quotes:
+            q = q.lower() if fold else q
+            i = low.find(q)
+            while i >= 0:
+                out.append((x.start + idx[i], x.start + idx[i + len(q) - 1] + 1))
+                i = low.find(q, i + 1)
+    return out
+
+
+def must_problems(c: Checked, must: list[Must], old: Doc, new: Doc, *, room: bool = False,
+                  facts: bool = False) -> list[str]:
     """From v28: why a reply whose bullets all passed still can't be published: a change it must report (`must_changes`) that
     no bullet cites on each side it has (the decision: one of its sentences), or a change of the stance quoted, on a side
     whose sentence names the stance, without the words on the stance (round 24: mpc-2021-02-05's 3702 quoted the previous
     resolution's "maintain status quo on the policy rate" for a change of the stance). From v29 (`room`, `DIFF_ROOM_FROM`):
     also an item of a list of decisions, inside a change it reports, that no bullet cites (round 25: mpc-2020-03-27's
-    "further, … the reverse repo rate … stands reduced by 90 basis points to 4.0 per cent")."""
+    "further, … the reverse repo rate … stands reduced by 90 basis points to 4.0 per cent"). From v30 (`facts`,
+    `DIFF_FACTS_FROM`): a fact change with both sides that no one bullet quotes on both sides (a vote: every one of its
+    sentences), and a period both documents project with different figures whose two figures no one bullet quotes side
+    by side, or that a bullet quotes from one document only (round 26: mpc-2019-12-05's 3758 set the previous Q2 figure
+    beside the new H2 projection)."""
     cites = [(x.document_id, x.start, x.end) for b in c.kept for x in b.citations]
 
     def covered(m: Must) -> bool:
@@ -2834,6 +3158,32 @@ def must_problems(c: Checked, must: list[Must], old: Doc, new: Doc, *, room: boo
         else:
             what = f'the new document\'s "{_shown(new.text, m.new)[:120]}", which the previous one doesn\'t have'
         out.append(f"a change every answer must report is left out or shown from one side only: {what}")
+    if facts:                                          # from v30: a fact change in one bullet, like beside like
+        each = [[(x.document_id, x.start, x.end) for x in b.citations] for b in c.kept]
+        for m in must:
+            if m.fact is None or m in missing:
+                continue
+            name = FACT_NAMES.get(m.fact, m.fact)
+            name = name[0].lower() + name[1:]
+            if m.old and m.new:
+                whole = m.why == "vote"
+                if not any((all(_hits([x], old.document_id, bc) for x in m.old) if whole else _hits(m.old, old.document_id, bc))
+                           and (all(_hits([x], new.document_id, bc) for x in m.new) if whole
+                                else _hits(m.new, new.document_id, bc)) for bc in each):
+                    out.append(f"{name} must be reported in one bullet that quotes the previous document's "
+                               + ("sentences on them (every one)" if whole else "words on them")
+                               + " beside the new one's: previous "
+                               f'"{_shown(old.text, m.old)[:120]}", new "{_shown(new.text, m.new)[:120]}"')
+            for label, a, b in m.periods:              # by the quotations: a citation is a whole sentence
+                at = [(_quoted_spans(x, old), _quoted_spans(x, new)) for x in c.kept]
+                gives = [(any(s < a[1] and a[0] < e for s, e in qo), any(s < b[1] and b[0] < e for s, e in qn))
+                         for qo, qn in at]
+                both = [g for g in gives if g[0] and g[1]]
+                one = [g for g in gives if g[0] != g[1]]
+                if not both or one:
+                    out.append(f"{name}: both documents give a figure for {label}, so quote each one's, previous beside "
+                               f'new, in the same bullet: previous "{old.text[a[0]:a[1]]}", new "{new.text[b[0]:b[1]]}"'
+                               + ("; a bullet quotes one of them without the other" if one else ""))
     for m in must:
         if m.kind != "stance" or not covered(m):
             continue
