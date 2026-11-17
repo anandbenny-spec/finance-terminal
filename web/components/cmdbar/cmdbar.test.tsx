@@ -9,7 +9,7 @@ const shown = vi.hoisted(() => ({ value: false }));
 vi.mock("@/lib/queries/cmdbar", () => ({ readCommandBarShown: async () => shown.value }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => {} }), usePathname: () => "/" }));
 
-import { Passage } from "@/components/ai/CitationChip";
+import { CitationChip, Passage } from "@/components/ai/CitationChip";
 import { AnswerView } from "@/components/cmdbar/AnswerView";
 import { GatedSlot } from "@/components/cmdbar/CommandBarSlot";
 import { CommandBarSlotView, HIDDEN_SLOT_CLASS } from "@/components/cmdbar/SlotView";
@@ -167,10 +167,25 @@ describe("a document answer, with citation chips (K-08, #586; Design 01 §1.10, 
     expect(out).not.toMatch(/rbi\.org\.in/);
     expect(out.match(/Official source/g)).toHaveLength(1);
   });
+  it("in the box's popover a chip opens a popover; in the phone sheet, a bottom sheet above it on any pointer", () => {
+    expect(view(DOC as never).match(/data-slot="popover-trigger"/g)).toHaveLength(3);
+    const sheet = html(<AnswerView answer={parseAnswer({ ...BASE, ...DOC })} now="2026-11-17T02:30:00Z" onNavigate={() => {}} inSheet />);
+    expect(sheet.match(/data-slot="sheet-trigger"/g)).toHaveLength(3);
+    expect(sheet).not.toContain("popover-trigger");
+  });
   it("shows a sentence only with a chip: no quoted passage left is the documents' not-found line", () => {
     const out = view({ ...DOC, citations: [{ text: "Uncited.", refs: [{ document: 0, char_start: 1, char_end: 2, quote: "" }] }] } as never);
     expect(text(out)).toBe(NOT_FOUND_TEXT);
     expect(out).not.toContain("Uncited.");
+  });
+});
+
+describe("CitationChip elsewhere is unchanged by K-08's sheet option", () => {
+  const c = { no: 3, quote: "q", documentTitle: "t", href: null, officialUrl: null };
+  it("opens a popover on a fine pointer unless asked for the sheet", () => {
+    expect(html(<CitationChip citation={c} />)).toContain('data-slot="popover-trigger"');
+    expect(html(<CitationChip citation={c} sheet={false} />)).toBe(html(<CitationChip citation={c} />));
+    expect(html(<CitationChip citation={c} sheet />)).toContain('data-slot="sheet-trigger"');
   });
 });
 

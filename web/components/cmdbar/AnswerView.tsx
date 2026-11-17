@@ -132,14 +132,20 @@ function DataAnswer({ answer, now }: { answer: Answer; now: string }) {
  * is named by its title, date and press-release number, never linked to RBI's pages (CLAUDE.md §1). Each title opens the
  * document on this site.
  */
-function DocumentAnswer({ lines, documents, ms, onNavigate }: ReturnType<typeof documentAnswer> & { ms: number; onNavigate: () => void }) {
+function DocumentAnswer({
+  lines,
+  documents,
+  ms,
+  onNavigate,
+  inSheet,
+}: ReturnType<typeof documentAnswer> & { ms: number; onNavigate: () => void; inSheet: boolean }) {
   return (
     <div className="space-y-2">
       <AiMark />
       <ul className="space-y-1.5 text-ui break-words text-ink-1">
         {lines.map((l, i) => (
           <li key={i}>
-            <Cited text={l.text} citations={l.citations} />
+            <Cited text={l.text} citations={l.citations} sheet={inSheet} />
           </li>
         ))}
       </ul>
@@ -173,8 +179,21 @@ function DocumentAnswer({ lines, documents, ms, onNavigate }: ReturnType<typeof 
   );
 }
 
-/** One answer, in the state the route (or the client) gave it. */
-export function AnswerView({ answer, now, onNavigate }: { answer: Answer; now: string; onNavigate: () => void }) {
+/**
+ * One answer, in the state the route (or the client) gave it. `inSheet`: the answer is in the full-screen sheet (phones), so its
+ * citation chips open their passages as bottom sheets, above it, on any pointer.
+ */
+export function AnswerView({
+  answer,
+  now,
+  onNavigate,
+  inSheet = false,
+}: {
+  answer: Answer;
+  now: string;
+  onNavigate: () => void;
+  inSheet?: boolean;
+}) {
   switch (answer.state) {
     case "paused":
     case "limit":
@@ -198,7 +217,7 @@ export function AnswerView({ answer, now, onNavigate }: { answer: Answer; now: s
         const doc = documentAnswer(answer);
         // No sentence with a chip left: nothing uncited is shown, and the answer is the route's own "not found".
         if (doc.lines.length === 0) return <StateNote kind="empty">{NOT_FOUND_TEXT}</StateNote>;
-        return <DocumentAnswer {...doc} ms={answer.ms} onNavigate={onNavigate} />;
+        return <DocumentAnswer {...doc} ms={answer.ms} onNavigate={onNavigate} inSheet={inSheet} />;
       }
       if (answer.route === "data") return <DataAnswer answer={answer} now={now} />;
       break;

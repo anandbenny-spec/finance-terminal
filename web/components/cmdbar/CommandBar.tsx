@@ -10,10 +10,10 @@
 // (`cmdbar_ai_enabled = false` until go-live: Spec 07 §3), so the box shows "AI questions are paused for now; search still
 // works." and nothing else. An example chip shows its precomputed answer: no model call, no limit counted.
 //
-// A document answer's citation chips (K-08, #586) open their passage in a popover, or a bottom sheet on touch, portaled out of
-// the box: a press in one doesn't close the box, Esc closes only that layer, and an answer's links and chips keep Enter and the
-// arrows (cmdk's list would take them). On phones the box is the full-screen sheet, the answer under the input, with no
-// sideways scroll at 320 px.
+// A document answer's citation chips (K-08, #586) open their passage in a popover, or a bottom sheet on touch and in the phone
+// sheet, portaled out of the box: a press in one doesn't close the box, Esc closes only that layer, and an answer's links and
+// chips keep Enter and the arrows (cmdk's list would take them). On phones the box is the full-screen sheet, the answer under
+// the input, with no sideways scroll at 320 px.
 import { Search, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
@@ -169,7 +169,7 @@ function CommandBox({
     body = (
       // The answer's own links, chips and "Show SQL" keep Enter and the arrows (keepAnswerKeys).
       <div className="px-3 py-2" onKeyDown={keepAnswerKeys}>
-        <AnswerView answer={answer} now={now} onNavigate={close} />
+        <AnswerView answer={answer} now={now} onNavigate={close} inSheet={variant === "sheet"} />
       </div>
     );
   } else if (!question) {
