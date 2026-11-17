@@ -264,6 +264,9 @@ class DataAnswer:
     error_class: str | None = None          # the last failure's class; None when answered
     attempts: list[Attempt] = field(default_factory=list)
     summary_cost_usd: Decimal = Decimal(0)
+    summary_model: str | None = None        # the summary's model, when a summary call was made (for the route's log)
+    summary_input_tokens: int = 0
+    summary_output_tokens: int = 0
     ms: int = 0
 
     @property
@@ -280,10 +283,21 @@ def _attempt(model: str, reply) -> Attempt:
     return Attempt(model, None, reply.cost_usd, u.input + u.cache_write_5m + u.cache_write_1h, u.output, u.cache_read)
 
 
+RUNNING, WRITING = "Running the query…", "Writing the answer…"      # Design 01 §4.6's status lines
+
+
 def answer_data(client, reader: Reader, question: str, prompt: Prompt, *, summarize: bool = True,
-                clock=time.monotonic) -> DataAnswer:
-    """The data route for one question. AIUnavailable (no key, no credit) passes through; every other failure is a state."""
+                clock=time.monotonic, stage=None) -> DataAnswer:
+    """The data route for one question. AIUnavailable (no key, no credit) passes through; every other failure is a state.
+    `stage` (the live route's, K-05) is told Design 01 §4.6's status line before the first query runs and before the summary;
+    the gate runner passes none."""
     t0 = clock()
+    told: set[str] = set()
+
+    def tell(line: str) -> None:
+        if stage is not None and line not in told:
+            told.add(line)
+            stage(line)
     out = DataAnswer("cant_answer")
     note = None
     for model in (FIRST_MODEL, RETRY_MODEL):
@@ -327,6 +341,7 @@ def answer_data(client, reader: Reader, question: str, prompt: Prompt, *, summar
             note = retry_note(out.error_class)
             continue
         out.guard_verdict = "accepted"
+        tell(RUNNING)
         try:
             result = reader.run(guarded)
         except QueryError as e:
@@ -341,6 +356,8 @@ def answer_data(client, reader: Reader, question: str, prompt: Prompt, *, summar
         break
     if out.state == "answered":
         if summarize:
+            if out.rows:
+                tell(WRITING)
             try:
                 s = summary_mod.summarize(client, question, out.columns, out.rows, out.sql)
             except AIUnavailable:
@@ -348,6 +365,11 @@ def answer_data(client, reader: Reader, question: str, prompt: Prompt, *, summar
             except CallError:                                # not billed: the rows stand, with the plain line
                 s = summary_mod.Summary(summary_mod.plain(len(out.rows)), False, True)
             out.summary, out.summary_grounded, out.summary_cost_usd = s.text, s.grounded, s.cost_usd
+            if s.reply is not None:
+                u = s.reply.usage
+                out.summary_model = HAIKU                     # the summary task's model (client.TASKS)
+                out.summary_input_tokens = u.input + u.cache_write_5m + u.cache_write_1h
+                out.summary_output_tokens = u.output
         else:
             out.summary = summary_mod.plain(len(out.rows))
     out.ms = int((clock() - t0) * 1000)
