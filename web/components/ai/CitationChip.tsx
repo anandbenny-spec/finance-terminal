@@ -55,14 +55,19 @@ const CHIP =
 // on hover and focus (a white wash over raised would be invisible, 1.01:1). The passage opens on the same two.
 const CHIP_FACE = "rounded-sm border border-line-input bg-raised px-1.5 group-hover:border-highlight group-focus-visible:border-highlight";
 
-export function CitationChip({ citation }: { citation: Citation }) {
+/**
+ * `sheet` (K-08, #586) opens the passage in the bottom sheet on any pointer: for a chip inside a sheet, such as the command bar's
+ * full-screen sheet on phones, where a popover (layer 40) would sit under the sheet (layer 50). Off by default: every other
+ * chip behaves as before.
+ */
+export function CitationChip({ citation, sheet = false }: { citation: Citation; sheet?: boolean }) {
   const coarse = useCoarsePointer();
   const chip = (
     <button type="button" className={CHIP} aria-label={`Source ${citation.no}: show the cited passage`}>
       <span className={CHIP_FACE}>[{citation.no}]</span>
     </button>
   );
-  if (coarse) {
+  if (coarse || sheet) {
     return (
       <Sheet>
         <SheetTrigger asChild>{chip}</SheetTrigger>
@@ -84,7 +89,7 @@ export function CitationChip({ citation }: { citation: Citation }) {
 }
 
 /** Chips after the last word of a claim, joined to it so a chip never sits alone on a line (Design 01 §4.5). */
-export function Cited({ text, citations }: { text: string; citations: Citation[] }) {
+export function Cited({ text, citations, sheet = false }: { text: string; citations: Citation[]; sheet?: boolean }) {
   const cut = text.lastIndexOf(" ");
   const [head, last] = cut > 0 ? [text.slice(0, cut + 1), text.slice(cut + 1)] : ["", text];
   return (
@@ -95,7 +100,7 @@ export function Cited({ text, citations }: { text: string; citations: Citation[]
         {citations.map((c) => (
           <span key={c.no}>
             {" "}
-            <CitationChip citation={c} />
+            <CitationChip citation={c} sheet={sheet} />
           </span>
         ))}
       </span>

@@ -9,12 +9,13 @@ const shown = vi.hoisted(() => ({ value: false }));
 vi.mock("@/lib/queries/cmdbar", () => ({ readCommandBarShown: async () => shown.value }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => {} }), usePathname: () => "/" }));
 
+import { CitationChip, Passage } from "@/components/ai/CitationChip";
 import { AnswerView } from "@/components/cmdbar/AnswerView";
 import { GatedSlot } from "@/components/cmdbar/CommandBarSlot";
 import { CommandBarSlotView, HIDDEN_SLOT_CLASS } from "@/components/cmdbar/SlotView";
 import { TopBar } from "@/components/shell/TopBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { CANT_TEXT, ERROR_TEXT, NOT_FOUND_TEXT, PAUSED_TEXT, PLACEHOLDER, parseAnswer, type Answer } from "@/lib/cmdbar";
+import { CANT_TEXT, ERROR_TEXT, NOT_FOUND_TEXT, PAUSED_TEXT, PLACEHOLDER, documentAnswer, parseAnswer, type Answer } from "@/lib/cmdbar";
 import { MINUS } from "@/lib/format";
 
 const html = (node: ReactNode) => renderToStaticMarkup(<TooltipProvider>{node}</TooltipProvider>);
@@ -131,18 +132,87 @@ describe("a data answer (Design 01 §4.6)", () => {
   });
 });
 
-describe("a document answer, until K-08's chips", () => {
-  it("marks it AI, numbers each sentence's documents, and lists them by name, date and press-release number, with no link", () => {
-    const out = view({
-      state: "answered",
-      route: "document",
-      citations: [{ text: "The MPC kept the repo rate unchanged.", refs: [{ document: 0, char_start: 10, char_end: 60, quote: "kept unchanged" }] }],
-      documents: [{ bank: "Reserve Bank of India", label: "Resolution", title: "Resolution of the Monetary Policy Committee", date: "2026-10-07", event_slug: "mpc-2026-10-07", press_release: "2026-2027/1234", source_url: "https://www.rbi.org.in/x" }],
-      ms: 3100,
-    } as never);
+describe("a document answer, with citation chips (K-08, #586; Design 01 §1.10, §4.5)", () => {
+  const DOCS = [
+    { document_id: 77, bank: "RBI", label: "MPC resolution", title: "Resolution of the Monetary Policy Committee", date: "2026-10-07", event_slug: "mpc-2026-10-07", press_release: "2026-2027/1234", source_url: "https://www.rbi.org.in/x" },
+    { document_id: 41, bank: "Fed", label: "FOMC statement", title: "Federal Reserve issues FOMC statement", date: "2026-09-17", event_slug: "fomc-2026-09-17", press_release: null, source_url: "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260917a.htm" },
+  ];
+  const DOC = {
+    state: "answered" as const,
+    route: "document",
+    citations: [
+      { text: "The MPC kept the repo rate unchanged.", refs: [{ document: 0, char_start: 10, char_end: 60, quote: "decided to keep the policy repo rate unchanged" }] },
+      { text: "The FOMC lowered its target range.", refs: [{ document: 1, char_start: 5, char_end: 50, quote: "lower the target range" }, { document: 0, char_start: 10, char_end: 60, quote: "decided to keep the policy repo rate unchanged" }] },
+    ],
+    documents: DOCS,
+    ms: 3100,
+  };
+
+  it("marks it AI and ends each sentence with its chips, joined to the last word so a chip never sits alone on a line", () => {
+    const out = view(DOC as never);
+    expect(text(out)).toContain("AI summary The MPC kept the repo rate unchanged. [1] The FOMC lowered its target range. [2] [1]");
+    expect(out).toContain('<span class="whitespace-nowrap">unchanged.<span> <button type="button"');
+    expect(out.match(/aria-label="Source 1: show the cited passage"/g)).toHaveLength(2);
+    expect(out.match(/aria-label="Source 2: show the cited passage"/g)).toHaveLength(1);
+    expect(out).toMatch(/<button type="button" class="[^"]*h-6 min-w-6[^"]*" aria-label="Source 1/);
+    expect(out).toContain('aria-haspopup="dialog"');
+  });
+  it("lists the cited documents, each opening on this site; a Fed document links to its source, an RBI one is named, never linked", () => {
+    const out = view(DOC as never);
     const t = text(out);
-    expect(t).toContain("AI summary The MPC kept the repo rate unchanged. [1]");
-    expect(t).toContain("[1] Reserve Bank of India · Resolution of the Monetary Policy Committee · 7 Oct 2026 · Press release 2026-2027/1234");
-    expect(out).not.toMatch(/rbi\.org\.in|<a /);
+    expect(t).toContain("Cited documents RBI · Resolution of the Monetary Policy Committee · 7 Oct 2026 · Press release 2026-2027/1234 Fed · Federal Reserve issues FOMC statement · 17 Sep 2026 Official source ↗");
+    expect(out).toContain('href="/documents/77"');
+    expect(out).toContain('href="/documents/41"');
+    expect(out).toContain('href="https://www.federalreserve.gov/newsevents/pressreleases/monetary20260917a.htm"');
+    expect(out).not.toMatch(/rbi\.org\.in/);
+    expect(out.match(/Official source/g)).toHaveLength(1);
+  });
+  it("in the box's popover a chip opens a popover; in the phone sheet, a bottom sheet above it on any pointer", () => {
+    expect(view(DOC as never).match(/data-slot="popover-trigger"/g)).toHaveLength(3);
+    const sheet = html(<AnswerView answer={parseAnswer({ ...BASE, ...DOC })} now="2026-11-17T02:30:00Z" onNavigate={() => {}} inSheet />);
+    expect(sheet.match(/data-slot="sheet-trigger"/g)).toHaveLength(3);
+    expect(sheet).not.toContain("popover-trigger");
+  });
+  it("shows a sentence only with a chip: no quoted passage left is the documents' not-found line", () => {
+    const out = view({ ...DOC, citations: [{ text: "Uncited.", refs: [{ document: 0, char_start: 1, char_end: 2, quote: "" }] }] } as never);
+    expect(text(out)).toBe(NOT_FOUND_TEXT);
+    expect(out).not.toContain("Uncited.");
+  });
+});
+
+describe("CitationChip elsewhere is unchanged by K-08's sheet option", () => {
+  const c = { no: 3, quote: "q", documentTitle: "t", href: null, officialUrl: null };
+  it("opens a popover on a fine pointer unless asked for the sheet", () => {
+    expect(html(<CitationChip citation={c} />)).toContain('data-slot="popover-trigger"');
+    expect(html(<CitationChip citation={c} sheet={false} />)).toBe(html(<CitationChip citation={c} />));
+    expect(html(<CitationChip citation={c} sheet />)).toContain('data-slot="sheet-trigger"');
+  });
+});
+
+describe("a chip's passage (CitationChip's Passage, built from the route's verified citation)", () => {
+  const answer = parseAnswer({
+    ...BASE,
+    state: "answered",
+    route: "document",
+    citations: [
+      { text: "The FOMC lowered its target range.", refs: [{ document: 0, char_start: 5, char_end: 50, quote: "lower the target range" }] },
+      { text: "The MPC kept the repo rate unchanged.", refs: [{ document: 1, char_start: 10, char_end: 60, quote: "keep the policy repo rate unchanged" }] },
+    ],
+    documents: [
+      { document_id: 41, bank: "Fed", label: "FOMC statement", title: "Federal Reserve issues FOMC statement", date: "2026-09-17", event_slug: null, press_release: null, source_url: "https://www.federalreserve.gov/x.htm" },
+      { document_id: 77, bank: "RBI", label: "MPC resolution", title: "Resolution of the Monetary Policy Committee", date: "2026-10-07", event_slug: null, press_release: "2026-2027/1234", source_url: "https://example.org/mirror.pdf" },
+    ],
+  });
+  const [fed, rbi] = documentAnswer(answer).lines.map((l) => html(<Passage citation={l.citations[0]} />));
+
+  it("a Fed passage: the quote, the document's title and date, Open in document at the span, and Official source ↗", () => {
+    expect(text(fed)).toBe("lower the target range Fed · Federal Reserve issues FOMC statement · 17 Sep 2026 Open in document Official source ↗");
+    expect(fed).toContain('href="/documents/41?span=5-50#cited"');
+    expect(fed).toContain('href="https://www.federalreserve.gov/x.htm"');
+  });
+  it("an RBI passage: its name, date and press-release number, and no link but our own document page", () => {
+    expect(text(rbi)).toBe("keep the policy repo rate unchanged RBI · Resolution of the Monetary Policy Committee · 7 Oct 2026 · Press release 2026-2027/1234 Open in document");
+    expect(rbi.match(/href="/g)).toHaveLength(1);
+    expect(rbi).toContain('href="/documents/77?span=10-60#cited"');
   });
 });

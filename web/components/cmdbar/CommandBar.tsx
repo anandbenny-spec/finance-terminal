@@ -9,6 +9,11 @@
 // Plain search never calls /api. An ask goes to `/api/cmdbar/ask`, which answers the paused state while the AI is switched off
 // (`cmdbar_ai_enabled = false` until go-live: Spec 07 §3), so the box shows "AI questions are paused for now; search still
 // works." and nothing else. An example chip shows its precomputed answer: no model call, no limit counted.
+//
+// A document answer's citation chips (K-08, #586) open their passage in a popover, or a bottom sheet on touch and in the phone
+// sheet, portaled out of the box: a press in one doesn't close the box, Esc closes only that layer, and an answer's links and
+// chips keep Enter and the arrows (cmdk's list would take them). On phones the box is the full-screen sheet, the answer under
+// the input, with no sideways scroll at 320 px.
 import { Search, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
@@ -28,6 +33,7 @@ import {
   groupHits,
   hitOf,
   isShortcut,
+  keepAnswerKeys,
   pageHits,
   shortcutLabel,
   type Answer,
@@ -67,6 +73,8 @@ function CommandBox({
   const [examples, setExamples] = useState<Example[]>([]);
   const askAbort = useRef<AbortController | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  /** The last pointer press inside the box, in React's tree: a chip's popover or sheet is portaled out of the box's DOM. */
+  const pressInside = useRef<Event | null>(null);
   const { term, result, loading, loadMore } = useSearch(answer || status ? "" : q);
   /** When the answer on screen arrived: its times are written against it (lib/format.ts). */
   const [now, setNow] = useState(() => new Date().toISOString());
@@ -83,10 +91,13 @@ function CommandBox({
     };
   }, [open]);
 
-  // The inline popover closes on a pointer press outside the box.
+  // The inline popover closes on a pointer press outside the box. A press in a citation's popover or sheet (K-08) is inside:
+  // those are portaled to the body, but React's events still pass through the box (`onPointerDownCapture` below), which runs
+  // before this listener does, so "Open in document" and "Official source ↗" stay clickable.
   useEffect(() => {
     if (variant !== "inline" || !open) return;
     const onDown = (e: PointerEvent) => {
+      if (pressInside.current === e) return;
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("pointerdown", onDown);
@@ -140,7 +151,8 @@ function CommandBox({
   const canAsk = question.length >= 2;
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === "Escape" && variant === "inline" && open) {
+    // Esc in an open citation popover or sheet closes only that layer: Radix takes the key first and marks it handled.
+    if (e.key === "Escape" && variant === "inline" && open && !e.nativeEvent.defaultPrevented) {
       e.preventDefault();
       setOpen(false);
     }
@@ -155,8 +167,9 @@ function CommandBox({
     );
   } else if (answer) {
     body = (
-      <div className="px-3 py-2">
-        <AnswerView answer={answer} now={now} onNavigate={close} />
+      // The answer's own links, chips and "Show SQL" keep Enter and the arrows (keepAnswerKeys).
+      <div className="px-3 py-2" onKeyDown={keepAnswerKeys}>
+        <AnswerView answer={answer} now={now} onNavigate={close} inSheet={variant === "sheet"} />
       </div>
     );
   } else if (!question) {
@@ -231,6 +244,9 @@ function CommandBox({
   return (
     <Command
       ref={rootRef}
+      onPointerDownCapture={(e) => {
+        pressInside.current = e.nativeEvent;
+      }}
       shouldFilter={false}
       loop
       label="Search and ask"

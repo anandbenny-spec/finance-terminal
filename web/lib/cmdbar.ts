@@ -11,6 +11,8 @@
 //   then one final object. Anything off its shape is "couldn't get an answer", never a raw error (CLAUDE.md §4).
 // - **Cells** arrive as exact decimal strings and ISO dates (`ft.cmdbar.route.cell`); they're shown through lib/format.ts,
 //   never rounded, so the figure on screen is the row's figure (CLAUDE.md §1).
+// - **A document answer's chips** (K-08, #586): `documentAnswer` turns the route's verified references into CitationChip's
+//   citations; an RBI document is named (title, date, press-release number) and never linked to RBI's pages (CLAUDE.md §1).
 import { companyHref } from "@/lib/equity/company";
 import {
   NOT_AVAILABLE,
@@ -21,6 +23,7 @@ import {
   formatTableDate,
   type Market,
 } from "@/lib/format";
+import { cutQuote, documentHref, type Citation } from "@/lib/policy/ai";
 import { meetingHref } from "@/lib/policy/decisions";
 import type { FieldPolicyRow } from "@/lib/queries/api";
 import { NAV, visibleGroups } from "@/lib/shell/nav";
@@ -45,6 +48,8 @@ export const NOT_FOUND_TEXT = "Not found in the stored Fed and RBI documents.";
 /** The client's own state for a failed request or a stream off its shape: never the error itself. */
 export const ERROR_TEXT = "Couldn't get an answer. Try again; search still works.";
 export const AI_SUMMARY = "AI summary";
+/** The line over a document answer's documents (K-08). */
+export const CITED_DOCUMENTS = "Cited documents";
 export const TRY = "Try";
 /** The first status line, shown as soon as a question is sent (the route's own lines follow). */
 export const FIRST_STATUS = "Understanding the question…";
@@ -62,6 +67,18 @@ export function shortcutLabel(platform: string | undefined): string {
 /** Whether a key press is the one shortcut (⌘K or Ctrl K), with no other modifier. */
 export function isShortcut(e: { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }): boolean {
   return e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+}
+
+/** The keys cmdk's list takes for itself (it calls preventDefault on them), so a link or chip in an answer would lose Enter. */
+export const LIST_KEYS: ReadonlySet<string> = new Set(["Enter", "ArrowDown", "ArrowUp", "Home", "End"]);
+
+/**
+ * Inside an answer (and the citation popovers and sheets opened from it, which React's events pass through), Enter opens the
+ * focused link or chip and the arrows scroll, as anywhere on the site: the keys stop here, before cmdk's list handler. The
+ * input keeps cmdk's model (arrows move, Enter selects); ⌘K / Ctrl K and Esc aren't stopped.
+ */
+export function keepAnswerKeys(e: { key: string; stopPropagation: () => void }) {
+  if (LIST_KEYS.has(e.key)) e.stopPropagation();
 }
 
 // ------------------------------------------------------------------------------------------------ plain search
@@ -248,6 +265,8 @@ export type Cell = string | boolean | null;
 export type DocRef = { document: number; char_start: number; char_end: number; quote: string };
 export type CitedSentence = { text: string; refs: DocRef[] };
 export type CitedDocument = {
+  /** core.document's id: "Open in document" (`/documents/[id]` at the span); null when the route sent none. */
+  document_id: number | null;
   bank: string;
   label: string;
   title: string;
@@ -308,6 +327,7 @@ function documentOf(v: unknown): CitedDocument | null {
   if (!isObj(v) || !str(v.title) || !str(v.bank)) return null;
   const url = str(v.source_url);
   return {
+    document_id: int(v.document_id),
     bank: str(v.bank)!,
     label: str(v.label) ?? "",
     title: str(v.title)!,
@@ -330,6 +350,67 @@ export function officialLink(url: string | null): string | null {
     return null;
   }
   return host === "rbi.org.in" || host.endsWith(".rbi.org.in") ? null : url;
+}
+
+/** Whether a cited document is the Fed's: only a Fed document carries "Official source ↗" (never RBI's pages: CLAUDE.md §1). */
+export function isFedDocument(doc: Pick<CitedDocument, "bank">): boolean {
+  return /^(fed|federal reserve)\b/i.test(doc.bank.trim());
+}
+
+/** A cited document as the box names it: bank, title, date and, for an RBI document, its press-release number (never a link). */
+export function documentLine(doc: CitedDocument): string {
+  return [doc.bank, doc.title, doc.date ? formatDate(doc.date) : null, doc.press_release ? `Press release ${doc.press_release}` : null]
+    .filter((p): p is string => !!p)
+    .join(" · ");
+}
+
+/** A cited document's page on this site (`/documents/[id]`, our stored text); null when the route sent no id. */
+export function documentPage(doc: Pick<CitedDocument, "document_id">): string | null {
+  return doc.document_id === null ? null : `/documents/${doc.document_id}`;
+}
+
+/** One kept sentence of a document answer, with its citation chips. */
+export type CitedLine = { text: string; citations: Citation[] };
+
+/**
+ * A document answer as the box shows it (K-08, #586; Design 01 §1.10, §4.5; Spec 07 §7): each sentence with its chips, then the
+ * documents those chips cite, in the order first cited.
+ *
+ * - **One chip per verified passage**, numbered in the order first cited across the answer; a passage cited again keeps its
+ *   number. Its popover (or, on touch, its sheet) holds the route's quote (our stored text at the verified span, at most 400 code
+ *   points), cut at a sentence boundary to 280 with "…" as every chip's is; the document's line (bank, title, date, an RBI
+ *   press-release number); "Open in document" (`/documents/[id]` at the span); and "Official source ↗" for a Fed document only.
+ * - **A sentence left with no chip isn't shown** (a reference without a quote makes no chip): no uncited AI claim (CLAUDE.md §1).
+ *   The route never sends one; this holds if it ever did.
+ */
+export function documentAnswer(answer: Pick<Answer, "citations" | "documents">): { lines: CitedLine[]; documents: CitedDocument[] } {
+  const chips = new Map<string, Citation>();
+  const cited: number[] = [];
+  const lines: CitedLine[] = [];
+  for (const s of answer.citations) {
+    if (!s.text.trim()) continue;
+    const citations: Citation[] = [];
+    for (const r of s.refs) {
+      const doc = answer.documents[r.document];
+      if (!doc || !r.quote.trim()) continue;
+      const key = `${r.document}:${r.char_start}:${r.char_end}`;
+      let chip = chips.get(key);
+      if (!chip) {
+        chip = {
+          no: chips.size + 1,
+          quote: cutQuote(r.quote),
+          documentTitle: documentLine(doc),
+          href: doc.document_id === null ? null : documentHref({ document_id: doc.document_id, char_start: r.char_start, char_end: r.char_end }),
+          officialUrl: isFedDocument(doc) ? officialLink(doc.source_url) : null,
+        };
+        chips.set(key, chip);
+        if (!cited.includes(r.document)) cited.push(r.document);
+      }
+      if (!citations.includes(chip)) citations.push(chip);
+    }
+    if (citations.length > 0) lines.push({ text: s.text.trim(), citations });
+  }
+  return { lines, documents: cited.map((i) => answer.documents[i]) };
 }
 
 /**
