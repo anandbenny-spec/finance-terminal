@@ -110,6 +110,18 @@ output stays published, and its rows with it. Dev and production both take it (p
 **Limits (§5.5).** A transcript whose request is estimated above 60,000 tokens is skipped with a warning naming it
 (`calls_too_long`); the wrapper itself refuses anything over 100,000.
 
+**A run over the $5 run limit sends what fits (#373, 2B-15c; Anand's option 1, 17 Nov 2026, 21:28 IST).** The run estimate is
+each new target's worst case (its request and a retry, at full `max_tokens` and the batch price; about $0.42 to $0.48 a v11
+summary). Where `policy.ai_batch` sends nothing when the total passes `RUN_LIMIT_USD`, this task (`partial_send`) sends the
+longest prefix that fits, in a fixed order (`_send_order`): the guidance extractions first, then the summaries, then the tone
+scores, then the retries (a target's second attempt in a later run); each group newest filing first. The rest get the outcome
+`budget`; they still lack an output, so the next run takes them, and a busy results week drains over a few weekly runs with
+no one splitting the backlog by hand. A run's own retries (already in its estimate) still go. The order of the checks is
+unchanged (AI available, then the run estimate, then the monthly switch, each request in the same order), and no run sends more
+than $5 of worst case. When the monthly switch (`ai_monthly_budget_usd`) is lower than what is left of the run limit, it is
+what stops sending: the `ai_spend` check names which stop left how many targets (`stopped_by`, `waiting_run_limit`,
+`waiting_monthly_switch`, `sent_requests`), and each alert raised (`ai_run_estimate`, `ai_budget:<month>`) gives its own counts.
+
 **Degrade (S2, #197).** With no key, a refused key, no credit, or `ai=off` (the workflow leaves the key out),
 `AIUnavailable` is caught before anything is sent and between requests: every target without an outcome is skipped ("skipped:
 AI unavailable", the `ai_available` warning and one alert a month), nothing new is published, every stored reply and every
@@ -156,7 +168,6 @@ from ft.ai import call_tone as ct
 from ft.ai import guidance_extraction as ge
 from ft.ai.batch import (
     BATCH_POLL_SECONDS,
-    RUN_LIMIT_USD,
     BatchSteps,
     Call,
     RunState,
@@ -177,7 +188,8 @@ from ft.jobs.tasks.ai_batch import AI_REASONS, INTEGRITY_LIMIT, INTEGRITY_MIN_TA
 # call_summary v11 runs on Opus 5.5 at effort high (ft/ai/call_summary.py, MODEL_OF), about 40 times Haiku's price
 # (config/ai_prices.yaml). Anand decided on 10 Nov 2026, 19:09 IST that the summaries ship as labelled paraphrases with their
 # quotes in view (#178), so v11 is merged to main (#370 part 2a, with his OK in the session, 11 Nov 2026). A run with no date
-# window asks for each company's newest call only (#370, `summary_scope`), and §7's $5 run estimate still holds about 10 calls a run.
+# window asks for each company's newest call only (#370, `summary_scope`), and §7's $5 run estimate still holds about 10 calls a run
+# (a run with more sends what fits and leaves the rest to the next: #373, `partial_send`).
 # call_tone v3 on Haiku 5.5 passed the tone gate's second round (#175; 10 Nov 2026: 25 of 30 on earnings_tone_2, no reversals), so
 # it is the tone prompt. v1 (Haiku) and v2 (v1's text on Sonnet) failed the first set; v4 and v5 (v3's text on Sonnet and Opus) were
 # never needed. A tone run is still opt-in (CALLS_AI_TASK=call_tone): no scheduled run asks for tone.
@@ -293,6 +305,7 @@ class Work:
     schema: dict | None = None        # the JSON schema of a request on the json route: the extraction's, or the summary's (v6 on)
     metrics: Metrics | None = None    # the extraction's metric map and switch
     passages: tuple = ()              # the tone request's management passages (`ft.ai.call_tone.Passage`)
+    filed: date | None = None         # the day the transcript was filed (IST): a partial send's order, newest first (#373)
 
     @property
     def target(self) -> str:
@@ -369,6 +382,7 @@ class EquityCallsAi(BatchSteps, Task):
     requires = "equity.earnings_call"
     # `scope` (tests: only the calls with these event slugs), `claude`, `sleep` and `monotonic` (tests inject) are
     # `BatchSteps`'.
+    partial_send = True                   # #373: a run over the $5 run limit sends what fits (`_send_order`), not nothing
 
     def __init__(self):
         self._last: Fetched | None = None
@@ -380,6 +394,16 @@ class EquityCallsAi(BatchSteps, Task):
 
     def due(self, db, workflow: str, now=None) -> Due:
         return equity_due(db, self.key, workflow, super().due(db, workflow, now), requires=self.requires)
+
+    def _send_order(self, w: Work, step) -> tuple:
+        """A partial send's order (#373; Anand's option 1, 17 Nov 2026): first attempts before retries (a target's next attempt
+        after a reply rejected in an earlier run); within each, the guidance extractions (cheap, and they feed guidance against
+        delivery), then the summaries, then the tone scores (a tone run is opt-in and runs alone, so it never shares a run with
+        the other two); each newest filing first (the IST day the transcript was filed, else the call's day; then the newer
+        event)."""
+        day = w.filed or w.call.day
+        return (step.attempt > 1, {ge.TASK: 0, cs.TASK: 1}.get(w.task, 2), -(day.toordinal() if day else 0), -w.event_id,
+                w.document_id)
 
     def _scoped_documents(self) -> tuple[str, list] | None:
         if self.scope is None:
@@ -487,18 +511,19 @@ class EquityCallsAi(BatchSteps, Task):
             held = share is not None and float(share) > ROLE_HOLD_SHARE         # strictly greater, as the rules and the views
             call = CallDoc(did, text, title, company, label, call_date or filed, tuple(turns.get(did, ())), held, fy_end)
             if not (lacking and (has_s or (newest_only and not newest))):
-                out.append(Work(cs.TASK, call, slug, event_id, entity_id, summary_schema))
+                out.append(Work(cs.TASK, call, slug, event_id, entity_id, summary_schema, filed=filed))
             if tone and not held and not (lacking and has_t):
                 items = ct.passages(call, chunks.get(did, ()))
                 if items:                                  # never for a role-held call (Spec 02B.1); none to score: no request
-                    out.append(Work(ct.TASK, call, slug, event_id, entity_id, tone_schema, passages=tuple(items)))
+                    out.append(Work(ct.TASK, call, slug, event_id, entity_id, tone_schema, passages=tuple(items),
+                                    filed=filed))
             if not guidance or (lacking and has_x):
                 continue
             if call.day is None or fy_end is None or not call.turns:
                 if skipped is not None:
                     skipped.append(slug)
                 continue
-            out.append(Work(ge.TASK, call, slug, event_id, entity_id, schema, metrics))
+            out.append(Work(ge.TASK, call, slug, event_id, entity_id, schema, metrics, filed=filed))
         return out
 
     # ------------------------------------------------------------------ fetch (network; outputs stored as they come)
@@ -1099,7 +1124,7 @@ class EquityCallsAi(BatchSteps, Task):
                 too_long.append(f"{o.work.slug} ({o.reason})")
         out.append(Check("calls_too_long", not too_long, _names(too_long) or "no transcript over the length limit",
                          blocking=False))
-        out.append(spend_check(f))
+        out.append(spend_check(f, partial=self.partial_send))
         reason = f.unavailable
         out.append(Check("ai_available", reason is None, json.dumps({
             "outcome": None if reason is None else f"skipped: AI unavailable ({reason})",
@@ -1262,7 +1287,7 @@ class EquityCallsAi(BatchSteps, Task):
                 elif w.document_id in bad:
                     out.append(Alert(key, True, "warn", f"{w.target} ({w.call.title}): {bad[w.document_id]}"))
         if f.targets:
-            out += spend_alerts(f, RUN_LIMIT_USD)
+            out += spend_alerts(f, self.run_limit(), partial=self.partial_send)
         month = datetime.now(UTC).strftime("%Y-%m")
         out.append(Alert(f"ai_unavailable:calls:{month}", f.unavailable is not None, "warn",
                          f"AI paused ({AI_REASONS.get(f.unavailable, f.unavailable)}): call summaries and extracted figures are skipped; "

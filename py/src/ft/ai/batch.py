@@ -3,7 +3,8 @@ policy.ai_batch at their second use (2B-03, #166; Plan 02 §7.1 rule 2) with no 
 
 The steps: submit through the Batch API; poll for up to 15 minutes; collect each ended batch; store each billed reply
 at once (its own small transaction, locking its request's row); track the spend (the run's, the month's, the open
-batches' worst case; the $5 run estimate and the monthly switch); retry once with a note, then reject (the task's
+batches' worst case; the $5 run estimate and the monthly switch; a task that sets `partial_send` sends the longest prefix of
+its new targets that fits under the run estimate instead of nothing, #373); retry once with a note, then reject (the task's
 alert); and S2's skip path (#197: `AIUnavailable` caught before sending and between requests, nothing sent or lost,
 the outcome "skipped: AI unavailable", a green run).
 
@@ -12,7 +13,8 @@ build their request and check a reply (`check`); its state (`RunState`) is the r
 `_entry` (a stored custom_id back to its target), `_store` (one billed reply:
 the output, citations, publication or rejection, and the request's final status; in one transaction), `_insert_bare`
 (a billed reply stored without its text), `_recheck` (a held draft checked again, without a request),
-`_scoped_documents_sql` (tests only) and `_prompt_weight`; and `run_limit` (the $5 stop, read at call time).
+`_scoped_documents_sql` (tests only) and `_prompt_weight`; and `run_limit` (the $5 stop, read at call time); and, for a
+partial send, `partial_send` and `_send_order`.
 The real-time path (`policy.ai_batch`'s watch on a decision day) stays in the task and uses the same helpers.
 """
 from __future__ import annotations
@@ -187,6 +189,8 @@ class RunState:
     stopped: str | None = None        # 'budget' | 'run_estimate'
     run_estimate: Decimal = Decimal(0)
     unavailable: str | None = None    # Claude can't be used: 'no_key' | 'auth' | 'billing' (AIUnavailable.reason, #197)
+    limit_left: set[str] = field(default_factory=set)   # #373, a partial send: the targets the run limit left for the next run
+    limit_estimate: Decimal = Decimal(0)                # #373: the run estimate of everything asked for, when it passed the limit
     _by_target: dict[str, Outcome] = field(default_factory=dict, repr=False)
 
     def outcome(self, w: Target, status: str | None = None, reason: str = "", *, first: bool = False) -> Outcome:
@@ -231,24 +235,48 @@ def batches_check(f: RunState):
         "held_for_watch": b.held_for_watch, "errors": errors}), blocking=False)
 
 
-def spend_check(f: RunState):
-    """The `ai_spend` check (non-blocking)."""
-    return Check("ai_spend", f.stopped is None, json.dumps({
+def waiting(f: RunState) -> tuple[int, int, int]:
+    """A partial send's counts (#373): (requests sent in this run, targets the run limit left for the next run, targets the
+    monthly switch stopped). A target is counted once, under the stop that left it."""
+    sent = sum(b["requests"] for b in f.batch.submitted)
+    left = {o.work.target for o in f.outcomes if o.status == "budget"}
+    by_limit = len(left & f.limit_left)
+    return sent, by_limit, len(left) - by_limit
+
+
+def spend_check(f: RunState, *, partial: bool = False):
+    """The `ai_spend` check (non-blocking). `partial` (a task that sends what fits, #373): the detail also says what was sent,
+    what waits and which stop left it: the run limit, the monthly switch, or both."""
+    detail = {
         "run_usd": str(f.spend), "month_usd": str(f.month_spend + f.spend), "budget_usd": str(f.budget),
         "in_batches_worst_usd": str(f.batch.exposure.quantize(Decimal("0.0001"))),
-        "stopped": f.stopped, "run_estimate_usd": str(f.run_estimate.quantize(Decimal("0.0001")))}),
-        blocking=False)
+        "stopped": f.stopped, "run_estimate_usd": str(f.run_estimate.quantize(Decimal("0.0001")))}
+    if partial:
+        sent, by_limit, by_month = waiting(f)
+        detail |= {"stopped_by": [s for s, n in (("run_limit", by_limit), ("monthly_switch", by_month)) if n],
+                   "sent_requests": sent, "waiting_run_limit": by_limit, "waiting_monthly_switch": by_month,
+                   "estimate_of_all_usd": str(f.limit_estimate.quantize(Decimal("0.0001"))) if f.limit_left else None}
+    return Check("ai_spend", f.stopped is None, json.dumps(detail), blocking=False)
 
 
-def spend_alerts(f: RunState, limit: Decimal) -> list:
-    """The monthly-budget and run-estimate alerts: raised by the stop, resolved by a run that finds room."""
+def spend_alerts(f: RunState, limit: Decimal, *, partial: bool = False) -> list:
+    """The monthly-budget and run-estimate alerts: raised by the stop, resolved by a run that finds room. `partial` (a task
+    that sends what fits, #373): each message says how many requests went and how many targets wait, so the alert raised
+    names the stop that left them (both alerts, when both stops did)."""
     out = []
     month = datetime.now(UTC).strftime("%Y-%m")
+    sent, by_limit, by_month = waiting(f) if partial else (0, 0, 0)
     if f.stopped == "budget":
         out.append(Alert(f"ai_budget:{month}", True, "error",
-                         f"AI spend reached the ${f.budget} monthly budget; requests stopped"))
+                         f"AI spend reached the ${f.budget} monthly budget; requests stopped" + (
+                             f": the monthly switch, not the ${limit} run limit, left {by_month} targets waiting "
+                             f"({sent} requests sent in this run)" if partial else "")))
     elif f.spend > 0:                                  # a run spent within the budget: it's been raised
         out.append(Alert(f"ai_budget:{month}", False))
+    if partial and f.limit_left:                       # #373: the run limit sent what fit and left the rest
+        return out + [Alert("ai_run_estimate", True, "error",
+                            f"an AI run estimated at ${f.limit_estimate:.2f} passed the ${limit} run limit: {sent} requests "
+                            f"sent within it, {by_limit} targets wait for the next run")]
     return out + [Alert("ai_run_estimate", f.stopped == "run_estimate", "error",
                         f"an AI run estimated at ${f.run_estimate:.2f} (over ${limit}) sent nothing more")]
 
@@ -260,11 +288,21 @@ class BatchSteps:
     claude: Client | None = None          # tests inject; otherwise built from ANTHROPIC_API_KEY on first use
     sleep: Callable[[float], None] = staticmethod(time.sleep)       # tests inject (the batch poll)
     monotonic: Callable[[], float] = staticmethod(time.monotonic)
+    # A run whose new targets' worst case passes the run limit: False (policy.ai_batch, unchanged) sends none of them; True (a
+    # task that opts in, #373: equity.calls_ai) sends the longest prefix that fits, in `_send_order`'s order, and leaves the rest
+    # (outcome `budget`) for the next run, which still finds them lacking an output. Either way no run sends more than the
+    # limit's worth of worst case.
+    partial_send: bool = False
 
     # ------------------------------------------------------------------ what the task provides
     def run_limit(self) -> Decimal:
         """The run estimate over which nothing more is sent (read at call time)."""
         return RUN_LIMIT_USD
+
+    def _send_order(self, w: Target, step: Step):
+        """A partial send's order (#373): the sort key of a target not yet in the run estimate; the lowest goes first, and
+        equal keys keep the run's order. Read only when `partial_send` is set."""
+        return 0
 
     def _scoped_documents(self) -> tuple[str, list] | None:
         """Tests only: (a select of document ids, its arguments) limiting the steps to part of the data, or None."""
@@ -495,9 +533,32 @@ class BatchSteps:
                 todo.append((w, p.step))
         return todo
 
+    def _new_cost(self, f: RunState, item) -> Decimal:
+        """What an item adds to the run estimate: its request and its retries at worst, counted once per target (nothing
+        for a target already in the estimate: this run's own retry of it)."""
+        w, s, r, _, wc = item
+        return Decimal(0) if w.target in f.batch.counted else Decimal(self._max_attempts(w, r) + 1 - s.attempt) * wc
+
+    def _within_limit(self, f: RunState, items: list) -> tuple[list, list]:
+        """A partial send (#373): (the items sent, the items left). An item already in the run estimate costs nothing more and
+        always goes; the others go in `_send_order`'s order while each still fits under the run limit, and from the first that
+        doesn't, none (the longest prefix: a later, cheaper target never jumps the queue)."""
+        free = [it for it in items if self._new_cost(f, it) == 0]
+        ordered = sorted((it for it in items if self._new_cost(f, it) > 0), key=lambda it: self._send_order(it[0], it[1]))
+        room, n = self.run_limit() - f.run_estimate, 0
+        for it in ordered:
+            cost = self._new_cost(f, it)
+            if cost > room:
+                break
+            room -= cost
+            n += 1
+        return free + ordered[:n], ordered[n:]
+
     def _submit(self, ctx, f: RunState, todo: list[tuple[Target, Step]], prompts) -> None:
         db = ctx.fetcher.db
-        if f.stopped:
+        # After the monthly switch nothing more is sent; after the run limit, nothing more either, unless the task sends what
+        # fits (#373), whose targets already in the run estimate (this run's retries) may still go.
+        if f.stopped == "budget" or (f.stopped and not self.partial_send):
             for w, _ in todo:
                 f.outcome(w, "budget", f"after {f.stopped}")
             return
@@ -513,21 +574,33 @@ class BatchSteps:
                 f.outcome(w, "too_long", str(e))
                 continue
             items.append((w, step, req, cid, self._worst_case(req, batch=True)))
-        new = sum((Decimal(self._max_attempts(w, r) + 1 - s.attempt) * wc for w, s, r, _, wc in items
-                   if w.target not in f.batch.counted),
-                  Decimal(0))                               # its retries, at worst, counted once per target
-        if f.run_estimate + new > self.run_limit():
-            f.run_estimate += new
+        new = sum((self._new_cost(f, it) for it in items), Decimal(0))   # its retries, at worst, counted once per target
+        limit = self.run_limit()
+        if self.partial_send:            # #373: the send order (this run's retries first), which the monthly switch's cut follows too
+            items.sort(key=lambda it: (self._new_cost(f, it) > 0, self._send_order(it[0], it[1])))
+        if f.run_estimate + new > limit:
+            if not self.partial_send:
+                f.run_estimate += new
+                f.stopped = "run_estimate"
+                for w, *_ in items:
+                    f.outcome(w, "budget", f"run estimate ${f.run_estimate:.2f}")
+                return
+            full = f.run_estimate + new
+            items, rest = self._within_limit(f, items)
+            new = sum((self._new_cost(f, it) for it in items), Decimal(0))
+            f.limit_estimate = max(f.limit_estimate, full)
             f.stopped = "run_estimate"
-            for w, *_ in items:
-                f.outcome(w, "budget", f"run estimate ${f.run_estimate:.2f}")
-            return
+            for w, *_ in rest:
+                f.limit_left.add(w.target)
+                f.outcome(w, "budget", f"run estimate ${full:.2f} over ${limit}: left for the next run")
+            print(f"  {self.key}: the run estimate ${full:.2f} passes the ${limit} run limit: {len(items)} requests go "
+                  f"within it, {len(rest)} targets wait for the next run")
         f.run_estimate += new
         f.batch.counted |= {w.target for w, *_ in items}
         chosen = []
         committed = f.month_spend + f.spend + f.batch.exposure
         for w, step, req, cid, wc in items:
-            if f.stopped or committed + wc > f.budget:
+            if f.stopped == "budget" or committed + wc > f.budget:
                 f.stopped = "budget"
                 f.outcome(w, "budget", f"month-to-date ${f.month_spend + f.spend:.4f}, ${f.batch.exposure:.4f} at "
                                        f"worst in open batches, of ${f.budget}")
