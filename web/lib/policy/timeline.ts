@@ -87,7 +87,8 @@ const COMPARE_LIMIT = 4_000_000;
  *
  * - `eq` and `ins` carry the current sentence's own characters, so `eq` + `ins` rebuilds it exactly (ends trimmed). `del`
  *   carries the previous sentence's own characters, so `eq` + `del` rebuilds the previous sentence word for word; only the
- *   whitespace between words may differ, because whitespace is never compared.
+ *   whitespace between words may differ, because whitespace is never compared. A struck run that comes before a kept word the
+ *   current sentence writes without a space ends with the previous sentence's space before that word.
  * - A word is a token (`TOKEN` above). The comparison is a longest common subsequence over tokens' keys, and a tie is broken
  *   the same way every time: a word only the previous sentence has is taken as removed before a word only the current one has.
  * - Identical sentences are one `eq`. Sentences that differ in a hyphen variant or a kind of space only are one `eq`.
@@ -97,7 +98,7 @@ export function compareSentences(previous: string, current: string): Op[] {
   const b = tokenize(current);
   const n = a.length;
   const m = b.length;
-  const edits: { op: Op["op"]; text: string }[] = [];
+  const edits: { op: Op["op"]; text: string; prevLead?: string }[] = [];
   if (n * m > COMPARE_LIMIT) {
     for (const t of a) edits.push({ op: "del", text: t.lead + t.text });
     for (const t of b) edits.push({ op: "ins", text: t.lead + t.text });
@@ -113,7 +114,7 @@ export function compareSentences(previous: string, current: string): Op[] {
     let j = 0;
     while (i < n && j < m) {
       if (a[i].key === b[j].key) {
-        edits.push({ op: "eq", text: b[j].lead + b[j].text });
+        edits.push({ op: "eq", text: b[j].lead + b[j].text, prevLead: a[i].lead });
         i++;
         j++;
       } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
@@ -144,6 +145,9 @@ export function compareSentences(previous: string, current: string): Op[] {
   };
   for (const e of edits) {
     if (e.op === "eq") {
+      // A kept word with no space before it in the current sentence, after words only the previous sentence had: the struck run
+      // ends with the previous sentence's space, so the two don't read as one word. `eq` and `ins` keep the current sentence's own.
+      if (del && e.prevLead && !/^\s/.test(e.text)) del += e.prevLead;
       flushStretch();
       eq += e.text;
     } else {

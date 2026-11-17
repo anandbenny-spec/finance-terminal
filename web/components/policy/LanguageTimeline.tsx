@@ -114,7 +114,7 @@ export function LanguageTimelinePanel({ data, footer, refresh }: { data: BankTim
               columns={columns}
               rows={data.rows}
               rowKey={(line) => line.key}
-              caption={`${data.bank} key phrases by meeting, newest first${meetings.trimmed ? `, the latest ${formatCount(meetings.shown.length)} of ${formatCount(meetings.total)}` : ""}; the bank's own sentence, with the words new since the meeting before underlined and the words removed since then struck through`}
+              caption={`${data.bank} key phrases by meeting, newest first${meetings.trimmed ? `, the latest ${formatCount(meetings.shown.length)} of ${formatCount(meetings.total)}` : ""}; the bank's own wording, with the words new since the meeting before underlined and the words removed since then struck through`}
               focusable
               empty={<StateNote kind="unavailable">No phrases are tracked yet.</StateNote>}
             />
@@ -123,7 +123,7 @@ export function LanguageTimelinePanel({ data, footer, refresh }: { data: BankTim
             <ShowAllMeetings total={meetings.total} trimmed={meetings.trimmed} controls={tableId} onToggle={() => setAll((v) => !v)} />
           )}
           <p className="border-t border-line px-3 py-2 text-meta text-ink-3">
-            Each cell is one sentence of the bank&apos;s own {rbi ? "resolution" : "statement"}. Underlined words are new since the meeting before, struck-through
+            Each cell is the bank&apos;s own wording of the phrase, word for word from its {rbi ? "resolution" : "statement"}. Underlined words are new since the meeting before, struck-through
             words were removed since then, and a faded sentence is unchanged. A new sentence follows a meeting where no single sentence fit the phrase. Where no
             single sentence fits a phrase, the cell says so.
           </p>
