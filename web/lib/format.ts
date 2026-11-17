@@ -338,12 +338,18 @@ export function dateInZone(instant: Instant, zone: EventZone): string {
 /**
  * The calendar day a filing was made, as `YYYY-MM-DD`, for `formatDate`. An Indian filing's day is the day in IST: an exchange
  * list date is stored as that day's midnight IST (18:30 UTC the day before), and a results filing can be broadcast between
- * midnight and 05:30 IST, so the instant's UTC date would be a day early (found by #191's page check, 12 Nov 2026). A US filing
- * keeps the instant's UTC date, as before: which day an evening acceptance counts on is an open question (#448).
+ * midnight and 05:30 IST, so the instant's UTC date would be a day early (found by #191's page check, 12 Nov 2026). A US filing's day
+ * is the filing date SEC assigns (`equity.filing.filing_date`, 0057; Anand, 17 Nov 2026, #448): it already applies the 17:30 ET
+ * cut-off, weekends and holidays, so nothing is computed here. A US filing without one (not yet filled, or the view not yet
+ * carrying the column) has no day: the page shows none rather than a guess.
  */
-export function filingDay(instant: string | null | undefined, market: Market): string | null {
-  if (!instant) return null;
-  return market === "IN" ? dateInZone(instant, IST) : instant.slice(0, 10);
+export function filingDay(
+  instant: string | null | undefined,
+  market: Market,
+  filingDate?: string | null,
+): string | null {
+  if (market === "US") return filingDate ?? null;
+  return instant ? dateInZone(instant, IST) : null;
 }
 
 /**

@@ -425,6 +425,8 @@ export type CompanyFinancialRow = {
   format: string | null;
   audited: boolean | null;
   filed_at: string | null;
+  /** The date SEC assigns a US filing (0057); null for an Indian filing, until filled, and before 0057 reaches the database. */
+  filing_date?: string | null;
   source_url: string | null;
   source_key: string;
   attribution: string | null;

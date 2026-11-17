@@ -1049,6 +1049,10 @@ def test_the_first_load_registers_every_filing_since_2019_unpublished(s3, monkey
     assert q("""select count(*) from equity.financials fn join core.entity e on e.id = fn.entity_id
                   where e.slug = 'us-googl' and fn.period_kind = 'instant' and fn.shares_outstanding is null
                     and fn.tags->>'shares_outstanding' like 'held: a multi-class%%'""")[0][0] == FILINGS["GOOGL"] - 1
+    # #448: "Filed" is the filing date SEC assigns (company facts' `filed`), stored beside the acceptance instant
+    assert q("""select fl.filing_date from equity.filing fl join core.document d on d.id = fl.document_id
+                 where d.external_key = '0000320193-25-000079'""") == [(D(2025, 10, 31),)]
+    assert q(f"select count(*) from equity.filing where entity_id in {US_IDS} and filing_date is null") == [(0,)]
     # every SEC request declared the secret's User-Agent; each reply is a sec raw file
     assert {r.headers["user-agent"] for r in sec.seen} == {UA}
     assert sorted({r.url.host for r in sec.seen}) == ["data.sec.gov", "www.sec.gov"]
@@ -1068,6 +1072,20 @@ def test_a_second_identical_load_writes_nothing(s3, monkeypatch):
     assert code == 0 and tr[0] == "success" and tr[1] == 0, tr
     assert counts() == before and snapshot() == rows
     assert len(sec.seen) == 2 * len(DOW)                         # Alphabet's latest cover page isn't read again
+
+
+@pytest.mark.db
+@needs_fixtures
+def test_filings_stored_before_0057_get_their_filing_date_on_the_next_load_and_it_is_never_rewritten(s3, monkeypatch):
+    sec = Sec()
+    go(sec, monkeypatch)
+    want = q(f"select document_id, filing_date from equity.filing where entity_id in {US_IDS} order by 1")
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        c.execute(f"update equity.filing set filing_date = null where entity_id in {US_IDS}")
+    code, tr = go(sec, monkeypatch)
+    assert code == 0 and tr[0] == "success", tr
+    assert q(f"select document_id, filing_date from equity.filing where entity_id in {US_IDS} order by 1") == want
+    assert detail(tr, "loaded").startswith("0 filings registered, 0 rebuilt")
 
 
 @pytest.mark.db

@@ -277,13 +277,20 @@ class UsFilings(Task):
                     cur.executemany(
                         """insert into equity.filing (document_id, entity_id, basis, format, period_end, fy_start, fy_end,
                                                       audited, filed_at, source_url, exchange, parse_status, parse_note,
-                                                      parser_version)
-                           values (%s, %s, 'consolidated', 'us_gaap', %s, %s, %s, %s, %s, %s, 'SEC', 'parsed', %s, %s)""",
+                                                      parser_version, filing_date)
+                           values (%s, %s, 'consolidated', 'us_gaap', %s, %s, %s, %s, %s, %s, 'SEC', 'parsed', %s, %s, %s)""",
                         [(doc_ids[b.filing.accn], x.entity_id, b.period_end, b.fy_start,
                           b.period_end if b.filing.annual else None, None if b.filing.amendment else b.filing.annual,
-                          self._accepted(x, b.filing.accn), b.filing.link(), self._note(x, b), str(self.version))
+                          self._accepted(x, b.filing.accn), b.filing.link(), self._note(x, b), str(self.version),
+                          b.filing.filed)
                          for b in new])
                 registered += len(new)
+            # SEC's filing date (company facts' `filed`) for filings stored before 0057: filled once where null (#448)
+            with tx.cursor() as cur:
+                cur.executemany(
+                    """update equity.filing f set filing_date = %s from core.document d
+                        where d.id = f.document_id and d.source_id = %s and d.external_key = %s and f.filing_date is null""",
+                    [(b.filing.filed, sec, b.filing.accn) for b in x.built if b.filing.accn not in x.new])
             for accn in x.rebuild:
                 b = by[accn]
                 doc_id = doc_ids[accn] = tx.execute(
