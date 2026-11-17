@@ -1,7 +1,8 @@
 "use client";
 
 // The command bar's answer states (K-07, #585; Design 01 §4.6, word for word; Spec 07 §4, §7): a data answer (its summary marked
-// "AI summary", a dense DataTable, "Show SQL" with a copy button, a footer with the view it read and the time taken), a page
+// "AI summary", a dense DataTable, "Show SQL" with a copy button, its source lines (K-13, #630: CLAUDE.md §1, every figure shows
+// its source line and every NSE-derived one says "Source: NSE"), a footer with the view it read and the time taken), a page
 // found, Can't answer (with suggested pages), Not found (documents), Limit reached (also the paused state) and the client's own
 // error state. Never a raw error, a run id or a task name (CLAUDE.md §4). A document answer's sentences carry CitationChips
 // (K-08, #586): a popover on a fine pointer, a bottom sheet on touch, and never a link to RBI's pages (CLAUDE.md §1).
@@ -10,6 +11,7 @@ import { Check, Copy, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { Cited } from "@/components/ai/CitationChip";
 import { DataTable, type Column } from "@/components/data/DataTable";
+import { SourceLine } from "@/components/data/SourceLine";
 import { StateNote } from "@/components/data/StateNote";
 import {
   AI_SUMMARY,
@@ -25,6 +27,7 @@ import {
   formatCell,
   isAiSummary,
   isFedDocument,
+  notFoundText,
   rowMarket,
   type Answer,
   type Cell,
@@ -118,6 +121,11 @@ function DataAnswer({ answer, now }: { answer: Answer; now: string }) {
           </div>
         </details>
       )}
+      {answer.sources.length > 0 && (
+        <p className="text-meta text-ink-2">
+          <SourceLine lines={answer.sources} />
+        </p>
+      )}
       <p className="font-mono text-meta text-ink-3">
         {answer.view ? `${answer.view} · ` : ""}
         {formatDurationMs(answer.ms)}
@@ -201,7 +209,13 @@ export function AnswerView({
     case "error":
       return <StateNote kind="error">{ERROR_TEXT}</StateNote>;
     case "not_found":
-      return <StateNote kind="empty">{NOT_FOUND_TEXT}</StateNote>;
+      // A "latest" question the latest meeting's documents didn't answer (K-13) comes with that meeting's page.
+      return (
+        <div>
+          <StateNote kind="empty">{notFoundText(answer)}</StateNote>
+          {answer.pages.length > 0 && <Pages pages={answer.pages.slice(0, 2)} onNavigate={onNavigate} />}
+        </div>
+      );
     case "page":
       if (answer.pages.length > 0) {
         return (

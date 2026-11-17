@@ -49,6 +49,8 @@ export const PLACEHOLDER = "Search meetings and companies, or ask about the data
 export const PAUSED_TEXT = "AI questions are paused for now; search still works.";
 export const CANT_TEXT = "That isn't in this site's data.";
 export const NOT_FOUND_TEXT = "Not found in the stored Fed and RBI documents.";
+/** A "latest" document question no cited document of the latest meeting answered (K-13, #630; the route's own words). */
+export const LATEST_NOT_FOUND_TEXT = "Not found in the latest meeting's stored documents.";
 /** The client's own state for a failed request or a stream off its shape: never the error itself. */
 export const ERROR_TEXT = "Couldn't get an answer. Try again; search still works.";
 export const AI_SUMMARY = "AI summary";
@@ -290,6 +292,8 @@ export type Answer = {
   citations: CitedSentence[];
   documents: CitedDocument[];
   view: string | null;
+  /** A data answer's source lines (K-13, #630; CLAUDE.md §1: "Source: NSE" on NSE-derived figures), shown with SourceLine. */
+  sources: string[];
   pages: PageLink[];
   ms: number;
 };
@@ -305,7 +309,7 @@ export const SUGGESTED_PAGES: readonly PageLink[] = [
 
 /** The client's own answer for a failure: the error state's words and nothing of the error. */
 export function errorAnswer(): Answer {
-  return { route: null, state: "error", summary: ERROR_TEXT, columns: [], rows: [], sql: null, citations: [], documents: [], view: null, pages: [], ms: 0 };
+  return { route: null, state: "error", summary: ERROR_TEXT, columns: [], rows: [], sql: null, citations: [], documents: [], view: null, sources: [], pages: [], ms: 0 };
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -470,9 +474,21 @@ export function parseAnswer(value: unknown): Answer {
     citations,
     documents,
     view: str(value.view),
+    sources: sourceLines(value.sources),
     pages,
     ms: int(value.ms) ?? 0,
   };
+}
+
+/** A data answer's source lines as the route sent them: strings only, each once; none (an answer stored before K-13) is []. */
+export function sourceLines(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.filter((l): l is string => typeof l === "string" && l.trim() !== "").map((l) => l.trim()))];
+}
+
+/** The words of a "not found" answer: the latest-meeting words when the route sent them, else the documents' own. */
+export function notFoundText(answer: Pick<Answer, "summary">): string {
+  return answer.summary === LATEST_NOT_FOUND_TEXT ? LATEST_NOT_FOUND_TEXT : NOT_FOUND_TEXT;
 }
 
 /**

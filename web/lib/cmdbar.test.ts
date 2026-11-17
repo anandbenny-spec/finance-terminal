@@ -196,6 +196,11 @@ describe("parseAnswer: the route's final object, checked", () => {
     expect(a.rows).toEqual([["2026-10-07", "-25"]]);
     expect(a.columns[1]).toEqual({ name: "change_bps", kind: "number" });
     expect(a.ms).toBe(2400);
+    expect(a.sources).toEqual([]);                                   // an answer stored before K-13
+  });
+  it("takes a data answer's source lines (K-13): strings only, each once", () => {
+    expect(parseAnswer({ ...DATA, sources: ["Source: NSE", "Source: NSE", 7, null, " ", "Source: SEC EDGAR"] }).sources).toEqual(["Source: NSE", "Source: SEC EDGAR"]);
+    expect(parseAnswer({ ...DATA, sources: "Source: NSE" }).sources).toEqual([]);
   });
   it("is the error state for anything off its shape, never the raw value", () => {
     for (const bad of [null, "boom", { state: "exploded" }, { ...DATA, rows: [["2026-10-07"]] }, { ...DATA, rows: [[{}, "1"]] },
