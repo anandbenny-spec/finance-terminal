@@ -83,7 +83,7 @@ def _listed(instruction: str, old: str, new: str) -> list[list[tuple[str, str]]]
         sides = []
         for label, shown in _MUST_SIDE.findall(line):
             doc, text = ("previous", old) if label in ("Previous", "Removed") else ("new", new)
-            head = " ".join(shown.removesuffix(" …").split())
+            head = " ".join(shown.split(" … ")[0].removesuffix(" …").split())   # v29 shows each sentence: the first's
             found = next((text[s:e] for s, e in sentence_spans(text)
                           if " ".join(text[s:e].split()).startswith(head) or head.startswith(" ".join(text[s:e].split()))),
                          None)
