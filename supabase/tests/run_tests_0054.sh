@@ -122,15 +122,16 @@ check "C24 a row without a 64-hex visitor hash, or without answered, is refused"
   'a row with a 64-hex visitor_hash is required.*null value in column "answered"'
 
 # ---------------------------------------------------------------- the examples
-check "C25 no example checked yet: an empty list" \
-  "$(as_role service_role "select jsonb_array_length(api.cmdbar_examples())")" '^0$'
+check "C25 the list holds exactly the checked examples (another script leaves one; a fresh project has none)" \
+  "$(as_role service_role "select jsonb_array_length(api.cmdbar_examples())"; as_pg "select count(*) from ops.cmdbar_example where verified")" \
+  '^([0-9]+).\1$'
 as_pg "insert into ops.cmdbar_example (question, module, display_order, answer, verified) values
          ('r54 second', 'equity', 2, '{\"state\": \"answered\"}', true),
          ('r54 unchecked', 'policy', 0, '{\"state\": \"answered\"}', false),
          ('r54 first', 'policy', 1, '{\"state\": \"answered\"}', true)" >/dev/null
 check "C26 only the examples the admin checked, in display order" \
-  "$(as_role service_role "select string_agg(e->>'question', ',' order by o) from jsonb_array_elements(api.cmdbar_examples()) with ordinality x(e, o)")" \
-  '^r54 first,r54 second$'
+  "$(as_role service_role "select string_agg(e->>'question', ',' order by o) from jsonb_array_elements(api.cmdbar_examples()) with ordinality x(e, o)
+                           where e->>'question' like 'r54 %'")" '^r54 first,r54 second$'
 
 as_pg "delete from ops.cmdbar_usage where bucket in ('$V1', '$V2', 'global');
        delete from ops.cmdbar_cache where question_sha in (decode('$SHA','hex'), decode('$OLD','hex'));
