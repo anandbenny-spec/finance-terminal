@@ -60,7 +60,7 @@ def test_v25_is_v24s_text_with_v24s_schema_on_sonnet_and_is_current():
     v24, v25 = load_prompt("statement_diff_summary", "v24"), load_prompt("statement_diff_summary", "v25")
     assert v25.text == v24.text and v25.version == "v25"
     assert load_schema("statement_diff_summary", "v25") == load_schema("statement_diff_summary", "v24")
-    assert PROMPT_VERSION["statement_diff_summary"] == "v27" and summaries.DIFF_COUNTERPART_FROM == 25   # v27: round 24
+    assert PROMPT_VERSION["statement_diff_summary"] == "v28" and summaries.DIFF_COUNTERPART_FROM == 25   # v28: round 25
     assert summaries.DIFF_MODEL_OF["v25"] == summaries.DIFF_MODEL_OF["v24"]
     assert summaries.DIFF_EFFORT_OF["v25"] == summaries.DIFF_EFFORT_OF["v24"]
 
