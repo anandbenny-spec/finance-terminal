@@ -318,7 +318,7 @@ get() { grep "^$1|" <<<"$OUT" | head -1 | cut -d'|' -f2-; }
 plan() { sed -n "/^PLAN-$1-START/,/^PLAN-$1-END/p" <<<"$OUT"; }
 # Rows a scan of equity.transcript_page read and threw away: the "Rows Removed by Filter" lines of those scans' own nodes only (from a
 # node's line to the next node's "->"), never a neighbouring node's, whatever the plan's layout.
-removed_on_pages() { awk '/on transcript_page/ { f = 1; next } /->/ { f = 0 } f && /Rows Removed by Filter/ { n++ } END { print n + 0 }' <<<"$1"; }
+removed_on_pages() { awk '/on transcript_page/ { f = 1; next } /->/ { f = 0 } f && /Rows Removed by Filter/ { n += $NF } END { print n + 0 }' <<<"$1"; }
 # The most page rows any scan of equity.transcript_page returned per execution ("actual rows", the per-loop figure), whatever the join
 # method: each of those rows carries a visitor's row-level check. A probe returns the one page it needs; the range join reads many.
 page_rows_per_scan() { awk '/on transcript_page/ && match($0, /actual rows=[0-9]+/) { v = substr($0, RSTART + 12, RLENGTH - 12) + 0; if (v > m) m = v } END { print m + 0 }' <<<"$1"; }
@@ -365,8 +365,10 @@ check "P3 citation_pages as a visitor: each page is one backward index probe on 
   "$(grep -c 'Index Scan Backward using transcript_page_document_id_char_start_key' <<<"$CPN")" '^2$'
 check "P4 citation_pages as a visitor: each page scan returns the one page it needs, and none is read and thrown away" \
   "$(page_rows_per_scan "$CPN"):$(removed_on_pages "$CPN")" '^1:0$'
-check "P5 control: 0035's body reads many page rows a scan for the same citations (and more in all than the probes)" \
-  "$(page_rows_per_scan "$CPO"):$(( $(pages_read "$CPO") > $(pages_read "$CPN") ))" '^([2-9]|[1-9][0-9]+):1$'
+# The old body's waste shows as removed rows on its page scans (a nested-loop probe with a filter, as on dev) or as many rows per scan
+# (a merge or hash join reading every page, as on a small fixture); either counts.
+check "P5 control: 0035's body reads page rows it throws away for the same citations (removed by its scans' filter, or many rows a scan)" \
+  "$(( $(removed_on_pages "$CPO") > 0 || $(page_rows_per_scan "$CPO") > 1 )):$(( $(pages_read "$CPO") > $(pages_read "$CPN") || $(removed_on_pages "$CPO") > 0 ))" '^1:1$'
 
 check "V01 the same columns, names and types in order, as 0048's and 0035's bodies" "$(get COLS)" '^true:true$'
 check "V02 both views still security_invoker" "$(get OPTS)" '^call_guidance:security_invoker=true,citation_pages:security_invoker=true$'
