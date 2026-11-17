@@ -50,6 +50,17 @@ const PRODUCTION: FieldPolicyRow[] = [
   policy("equity.remarks_change", "labelled", "derived"),
   policy("ai.call_tone", "labelled", "AI-scored"),
 ];
+// Production on 17 Nov 2026 (#620): the outcomes labelled since 14 Nov (#532) and the results-day moves since 16 Nov (#577); the hit
+// rates and the summary hidden.
+const TODAY: FieldPolicyRow[] = [
+  policy("ai.call_summary", "hidden"),
+  policy("ai.guidance_extraction", "labelled", "AI-extracted"),
+  policy("equity.guidance_outcome", "labelled", "derived"),
+  policy("equity.guidance_hit_rate", "hidden"),
+  policy("equity.remarks_change", "labelled", "derived"),
+  policy("ai.call_tone", "labelled", "AI-scored"),
+  policy("equity.results_move", "labelled", "derived"),
+];
 const EVERY: FieldPolicyRow[] = [...SHOWN, policy("equity.remarks_change", "labelled", "derived"), policy("ai.call_tone", "labelled", "AI-scored"), policy("equity.results_move", "labelled", "derived")];
 
 const toneRow = (over: Record<string, unknown> = {}) => ({
@@ -75,6 +86,7 @@ function store(policies: FieldPolicyRow[], over: Store = {}): Store {
     call_guidance: [guidanceRow(8001)] as unknown as Row[],
     guidance_hit_rates: [],
     results_moves: [],
+    series: [{ key: "yf.^NSEI", name: "Nifty 50", market: "IN", attribution: "Source: NSE" }] as unknown as Row[],
     call_tone: [toneRow()] as unknown as Row[],
     ai_outputs: [output({ id: 9100, task: "call_tone" })] as unknown as Row[],
     ai_citations: [citationRow(9002), citationRow(9100), citationRow(8001)] as unknown as Row[],
@@ -84,31 +96,52 @@ function store(policies: FieldPolicyRow[], over: Store = {}): Store {
 }
 
 const WAVE1 = ["earnings_calls", "field_policy"];
-const WAVE3 = ["ai_citations", "ai_outputs", "citation_pages"];
+const WAVE3 = ["ai_outputs", "ai_citations", "citation_pages"];
 
-describe("the calls tab's waves (#516)", () => {
-  it("reads the calls list and the policies first, then the panels, then the quotes, never more than three at once (production's fields)", async () => {
+describe("the calls tab's waves (#516), one read at a time (#620)", () => {
+  // #620 (17 Nov 2026): a cold tab's reads cost about 0.45 to 0.75 s of database time as a visitor, and wave 2 fired five of the
+  // dearest at once, so several tabs first-loaded together timed out. The tab now reads one view at a time, in the waves' order.
+  it("reads the calls list and the policies first, then the panels, then the quotes, one at a time (production's fields of 13 Nov)", async () => {
     const { db, started, peak } = slowClient(store(PRODUCTION));
     const out = await readCallsTab(db, "tcs", undefined);
-    expect(started.slice(0, 2).sort()).toEqual(WAVE1);
-    expect(started.slice(2, 5).sort()).toEqual(["call_figures", "call_tone", "remarks_changes"]);
-    expect(started.slice(5).sort()).toEqual(WAVE3);
-    expect(peak()).toBeLessThanOrEqual(3);
+    expect(started).toEqual([...WAVE1, "call_figures", "remarks_changes", "call_tone", ...WAVE3]);
+    expect(peak()).toBe(1);
     expect(out.tone.state).toBe("ok");
     expect(out.remarks).toEqual([]);
   });
 
-  it("with every field open, wave 2 holds the six panel reads and wave 3 still three, so the peak is six, not ten", async () => {
+  it("with production's fields of 17 Nov (outcomes and results-day moves shown, hit rates hidden) the guidance record is read, one at a time", async () => {
+    const { db, started, peak } = slowClient(store(TODAY));
+    const out = await readCallsTab(db, "tcs", undefined);
+    expect(started).toEqual([...WAVE1, "call_figures", "remarks_changes", "call_guidance", "results_moves", "series", "call_tone", ...WAVE3]);
+    expect(peak()).toBe(1);
+    expect(out.guidance?.rows).toHaveLength(1);
+    expect(out.guidance?.rate).toBeNull();
+    expect(out.results.state).toBe("ok");
+  });
+
+  it("with every field open, every read still goes alone: never two in flight, where wave 2 used to hold six", async () => {
     const { db, started, peak } = slowClient(store(EVERY));
     await readCallsTab(db, "tcs", undefined);
-    // The Nifty 50's attribution (one `series` read) follows the results rows inside that panel's slot, so it is not a seventh at once.
-    expect(started.filter((v) => v === "series")).toHaveLength(1);
-    expect(started.indexOf("series")).toBeGreaterThan(started.indexOf("results_moves"));
-    started.splice(started.indexOf("series"), 1);
-    expect(started.slice(0, 2).sort()).toEqual(WAVE1);
-    expect(started.slice(2, 8).sort()).toEqual(["call_figures", "call_guidance", "call_tone", "guidance_hit_rates", "remarks_changes", "results_moves"]);
-    expect(started.slice(8).sort()).toEqual(WAVE3);
-    expect(peak()).toBeLessThanOrEqual(6);
+    // The Nifty 50's attribution (one `series` read) follows the results rows inside that panel's slot.
+    expect(started).toEqual([...WAVE1, "call_figures", "remarks_changes", "call_guidance", "guidance_hit_rates", "results_moves", "series", "call_tone", ...WAVE3]);
+    expect(peak()).toBe(1);
+  });
+
+  it("stops at a failed figures read: the tab fails and no other panel's read starts", async () => {
+    const { db, started } = slowClient(store(EVERY, { call_figures: undefined as unknown as Row[] }));
+    await expect(readCallsTab(db, "tcs", undefined)).rejects.toThrow();
+    expect(started).toEqual([...WAVE1, "call_figures"]);
+  });
+
+  it("a panel's failed read holds back only that panel, and the reads after it still run in turn", async () => {
+    const { db, started, peak } = slowClient(store(TODAY, { call_guidance: undefined as unknown as Row[] }));
+    const out = await readCallsTab(db, "tcs", undefined);
+    expect(out.guidance).toBeNull();
+    expect(out.results.state).toBe("ok");
+    expect(out.tone.state).toBe("ok");
+    expect(started).toEqual([...WAVE1, "call_figures", "remarks_changes", "call_guidance", "results_moves", "series", "call_tone", ...WAVE3]);
+    expect(peak()).toBe(1);
   });
 
   it("reads each of the outputs, citations and pages once, for every output the page quotes, and gives each panel its own", async () => {
