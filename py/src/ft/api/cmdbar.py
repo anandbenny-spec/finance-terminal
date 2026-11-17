@@ -49,7 +49,8 @@ VOYAGE_TIMEOUT_S = 10.0                                                  # one q
 READER_CONNECT_TIMEOUT_S = 5
 MAX_BODY_CHARS = 4_000
 PAGE_COLUMNS = ("item_type", "subtype", "slug", "title", "parent_slug")
-# 0054's functions: each one's arguments, by name, with their types (the SQL store casts to them).
+# 0054's functions (and 0055's two for the admin page, K-09 part 2, #588): each one's arguments, by name, with their types (the
+# SQL store casts to them).
 FUNCTIONS: dict[str, tuple[tuple[str, str], ...]] = {
     "cmdbar_state": (),
     "cmdbar_count": (("p_bucket", "text"), ("p_window_start", "timestamptz")),
@@ -59,6 +60,8 @@ FUNCTIONS: dict[str, tuple[tuple[str, str], ...]] = {
     "cmdbar_cache_hit": (("p_question_sha", "text"),),
     "cmdbar_log": (("p_row", "jsonb"),),
     "cmdbar_examples": (),
+    "cmdbar_examples_admin": (),
+    "cmdbar_example_check": (("p_id", "integer"), ("p_verified", "boolean")),
 }
 
 router = APIRouter(prefix="/api/cmdbar")
@@ -169,6 +172,20 @@ class FunctionStore:
         if not isinstance(rows, list):
             raise route_mod.StoreError("cmdbar_examples returned an unexpected value")
         return rows
+
+    def examples_admin(self) -> list[dict]:
+        """Every example, checked or not (0055; the admin page only, `ft.api.cmdbar_admin`)."""
+        rows = self._rpc("cmdbar_examples_admin", {})
+        if not isinstance(rows, list):
+            raise route_mod.StoreError("cmdbar_examples_admin returned an unexpected value")
+        return rows
+
+    def example_check(self, example_id: int, verified: bool) -> dict | None:
+        """Sets one example's `verified` (0055); None for an unknown id."""
+        got = self._rpc("cmdbar_example_check", {"p_id": example_id, "p_verified": verified}, empty_ok=True)
+        if got is not None and not isinstance(got, dict):
+            raise route_mod.StoreError("cmdbar_example_check returned an unexpected value")
+        return got
 
     def close(self) -> None:
         pass
