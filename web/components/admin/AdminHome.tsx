@@ -113,6 +113,12 @@ export function AdminHome() {
             </Link>
             <span className="text-ink-2">: Pass 2&apos;s evaluation sets, one item at a time.</span>
           </li>
+          <li>
+            <Link prefetch={false} href="/admin/cmdbar" className="text-ink-1 underline">
+              Command bar examples
+            </Link>
+            <span className="text-ink-2">: check each example answer once before the box shows it.</span>
+          </li>
           <li className="text-ink-2">Refresh: the refresh button in each Fed vs RBI panel&apos;s header.</li>
         </ul>
         <div>
