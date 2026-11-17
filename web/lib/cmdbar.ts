@@ -13,11 +13,15 @@
 //   never rounded, so the figure on screen is the row's figure (CLAUDE.md §1).
 // - **A document answer's chips** (K-08, #586): `documentAnswer` turns the route's verified references into CitationChip's
 //   citations; an RBI document is named (title, date, press-release number) and never linked to RBI's pages (CLAUDE.md §1).
+// - **The pages' lines** (K-12, #589; Spec 07 §7): About's "What is logged" names each `ops.cmdbar_log` column (`LOGGED`), and
+//   `/methodology`'s gate results are `api.eval_summary`'s rows (`gateLines`), never a figure written here.
 import { companyHref } from "@/lib/equity/company";
 import {
   NOT_AVAILABLE,
   dateInZone,
+  formatAxisNumber,
   formatCheckedTime,
+  formatCount,
   formatDate,
   formatExactDecimal,
   formatTableDate,
@@ -25,7 +29,7 @@ import {
 } from "@/lib/format";
 import { cutQuote, documentHref, type Citation } from "@/lib/policy/ai";
 import { meetingHref } from "@/lib/policy/decisions";
-import type { FieldPolicyRow } from "@/lib/queries/api";
+import type { EvalSummaryRow, FieldPolicyRow } from "@/lib/queries/api";
 import { NAV, visibleGroups } from "@/lib/shell/nav";
 
 // ------------------------------------------------------------------------------------------------ the gate (Spec 07 §3)
@@ -593,4 +597,71 @@ export function formatCell(value: Cell, kind: ColumnKind, market: Market | undef
   if (kind === "date" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return formatTableDate(value);
   if (kind === "timestamp" && /(Z|[+-]\d{2}:?\d{2})$/.test(value)) return formatCheckedTime(value, now);
   return value;
+}
+
+// ------------------------------------------------------------------------------------------------ the pages' lines (K-12)
+
+/**
+ * About's "What is logged" (K-12, #589; Spec 07 §7, N7): one line per kind of fact the route keeps, each naming the
+ * `ops.cmdbar_log` columns it describes (0010; written by `ft.cmdbar.log`). The test reads the table's columns from the
+ * migrations and checks that these lines name every one and nothing else, so the copy can't drift from the log.
+ */
+export type LoggedLine = { columns: readonly string[]; text: string };
+
+export const LOGGED: readonly LoggedLine[] = [
+  { columns: ["question", "at"], text: "the question as typed, and the time it was asked" },
+  {
+    columns: ["visitor_hash"],
+    text: "a daily-rotating anonymous hash: a code made with a secret key from the network address and the browser, which changes every day and can't be turned back into either",
+  },
+  {
+    columns: ["route", "cache_hit"],
+    text: "the route the question took (a page, a data question, a document question, or one the bar can't answer), and whether a stored answer was reused",
+  },
+  {
+    columns: ["generated_sql", "sql_valid", "reject_reason"],
+    text: "for a data question, the query that ran, whether the checks accepted it and, if not, the kind of reason",
+  },
+  { columns: ["rows_returned", "answered"], text: "the number of rows returned, and whether the question was answered" },
+  { columns: ["latency_ms"], text: "how long the answer took" },
+  { columns: ["models", "input_tokens", "output_tokens", "cost_usd"], text: "the AI models used, the tokens they read and wrote, and the cost" },
+  { columns: ["error_class"], text: "the kind of error, if one happened, never the error itself" },
+];
+
+/** `ops.cmdbar_log`'s columns that hold nothing about a question: the row's own number. */
+export const LOG_ROW_ID = ["id"] as const;
+
+/**
+ * The bar's three evaluation gates (Spec 07 §6; py/config/eval/gates.yaml, whose entries the test checks these against). The
+ * pass rules stay in gates.yaml; the page shows only the passing results `api.eval_summary` holds.
+ */
+export const CMDBAR_GATES = [
+  { key: "cmdbar_sql", evalSet: "cmdbar_sql", metric: "result_match", label: "Data questions, the share whose rows equal those of a checked answer" },
+  { key: "cmdbar_router", evalSet: "cmdbar_router", metric: "route_accuracy", label: "Routing, the share of questions sent to the right kind of answer" },
+  { key: "retrieval", evalSet: "retrieval", metric: "recall_at_8", label: "Document search, the share of questions whose expected passage was among those found" },
+] as const;
+
+export type GateLine = { key: string; label: string; result: { value: string; items: string; date: string } | null };
+
+/**
+ * Each gate's newest passing run from `api.eval_summary`, formatted as /accuracy formats it (the value to two decimals, the
+ * items as a count, the run's IST date); null where no passing run is recorded. Computes nothing: every figure is the row's.
+ */
+export function gateLines(rows: readonly EvalSummaryRow[]): GateLine[] {
+  return CMDBAR_GATES.map((g) => {
+    const row = rows
+      .filter((r) => r.eval_set === g.evalSet && r.metric === g.metric)
+      .sort((a, b) => b.run_at.localeCompare(a.run_at))[0];
+    return {
+      key: g.key,
+      label: g.label,
+      result: row
+        ? {
+            value: formatAxisNumber(row.value, 2),
+            items: row.n_items === null ? NOT_AVAILABLE : formatCount(row.n_items),
+            date: formatDate(dateInZone(row.run_at, "Asia/Kolkata")),
+          }
+        : null,
+    };
+  });
 }
