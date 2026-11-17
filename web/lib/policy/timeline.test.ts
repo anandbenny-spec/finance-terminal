@@ -99,7 +99,7 @@ describe("compareSentences", () => {
 
   it("is the same every time, and breaks a tie by taking the previous sentence's word as removed first", () => {
     expect(compareSentences("a b", "b a")).toEqual(compareSentences("a b", "b a"));
-    expect(compareSentences("a b", "b a")).toEqual([D("a"), E("b"), I(" a")]);
+    expect(compareSentences("a b", "b a")).toEqual([D("a "), E("b"), I(" a")]);
     expect(compareSentences("", "")).toEqual([]);
     expect(compareSentences("", "Alpha.")).toEqual([I("Alpha.")]);
   });
@@ -118,6 +118,25 @@ describe("compareSentences", () => {
     expect(ops.some((o) => o.op === "eq" && o.text.includes("per cent in"))).toBe(true);
     expect(rebuildNow(ops)).toBe(dec);
     expect(squash(rebuildBefore(ops))).toBe(squash(oct));
+  });
+
+  // #550: a struck run before a kept word the current sentence writes with no space. Both are live RBI cells (stance, 7 Feb 2025
+  // against 6 Dec 2024; inflation, 30 Sep 2022 against 5 Aug 2022), shortened to the stretch that matters.
+  it("ends a struck run with the previous sentence's space when the kept word has none before it (#550)", () => {
+    const ops = compareSentences("The MPC also decided to continue with the neutral stance.", "continue with the neutral stance.");
+    expect(ops).toEqual([D("The MPC also decided to "), E("continue with the neutral stance.")]);
+    expect(rebuildBefore(ops)).toBe("The MPC also decided to continue with the neutral stance.");
+    expect(rebuildNow(ops)).toBe("continue with the neutral stance.");
+    const yoy = compareSentences("CPI (year-on-year, y-o-y) rose.", "CPI (y-o-y) rose.");
+    expect(yoy).toEqual([E("CPI ("), D("year-on-year, "), E("y-o-y) rose.")]);
+    expect(rebuildBefore(yoy)).toBe("CPI (year-on-year, y-o-y) rose.");
+    expect(rebuildNow(yoy)).toBe("CPI (y-o-y) rose.");
+  });
+
+  it("leaves the space alone where the kept word has its own, and where nothing is struck", () => {
+    expect(compareSentences("a b c", "a c")).toEqual([E("a"), D(" b"), E(" c")]);
+    expect(compareSentences("( CPI rose", "(CPI rose")).toEqual([E("(CPI rose")]);
+    expect(compareSentences("a ( CPI", "a (CPI")).toEqual([E("a (CPI")]);
   });
 
   // A seeded property test: random sentences edited at random, with whitespace and hyphen variants thrown in. The fixture
@@ -157,6 +176,9 @@ describe("compareSentences", () => {
         const ops = compareSentences(previous, current);
         expect(rebuildNow(ops), `${n}: ${previous} | ${current}`).toBe(current);
         expect(squash(rebuildBefore(ops)), `${n}: ${previous} | ${current}`).toBe(squash(previous));
+        // #550: no word of the previous sentence is joined to its neighbour (the sentences are space-separated words)
+        const words = (s: string) => s.replace(/[‐‑]/g, "-").split(/\s+/).filter(Boolean);
+        expect(words(rebuildBefore(ops)), `${n}: ${previous} | ${current}`).toEqual(words(previous));
       }
     });
 
