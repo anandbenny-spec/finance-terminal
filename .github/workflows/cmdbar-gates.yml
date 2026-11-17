@@ -12,6 +12,8 @@
 # prices the run and checks that sql_reader may call search_chunks; with `send` on each question goes through the document route
 # (voyage-4-lite, search_chunks over Fed and RBI policy documents only, the cited answer): recall within the top 8 is scored, and
 # the answers' counts are recorded beside it. The Voyage key, like the model key, is present only on a run that sends.
+# `query_model` (retrieval only; K-10, #587): voyage-4 embeds the questions for Architecture 03 §0's comparison, recorded beside
+# the route's voyage-4-lite run and never as the gate.
 name: cmdbar-gates
 on:
   workflow_dispatch:
@@ -38,6 +40,11 @@ on:
         description: Stop before the run's spend in USD could pass this
         type: string
         default: "0.50"
+      query_model:
+        description: 'retrieval only: the questions'' Voyage model (voyage-4-lite is the route''s; voyage-4 is the comparison run)'
+        type: choice
+        options: [voyage-4-lite, voyage-4]
+        default: voyage-4-lite
 concurrency:
   group: cmdbar-gates
   cancel-in-progress: false
@@ -62,6 +69,7 @@ jobs:
           args=(--set "$SET" --split "$SPLIT" --max-cost "$MAX_COST")
           if [ -n "$ITEMS" ]; then args+=(--items "$ITEMS"); fi
           if [ "$SEND" = "true" ]; then args+=(--send); fi
+          if [ "$SET" = "retrieval" ]; then args+=(--query-model "$QUERY_MODEL"); fi
           uv run --locked python -m ft.eval.cmdbar "${args[@]}"
         env:
           SET: ${{ inputs.set }}
@@ -69,6 +77,7 @@ jobs:
           ITEMS: ${{ inputs.items }}
           SEND: ${{ inputs.send }}
           MAX_COST: ${{ inputs.max_cost }}
+          QUERY_MODEL: ${{ inputs.query_model }}
           # Dev's databases only: sql_reader (transaction pooler) for the answers and the golds, job_writer for the records.
           SQL_READER_DATABASE_URL: ${{ secrets.DEV_SQL_READER_DATABASE_URL }}
           JOB_DATABASE_URL: ${{ secrets.DEV_JOB_DATABASE_URL }}

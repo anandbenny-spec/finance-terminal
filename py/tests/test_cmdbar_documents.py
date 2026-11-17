@@ -413,6 +413,34 @@ def test_the_retrieval_dry_run_sends_nothing_and_a_sent_run_scores_records_and_l
     assert "SENTINEL" not in text and "neutral" not in text and "rbi.org.in" not in text
 
 
+def test_the_voyage_4_comparison_embeds_questions_with_voyage_4_and_is_never_recorded_as_the_gate():
+    """Architecture 03 §0: the retrieval evaluation also runs voyage-4 questions (K-10, #587). Only the questions' model changes,
+    the run says which model it used, and a comparison run is never `passed`, since the route embeds with voyage-4-lite."""
+    from test_cmdbar_runner import FakeWriter, run_main
+    fake = answering(both_cited)
+    emb, vo = voyage()
+    wr = FakeWriter()
+    code, lines = run_main(["--set", "retrieval", "--split", "test", "--send", "--items", "ret-t01", "--query-model", "voyage-4"],
+                           client=claude(fake), reader=RetrievalReader(), writer=wr, embedder=emb)
+    assert code == 0 and [(c["model"], c["input_type"], c["output_dimension"]) for c in vo.calls] == [("voyage-4", "query", 512)]
+    metrics, passed, notes = wr.runs[0][5:]
+    assert metrics.obj["embedding_model"] == "voyage-4" and passed is False and "comparison" in notes
+    assert '"query_model":"voyage-4"' in lines[0]
+
+    emb, vo = voyage()                                       # the default is the route's own model
+    wr = FakeWriter()
+    code, _ = run_main(["--set", "retrieval", "--split", "test", "--send", "--items", "ret-t01"], client=claude(fake),
+                       reader=RetrievalReader(), writer=wr, embedder=emb)
+    assert code == 0 and [c["model"] for c in vo.calls] == ["voyage-4-lite"] and wr.runs[0][5].obj["embedding_model"] == "voyage-4-lite"
+    assert "comparison" not in wr.runs[0][7]
+
+
+def test_the_query_model_option_is_refused_outside_the_retrieval_set():
+    from test_cmdbar_runner import run_main
+    with pytest.raises(SystemExit):
+        run_main(["--set", "cmdbar_router", "--split", "test", "--query-model", "voyage-4"])
+
+
 def test_the_retrieval_price_is_cents_and_its_worst_case_above_its_estimate():
     p = ev.price_run("retrieval", ev.load_items("retrieval", "dev"), None, date(2026, 11, 17))
     assert Decimal(0) < p["estimate"] < p["worst_case"] < Decimal("0.05") and len(p["per_item_worst"]) == 5

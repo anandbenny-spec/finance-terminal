@@ -300,7 +300,9 @@ def test_the_workflow_is_manual_with_no_target_input():
     wf = _wf()
     trigger = wf.get("on", wf.get(True))                                       # YAML 1.1 reads a bare `on` as True
     assert list(trigger) == ["workflow_dispatch"]
-    assert set(trigger["workflow_dispatch"]["inputs"]) == {"set", "split", "items", "send", "max_cost"}
+    assert set(trigger["workflow_dispatch"]["inputs"]) == {"set", "split", "items", "send", "max_cost", "query_model"}
+    qm = trigger["workflow_dispatch"]["inputs"]["query_model"]                 # K-10 (#587): the route's model by default
+    assert qm["options"] == list(ev.QUERY_MODELS) and qm["default"] == "voyage-4-lite"
     assert trigger["workflow_dispatch"]["inputs"]["send"]["default"] is False
     assert wf["permissions"] == {"contents": "read"} and wf["concurrency"]["cancel-in-progress"] is False
 
