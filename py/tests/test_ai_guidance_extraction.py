@@ -810,14 +810,14 @@ def test_a_hyphenated_ranges_second_figure_is_read_under_v6():
     ("This deal is expected to contribute 14 per cent revenue growth in FY27.", "revenue growth from the deal"),
     ("On a like-for-like basis revenue growth will be 14 per cent in FY27.", "revenue growth"),
 ])
-def test_a_qualified_measure_under_a_listed_key_goes_to_other_under_v6_and_is_never_scored(sentence, metric_text):
+def test_a_qualified_measure_under_a_listed_key_goes_to_other_under_every_version_and_is_never_scored(sentence, metric_text):
+    # #613: v1 (production's version) gets the rule too; until then a v1 reply kept the listed key and was scored (output 1053)
     t = T(sentence, metric_text=metric_text)
-    old, new = chk(one(sentence), [t]), chk6(one(sentence), [t])
-    assert [(x["metric"], x["not_scored_reason"]) for x in old.targets] == [("revenue_growth", None)]       # v1: as before
-    assert [(x["metric"], x["metric_label"], x["not_scored_reason"]) for x in new.targets] == [
-        ("other", METRICS.labels["other"], "no_filed_figure")]
-    assert new.targets[0]["metric_text"] == metric_text and new.moved == {"qualified_metric": 1} and not new.drops
-    assert content(new, attempt=1, reply=None, metrics=METRICS)["moved"] == {"qualified_metric": 1}
+    for got in (chk(one(sentence), [t]), chk6(one(sentence), [t])):
+        assert [(x["metric"], x["metric_label"], x["not_scored_reason"]) for x in got.targets] == [
+            ("other", METRICS.labels["other"], "no_filed_figure")]
+        assert got.targets[0]["metric_text"] == metric_text and got.moved == {"qualified_metric": 1} and not got.drops
+        assert content(got, attempt=1, reply=None, metrics=METRICS)["moved"] == {"qualified_metric": 1}
 
 
 def test_a_plain_measure_keeps_its_key_under_v6_and_v1s_content_has_no_moved_entry():
@@ -828,12 +828,12 @@ def test_a_plain_measure_keeps_its_key_under_v6_and_v1s_content_has_no_moved_ent
     assert "moved" not in content(chk(one(GROWTH), [T(GROWTH)]), attempt=1, reply=None, metrics=METRICS)
 
 
-def test_a_qualified_stated_figure_is_dropped_under_v6_since_it_can_not_be_other():
+def test_a_qualified_stated_figure_is_dropped_under_every_version_since_it_can_not_be_other():
+    # #613: v1 too (until then a v1 reply kept it under its listed key)
     s = "Adjusted EBITDA margin was 21.3 per cent in Q2 FY27."
     st = S(s, metric="ebitda_margin", metric_text="adjusted EBITDA margin", value=21.3, unit="pct")
-    assert len(chk(one(s), stated=[st]).stated) == 1
-    c = chk6(one(s), stated=[st])
-    assert c.stated == [] and c.drops == {"qualified_stated": 1} and "qualified_stated" in ge.DROPS
+    for c in (chk(one(s), stated=[st]), chk6(one(s), stated=[st])):
+        assert c.stated == [] and c.drops == {"qualified_stated": 1} and "qualified_stated" in ge.DROPS
 
 
 @pytest.mark.parametrize("scope, stored", [
@@ -870,3 +870,101 @@ def test_a_v6_request_has_24000_max_tokens_and_its_own_input_hash():
     v6 = ge.guidance_request(call, load_prompt(ge.TASK, "v6"), load_schema(ge.TASK, "v6"))
     assert v6.max_tokens == 24_000 and v6.params()["max_tokens"] == 24_000 and v6.input_sha256 != v5.input_sha256
     assert "WHOSE FIGURE, AND WHICH FIGURE" in v6.params()["system"] and "guidance_extraction v6" not in v6.params()["system"]
+
+
+# ---------------------------------------------------------------------------------------------- #613 (2B-09c): v1 replies
+def test_a_v1_stated_pat_figure_that_says_adjusted_is_dropped_and_a_v1_target_moves_to_other():
+    # #542 part 2's output 1053: a consolidated adjusted PAT stored as `pat`, and scored. Synthetic text only.
+    st = "Our consolidated adjusted PAT was 805 crore in Q2 FY27."
+    c = chk(one(st), stated=[S(st, metric="pat", metric_text="consolidated adjusted PAT", value=805)])
+    assert c.stated == [] and c.drops == {"qualified_stated": 1} and not c.moved
+    tg = "We expect adjusted PAT of 3,200 crore in FY27."
+    (t,) = chk(one(tg), [T(tg, metric="pat", metric_text="PAT", value=3200, unit="inr", growth_basis="level")]).targets
+    assert (t["metric"], t["metric_text"], t["value"], t["not_scored_reason"]) == ("other", "PAT", "3200", "no_filed_figure")
+
+
+def test_a_v1_quote_without_a_qualifier_is_unchanged():
+    st, tg = "Our consolidated PAT was 805 crore in Q2 FY27.", "We expect PAT of 3,200 crore in FY27."
+    c = chk(doc((RAO, "management", f"{st} {tg}")), [T(tg, metric="pat", metric_text="PAT", value=3200, unit="inr",
+                                                       growth_basis="level")],
+            [S(st, metric="pat", metric_text="consolidated PAT", value=805)])
+    assert [(x["metric"], x["not_scored_reason"]) for x in c.targets] == [("pat", None)]
+    assert [(x["metric"], x["value"]) for x in c.stated] == [("pat", "805")] and not c.drops and not c.moved
+    assert "moved" not in content(c, attempt=1, reply=None, metrics=METRICS)
+
+
+# ---------------------------------------------------------------------------------------------- #613 (2B-09c): a figure pair read as years
+BAND = "We expect EBITDA margin of 27 to 28 per cent."
+
+
+def pair(quote: str, low=27, high=28, start=2027, end=2028, **kw) -> dict:
+    """A margin range stored, as #542 part 2's output 2217 was, as a multi-year period FY<start> to FY<end>."""
+    return T(quote, metric="ebitda_margin", metric_text="EBITDA margin", kind="range", value=None, low=low, high=high,
+             period_kind="multi_year", fiscal_year=end, start_fiscal_year=start, period_text="FY27 to FY28",
+             growth_basis="level") | kw
+
+
+@pytest.mark.parametrize("version", [None, "v1", "v6"])
+def test_a_band_read_as_fy27_to_fy28_with_no_year_in_its_quote_is_kept_undated(version):
+    c = check({"targets": [pair(BAND)], "stated_figures": []}, one(BAND), METRICS, version=version)
+    (t,) = c.targets
+    assert (t["low"], t["high"], t["kind"], t["metric"]) == ("27", "28", "range", "ebitda_margin")
+    assert (t["period_kind"], t["target_start"], t["target_end"], t["period_text"]) == ("undated", None, None, None)
+    assert t["not_scored_reason"] == "undated" and c.moved == {"figure_pair_not_years": 1} and not c.drops
+    assert content(c, attempt=1, reply=None, metrics=METRICS)["moved"] == {"figure_pair_not_years": 1}
+
+
+@pytest.mark.parametrize("quote", [
+    "We expect EBITDA margin of 27 to 28 per cent across FY27 and FY28.",
+    "We expect EBITDA margin of 27 to 28 per cent in FY 28.",
+    "We expect EBITDA margin of 27 to 28 per cent by F'28.",
+    "We expect EBITDA margin of 27 to 28 per cent by 2028.",
+    "We expect EBITDA margin of 27 to 28 per cent over the next two financial years.",
+    "We expect EBITDA margin of 27 to 28 per cent this fiscal and the next.",
+    "We expect EBITDA margin of 27 to 28 per cent next year.",
+])
+def test_a_quote_that_names_a_year_keeps_its_period(quote):
+    c = chk(one(quote), [pair(quote)])
+    (t,) = c.targets
+    assert (t["period_kind"], t["target_start"], t["target_end"], t["period_text"]) == (
+        "multi_year", "2026-04-01", "2028-03-31", "FY27 to FY28")
+    assert t["not_scored_reason"] is None and not c.moved
+
+
+@pytest.mark.parametrize("quote, low, high, start, end", [
+    ("We expect EBITDA margin of 26 to 28 per cent.", 26, 28, 2027, 2028),       # the pair differs from the years
+    ("We expect EBITDA margin of 27 to 28 per cent.", 27, 28, 2028, 2029),       # the years differ from the pair
+    ("We expect EBITDA margin of 27 to 28 per cent.", 27, 28, 2027, 2029),
+])
+def test_a_pair_that_differs_from_the_years_is_unchanged(quote, low, high, start, end):
+    c = chk(one(quote), [pair(quote, low=low, high=high, start=start, end=end)])
+    (t,) = c.targets
+    assert t["period_kind"] == "multi_year" and t["target_start"] is not None and not c.moved
+
+
+def test_the_four_digit_form_is_moved_where_the_quote_writes_figures_and_kept_where_it_writes_years():
+    grouped = "We will spend capital expenditure of 2,027 to 2,028 crore."
+    c = chk(one(grouped), [pair(grouped, low=2027, high=2028, metric="capex", metric_text="capital expenditure", unit="inr")])
+    assert c.targets[0]["period_kind"] == "undated" and c.moved == {"figure_pair_not_years": 1}
+    bare = "We will spend capital expenditure of 2027 to 2028 crore."                 # a four-digit year as written: kept
+    c = chk(one(bare), [pair(bare, low=2027, high=2028, metric="capex", metric_text="capital expenditure", unit="inr")])
+    assert c.targets[0]["period_kind"] == "multi_year" and not c.moved
+
+
+def test_only_a_target_the_period_checks_keep_is_moved_and_one_they_drop_stays_dropped():
+    over = "We expect EBITDA margin of 24 to 25 per cent."                            # read as FY24 to FY25: ended before the call
+    assert chk(one(over), [pair(over, low=24, high=25, start=2024, end=2025)]).drops == {"period_over": 1}
+    far = "We expect EBITDA margin of 45 to 50 per cent."                             # read as FY45 to FY50: implausible
+    assert chk(one(far), [pair(far, low=45, high=50, start=2045, end=2050)]).drops == {"period_invalid": 1}
+
+
+@pytest.mark.parametrize("quote, named", [
+    ("margin in FY27", True), ("margin in FY 27", True), ("margin in FY'27", True), ("margin in FY-27", True),
+    ("margin in FY2027", True), ("margin in fy27", True), ("margin in F27", True), ("margin in F'28", True),
+    ("margin this FY", True), ("margin by 2028", True), ("this financial year", True), ("this fiscal", True),
+    ("next year", True), ("over two years", True), ("year-on-year growth in FY27", True),
+    ("27 to 28 per cent", False), ("27 to 28 per cent year-on-year", False), ("growth year on year", False),
+    ("growth year over year", False), ("capex of 2,027 crore", False), ("in Q3 and H2", False), ("of 27%", False),
+])
+def test_what_names_a_year_in_a_quote(quote, named):
+    assert ge.names_year(quote) is named
