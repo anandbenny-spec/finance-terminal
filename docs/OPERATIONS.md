@@ -194,6 +194,18 @@ key was refused", "no API credits left"): it fails no run, sends nothing and los
 published. Documents stored from then on wait for their summaries until a key and credits return, and the pages show labelled
 states instead of errors. To switch AI off deliberately for a manual run, set the `ai` input to `off` on `daily` or `watch`.
 
+**A run over the $5 run limit (#373).** Each AI run first adds up the worst case of what it would send (every new request and a
+retry, at full output length and the batch price); `CLAUDE.md` §7's $5 run limit stays. The earnings calls' task
+(`equity.calls_ai`: the call summaries, the guidance extractions and the tone scores) **sends what fits and leaves the rest**:
+the extractions first, then the summaries, then the tone scores, then the retries, each newest filing first, up to $5 of worst
+case. The rest wait, and the next run takes them because they still lack an output, so a busy results week (more than about 10
+new calls; likely mid-January to mid-February) drains over a few Sunday `weekly` runs with nothing to do by hand. The run's
+`ai_spend` warning and the `ai_run_estimate` alert say how many requests went and how many targets wait. The monthly switch
+(`ai_monthly_budget_usd`) is checked after the run limit, request by request: when it is lower than what is left of the $5, it is
+the switch that stops sending, and the `ai_budget:<month>` alert says so with its own count (the targets then wait for the next
+month, or for the switch to be raised). The Fed and RBI task (`policy.ai_batch`) keeps the old rule: a run over $5 sends nothing
+more.
+
 ### 5.4 What breaks first, and how it shows
 
 1. **The daily load fails**: the FRED key, a source's page layout changing, a database or storage problem. Shows as "Update delayed"
