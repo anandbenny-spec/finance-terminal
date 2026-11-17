@@ -14,6 +14,10 @@
 # the answers' counts are recorded beside it. The Voyage key, like the model key, is present only on a run that sends.
 # `query_model` (retrieval only; K-10, #587): voyage-4 embeds the questions for Architecture 03 §0's comparison, recorded beside
 # the route's voyage-4-lite run and never as the gate.
+# `examples` (K-09, #588) isn't a set: it is the dev trial of the task `cmdbar.examples` while it is disabled (`python -m
+# ft.jobs.tasks.cmdbar_examples --target dev`): one refresh job run on dev, recorded in ops.job_run and ops.task_run, that answers
+# the chips of config/cmdbar/examples.yaml through the route and stores them in ops.cmdbar_example, unchecked. `split`, `items`,
+# `max_cost` and `query_model` don't apply (the task holds its own run cap); with `send` off no model is asked (`ai_off`).
 name: cmdbar-gates
 on:
   workflow_dispatch:
@@ -21,7 +25,7 @@ on:
       set:
         description: The evaluation set
         type: choice
-        options: [cmdbar_sql, cmdbar_router, retrieval]
+        options: [cmdbar_sql, cmdbar_router, retrieval, examples]
         default: cmdbar_sql
       split:
         description: 'dev: prompt work (K-04, K-06); test: the gate (K-10) and the judge (K-11) only (Spec 07 N5)'
@@ -66,6 +70,10 @@ jobs:
       - run: uv sync --locked
       - name: Gate run
         run: |
+          if [ "$SET" = "examples" ]; then
+            uv run --locked python -m ft.jobs.tasks.cmdbar_examples --target dev --runner github --github-run-id "$GITHUB_RUN_ID" --git-sha "$GITHUB_SHA"
+            exit $?
+          fi
           args=(--set "$SET" --split "$SPLIT" --max-cost "$MAX_COST")
           if [ -n "$ITEMS" ]; then args+=(--items "$ITEMS"); fi
           if [ "$SEND" = "true" ]; then args+=(--send); fi

@@ -21,7 +21,8 @@ def test_repo_config_loads():
                           "equity.call_transcripts", "equity.call_text", "equity.calls_ai", "equity.rate_reactions",
                           "equity.results_reactions", "equity.valuation", "equity.snapshot", "equity.guidance_scores", "equity.call_scores",
                           "us.universe", "us.prices", "us.corporate_actions", "us.filings", "us.valuation_inputs",
-                          "us.metrics", "us.beta", "us.valuation", "us.snapshot", "cmdbar.log_retention"}
+                          "us.metrics", "us.beta", "us.valuation", "us.snapshot", "cmdbar.log_retention",
+                          "cmdbar.examples"}
     # the due-rule names are kept as tasks.yaml writes them (Prompt 01 A2)
     # a daily rule may add the decision-day catch-up (#158: `every 16 hours or fomc_catch_up`; test_catch_up_rules.py)
     assert tasks["policy.fed_documents"].rules == {"daily": "every 16 hours or fomc_catch_up", "watch": "fomc_decision_day"}
@@ -30,8 +31,9 @@ def test_repo_config_loads():
     assert tasks["policy.calendar"].min_interval == timedelta(days=25)
     assert tasks["policy.fed_documents"].min_interval == timedelta(hours=16)
     assert tasks["policy.fed_documents"].overdue_after == timedelta(days=3)
-    # every task is enabled since Pass 1b built policy.reactions (#70); `enabled: false` is still honoured (below)
-    assert [k for k, t in tasks.items() if not t.enabled] == []
+    # every task is enabled since Pass 1b built policy.reactions (#70), but for cmdbar.examples, which ships disabled until the
+    # command bar's go-live (K-09, #588; Spec 07 §3); `enabled: false` is honoured (below)
+    assert [k for k, t in tasks.items() if not t.enabled] == ["cmdbar.examples"]
 
 
 def with_reactions_disabled(tmp_path):

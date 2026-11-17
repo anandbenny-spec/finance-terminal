@@ -261,6 +261,24 @@ def _ask(question, ip, user_agent, deps, store, emit, t0) -> dict:
     return out
 
 
+def answer(question: str, deps: Deps, store: Store, emit: Callable[[str], None] = lambda line: None) \
+        -> tuple[dict, bool, LogRow]:
+    """Steps 4 and 5 alone, for an asker that isn't a visitor: the example chips' precompute (K-09, `cmdbar.examples`). The
+    router, then the data, document, page or unsupported route, exactly as `ask` runs them, with no switch, limits, cache or
+    log (those are for visitors; the task has its own spend rules). `store` answers `page` and `freshness` only. Returns the
+    final object, whether `ask` would cache it, and the row holding its route, models, tokens and cost (never written to
+    `ops.cmdbar_log`). Never raises: anything unforeseen is "can't answer", not cacheable, with the error class `internal`."""
+    a = _Ask(deps, store, LogRow("", question), deps.clock())
+    try:
+        out, keep = _dispatch(a, question, emit)
+    except Exception as e:                               # noqa: BLE001 - as `ask`: never a raw error
+        _note("answer", e)
+        a.row.error_class = "internal"
+        out, keep = final("cant_answer", summary=CANT_TEXT, pages=SUGGESTED_PAGES), False
+    out["ms"] = a.row.latency_ms = a.ms()
+    return out, keep, a.row
+
+
 def _limit(a: _Ask, which: str) -> dict:
     a.row.answered, a.row.error_class = False, f"{which}_limit"
     return final("limit", summary=PAUSED_TEXT, ms=a.ms())
