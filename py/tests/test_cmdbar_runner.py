@@ -308,7 +308,8 @@ def test_the_workflow_is_manual_with_no_target_input():
 def test_the_workflow_reaches_dev_only_and_the_model_only_when_it_sends():
     text = WORKFLOW.read_text()
     assert set(re.findall(r"secrets\.([A-Za-z0-9_]+)", text)) == {"DEV_SQL_READER_DATABASE_URL", "DEV_JOB_DATABASE_URL",
-                                                                   "ANTHROPIC_API_KEY"}
+                                                                   "ANTHROPIC_API_KEY", "VOYAGE_API_KEY"}   # Voyage: K-06
     env = _wf()["jobs"]["run"]["steps"][-1]["env"]
     assert env["ANTHROPIC_API_KEY"] == "${{ inputs.send && secrets.ANTHROPIC_API_KEY || '' }}"
+    assert env["VOYAGE_API_KEY"] == "${{ inputs.send && secrets.VOYAGE_API_KEY || '' }}"
     assert "${{" not in _wf()["jobs"]["run"]["steps"][-1]["run"]               # inputs reach the script through env only

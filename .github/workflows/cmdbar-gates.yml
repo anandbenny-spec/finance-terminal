@@ -8,7 +8,10 @@
 # prices itself from config/ai_prices.yaml and, for cmdbar_sql, logs in as sql_reader and runs the golds (the transaction
 # pooler, port 6543). With `send` on it answers, records one ops.eval_run and one ops.eval_result per item on dev as job_writer,
 # and stops before spend could pass `max_cost`. Annotations hold ids, counts, classes and costs only: never a row, a summary
-# line or a figure (this repository and its run logs are public: CLAUDE.md §4). Retrieval (the third set) is K-06's.
+# line or a figure (this repository and its run logs are public: CLAUDE.md §4). `retrieval` (K-06, #584): with `send` off it only
+# prices the run and checks that sql_reader may call search_chunks; with `send` on each question goes through the document route
+# (voyage-4-lite, search_chunks over Fed and RBI policy documents only, the cited answer): recall within the top 8 is scored, and
+# the answers' counts are recorded beside it. The Voyage key, like the model key, is present only on a run that sends.
 name: cmdbar-gates
 on:
   workflow_dispatch:
@@ -16,7 +19,7 @@ on:
       set:
         description: The evaluation set
         type: choice
-        options: [cmdbar_sql, cmdbar_router]
+        options: [cmdbar_sql, cmdbar_router, retrieval]
         default: cmdbar_sql
       split:
         description: 'dev: prompt work (K-04, K-06); test: the gate (K-10) and the judge (K-11) only (Spec 07 N5)'
@@ -69,5 +72,6 @@ jobs:
           # Dev's databases only: sql_reader (transaction pooler) for the answers and the golds, job_writer for the records.
           SQL_READER_DATABASE_URL: ${{ secrets.DEV_SQL_READER_DATABASE_URL }}
           JOB_DATABASE_URL: ${{ secrets.DEV_JOB_DATABASE_URL }}
-          # The model key is present only on a run that sends, so a price check cannot reach the model.
+          # The model keys are present only on a run that sends, so a price check cannot reach a model.
           ANTHROPIC_API_KEY: ${{ inputs.send && secrets.ANTHROPIC_API_KEY || '' }}
+          VOYAGE_API_KEY: ${{ inputs.send && secrets.VOYAGE_API_KEY || '' }}

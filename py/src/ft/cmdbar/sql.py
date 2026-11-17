@@ -134,6 +134,14 @@ class Reader:
             return Result([d.name for d in cur.description or []], [tuple(r) for r in cur.fetchall()])
         return self._in_transaction(go)
 
+    def select(self, sql: str, params: tuple = ()) -> Result:
+        """One of this package's own fixed queries, with its parameters, in the same read-only transaction (the document
+        route's `semantic.search_chunks` call: K-06). Never a model's query: those go through the guard and `run`."""
+        def go():
+            cur = self.conn.execute(sql, params)
+            return Result([d.name for d in cur.description or []], [tuple(r) for r in cur.fetchall()])
+        return self._in_transaction(go)
+
     def describe(self, views=None) -> tuple[list[ViewDoc], list[str]]:
         """(each view of `views` (default: the guard's VIEWS) that sql_reader can select, with its comments; the curated
         peer-group names). A view sql_reader can't select is left out, so the caller can see it is missing."""

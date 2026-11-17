@@ -6,7 +6,11 @@ through the route's own code (`ft/cmdbar`) on dev and scores it with the rules S
 
 **Sets.** `cmdbar_sql`: each item's question goes through `ft.cmdbar.sql.answer_data` (prompt, guard, the read-only run as
 `sql_reader`, one Sonnet retry, the summary); its gold SQL goes through the same guard and runs on the same database
-(golds are SQL, never rows: N4). `cmdbar_router`: each question goes through `ft.cmdbar.router.route`. Retrieval is K-06's.
+(golds are SQL, never rows: N4). `cmdbar_router`: each question goes through `ft.cmdbar.router.route`. `retrieval` (K-06, #584):
+each question goes through `ft.cmdbar.documents.answer_documents`, the document route's own code (`voyage-4-lite`,
+`search_chunks` over Fed and RBI policy documents only with `k => 8`, then the cited answer), with no router filters (as the set
+says); the item's expected passage (its document and character span) is scored against the passages retrieval returned, and the
+answer's cited sentences are counted beside it.
 
 **Scoring** (Spec 07 §6):
 - `cmdbar_sql`, result-set match: the model's rows equal the gold's as multisets of tuples on the gold's columns; each gold column
@@ -20,11 +24,18 @@ through the route's own code (`ft/cmdbar`) on dev and scores it with the rules S
   the cross-currency items.
 - `cmdbar_router`, route accuracy; filter agreement is reported beside it where the gold states filters. Pass: at least 90%,
   and no unanswerable (`unsupported`) item routed to data or documents.
+- `retrieval`, recall within the top 8: an item is a hit when any returned passage of its document (bank, document type and
+  meeting) overlaps its span; the mean reciprocal rank is reported. Pass: recall at least 0.85, and no returned row that isn't a
+  Fed or RBI policy document (N3: a tightening, decided by Claude under the standing delegation, 17 Nov 2026, #584). Reported
+  beside it, never part of the rule: each answer's state, sentences kept and dropped, its verified citations, whether one cites
+  the expected document, transcript characters (always 0) and RBI links (always 0).
 A dev-split run is prompt work, never the gate: its `passed` is false whatever its numbers (N5).
 
 **Spend.** Without `--send` nothing reaches a model: it prices the run from `config/ai_prices.yaml` (the estimate and the worst
-case, every request using its whole token cap and every SQL item retried on Sonnet) and, for `cmdbar_sql`, runs the golds. With
-`--send`, the run stops before any item whose worst case would take its actual spend past `--max-cost`.
+case, every request using its whole token cap and every SQL item retried on Sonnet) and, for `cmdbar_sql`, runs the golds (for
+`retrieval`, it checks that `sql_reader` may call `search_chunks`; no question is embedded). With `--send`, the run stops before
+any item whose worst case would take its actual spend past `--max-cost`. `retrieval`'s Voyage tokens (about 20 a question) are
+within Voyage's free allowance, so they are counted at no cost (config/ai_prices.yaml's `voyage` note).
 
 **Writes** one `ops.eval_run` and one `ops.eval_result` per item on dev, as `job_writer` (`JOB_DATABASE_URL`): counts, the
 query that ran and the summary line, never the rows. **Prints** annotations with ids, counts, classes and costs only: never a
@@ -51,19 +62,24 @@ from pglast import ast, parse_sql, stream
 from pglast.parser import ParseError
 
 from ft.ai import sqlguard
-from ft.ai.client import CONFIG, MILLION, AIError, Client, Request, price_entry
+from ft.ai.client import CONFIG, MILLION, AIError, Client, Embedder, Request, price_entry
+from ft.cmdbar import documents as documents_mod
 from ft.cmdbar import router as router_mod
 from ft.cmdbar import sql as sql_mod
 from ft.cmdbar import summary as summary_mod
 
 SETS_DIR = CONFIG / "eval" / "sets"
-SETS = ("cmdbar_sql", "cmdbar_router")
+SETS = ("cmdbar_sql", "cmdbar_router", "retrieval")
 SPLITS = ("dev", "test")
 DEFAULT_MAX_COST = Decimal("0.50")
 SUMMARY_INPUT_TOKENS_EST = 2_500          # a summary request with 50 rows of a wide view, over-estimated
+PASSAGE_CHARS_EST = 2_500                 # one retrieved passage (the chunker cuts about 1,800 characters), over-estimated
 MAX_ASSIGNMENTS = 20_000                  # column-matching search limit (sets have a handful of columns)
 GATE = {"cmdbar_sql": "accuracy >= 0.85 and cross-currency accuracy == 1.0 (test split; Spec 07 §6)",
-        "cmdbar_router": "route accuracy >= 0.90 and no unanswerable item answered (test split; Spec 07 §6)"}
+        "cmdbar_router": "route accuracy >= 0.90 and no unanswerable item answered (test split; Spec 07 §6)",
+        "retrieval": "recall within the top 8 >= 0.85 and no row that isn't a Fed or RBI policy document (test split; Spec 07 §6, N3)"}
+SEARCH_EXECUTABLE_SQL = ("select has_function_privilege('semantic.search_chunks(extensions.halfvec, text, text[], text[], date, "
+                         "date, integer)', 'execute')")
 
 
 # ---------------------------------------------------------------------------------------------- the sets
@@ -236,11 +252,17 @@ class ItemResult:
     predicted_filters: dict | None = None
     cost_usd: Decimal = Decimal(0)
     ms: int = 0
+    rank: int | None = None                    # retrieval: the first returned passage holding the expected span (1-based)
+    returned: int | None = None                # retrieval: the Fed and RBI policy passages returned
+    foreign: int | None = None                 # retrieval: returned rows that weren't such a passage (always 0: N3)
+    retrieved: list | None = None              # retrieval: [document_id, chunk_no] of each returned passage, best first
+    answer: dict | None = None                 # retrieval: the cited answer's counts (`answer_counts`)
 
     def annotation(self) -> dict:
-        """What the log may show: ids, classes, counts, costs. Never a row, a summary or the SQL."""
+        """What the log may show: ids, classes, counts, costs. Never a row, a summary, a passage or the SQL."""
         out = {"id": self.id, "correct": self.correct, "reason": self.reason}
-        for k in ("gold_rows", "model_rows", "error_class", "route", "gold_route", "filters_agree"):
+        for k in ("gold_rows", "model_rows", "error_class", "route", "gold_route", "filters_agree", "rank", "returned",
+                  "foreign", "answer"):
             if (v := getattr(self, k)) is not None:
                 out[k] = v
         if self.models:
@@ -316,6 +338,46 @@ def score_router_item(item: dict, got: router_mod.Route | None, error_class: str
     return r
 
 
+def expected_rank(item: dict, chunks: list[documents_mod.Chunk]) -> int | None:
+    """The rank (1-based) of the first returned passage of the item's document that overlaps its span, or None."""
+    want = (item["bank"], item["doc_type"], item["event_slug"])
+    for n, c in enumerate(chunks, 1):
+        if (c.bank, c.doc_type, c.event_slug) == want and c.char_start < item["char_end"] and c.char_end > item["char_start"]:
+            return n
+    return None
+
+
+def answer_counts(item: dict, ans: documents_mod.DocAnswer) -> dict:
+    """The cited answer's counts (never its text): sentences kept and dropped, verified citations, whether one cites the
+    expected document, transcript characters and RBI links in what a visitor would see (both always 0)."""
+    want = (item["bank"], item["doc_type"], item["event_slug"])
+    refs = [r for s in ans.kept for r in s.refs]
+    seen = json.dumps({"c": ans.citations, "d": ans.documents}, ensure_ascii=False).lower()
+    transcript = sum(len(r.quote) for r in refs if not ans.chunks[r.chunk].is_policy)
+    return {"state": ans.state, "kept": len(ans.kept), "dropped": len(ans.dropped), "refs": len(refs),
+            "cites_expected": any((ans.chunks[r.chunk].bank, ans.chunks[r.chunk].doc_type, ans.chunks[r.chunk].event_slug) == want
+                                  for r in refs),
+            "transcript_chars": transcript, "rbi_links": seen.count("rbi.org.in")}
+
+
+def score_retrieval_item(item: dict, ans: documents_mod.DocAnswer | None, error_class: str | None, cost: Decimal,
+                         ms: int) -> ItemResult:
+    r = ItemResult(item["id"], False, "", cost_usd=cost, ms=ms)
+    if ans is None:
+        r.reason, r.error_class = f"error: {error_class}", error_class
+        return r
+    r.rank = expected_rank(item, ans.chunks)
+    r.correct, r.reason = r.rank is not None, ("hit" if r.rank is not None else "miss")
+    r.returned, r.foreign = len(ans.chunks), ans.foreign
+    r.retrieved = [[c.document_id, c.chunk_no] for c in ans.chunks]
+    r.state, r.summary, r.error_class = ans.state, ans.summary, ans.error_class
+    r.models = [ans.model] if ans.model else []
+    r.answer = answer_counts(item, ans)
+    if ans.error_class and not ans.chunks:
+        r.reason = f"error: {ans.error_class}"
+    return r
+
+
 # ---------------------------------------------------------------------------------------------- metrics
 def _frac(n: int, d: int) -> float | None:
     return round(n / d, 4) if d else None
@@ -365,6 +427,27 @@ def router_rule_met(m: dict) -> bool:
     return m["accuracy"] is not None and m["accuracy"] >= 0.90 and m["unanswerable"]["answered"] == 0
 
 
+def retrieval_metrics(results: list[ItemResult]) -> dict:
+    n = len(results)
+    hits = sum(1 for r in results if r.correct)
+    answers = [r.answer for r in results if r.answer is not None]
+    return {
+        "n": n, "hits": hits, "recall_at_8": _frac(hits, n),
+        "mrr": round(sum(1 / r.rank for r in results if r.rank) / n, 4) if n else None,
+        "foreign": sum(r.foreign or 0 for r in results), "errors": sum(1 for r in results if r.reason.startswith("error")),
+        "reasons": dict(Counter(r.reason for r in results)),
+        "answers": {"n": len(answers), "states": dict(Counter(a["state"] for a in answers)),
+                    "sentences_kept": sum(a["kept"] for a in answers), "sentences_dropped": sum(a["dropped"] for a in answers),
+                    "refs": sum(a["refs"] for a in answers), "cites_expected": sum(1 for a in answers if a["cites_expected"]),
+                    "transcript_chars": sum(a["transcript_chars"] for a in answers),
+                    "rbi_links": sum(a["rbi_links"] for a in answers)},
+    }
+
+
+def retrieval_rule_met(m: dict) -> bool:
+    return m["recall_at_8"] is not None and m["recall_at_8"] >= 0.85 and m["foreign"] == 0
+
+
 # ---------------------------------------------------------------------------------------------- price
 def _price(model: str, on: date) -> dict:
     m, _, _ = price_entry(model, on)
@@ -387,13 +470,25 @@ def sql_item_worst(question: str, prompt, on: date) -> Decimal:
     return request_cost(first, on) + request_cost(retry, on) + summary
 
 
+def answer_request_est(question: str) -> Request:
+    """A document answer's request with 8 passages of PASSAGE_CHARS_EST characters: what retrieval could send, over-estimated."""
+    chunk = documents_mod.Chunk(0, 0, 0, PASSAGE_CHARS_EST, None, None, "x" * PASSAGE_CHARS_EST, "fomc_statement",
+                                "FOMC statement, 1 Jan 2026", "fed", None, None, None)
+    return documents_mod.request(question, [chunk] * documents_mod.K)
+
+
 def price_run(set_name: str, items: list[dict], prompt, on: date) -> dict:
     """{estimate, worst_case, per_item_worst} in USD. The estimate: the first request uncached once, then cache reads, about
-    1,500 output tokens, a summary, no retry. The worst case: every request at its cap, every SQL item retried on Sonnet."""
+    1,500 output tokens, a summary, no retry. The worst case: every request at its cap, every SQL item retried on Sonnet. A
+    retrieval item: one answer request over 8 passages (uncached: each has its own passages), about 400 output tokens."""
     est = worst = Decimal(0)
     per = {}
     for n, it in enumerate(items):
-        if set_name == "cmdbar_sql":
+        if set_name == "retrieval":
+            req = answer_request_est(it["question"])
+            w = request_cost(req, on)
+            e = request_cost(req, on, output_tokens=400)
+        elif set_name == "cmdbar_sql":
             req = sql_mod.request(it["question"], prompt)
             w = sql_item_worst(it["question"], prompt, on)
             p = _price(req.model_id, on)
@@ -420,7 +515,8 @@ def record(conn, set_name: str, split: str, set_version: str, model: str, prompt
         for r in results:
             predicted = {"state": r.state, "route": r.route, "sql": r.sql, "rows": r.model_rows, "error_class": r.error_class,
                          "models": r.models, "guard": r.guard_verdict, "reason": r.reason, "summary": r.summary,
-                         "summary_grounded": r.summary_grounded, "filters": r.predicted_filters}
+                         "summary_grounded": r.summary_grounded, "filters": r.predicted_filters, "rank": r.rank,
+                         "retrieved": r.retrieved, "foreign": r.foreign, "answer": r.answer}
             conn.execute(
                 """insert into ops.eval_result (eval_run_id, item_key, expected, predicted, correct, latency_ms, cost_usd)
                    values (%s, %s, %s, %s, %s, %s, %s)""",
@@ -443,7 +539,7 @@ def _connect_writer(dsn: str):
     return conn
 
 
-def main(argv: list[str] | None = None, *, env=None, out=print, client=None, reader=None, writer=None,
+def main(argv: list[str] | None = None, *, env=None, out=print, client=None, reader=None, writer=None, embedder=None,
          today=lambda: datetime.now(UTC).date()) -> int:
     env = os.environ if env is None else env
     p = argparse.ArgumentParser(prog="python -m ft.eval.cmdbar", description=__doc__.split("\n\n")[0])
@@ -458,12 +554,14 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
         items = load_items(args.set, args.split, ids or None)
     except ValueError as e:
         p.error(str(e))
-    needs_reader = args.set == "cmdbar_sql"
+    needs_reader = args.set in ("cmdbar_sql", "retrieval")
     if needs_reader and reader is None and not (env.get("SQL_READER_DATABASE_URL") or "").strip():
         p.error("SQL_READER_DATABASE_URL is not set (the workflow reads the DEV_ secret)")
     if args.send:
         if client is None and not (env.get("ANTHROPIC_API_KEY") or "").strip():
             p.error("ANTHROPIC_API_KEY is not set")
+        if args.set == "retrieval" and embedder is None and not (env.get("VOYAGE_API_KEY") or "").strip():
+            p.error("VOYAGE_API_KEY is not set")
         if writer is None and not (env.get("JOB_DATABASE_URL") or "").strip():
             p.error("JOB_DATABASE_URL is not set (the workflow reads the DEV_ secret)")
     on = today()
@@ -475,14 +573,20 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
     golds: dict[str, tuple] = {}
     own_reader = False
     try:
-        if needs_reader:
-            if reader is None:
-                try:
-                    reader = sql_mod.Reader.connect(env["SQL_READER_DATABASE_URL"].strip())
-                except sql_mod.ReaderDown as e:
-                    out(f"::error title=sql_reader::could not connect as sql_reader ({e})")
-                    return 1
-                own_reader = True
+        if needs_reader and reader is None:
+            try:
+                reader = sql_mod.Reader.connect(env["SQL_READER_DATABASE_URL"].strip())
+            except sql_mod.ReaderDown as e:
+                out(f"::error title=sql_reader::could not connect as sql_reader ({e})")
+                return 1
+            own_reader = True
+        if args.set == "retrieval":
+            try:
+                info["search_chunks_executable"] = bool(reader.select(SEARCH_EXECUTABLE_SQL).rows[0][0])
+            except (sql_mod.QueryError, sql_mod.ReaderDown) as e:
+                out(f"::error title=sql_reader::could not check search_chunks as sql_reader ({type(e).__name__})")
+                return 1
+        elif needs_reader:
             docs, groups = reader.describe()
             missing = sorted(sqlguard.VIEWS - {d.name for d in docs})
             prompt = sql_mod.sql_prompt(sql_mod.render_views(docs, groups))
@@ -507,6 +611,9 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
             return 0
 
         claude = client or Client(env["ANTHROPIC_API_KEY"].strip())
+        voyage = embedder
+        if args.set == "retrieval" and voyage is None:
+            voyage = Embedder(env["VOYAGE_API_KEY"].strip())
         results: list[ItemResult] = []
         spent, stopped = Decimal(0), False
         for it in items:
@@ -519,6 +626,13 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
                 ans = sql_mod.answer_data(claude, reader, it["question"], prompt)
                 g = golds.get(it["id"], (None, None, 0))
                 r = score_sql_item(it, g[0], g[1], ans)
+            elif args.set == "retrieval":
+                t0 = time.monotonic()
+                try:
+                    doc = documents_mod.answer_documents(claude, voyage, reader, it["question"])
+                    r = score_retrieval_item(it, doc, None, doc.cost_usd, doc.ms)
+                except AIError as e:                        # no key or no credit (Voyage's or Claude's): recorded, not raised
+                    r = score_retrieval_item(it, None, type(e).__name__, Decimal(0), int((time.monotonic() - t0) * 1000))
             else:
                 t0 = time.monotonic()
                 try:
@@ -542,6 +656,16 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
                 it = next(i for i in items if i["id"] == r.id)
                 return {"answerable": it["answerable"], "rows": gold_rows.get(r.id), "cross_currency": bool(it.get("cross_currency")),
                         "ordered": bool(it.get("ordered")), "family": it.get("family")}
+        elif args.set == "retrieval":
+            metrics = retrieval_metrics(results)
+            met = retrieval_rule_met(metrics)
+            prompt_version, model = documents_mod.PROMPT_VERSION, documents_mod.MODEL
+            metrics |= {"embedding_model": "voyage-4-lite", "k": documents_mod.K, "banks": list(documents_mod.BANKS),
+                        "doc_types": list(documents_mod.DOC_TYPES)}
+
+            def expected_of(r: ItemResult) -> dict:
+                it = next(i for i in items if i["id"] == r.id)
+                return {k: it[k] for k in ("bank", "doc_type", "event_slug", "char_start", "char_end")}
         else:
             metrics = router_metrics(results)
             met = router_rule_met(metrics)

@@ -130,6 +130,9 @@ TASKS: dict[str, TaskSpec] = {
     "cmdbar_router": TaskSpec("json", "low", 3_000),
     "cmdbar_sql": TaskSpec("json", "medium", 8_000),
     "cmdbar_summary": TaskSpec("json", "low", 3_000),
+    # The command bar's document answers (Spec 07 §4 step 5b; K-06, #584): the citations route over the 8 passages retrieval
+    # returned, effort low, a short answer (one to four sentences) with headroom for thinking. Real time only.
+    "cmdbar_answer": TaskSpec("citations", "low", 4_000),
 }
 
 
