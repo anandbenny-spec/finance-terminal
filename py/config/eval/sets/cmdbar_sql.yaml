@@ -2081,15 +2081,15 @@ items:
   - id: sql-r3-e21
     split: test
     family: equity
-    question: What was Tata Steel's consolidated revenue in the quarter to 30 September 2026?
+    question: What was Tata Steel's consolidated revenue in the quarter to 30 June 2026?
     answerable: true
     gold_sql: |
       select revenue
       from company_financials
-      where nse_symbol = 'TATASTEEL' and basis = 'consolidated' and period_kind = 'quarter' and period_end = date '2026-09-30'
+      where nse_symbol = 'TATASTEEL' and basis = 'consolidated' and period_kind = 'quarter' and period_end = date '2026-06-30'
     cross_currency: false
     ordered: false
-    notes: Revenue from operations, full rupees.
+    notes: Revenue from operations, full rupees. (Written for the quarter to 30 September 2026, whose gold was empty on dev; moved to June before any model run.)
   - id: sql-r3-e22
     split: test
     family: equity
