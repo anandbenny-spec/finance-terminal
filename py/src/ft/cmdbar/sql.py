@@ -1,6 +1,6 @@
 """The data route (Spec 07 §4 step 5a; Architecture 03 §1.7): question → SQL → guard → read-only run → summary.
 
-**The prompt** (`config/prompts/cmdbar_sql/v5.md`): the rules (only these views; never across currencies; say so if it can't be
+**The prompt** (`config/prompts/cmdbar_sql/v6.md`): the rules (only these views; never across currencies; say so if it can't be
 answered), worked examples, and the views' descriptions. **The descriptions are generated at run time from the views'
 COMMENTs, read through `sql_reader` and cached by the caller** (decided by Claude under the standing delegation, 16 Nov 2026,
 K-04 #582; the alternative was a file generated at build time with a CI test against the migrations): the text is then always
@@ -39,7 +39,7 @@ from ft.cmdbar import as_data, clean_question
 from ft.cmdbar import summary as summary_mod
 
 TASK = "cmdbar_sql"
-PROMPT_VERSION = "v5"          # v2 (16 Nov 2026): a view's columns only; v3 to v5 (17 Nov 2026, #587): runs 45's and 50's miss classes
+PROMPT_VERSION = "v6"          # v2 (16 Nov 2026): a view's columns only; v3 to v6 (17 Nov 2026, #587): runs 45's, 50's and 52's miss classes
 FIRST_MODEL, RETRY_MODEL = HAIKU, SONNET
 STATEMENT_TIMEOUT = "3s"
 PLACEHOLDERS = ("{{VIEWS}}", "{{FUNCTIONS}}", "{{CASTS}}")

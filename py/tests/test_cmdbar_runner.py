@@ -139,6 +139,29 @@ R2_X07 = ("WITH latest AS (SELECT series_name, max(date) AS latest_date FROM mar
           "change_pct_12m DESC")
 
 
+# The same item answered with prompt v5 (dev run 52, 17 Nov 2026): the year-ago level comes from a LATERAL subquery tied to the
+# series by its own WHERE.
+R2_X07_LATERAL = ("WITH s AS (SELECT series_name, date, value, currency FROM market_daily WHERE (series_name ILIKE '%Sensex%' OR "
+                  "series_name ILIKE '%Nasdaq Composite%') AND value IS NOT NULL) SELECT l.series_name, l.latest_date, lv.currency, "
+                  "lv.value AS latest_value, p.base_date, p.value AS year_ago_value, round((lv.value / p.value - 1) * 100, 2) AS "
+                  "change_pct_12m FROM (SELECT series_name, max(date) AS latest_date FROM s GROUP BY series_name) AS l INNER JOIN "
+                  "s AS lv ON lv.series_name = l.series_name AND lv.date = l.latest_date INNER JOIN LATERAL (SELECT x.date AS "
+                  "base_date, x.value FROM s AS x WHERE x.series_name = l.series_name AND x.date <= l.latest_date - CAST('12 "
+                  "months' AS interval) ORDER BY x.date DESC LIMIT 1) AS p ON TRUE ORDER BY change_pct_12m DESC")
+
+
+def test_a_lateral_subquerys_correlation_ties_it_to_the_same_series():
+    cc = ev.money_comparison
+    cols = ["series_name", "latest_date", "currency", "latest_value", "base_date", "year_ago_value", "change_pct_12m"]
+    row = ("Sensex", date(2026, 11, 9), "INR", Decimal(2), date(2025, 11, 7), Decimal(1), Decimal("3.5"))
+    assert cc(R2_X07_LATERAL, cols, [row], (0, 6)) is None
+    # tied to nothing (no correlation on an entity key), or to another series: still money
+    untied = R2_X07_LATERAL.replace("x.series_name = l.series_name AND ", "")
+    assert cc(untied, cols, [row], (0, 6)) == "orders_by_figure"
+    other = R2_X07_LATERAL.replace("x.series_name = l.series_name", "x.series_name = 'Nifty 50'")
+    assert cc(other, cols, [row], (0, 6)) == "orders_by_figure"
+
+
 def test_a_ratio_of_one_companys_or_one_series_own_money_is_currency_neutral():
     """Anand, 17 Nov 2026, 14:13 IST (#587, option A point 1): the same company or series on both sides of a ratio, by the
     query's join keys (or one row's own columns), makes it currency-neutral; a ratio across companies or series is still money."""
@@ -317,7 +340,7 @@ def test_a_sent_dev_run_records_every_item_never_passes_and_logs_no_rows():
     items = ev.load_items("cmdbar_sql", "dev")
     assert code == 0 and len(wr.results) == len(items) and len(wr.runs) == 1
     eval_set, set_version, model, prompt_version, n, metrics, passed, notes = wr.runs[0]
-    assert (eval_set, set_version, model, prompt_version, n, passed) == ("cmdbar_sql", "f" * 40, "claude-haiku-5-5", "v5",
+    assert (eval_set, set_version, model, prompt_version, n, passed) == ("cmdbar_sql", "f" * 40, "claude-haiku-5-5", "v6",
                                                                          len(items), False)
     assert metrics.obj["split"] == "dev" and metrics.obj["complete"] and "not the gate" in notes
     assert metrics.obj["correct"] == len(items) - sum(1 for i in items if not i["answerable"])

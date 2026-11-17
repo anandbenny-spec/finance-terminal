@@ -284,8 +284,8 @@ def _equalities(node):
 
 class _Scope:
     """One SELECT's row sources (the alias of each FROM item) and which of them name the same company or series: those an
-    equality on one entity key ties together, in a JOIN's ON or USING or among the WHERE's top-level AND terms (transitively:
-    `m1 = l` and `m0 = l` on series_name make m1 and m0 one series)."""
+    equality on one entity key ties together, in a JOIN's ON or USING, among the WHERE's top-level AND terms, or in a LATERAL
+    subquery's WHERE as its correlation (transitively: `m1 = l` and `m0 = l` on series_name make m1 and m0 one series)."""
 
     def __init__(self, sel: ast.SelectStmt):
         self.aliases: list[str] = []
@@ -302,11 +302,33 @@ class _Scope:
                     if qa is not None and qb is not None:
                         self._union(qa, qb)
 
+    def _correlated(self, sub) -> set[str]:
+        """The sources of this SELECT that a (LATERAL) subquery in its FROM ties itself to: an equality on an entity key in the
+        subquery's WHERE between its own rows (all one company or series) and an earlier source (`x.series_name = l.series_name`)."""
+        if not isinstance(sub, ast.SelectStmt) or not sub.fromClause:
+            return set()
+        inner = _Scope(sub)
+        if not inner.aliases or not inner.same_entity(set(inner.aliases)):
+            return set()
+        out = set()
+        for eq in _equalities(sub.whereClause):
+            a, b = eq.lexpr, eq.rexpr
+            if not (isinstance(a, ast.ColumnRef) and isinstance(b, ast.ColumnRef) and _colname(a) == _colname(b)
+                    and _colname(a) in ENTITY_KEYS):
+                continue
+            for mine, theirs in ((a, b), (b, a)):
+                q = _qualifier(theirs)
+                if q is not None and q not in inner._parent and q in self._parent and inner.source(mine) is not None:
+                    out.add(q)
+        return out
+
     def _add(self, item, conditions: list) -> list[str]:
+        tied: set[str] = set()
         if isinstance(item, ast.RangeVar):
             names = [item.alias.aliasname if item.alias else item.relname]
         elif isinstance(item, ast.RangeSubselect):
             names = [item.alias.aliasname] if item.alias else []
+            tied = self._correlated(item.subquery) if names else set()
         elif isinstance(item, ast.JoinExpr):
             left, right = self._add(item.larg, conditions), self._add(item.rarg, conditions)
             names = left + right
@@ -322,6 +344,8 @@ class _Scope:
             if n not in self._parent:
                 self.aliases.append(n)
                 self._parent[n] = n
+        for q in tied:
+            self._union(names[0], q)
         return names
 
     def _find(self, a: str) -> str:
