@@ -29,6 +29,11 @@
 --  * `limit 1` with `order by char_start desc` and the char_end check outside the probe, so a span past the last page's end costs
 --    one probe, not a scan back through every page. Alternative: the char_end check inside the probe (same rows, a longer scan in
 --    that case only).
+--  * The span's last code point is written `p.char_start < c.char_end` and `c.char_end <= p2.char_end`, not 0035's
+--    `c.char_end - 1 >= p.char_start` and `c.char_end - 1 < p.char_end` (the same for integers). Under a visitor's row-level
+--    security Postgres 17 won't put a non-leakproof function (`-`, int4mi) into an index condition ahead of the policy, so with
+--    `c.char_end - 1` the probe scanned back from the transcript's last page and ran the policy on every page (CI on PR #625:
+--    9 pages thrown away in the test's 12 citations). Alternative: keep the subtraction (the same rows, the long scan).
 
 ------------------------------------------------------------------ api.call_guidance (body: 0048's, the first-statement lookup gated)
 create or replace view api.call_guidance with (security_invoker = true) as
@@ -103,15 +108,15 @@ cross join lateral (   -- the page holding the span's first code point: the last
   order by p.char_start desc
   limit 1
 ) p1
-cross join lateral (   -- the page holding the span's last code point
+cross join lateral (   -- the page holding the span's last code point (c.char_end - 1): the last page that starts before c.char_end
   select p.pdf_page, p.char_end
   from equity.transcript_page p
-  where p.document_id = c.document_id and p.char_start <= c.char_end - 1
+  where p.document_id = c.document_id and p.char_start < c.char_end
   order by p.char_start desc
   limit 1
 ) p2
 where c.verified and c.kind = 'document_span'
-  and c.char_start < p1.char_end and c.char_end - 1 < p2.char_end
+  and c.char_start < p1.char_end and c.char_end <= p2.char_end
   and (o.task <> 'call_summary' or core.call_summary_version_ok(o.prompt_version))
   and (d.event_id is null or (ev.id is not null and es.id is not null and not es.is_suppressed));
 

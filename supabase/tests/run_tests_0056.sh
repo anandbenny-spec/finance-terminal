@@ -361,8 +361,8 @@ check "P2 control: 0048's body runs the lookup on every row as a visitor (no nev
   "$(grep -E 'guidance_outcome o1' <<<"$CGO" | grep -vc 'never executed')" '^[1-9][0-9]*$'
 CPN="$(plan CP-NEW)"; CPO="$(plan CP-OLD)"
 check "P2b the 40-page transcript: the same 12 rows from both bodies (the plan checks' rows)" "$(get CPP)" '^0:12:12$'
-check "P3 citation_pages as a visitor: each page is one backward index probe on (document_id, char_start)" \
-  "$(grep -c 'Index Scan Backward using transcript_page_document_id_char_start_key' <<<"$CPN")" '^2$'
+check "P3 citation_pages as a visitor: each page is one backward index probe on (document_id, char_start), char_start in the index condition of both" \
+  "$(grep -c 'Index Scan Backward using transcript_page_document_id_char_start_key' <<<"$CPN"):$(grep -c 'Index Cond: ((document_id = c.document_id) AND (char_start' <<<"$CPN")" '^2:2$'
 P4="$(page_rows_per_scan "$CPN"):$(removed_on_pages "$CPN")"
 check "P4 citation_pages as a visitor: each page scan returns at most the one page it needs (an average a run, so 0 or 1), and none is read and thrown away (rows a scan, rows removed: $P4)" \
   "$P4" '^[01]:0$'
