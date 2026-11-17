@@ -270,13 +270,21 @@ describe("instants", () => {
     expect(dateInZone("2026-12-03T18:30Z", "Asia/Kolkata")).toBe("2026-12-04");
   });
 
-  it("gives an Indian filing's day in IST and leaves a US filing on the instant's UTC date", () => {
+  it("gives an Indian filing's day in IST and a US filing the filing date SEC assigns", () => {
     // NSE's list date, stored as midnight IST: 20 Oct 2026 is 18:30 UTC on the 19th.
     expect(filingDay("2026-10-19T18:30:00+00:00", "IN")).toBe("2026-10-20");
     // A results filing broadcast at 00:40 IST.
     expect(filingDay("2026-07-24T19:10:00+00:00", "IN")).toBe("2026-07-25");
     expect(filingDay("2026-07-24T10:00:00+00:00", "IN")).toBe("2026-07-24");
-    expect(filingDay("2026-10-29T01:30:00+00:00", "US")).toBe("2026-10-29");
+    // A US filing accepted on a Friday evening (17:45 ET, 21:45 UTC): SEC's filing date is the next business day, Monday.
+    expect(filingDay("2026-11-13T22:45:00+00:00", "US", "2026-11-16")).toBe("2026-11-16");
+    // A weekday evening acceptance after the 17:30 ET cut-off (20:10 ET Tuesday is 01:10 UTC Wednesday): SEC's date is Wednesday.
+    expect(filingDay("2026-10-29T01:10:00+00:00", "US", "2026-10-29")).toBe("2026-10-29");
+    // The instant's UTC date is never used for a US row: no filing date, no day.
+    expect(filingDay("2026-10-29T01:30:00+00:00", "US")).toBeNull();
+    expect(filingDay("2026-10-29T01:30:00+00:00", "US", null)).toBeNull();
+    // An Indian row ignores a filing date it doesn't carry.
+    expect(filingDay("2026-10-19T18:30:00+00:00", "IN", "2026-01-01")).toBe("2026-10-20");
     expect(filingDay(null, "IN")).toBeNull();
     expect(filingDay(undefined, "US")).toBeNull();
   });

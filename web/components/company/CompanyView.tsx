@@ -90,7 +90,7 @@ const BANK_LINES: LineSpec[] = [
 const latest = (dates: (string | null | undefined)[]): string | null => dates.filter((d): d is string => Boolean(d)).sort().at(-1) ?? null;
 
 /** The day of the newest filing among the rows, in the filing's market (lib/format.ts `filingDay`). */
-const lastFiled = (rows: readonly CompanyFinancialRow[]): string | null => latest(rows.map((r) => filingDay(r.filed_at, r.market)));
+const lastFiled = (rows: readonly CompanyFinancialRow[]): string | null => latest(rows.map((r) => filingDay(r.filed_at, r.market, r.filing_date)));
 
 function BasisToggle({ slug, basis, available }: { slug: string; basis: Basis; available: Basis[] }) {
   return (

@@ -39,6 +39,32 @@ describe("the statement table's filing link", () => {
   });
 });
 
+describe("a US filing's Filed day (#448)", () => {
+  const us = (over: Record<string, unknown>) =>
+    html(
+      page({
+        tab: "financials",
+        overview: null,
+        financials: {
+          financials: [financial("quarter", "2026-09-26", { market: "US", currency: "USD", filed_at: "2026-11-13T22:45:00+00:00", ...over })],
+          metrics: [],
+          promoter: [],
+        },
+      }),
+    );
+  it("shows the filing date SEC assigns, not the acceptance instant's UTC date", () => {
+    // Accepted Friday 13 Nov at 17:45 ET (22:45 UTC): SEC's filing date is Monday 16 Nov.
+    const out = us({ filing_date: "2026-11-16" });
+    expect(out).toContain("Filed 16 Nov 2026");
+    expect(out).not.toContain("Filed 13 Nov 2026");
+  });
+  it("shows no day, never a guess, while the filing date isn't stored", () => {
+    const out = us({ filing_date: null });
+    expect(out).not.toContain("Filed 13 Nov 2026");
+    expect(out).toContain("Filing");
+  });
+});
+
 describe("the promoter panel's filing link", () => {
   const corrected = (url: string | null) =>
     promoter("2021-12-31", { promoter_pct: 66.13, correction: "percent_for_fraction", label_kind: "derived", filed_pct: 6613, share_ratio_pct: 66.13, nse_pct: 66.1, source_url: url });

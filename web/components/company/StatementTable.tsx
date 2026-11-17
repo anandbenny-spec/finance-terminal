@@ -19,7 +19,8 @@ type Line = { id: string; label: ReactNode; cells: Map<string, ReactNode> };
 const colId = (r: CompanyFinancialRow) => `${r.period_kind}-${r.period_end}`;
 
 function FilingLink({ row }: { row: CompanyFinancialRow }) {
-  const text = row.filed_at ? `Filed ${formatDate(filingDay(row.filed_at, row.market))}` : "Filing";
+  const day = filingDay(row.filed_at, row.market, row.filing_date);
+  const text = day ? `Filed ${formatDate(day)}` : "Filing";
   // A stored URL that isn't https:// renders as text, not a link (the check the other filing links make; #367).
   if (!row.source_url?.startsWith("https://")) return <span>{text}</span>;
   return (
