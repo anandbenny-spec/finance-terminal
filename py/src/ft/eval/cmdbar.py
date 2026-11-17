@@ -42,8 +42,10 @@ document, page or unsupported answer), exactly as `cmdbar.examples` asks its chi
 answer is recorded with its slug, unresolved. It isn't a set and never a gate: one `ops.eval_run` (`eval_set =
 'cmdbar_questions'`, `passed` false) and one `ops.eval_result` per question (`q1` to `q5`; `expected` holds the question,
 `predicted` the route, state, guard verdict and reason class, the re-printed query, the rows returned, the summary, the
-citation count, the models and the cost; `correct` empty). Its annotations hold, per question, only the route, the state, the
-guard's verdict and reason class, the rows returned and the cost: never the question, the summary, a row or the query.
+citation count, the models and the cost, and since K-13 (#630) the source lines, whether it was a "latest" question and the pages
+offered; `correct` empty). Its annotations hold, per question, only the route, the state, the guard's verdict and reason class,
+the rows returned, the cost, and (K-13) the number of source lines, whether "Source: NSE" is one, whether it was a latest question
+and the number of pages: never the question, the summary, a row, the query or a source line's text.
 
 **Spend.** Without `--send` nothing reaches a model: it prices the run from `config/ai_prices.yaml` (the estimate and the worst
 case, every request using its whole token cap and every SQL item retried on Sonnet) and, for `cmdbar_sql`, runs the golds (for
@@ -986,18 +988,24 @@ class QuestionResult:
     models: list[str] = field(default_factory=list)
     cost_usd: Decimal = Decimal(0)
     ms: int = 0
+    sources: list[str] = field(default_factory=list)   # a data answer's source lines (K-13, #630)
+    latest: bool = False                               # a "latest" question (K-13's check and date floor apply)
+    pages: int = 0                                     # pages offered (a latest question's not-found: the meeting's page)
 
     def annotation(self) -> dict:
-        """What the log may show (K-11a's rule): the route, the state, the guard's verdict and class, the rows returned and the
-        cost. Never the question, the summary, a row or the query."""
+        """What the log may show (K-11a's rule, and K-13's counts): the route, the state, the guard's verdict and class, the rows
+        returned, the cost, how many source lines the answer carries and whether "Source: NSE" is one, whether it was a latest
+        question, and how many pages it offered. Never the question, the summary, a row, the query or a source line's text."""
         return {"id": self.id, "route": self.route, "state": self.state, "guard": self.guard, "guard_class": self.guard_class,
-                "rows": self.rows, "cost_usd": f"{self.cost_usd:.6f}"}
+                "rows": self.rows, "cost_usd": f"{self.cost_usd:.6f}", "sources": len(self.sources),
+                "source_nse": "Source: NSE" in self.sources, "latest": self.latest, "pages": self.pages}
 
     def predicted(self) -> dict:
         return {"route": self.route, "state": self.state, "guard": self.guard, "guard_class": self.guard_class, "sql": self.sql,
                 "rows": self.rows, "summary": self.summary, "sentences": self.sentences, "citations": self.citations,
                 "documents": self.documents, "page_slug": self.page_slug, "error_class": self.error_class,
-                "models": self.models, "cost_usd": f"{self.cost_usd:.6f}", "ms": self.ms}
+                "models": self.models, "cost_usd": f"{self.cost_usd:.6f}", "ms": self.ms, "sources": self.sources,
+                "latest": self.latest, "pages": self.pages}
 
 
 def question_result(qid: str, question: str, out: dict, row) -> QuestionResult:
@@ -1010,14 +1018,20 @@ def question_result(qid: str, question: str, out: dict, row) -> QuestionResult:
         sql=out.get("sql") or row.generated_sql, rows=row.rows_returned, summary=out.get("summary"),
         sentences=len(cites), citations=sum(len(c.get("refs") or []) for c in cites), documents=len(out.get("documents") or []),
         page_slug=pages[0].get("slug") if out.get("state") == "page" and pages else None, error_class=row.error_class,
-        models=list(row.models), cost_usd=row.cost_usd, ms=int(out.get("ms") or 0))
+        models=list(row.models), cost_usd=row.cost_usd, ms=int(out.get("ms") or 0),
+        sources=[x for x in out.get("sources") or [] if isinstance(x, str)], latest=documents_mod.asks_latest(question),
+        pages=len(pages))
 
 
 def questions_metrics(results: list[QuestionResult]) -> dict:
     return {"n": len(results), "routes": dict(Counter(str(r.route) for r in results)),
             "states": dict(Counter(str(r.state) for r in results)),
             "guard": dict(Counter(str(r.guard) for r in results)),
-            "error_classes": dict(Counter(r.error_class for r in results if r.error_class))}
+            "error_classes": dict(Counter(r.error_class for r in results if r.error_class)),
+            # K-13 (#630): every answered data answer carries its source lines
+            "data_answers_with_sources": sum(1 for r in results if r.route == "data" and r.state == "answered" and r.sources),
+            "data_answers_without_sources": sum(1 for r in results
+                                                if r.route == "data" and r.state == "answered" and not r.sources)}
 
 
 def record_questions(conn, set_version: str, model: str, prompt_version: str, metrics: dict,
