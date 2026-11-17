@@ -2,8 +2,8 @@
 cause it finds). The diagnosis (#445, 17 Nov 2026, 23:00 IST): every rule (c) failure of rounds 22 to 26 was an RBI target
 whose vote or projection was set beside the wrong sentence, or shown from one side only, in the fallback and on the model's
 route alike, because what sits beside what was decided by word overlap. `statement_diff_summary` v30
-(`summaries.DIFF_FACTS_FROM`) pairs the votes and the committee's projections by fact, read from each stored text by module
-1's own readers (`ai_batch.diff_facts`). The sentences below are cut from the named resolutions' stored texts on dev (only
+(`summaries.DIFF_FACTS_FROM`) pairs the votes and the committee's projections by fact, read from each stored text by the
+task's own reading (`summaries.resolution_facts`, through `ai_batch.diff_facts`). The sentences below are cut from the named resolutions' stored texts on dev (only
 whole sentences, in their order; a paragraph keeps its number). v29 keeps its rules, and a Fed pair is read as before. No
 database and no model."""
 from types import SimpleNamespace
@@ -188,7 +188,7 @@ def test_v30_is_v29s_text_plus_one_sentence_and_is_current():
     assert load_schema("statement_diff_summary", "v30") == load_schema("statement_diff_summary", "v29")
 
 
-def test_module_1s_readers_give_the_facts_of_a_stored_text():
+def test_the_facts_are_read_from_a_stored_text():
     _, a, b, (fa, fb) = _pair(DEC_2024, FEB_2025)
     assert sorted(a.text[s:e].removeprefix("6. ") for s, e in fa.rate_votes) == [TWO_226, FOUR_226]
     assert [a.text[s:e] for s, e in fa.stance_votes] == [STANCE_226]
@@ -242,7 +242,7 @@ def test_the_v30_list_names_each_vote_whole_and_the_check_wants_both_sides_in_on
     assert [m.fact for m in must if m.fact] == ["rate vote", "stance vote", "gdp"]
     listed = must_text(must, a.text, b.text, each=True)
     line = next(x for x in listed.splitlines() if x.startswith("- The vote on the policy rate"))
-    assert f'Previous: "{FOUR_226} {TWO_226}" New: "{ALL_227}"' in line
+    assert f'Previous: "6. {FOUR_226} {TWO_226}" New: "{ALL_227}"' in line                  # whole, as the document has it
     assert next(x for x in listed.splitlines() if x.startswith("- The vote on the stance")).endswith(f'New: "{NEUTRAL_227}"')
     # A reply giving the two members' vote beside the new one, and the four in another bullet, is retried.
     split = _answer(
@@ -417,3 +417,31 @@ def test_votes_with_no_other_side_join_a_decision_stated_as_a_vote():
     for x in bullets:
         if VOTED_237 in x.text:
             assert "The previous MPC resolution doesn't have" not in x.text[x.text.index(VOTED_237):][:200]
+
+
+def test_the_projections_periods_and_figures():
+    text = ("9. Considering all factors, CPI inflation is projected to be 5.2 per cent for 2026-27 with Q2 at 4.9 per cent; Q3 "
+            "at 6.0 per cent; and Q4 at 5.7 per cent (Chart 2). Inflation for Q1:2027-28 is projected at 5.6 per cent with "
+            "risks being evenly balanced. Core inflation is projected at 4.4 per cent for 2026-27.\n\n" + GDP_227 + "\n\n"
+            + RECAP_194)
+    got = [(p[0], p[1], p[2], text[p[3][0]:p[3][1]]) for p in summaries.resolution_facts(text).projections]
+    assert got == [("cpi", "FY 2026-27", "5.2 per cent", "5.2 per cent for 2026-27"),
+                   ("cpi", "Q2 2026-27", "4.9 per cent", "Q2 at 4.9 per cent"),
+                   ("cpi", "Q3 2026-27", "6.0 per cent", "Q3 at 6.0 per cent"),
+                   ("cpi", "Q4 2026-27", "5.7 per cent", "Q4 at 5.7 per cent"),
+                   ("cpi", "Q1 2027-28", "5.6 per cent", "Q1:2027-28 is projected at 5.6 per cent"),
+                   ("gdp", "FY 2025-26", "6.7 per cent", "2025-26 is projected at 6.7 per cent"),
+                   ("gdp", "Q1 2025-26", "6.7 per cent", "Q1 at 6.7 per cent"),
+                   ("gdp", "Q2 2025-26", "7.0 per cent", "Q2 at 7.0 per cent"),
+                   ("gdp", "Q3 2025-26", "6.5 per cent", "Q3 and Q4 at 6.5 per cent"),
+                   ("gdp", "Q4 2025-26", "6.5 per cent", "Q4 at 6.5 per cent")]     # core inflation and the recap: none
+
+
+def test_the_facts_are_the_tasks_own_reading_not_module_1s(monkeypatch):
+    # A request is sent again when its input changes: if module 1's readers improve, the summaries' requests must not change
+    # with them (test_rbi_extraction_task's "nothing is sent" after the regex improves).
+    from ft.policy import rbi_resolution
+    _, a, _, (before, _) = _pair(OCT_2019, DEC_2019)
+    monkeypatch.setattr(rbi_resolution, "read_projections", lambda text: ((), ()))
+    monkeypatch.setattr(rbi_resolution, "_votes", lambda *args, **kw: None)
+    assert diff_facts(a.text) == before and before.projections and before.rate_votes

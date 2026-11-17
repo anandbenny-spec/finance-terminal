@@ -71,9 +71,13 @@ _MUST_HEAD = "Each of these changes must be reported"
 _MUST_SIDE = re.compile(r'(Previous|New|Removed|Added)(?: \([^)]*\))?: "(.*?)"(?=\s+New: "|\s*$)')
 
 
+_FACT_LINE = re.compile(r"^- The (?:votes|vote on the|CPI inflation projections|real GDP growth projections)\b")
+
+
 def _listed(instruction: str, old: str, new: str) -> list[list[tuple[str, str]]]:
     """From v28 (#445, round 25): the changes the instruction lists to report, each as its sides' (document, first sentence),
-    the sentence found in its document from the words the list shows."""
+    the sentence found in its document from the words the list shows. From v30, a fact's line (the votes, a projection) shows
+    its sentences whole, and the prompt asks for all of them: each side's every sentence."""
     if _MUST_HEAD not in instruction:
         return []
     out = []
@@ -83,6 +87,10 @@ def _listed(instruction: str, old: str, new: str) -> list[list[tuple[str, str]]]
         sides = []
         for label, shown in _MUST_SIDE.findall(line):
             doc, text = ("previous", old) if label in ("Previous", "Removed") else ("new", new)
+            if _FACT_LINE.match(line):                  # v30: a fact's sentences, every one, in the document's order
+                whole = " " + " ".join(shown.split()) + " "
+                sides += [(doc, text[s:e]) for s, e in sentence_spans(text) if " " + " ".join(text[s:e].split()) + " " in whole]
+                continue
             head = " ".join(shown.split(" … ")[0].removesuffix(" …").split())   # v29 shows each sentence: the first's
             found = next((text[s:e] for s, e in sentence_spans(text)
                           if " ".join(text[s:e].split()).startswith(head) or head.startswith(" ".join(text[s:e].split()))),

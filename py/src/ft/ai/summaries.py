@@ -72,6 +72,7 @@ from itertools import pairwise
 from ft.ai.citations import map_api_citation
 from ft.ai.client import HAIKU, SONNET, Prompt, Reply, Request, Source, TextPart, load_schema
 from ft.engines.document.diff import PAIR_MIN
+from ft.engines.document.text import sentence_spans as text_sentences
 from ft.engines.document.text import words as text_words
 
 BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
@@ -305,7 +306,8 @@ DIFF_ROOM_FROM = 29
 # vote on the stance; mpc-2019-12-05's previous Q2 inflation figure beside the new H2 projection). The diagnosis (#445,
 # 17 Nov 2026, 23:00 IST) found the cause: what sits beside what was decided by word overlap, and nothing knew which fact a
 # sentence states, while an RBI resolution is rewritten almost whole each meeting. So, for two RBI resolutions (`Facts`, read
-# from each stored text by module 1's own readers, `rbi_resolution.read_votes` and `read_projections`):
+# from each stored text by `resolution_facts`, this task's own reading of what module 1's readers read, so that a request
+# changes only with this task's version):
 # - the votes and the committee's own projections are paired by fact first (`_fact_changes`): every changed sentence holding
 #   a member's or the committee's vote, against the other document's (the vote on the rate and the vote on the stance apart
 #   where both documents state them apart), and every changed sentence holding a CPI inflation, or a GDP growth, projection,
@@ -2420,13 +2422,101 @@ def _corridor_mates(changes: list[list], old: Doc, new: Doc, *, skip: set[int] |
 # ---- v30's facts (`DIFF_FACTS_FROM`; `_fact_changes`, `fallback_bullets`' and `must_changes`' `facts`)
 @dataclass(frozen=True)
 class Facts:
-    """What module 1's readers find in one RBI resolution's stored text (`ai_batch.diff_facts`): the spans of its votes on the
-    rate and on the stance (a member's, or the committee's "unanimously"/"all members"), and its own projections as
-    (variable 'cpi' or 'gdp', period label, value, span). A recap of an earlier projection isn't one (the reader skips it)."""
+    """What one RBI resolution's stored text states (`resolution_facts`): the sentences of its votes on the rate and on the
+    stance (a member's, or the committee's "unanimously"/"all members"), its own projections as (variable 'cpi' or 'gdp',
+    period label, figure, span of the period and its figure; a sentence whose periods can't be read as one with an empty
+    label), and its decision's statement where that is a vote. A recap of an earlier projection isn't one."""
     rate_votes: tuple[tuple[int, int], ...] = ()
     stance_votes: tuple[tuple[int, int], ...] = ()
     projections: tuple[tuple[str, str, str, tuple[int, int]], ...] = ()
     decision: tuple[tuple[int, int], ...] = ()          # its decision's statement, where that is a vote ("the MPC voted …")
+
+
+# From v30: the facts' reading (`resolution_facts`), this task's own, so a request changes only with this task's version (a
+# request is sent again when its input changes: module 1's readers may improve, and the summaries must not follow them).
+# A vote sentence (as module 1's vote reader finds them), on the rate or the stance by its words; never a list's lead-in or
+# the resolution's first sentence naming the policy rate, its decision ("the MPC voted unanimously to keep …").
+_FACT_VOTE = re.compile(r"\bvot(?:ed|es|ing)\b|\bunanimous(?:ly)?\b|\bof the view that the stance\b|\bexpressed reservations\b"
+                        r"|\ball\s+(?:the\s+)?members\b[^.]*\bdecided\b|\bwere of the view\b", re.IGNORECASE)
+_FACT_VOTE_RATE = re.compile(r"\brate\b|\bbasis points\b|\bbps\b|\bin favour of the decision\b", re.IGNORECASE)
+_FACT_VOTE_STANCE = re.compile(r"\bstance\b|\baccommodation\b|\bpart of the resolution\b", re.IGNORECASE)
+_FACT_POLICY_RATE = re.compile(r"(?<!reverse )\brepo rate\b|\bpolicy rate\b", re.IGNORECASE)
+# A projection sentence: the committee's own, in the present tense (`_own_projection`, never a recap or a ratio to GDP), of
+# CPI inflation (not core, food or fuel inflation alone) or of GDP growth; its periods and their figures.
+_FACT_CORE = re.compile(r"\b(?:core|food|fuel)\s+inflation\b|\bexcluding\b|\bGVA\b|\bgross value added\b", re.IGNORECASE)
+_FACT_FY = r"(?:19|20)\d\d\s?[-–]\s?\d\d"
+_FACT_PERIOD = re.compile(rf"\b(?P<q>Q[1-4]|H[12])\b(?:\s?:\s?(?P<fy1>{_FACT_FY}))?|(?<![\d.])(?P<fy>{_FACT_FY})\b")
+_FACT_FIGURE = r"(?:\(\s?[-−]\s?\)\s?|[-−])?\d+(?:\.\d+)?(?:\s?[-–]\s?\d+(?:\.\d+)?|\s+to\s+\d+(?:\.\d+)?)?\s*per\s*cent"
+_FACT_AFTER = re.compile(r"\s*(?:,\s*)?(?:(?:is|are|has been|have been)\s+)?(?:now\s+)?(?:(?:projected|revised|retained|placed|"
+                         rf"expected)(?:\s+\w+)??\s+)?(?:(?:to\s+be|at|to)\s+)(?:the\s+range\s+of\s+)?(?P<f>{_FACT_FIGURE})",
+                         re.IGNORECASE)
+_FACT_BEFORE = re.compile(rf"(?P<f>{_FACT_FIGURE})\s+(?:for|in)\s+(?:the\s+)?$", re.IGNORECASE)
+_FACT_EACH = re.compile(rf"^\s*(?:,\s*|and\s+|;\s*and\s+)(?:Q[1-4]|H[12])\s+at\s+(?P<f>{_FACT_FIGURE})\s+each\b", re.IGNORECASE)
+
+
+def _fy(text: str) -> str:
+    """A financial year as "2024-25"."""
+    a, b = re.split(r"\s?[-–]\s?", text.strip())
+    return f"{a}-{b}"
+
+
+def _periods(t: str, s: int) -> list[tuple[str, str, tuple[int, int]]]:
+    """A projection sentence's periods (`t` starting at `s` in its document) with their figures: (label, figure, span of the
+    period and its figure); a quarter or half without its year takes the sentence's year named before it (else after it). A
+    period whose figure can't be read is left out."""
+    found = list(_FACT_PERIOD.finditer(t))
+    out = []
+    for i, m in enumerate(found):
+        if m["fy"]:
+            label = "FY " + _fy(m["fy"])
+        else:
+            year = m["fy1"] or next((x["fy"] or x["fy1"] for x in reversed(found[:i]) if x["fy"] or x["fy1"]), None) or \
+                next((x["fy"] or x["fy1"] for x in found[i + 1:] if x["fy"] or x["fy1"]), None)
+            if not year:
+                continue
+            label = f"{m['q']} {_fy(year)}"
+        stop = found[i + 1].start() if i + 1 < len(found) else len(t)
+        stop = min(stop, *(k for k in (t.find(";", m.end()),) if k >= 0), len(t))
+        start = found[i - 1].end() if i else 0
+        f = None
+        if (a := _FACT_AFTER.match(t, m.end(), stop)) is not None:
+            f, span = a["f"], (m.start(), a.end("f"))
+        elif (b := _FACT_BEFORE.search(t, start, m.start())) is not None:
+            f, span = b["f"], (b.start("f"), m.end())
+        elif (e := _FACT_EACH.match(t[m.end():])) is not None:           # "Q3 and Q4 at 6.5 per cent each"
+            f, span = e["f"], (m.start(), m.end() + e.end("f"))
+        if f is not None:
+            figure = " ".join(re.sub(r"\s?[-–]\s?", "-", f.lower()).split())
+            out.append((label, figure, (s + span[0], s + span[1])))
+    return out
+
+
+def resolution_facts(text: str) -> Facts:
+    """From v30 (`DIFF_FACTS_FROM`): an RBI resolution's votes and its own projections, read from its stored text by this
+    task's reading (above): `ai_batch` gives them for two RBI resolutions."""
+    sentences = text_sentences(text)
+    decision = next(((a, b) for a, b in sentences if _FACT_POLICY_RATE.search(text[a:b])), None)
+    rate, stance, projections, stated = [], [], [], []
+    for a, b in sentences:
+        t = text[a:b]
+        if _FACT_VOTE.search(t) and not t.rstrip().endswith(":"):
+            if (a, b) == decision:
+                stated.append((a, b))
+            else:
+                on_rate, on_stance = bool(_FACT_VOTE_RATE.search(t)), bool(_FACT_VOTE_STANCE.search(t))
+                if on_rate or not on_stance:
+                    rate.append((a, b))
+                if on_stance:
+                    stance.append((a, b))
+        if _own_projection(t) and not _K_RECAP.search(t) and not _K_RATIO.search(t):
+            plain = _FACT_CORE.sub(" ", t)             # CPI inflation, or GDP growth: whichever the sentence names first
+            inflation, growth = re.search(r"\binflation\b", plain, re.IGNORECASE), re.search(r"\bGDP\b|\bgrowth\b", plain)
+            var = ("gdp" if growth.start() < inflation.start() else "cpi") if inflation and growth else \
+                "cpi" if inflation else "gdp" if growth else None
+            if var is not None:
+                projections += [(var, label, figure, span) for label, figure, span in _periods(t, a)] or \
+                    [(var, "", "", (a, b))]
+    return Facts(tuple(rate), tuple(stance), tuple(projections), tuple(stated))
 
 
 FACT_NAMES = {"votes": "The votes", "rate vote": "The vote on the policy rate", "stance vote": "The vote on the stance",
@@ -2949,14 +3039,9 @@ def _shown(text: str, spans, *, each: bool = False) -> str:
 
 
 def _whole(text: str, spans) -> str:
-    """A fact change's side as the request lists it (from v30): its sentences whole, each as the document has it, without
-    the RBI paragraph number that opens a paragraph (as the fallback quotes it, `_side`'s `bare`)."""
-    out = []
-    for s, e in sorted(spans):
-        if _opening(text, s) and (m := _PARA_NUMBER.match(text, s, e)) and m.end() < e:
-            s = m.end()
-        out.append(" ".join(text[s:e].split()))
-    return " ".join(out)
+    """A fact change's side as the request lists it (from v30): its sentences whole, each as the document has it (an RBI
+    paragraph number too, as `_shown` shows it)."""
+    return " ".join(" ".join(text[s:e].split()) for s, e in sorted(spans))
 
 
 def must_text(must: list[Must], old_text: str, new_text: str, *, each: bool = False) -> str:
@@ -3078,7 +3163,8 @@ def must_problems(c: Checked, must: list[Must], old: Doc, new: Doc, *, room: boo
         for m in must:
             if m.fact is None or m in missing:
                 continue
-            name = FACT_NAMES.get(m.fact, m.fact).lower()
+            name = FACT_NAMES.get(m.fact, m.fact)
+            name = name[0].lower() + name[1:]
             if m.old and m.new:
                 whole = m.why == "vote"
                 if not any((all(_hits([x], old.document_id, bc) for x in m.old) if whole else _hits(m.old, old.document_id, bc))

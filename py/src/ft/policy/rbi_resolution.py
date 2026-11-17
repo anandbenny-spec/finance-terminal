@@ -675,12 +675,6 @@ def read_projections(text: str) -> tuple[tuple[Projection, ...], tuple[tuple[int
     return _projections(reread(text), [])
 
 
-def read_votes(text: str) -> Votes:
-    """The votes a stored resolution's text states, read as `parse` read them at load time (the vote reader looks only at
-    the text's sentences): `statement_diff_summary`'s facts (#445, round 27; `ai_batch.diff_facts`)."""
-    return _votes(reread(text), [])
-
-
 _LABEL = re.compile(r"^(?:(?P<q>Q[1-4]|H[12])|FY) (?P<a>20\d\d)-(?P<b>\d\d)$")
 
 

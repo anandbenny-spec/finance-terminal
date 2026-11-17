@@ -157,8 +157,8 @@ plus one sentence (Anand, 17 Nov 2026, about 14:10 IST: round 26 adds only what 
 list of decisions inside a listed change is reported and checked, and the fallback reads a corridor rate's sentence with its
 other side and places the changes v1 cites before v28's own (`summaries.DIFF_ROOM_FROM`). v30 is v29 plus one sentence
 (Anand, 17 Nov 2026, about 19:40 IST: round 27 fixes the cause a diagnosis finds): for two RBI resolutions, the votes and the
-committee's projections are paired by fact, read from each stored text by module 1's own readers (`diff_facts`), in the
-fallback, the list of changes to report and its check (`summaries.DIFF_FACTS_FROM`).
+committee's projections are paired by fact, read from each stored text (`diff_facts`), in the fallback, the list of changes
+to report and its check (`summaries.DIFF_FACTS_FROM`).
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -206,7 +206,7 @@ from ft.ai.client import (
     load_schema,
 )
 from ft.ai.summaries import Checked, Doc
-from ft.engines.document.text import ExtractError, sentence_spans
+from ft.engines.document.text import ExtractError
 from ft.jobs import due as due_rules
 from ft.jobs.runner import Alert, Check, Context, Task
 from ft.jobs.tasks import register
@@ -273,42 +273,10 @@ def _schema(task: str, version: str) -> dict:
     return load_schema(task, version)
 
 
-# From v30: a vote sentence's subject (`diff_facts`): the rate ("voted in favour of the decision" too), or the stance (a
-# member "voted against this part of the resolution", the part on the stance).
-_VOTE_RATE = re.compile(r"\brate\b|\bbasis points\b|\bbps\b|\bin favour of the decision\b", re.IGNORECASE)
-_VOTE_STANCE = re.compile(r"\bstance\b|\baccommodation\b|\bpart of the resolution\b", re.IGNORECASE)
-_POLICY_RATE = re.compile(r"(?<!reverse )\brepo rate\b|\bpolicy rate\b", re.IGNORECASE)
-
-
 def diff_facts(text: str) -> summaries.Facts:
-    """From v30 (`summaries.DIFF_FACTS_FROM`): an RBI resolution's votes and projections, read from its stored text by module
-    1's own readers (`rbi_resolution.read_votes`, `read_projections`), for the diff summary to pair by fact. A vote is each
-    sentence the vote reader reads as one (a member's, or the committee's), on the rate where it holds a rate vote the reader
-    found or names the rate, on the stance where it holds a stance vote or names the stance; never a list's lead-in
-    ("… unanimously decided to:") or the resolution's first statement of the policy rate, which is its decision ("the MPC
-    voted unanimously to keep the policy repo rate … unchanged", mpc-2026-10-07), paired as the decision is (`decision`: where
-    the other document's votes have no other side, they join the decision's change, `summaries._analyse`)."""
-    v = rbi_resolution.read_votes(text)
-    found_rate = [m.rate_span for m in v.named.values() if m.rate and m.rate_span] + [v.all_rate_span] * bool(v.all_rate_span)
-    found_stance = [m.stance_span for m in v.named.values() if m.stance and m.stance_span] + \
-        [v.all_stance_span] * bool(v.all_stance_span)
-    decision = next(((s, e) for s, e in sentence_spans(text) if _POLICY_RATE.search(text[s:e])), None)
-    rate: list[tuple[int, int]] = []
-    stance: list[tuple[int, int]] = []
-    for s, e in v.sentences:
-        t = text[s:e]
-        if t.rstrip().endswith(":") or (decision is not None and s < decision[1] and decision[0] < e):
-            continue
-        on_rate = any(a < e and s < b for a, b in found_rate) or bool(_VOTE_RATE.search(t))
-        on_stance = any(a < e and s < b for a, b in found_stance) or bool(_VOTE_STANCE.search(t))
-        if on_rate or not on_stance:
-            rate.append((s, e))
-        if on_stance:
-            stance.append((s, e))
-    projections = tuple((p.variable, p.target_label, str((p.value, p.low, p.high)), p.span)
-                        for p in rbi_resolution.read_projections(text)[0])
-    stated = tuple(x for x in v.sentences if decision is not None and x[0] < decision[1] and decision[0] < x[1])
-    return summaries.Facts(tuple(rate), tuple(stance), projections, stated)
+    """From v30 (`summaries.DIFF_FACTS_FROM`): an RBI resolution's votes and its own projections, for the diff summary to
+    pair by fact (`summaries.resolution_facts`: the task's own reading, so its requests change only with its version)."""
+    return summaries.resolution_facts(text)
 
 
 @dataclass
