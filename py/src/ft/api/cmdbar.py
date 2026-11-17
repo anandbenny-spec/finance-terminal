@@ -36,7 +36,7 @@ import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ft.ai.client import Client
+from ft.ai.client import Client, Embedder, VoyageHTTP
 from ft.cmdbar import BadQuestion, clean_question
 from ft.cmdbar import route as route_mod
 from ft.cmdbar import sql as sql_mod
@@ -45,6 +45,7 @@ from ft.cmdbar.log import LogRow
 NO_STORE = {"Cache-Control": "no-store"}
 STORE_TIMEOUT_S = 5.0
 CLIENT_TIMEOUT_S, CLIENT_RETRIES, CLIENT_MAX_WAIT_S = 30.0, 1, 5.0      # a visitor waits: short timeouts, one retry
+VOYAGE_TIMEOUT_S = 10.0                                                  # one question's embedding (K-06)
 READER_CONNECT_TIMEOUT_S = 5
 MAX_BODY_CHARS = 4_000
 PAGE_COLUMNS = ("item_type", "subtype", "slug", "title", "parent_slug")
@@ -265,13 +266,19 @@ def live_client(env: Mapping[str, str]) -> Client:
                   max_wait=CLIENT_MAX_WAIT_S)
 
 
+def live_embedder(env: Mapping[str, str]) -> Embedder:
+    """Voyage for the document route's question (`voyage-4-lite`), with the model client's short waits (K-06)."""
+    return Embedder(client=VoyageHTTP(env["VOYAGE_API_KEY"].strip(), timeout=VOYAGE_TIMEOUT_S), retries=CLIENT_RETRIES,
+                    max_wait=CLIENT_MAX_WAIT_S)
+
+
 def live_reader(env: Mapping[str, str]) -> sql_mod.Reader:
     return sql_mod.Reader.connect(env["SQL_READER_DATABASE_URL"].strip(), connect_timeout=READER_CONNECT_TIMEOUT_S)
 
 
 def live_deps() -> route_mod.Deps:
     return route_mod.Deps(env=os.environ, store=live_store, client=live_client, reader=live_reader,
-                          prompt=route_mod.cached_prompt)
+                          prompt=route_mod.cached_prompt, embedder=live_embedder)
 
 
 # ---------------------------------------------------------------------------------------------- the routes

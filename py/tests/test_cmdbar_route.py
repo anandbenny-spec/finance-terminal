@@ -102,8 +102,13 @@ class FakeStore:
 
 
 class FakeReader:
-    def __init__(self, *script):
+    def __init__(self, *script, passages=()):
         self.script, self.ran, self.closed = list(script) or [ROWS], [], False
+        self.passages, self.searched = list(passages), []         # the document route's search_chunks rows (K-06)
+
+    def select(self, sql, params):
+        self.searched.append(params)
+        return s.Result([], [tuple(p) for p in self.passages])
 
     def run(self, guarded):
         self.ran.append(guarded)
@@ -129,13 +134,25 @@ def model(route="data", sql=SQL, summary=SUMMARY, slug=None, script=("ok",)):
     return FakeClaude(script=script, answer=answer)
 
 
+class FakeEmbedder:
+    """Voyage for the document route (K-06): one fixed vector per question, every call recorded."""
+
+    def __init__(self):
+        self.calls = []
+
+    def embed_query(self, text):
+        self.calls.append(text)
+        return [0.01] * 512
+
+
 class Harness:
     def __init__(self, store=None, fake=None, reader=None, env=None, now=NOW):
         self.store = store or FakeStore()
         self.fake = fake or model()
         self.reader = reader or FakeReader()
+        self.voyage = FakeEmbedder()
         self.env = dict(ENV if env is None else env)
-        self.built = {"store": 0, "client": 0, "reader": 0, "prompt": 0}
+        self.built = {"store": 0, "client": 0, "reader": 0, "prompt": 0, "embedder": 0}
         self.now = now
 
         def build(kind, value):
@@ -145,7 +162,8 @@ class Harness:
             return f
         self.deps = r.Deps(env=self.env, store=build("store", lambda: self.store),
                            client=build("client", lambda: claude(self.fake)), reader=build("reader", lambda: self.reader),
-                           prompt=build("prompt", PROMPT), now=lambda: self.now)
+                           prompt=build("prompt", PROMPT), now=lambda: self.now,
+                           embedder=build("embedder", lambda: self.voyage))
 
     def ask(self, question="When did the RBI last cut, and by how much?", ip=IP, ua=UA):
         lines: list[str] = []
@@ -160,7 +178,7 @@ def test_a_missing_secret_is_paused_with_no_call_of_any_kind(missing):
     h = Harness(env={k: v for k, v in ENV.items() if k != missing})
     out = h.ask()
     assert out["state"] == "paused" and out["summary"] == "AI questions are paused for now; search still works."
-    assert h.built == {"store": 0, "client": 0, "reader": 0, "prompt": 0}
+    assert h.built == {"store": 0, "client": 0, "reader": 0, "prompt": 0, "embedder": 0}
     assert h.store.calls == [] and h.fake.requests == [] and h.lines == []
 
 
@@ -322,11 +340,15 @@ def test_an_unsupported_question_is_cant_answer_with_live_suggested_pages():
     assert 2 <= len(out["pages"]) <= 3 and all(f'href: "{p["href"]}"' in nav for p in out["pages"])
 
 
-def test_a_document_question_is_not_found_until_k06_with_no_voyage_or_second_model_call():
+def test_a_document_question_with_no_passage_found_is_not_found_with_no_second_model_call():
+    # K-06 replaced K-05's stub (which searched nothing): the question is embedded and searched over Fed and RBI policy documents
+    # only; with no passage returned there is no answer call, and nothing is cited.
     h = Harness(fake=model(route="document"))
     out = h.ask("What did the RBI say about food inflation?")
     assert out["state"] == "not_found" and out["summary"] == "Not found in the stored Fed and RBI documents."
-    assert len(h.fake.requests) == 1 and h.built["reader"] == 0 and out["citations"] == [] and out["documents"] == []
+    assert len(h.fake.requests) == 1 and out["citations"] == [] and out["documents"] == []
+    assert h.voyage.calls == ["What did the RBI say about food inflation?"] and len(h.reader.searched) == 1
+    assert h.reader.searched[0][2:4] == (["fed", "rbi"], list(r.documents_mod.DOC_TYPES)) and h.reader.closed
 
 
 def test_an_unanswerable_data_question_is_cant_answer_and_runs_nothing():

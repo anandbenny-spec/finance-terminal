@@ -10,16 +10,19 @@ words) as it starts. `ft.api.cmdbar` streams both as newline-delimited JSON.
 2. **Limits** (`ft.cmdbar.limits`): the visitor's hourly count on every ask; the overall daily count (IST day) only for a question
    that reaches the router. Over either: the limit state, logged with `answered = false`.
 3. **Cache** (`ft.cmdbar.cache`): a valid entry is served with no model call.
-4. **Router**, then 5a **the data route** (K-04's `ft.cmdbar.sql.answer_data`, the code the gates measure), 5c **a page** (checked
-   against `api.search_index`), 5d **unsupported** ("That isn't in this site's data." and three suggested pages). 5b, document
-   questions, is K-06's: until then the document route answers "Not found in the stored Fed and RBI documents." with no Voyage
-   call and no model call beyond the router.
+4. **Router**, then 5a **the data route** (K-04's `ft.cmdbar.sql.answer_data`, the code the gates measure), 5b **the document
+   route** (K-06's `ft.cmdbar.documents.answer_documents`: `voyage-4-lite`, `search_chunks` over Fed and RBI policy documents
+   only, an answer with native citations, every sentence without a verified citation dropped; none left: "Not found in the
+   stored Fed and RBI documents."), 5c **a page** (checked against `api.search_index`), 5d **unsupported** ("That isn't in this
+   site's data." and three suggested pages).
 6. **The log** (`ft.cmdbar.log`): one row per ask that passed step 0.
 
 **What a visitor sees** is only the final object: `route`, `summary` (the one-line answer or the state's words), `columns`
 (each `{name, kind}`), `rows` (numbers as exact decimal strings, dates as ISO 8601), `sql` (the re-printed query that ran: "Show
-SQL"), `citations` and `documents` (K-06), `view` (the views it read), `pages` (the page found, or the suggested pages), `ms` and
-`state` (`answered`, `page`, `cant_answer`, `not_found`, `paused` or `limit`). Never a raw error, an error class, a run id or a
+SQL"), `citations` and `documents` (a document answer's: one entry per kept sentence, `{"text", "refs": [{"document",
+"char_start", "char_end", "quote"}]}`, and the cited documents, an RBI one by its name, date and press-release number, never its
+link: `ft.cmdbar.documents`), `view` (the views it read), `pages` (the page found, or the suggested pages), `ms` and `state`
+(`answered`, `page`, `cant_answer`, `not_found`, `paused` or `limit`). Never a raw error, an error class, a run id or a
 task name (`CLAUDE.md` §4): those go to the log row or, for the store's own failures, to the server log as a class name.
 
 **The database:** `ops` isn't in the Data API (`CLAUDE.md` §4) and `service_role` can't log in to Postgres, so the deployed route
@@ -38,8 +41,9 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Protocol
 
-from ft.ai.client import AIUnavailable, CallError, Failed
+from ft.ai.client import AIUnavailable, CallError, Embedder, Failed
 from ft.cmdbar import cache, limits
+from ft.cmdbar import documents as documents_mod
 from ft.cmdbar import router as router_mod
 from ft.cmdbar import sql as sql_mod
 from ft.cmdbar.log import LogRow
@@ -107,6 +111,7 @@ class Deps:
     prompt: Callable[[sql_mod.Reader, Mapping[str, str]], object]
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     clock: Callable[[], float] = time.monotonic
+    embedder: Callable[[Mapping[str, str]], object] = field(default=lambda env: Embedder(env["VOYAGE_API_KEY"].strip()))
 
 
 def missing_secrets(env: Mapping[str, str]) -> list[str]:
@@ -115,12 +120,13 @@ def missing_secrets(env: Mapping[str, str]) -> list[str]:
 
 # ---------------------------------------------------------------------------------------------- the final object
 def final(state: str, *, route: str | None = None, summary: str | None = None, columns=(), rows=(), sql: str | None = None,
-          view: str | None = None, pages=(), ms: int = 0) -> dict:
+          citations=(), documents=(), view: str | None = None, pages=(), ms: int = 0) -> dict:
     """The route's final object (Spec 07 §4's answer shape, with `pages` for the page found or the suggestions)."""
     if state not in STATES:
         raise ValueError(f"unknown state {state!r}")
-    return {"route": route, "summary": summary, "columns": list(columns), "rows": list(rows), "sql": sql, "citations": [],
-            "documents": [], "view": view, "pages": [dict(p) for p in pages], "ms": ms, "state": state}
+    return {"route": route, "summary": summary, "columns": list(columns), "rows": list(rows), "sql": sql,
+            "citations": [dict(c) for c in citations], "documents": [dict(d) for d in documents], "view": view,
+            "pages": [dict(p) for p in pages], "ms": ms, "state": state}
 
 
 def _kind(v) -> str | None:
@@ -299,7 +305,7 @@ def _cached(a: _Ask, sha: bytes) -> dict | None:
         entry = a.store.cache_get(sha)
         if entry is None or not isinstance(entry.answer, dict) or entry.answer.get("state") not in STATES:
             return None
-        if entry.data_version != cache.data_version(cache.views_read(entry.answer.get("sql")), a.freshness()):
+        if entry.data_version != cache.answer_version(entry.answer, a.freshness()):
             return None
     except Exception as e:                               # noqa: BLE001 - an unreadable cache is a miss
         _note("cache get", e)
@@ -319,7 +325,7 @@ def _cached(a: _Ask, sha: bytes) -> dict | None:
 
 def _store(a: _Ask, sha: bytes, question: str, out: dict, now: datetime) -> None:
     try:
-        version = cache.data_version(cache.views_read(out.get("sql")), a.freshness())
+        version = cache.answer_version(out, a.freshness())
         a.store.cache_put(sha, question, out["route"], out, version, now + cache.TTL)
     except Exception as e:                               # noqa: BLE001 - not cached; the answer stands
         _note("cache put", e)
@@ -360,8 +366,8 @@ def _dispatch(a: _Ask, question: str, emit) -> tuple[dict, bool]:
         row.answered = True
         return final("page", route="page", pages=[page], ms=a.ms()), True
 
-    if r.route == "document":                            # K-06 builds 5b; until then, nothing is searched
-        return final("not_found", route="document", summary=NOT_FOUND_TEXT, ms=a.ms()), False
+    if r.route == "document":
+        return _documents(a, client, question, r, emit)
 
     if r.route != "data":
         return final("cant_answer", route=r.route, summary=CANT_TEXT, pages=SUGGESTED_PAGES, ms=a.ms()), True
@@ -411,3 +417,48 @@ def _dispatch(a: _Ask, question: str, emit) -> tuple[dict, bool]:
     if ans.state == "unanswerable":                      # the model said the views can't answer it
         return final("cant_answer", route="data", summary=CANT_TEXT, pages=SUGGESTED_PAGES, ms=a.ms()), True
     return final("cant_answer", route="data", summary=CANT_TEXT, pages=SUGGESTED_PAGES, ms=a.ms()), False
+
+
+def _documents(a: _Ask, client, question: str, r: router_mod.Route, emit) -> tuple[dict, bool]:
+    """Step 5b (K-06): Fed and RBI policy documents only, every sentence carrying a verified citation. Only an answered one is
+    cached (its version follows the policy tasks: `cache.answer_version`); "not found" and failures are not."""
+    deps, row = a.deps, a.row
+    emit(SEARCHING)
+    try:
+        embedder = deps.embedder(deps.env)
+    except AIUnavailable:
+        row.error_class = "ai_unavailable"
+        return final("paused", summary=PAUSED_TEXT, ms=a.ms()), False
+    except Exception as e:                               # noqa: BLE001
+        _note("embedder", e)
+        row.error_class = "embedding"
+        return final("cant_answer", route="document", summary=CANT_TEXT, pages=SUGGESTED_PAGES, ms=a.ms()), False
+    try:
+        reader = deps.reader(deps.env)
+    except Exception as e:                               # noqa: BLE001 - ReaderDown, or anything else connecting
+        _note("reader", e)
+        row.error_class = "database_unavailable"
+        return final("cant_answer", route="document", summary=CANT_TEXT, pages=SUGGESTED_PAGES, ms=a.ms()), False
+    try:
+        ans = documents_mod.answer_documents(client, embedder, reader, question, date_from=r.filters.date_from,
+                                             date_to=r.filters.date_to, clock=deps.clock)
+    except AIUnavailable:
+        row.error_class = "ai_unavailable"
+        return final("paused", summary=PAUSED_TEXT, ms=a.ms()), False
+    finally:
+        try:
+            reader.close()
+        except Exception as e:                           # noqa: BLE001
+            _note("reader close", e)
+
+    if ans.model:
+        a.bill(ans.model, ans.cost_usd, ans.input_tokens, ans.output_tokens)
+    row.rows_returned = len(ans.chunks)
+    row.error_class = ans.error_class
+    if ans.state == "answered":
+        row.answered = True
+        return final("answered", route="document", summary=ans.summary, citations=ans.citations, documents=ans.documents,
+                     ms=a.ms()), True
+    if ans.state == "not_found":
+        return final("not_found", route="document", summary=NOT_FOUND_TEXT, ms=a.ms()), False
+    return final("cant_answer", route="document", summary=CANT_TEXT, pages=SUGGESTED_PAGES, ms=a.ms()), False
