@@ -47,6 +47,13 @@
 # 55 new `sql-r3-` items, written from the views' comments alone before prompt v5 and before any model saw them, and committed
 # before the prompt work. Their golds ran on dev (counts on #587) before any model run. On dev, sql-r3-c09 is empty while the
 # guidance extraction is hidden there, and the cross-currency golds return India's rows only (no US company is published there).
+#
+# Round 4 (17 Nov 2026, K-10's round 4, #587; Anand's answer A, 15:33 IST): run 55 read the round 3 test split, so those 55 items
+# moved to the dev split too. The test split is now Spec 01's five chips plus 55 new `sql-r4-` items, written from the views'
+# column and view comments alone (read on dev), before the session read any prompt or round 3's model output and before any
+# model saw them, and committed before any other round 4 change. Their golds ran on dev (counts on #587) before any model run.
+# On dev, sql-r4-c08 counts zero while the guidance extraction is hidden there, and the cross-currency golds return India's rows
+# only.
 
 items:
   # ---------------------------------------------------------------- module 1: Spec 01 §4.6 chips 1 to 5 (test), then the
@@ -1684,12 +1691,13 @@ items:
     cross_currency: true
     ordered: false
     notes: Index levels in different currencies are never compared (market_daily's comment); each latest close in its own currency.
-  # ---------------------------------------------------------------- round 3 test split (17 Nov 2026, #587): module 1
+  # ---------------------------------------------------------------- round 3 items (17 Nov 2026, #587), in the dev split since
+  # round 4 (run 55 read them, so they became tuning data): module 1
   # Written for K-10's round 3 from the views' column and view comments alone (read on dev, 17 Nov 2026, 14:25 IST), before
   # prompt v5 was written and before any model saw them (Spec 07 N5; Anand's answer A of 17 Nov 2026, 14:13 IST, on #587).
   # Their golds ran on dev (counts only, on #587) before any model run.
   - id: sql-r3-m01
-    split: test
+    split: dev
     family: module1
     question: On which dates in 2020 did the Fed cut rates, and by how much?
     answerable: true
@@ -1702,7 +1710,7 @@ items:
     ordered: false
     notes: Held decisions, the unscheduled March 2020 ones among them. The change is signed (negative = cut), as the chip sql-m01 reads it.
   - id: sql-r3-m02
-    split: test
+    split: dev
     family: module1
     question: How many MPC meetings did the RBI hold in 2023?
     answerable: true
@@ -1714,7 +1722,7 @@ items:
     ordered: false
     notes: Every held MPC meeting of the calendar year.
   - id: sql-r3-m03
-    split: test
+    split: dev
     family: module1
     question: What was the repo rate after the RBI's last decision of 2019?
     answerable: true
@@ -1728,7 +1736,7 @@ items:
     ordered: false
     notes: Percent, after the year's last held decision.
   - id: sql-r3-m04
-    split: test
+    split: dev
     family: module1
     question: How many dissenting votes were cast at RBI MPC meetings in 2024?
     answerable: true
@@ -1740,7 +1748,7 @@ items:
     ordered: false
     notes: One row per member per meeting, so a member who dissented on the rate and the stance counts once at that meeting.
   - id: sql-r3-m05
-    split: test
+    split: dev
     family: module1
     question: What was the USD/INR exchange rate on 30 June 2025?
     answerable: true
@@ -1752,7 +1760,7 @@ items:
     ordered: false
     notes: Rupees per dollar. market_daily's comment keeps fred.DEXINUS for history and yf.INR=X for the latest day only, so a past date reads fred.DEXINUS.
   - id: sql-r3-m06
-    split: test
+    split: dev
     family: module1
     question: What is the latest India 10-year government bond yield, and the date of that observation?
     answerable: true
@@ -1766,7 +1774,7 @@ items:
     ordered: false
     notes: A monthly series dated the first day of its month; percent.
   - id: sql-r3-m07
-    split: test
+    split: dev
     family: module1
     question: Which RBI projections were published as ranges rather than single figures?
     answerable: true
@@ -1778,7 +1786,7 @@ items:
     ordered: false
     notes: A range has low_pct and high_pct and no value_pct. A model may add the range itself; the meeting, variable and period are checked.
   - id: sql-r3-m08
-    split: test
+    split: dev
     family: module1
     question: What was the Fed's net change in its policy rate over 2024, in basis points?
     answerable: true
@@ -1790,7 +1798,7 @@ items:
     ordered: false
     notes: The sum of the year's signed changes (negative = net cut).
   - id: sql-r3-m09
-    split: test
+    split: dev
     family: module1
     question: Which FOMC members dissented at the September 2025 meeting?
     answerable: true
@@ -1802,7 +1810,7 @@ items:
     ordered: false
     notes: The September 2025 FOMC decision; its dissenters' rows.
   - id: sql-r3-m10
-    split: test
+    split: dev
     family: module1
     question: What was the effective federal funds rate on the day of each Fed decision in 2025?
     answerable: true
@@ -1815,16 +1823,16 @@ items:
     ordered: false
     notes: The EFFR observation dated the decision day; percent.
   - id: sql-r3-m11
-    split: test
+    split: dev
     family: module1
     question: Why did the RBI cut the repo rate in June 2025?
     answerable: false
     cross_currency: false
     ordered: false
     notes: The reasons are in the resolution's text, which the views don't hold (a document question, not a data one).
-  # ---------------------------------------------------------------- round 3 test split: equity
+  # ---------------------------------------------------------------- round 3 items (dev since round 4): equity
   - id: sql-r3-e01
-    split: test
+    split: dev
     family: equity
     question: Which Nifty 50 companies have a dividend yield above 3%?
     answerable: true
@@ -1836,7 +1844,7 @@ items:
     ordered: false
     notes: dividend_yield is a fraction.
   - id: sql-r3-e02
-    split: test
+    split: dev
     family: equity
     question: What is Titan's market capitalisation?
     answerable: true
@@ -1848,7 +1856,7 @@ items:
     ordered: false
     notes: Rupees, at the latest weekly snapshot.
   - id: sql-r3-e03
-    split: test
+    split: dev
     family: equity
     question: Which three Nifty 50 shares had the weakest one-year price return, weakest first?
     answerable: true
@@ -1862,7 +1870,7 @@ items:
     ordered: true
     notes: return_1y excludes dividends, a fraction; lowest first.
   - id: sql-r3-e04
-    split: test
+    split: dev
     family: equity
     question: How many Nifty 50 companies are in the Banks peer group?
     answerable: true
@@ -1874,7 +1882,7 @@ items:
     ordered: false
     notes: The curated peer group labelled Banks.
   - id: sql-r3-e05
-    split: test
+    split: dev
     family: equity
     question: What was ICICI Bank's standalone net NPA ratio in its latest quarter?
     answerable: true
@@ -1888,7 +1896,7 @@ items:
     ordered: false
     notes: A fraction, as filed; the latest quarter that carries it.
   - id: sql-r3-e06
-    split: test
+    split: dev
     family: equity
     question: Which Nifty 50 companies trade at a trailing P/E between 20 and 30?
     answerable: true
@@ -1900,7 +1908,7 @@ items:
     ordered: false
     notes: Both ends included.
   - id: sql-r3-e07
-    split: test
+    split: dev
     family: equity
     question: What was NTPC's consolidated finance cost in its latest financial year?
     answerable: true
@@ -1914,7 +1922,7 @@ items:
     ordered: false
     notes: Full rupees.
   - id: sql-r3-e08
-    split: test
+    split: dev
     family: equity
     question: What was Coal India's consolidated profit before tax in the financial year to March 2026?
     answerable: true
@@ -1926,7 +1934,7 @@ items:
     ordered: false
     notes: Full rupees; pbt is profit before tax.
   - id: sql-r3-e09
-    split: test
+    split: dev
     family: equity
     question: What is the median dividend yield of the Nifty 50's banks?
     answerable: true
@@ -1939,7 +1947,7 @@ items:
     ordered: false
     notes: The banks are the Banks peer group. A fraction, compared at four decimals.
   - id: sql-r3-e10
-    split: test
+    split: dev
     family: equity
     question: Which Nifty 50 companies are valued as insurers?
     answerable: true
@@ -1951,7 +1959,7 @@ items:
     ordered: false
     notes: valuation_family insurer.
   - id: sql-r3-e11
-    split: test
+    split: dev
     family: equity
     question: What is the average debt-to-equity ratio of the Nifty 50's power companies?
     answerable: true
@@ -1964,7 +1972,7 @@ items:
     ordered: false
     notes: The Power peer group; a multiple, compared at four decimals.
   - id: sql-r3-e12
-    split: test
+    split: dev
     family: equity
     question: Which company in the Nifty 50's Automobiles peer group has the highest EBIT margin?
     answerable: true
@@ -1979,7 +1987,7 @@ items:
     ordered: false
     notes: Among the group's companies with an EBIT margin.
   - id: sql-r3-e13
-    split: test
+    split: dev
     family: equity
     question: How much did Hindalco spend on capital expenditure in each of its last two financial years, consolidated?
     answerable: true
@@ -1993,7 +2001,7 @@ items:
     ordered: false
     notes: Full rupees, as filed.
   - id: sql-r3-e14
-    split: test
+    split: dev
     family: equity
     question: Which Nifty 50 companies have grown revenue by more than 15% a year over the last three years?
     answerable: true
@@ -2005,7 +2013,7 @@ items:
     ordered: false
     notes: Three-year compound annual growth, a fraction.
   - id: sql-r3-e15
-    split: test
+    split: dev
     family: equity
     question: How many shares does Reliance have outstanding today?
     answerable: true
@@ -2017,7 +2025,7 @@ items:
     ordered: false
     notes: company_valuations.shares is shares outstanding today (company_financials' shares_outstanding is as filed for a past period).
   - id: sql-r3-e16
-    split: test
+    split: dev
     family: equity
     question: What were Kotak Mahindra Bank's standalone provisions in each of its last four quarters?
     answerable: true
@@ -2031,7 +2039,7 @@ items:
     ordered: false
     notes: Banks' provisions and contingencies, full rupees.
   - id: sql-r3-e17
-    split: test
+    split: dev
     family: equity
     question: Which Nifty 50 companies have an EV/EBIT below 15?
     answerable: true
@@ -2043,7 +2051,7 @@ items:
     ordered: false
     notes: Null for lenders and insurers, so they never qualify.
   - id: sql-r3-e18
-    split: test
+    split: dev
     family: equity
     question: What is the date of the latest valuation snapshot for the Nifty 50?
     answerable: true
@@ -2055,7 +2063,7 @@ items:
     ordered: false
     notes: The weekly snapshot's date.
   - id: sql-r3-e19
-    split: test
+    split: dev
     family: equity
     question: Which Nifty 50 company has no BSE scrip code?
     answerable: true
@@ -2067,7 +2075,7 @@ items:
     ordered: false
     notes: bse_code null.
   - id: sql-r3-e20
-    split: test
+    split: dev
     family: equity
     question: Which Nifty 50 companies filed their BRSR for FY 2024-25 on a standalone boundary?
     answerable: true
@@ -2079,7 +2087,7 @@ items:
     ordered: false
     notes: value_chain's fiscal_year labels read 'FY 2024-25'.
   - id: sql-r3-e21
-    split: test
+    split: dev
     family: equity
     question: What was Tata Steel's consolidated revenue in the quarter to 30 June 2026?
     answerable: true
@@ -2091,7 +2099,7 @@ items:
     ordered: false
     notes: Revenue from operations, full rupees. (Written for the quarter to 30 September 2026, whose gold was empty on dev; moved to June before any model run.)
   - id: sql-r3-e22
-    split: test
+    split: dev
     family: equity
     question: In which Nifty 50 companies do promoters hold between 40% and 60% of the shares?
     answerable: true
@@ -2103,7 +2111,7 @@ items:
     ordered: false
     notes: promoter_pct is in percent (0 to 100); both ends included.
   - id: sql-r3-e23
-    split: test
+    split: dev
     family: equity
     question: What was Infosys's share price on 2 January 2020?
     answerable: false
@@ -2111,7 +2119,7 @@ items:
     ordered: false
     notes: company_valuations holds the latest snapshot only; no view holds a company's price history.
   - id: sql-r3-e24
-    split: test
+    split: dev
     family: equity
     question: How many employees does TCS have?
     answerable: false
@@ -2119,16 +2127,16 @@ items:
     ordered: false
     notes: No view holds a headcount (employee_cost is an expense).
   - id: sql-r3-e25
-    split: test
+    split: dev
     family: equity
     question: Should I buy Reliance shares before its next results?
     answerable: false
     cross_currency: false
     ordered: false
     notes: Advice; the site gives no recommendation.
-  # ---------------------------------------------------------------- round 3 test split: calls and guidance
+  # ---------------------------------------------------------------- round 3 items (dev since round 4): calls and guidance
   - id: sql-r3-c01
-    split: test
+    split: dev
     family: calls
     question: How many earnings calls does the site list for Q4 FY26?
     answerable: true
@@ -2140,7 +2148,7 @@ items:
     ordered: false
     notes: Every listed call of that fiscal quarter, whatever its transcript status.
   - id: sql-r3-c02
-    split: test
+    split: dev
     family: calls
     question: Which companies' Q2 FY27 call transcripts are on the company's website rather than stored here?
     answerable: true
@@ -2152,7 +2160,7 @@ items:
     ordered: false
     notes: transcript_status on_company_website.
   - id: sql-r3-c03
-    split: test
+    split: dev
     family: calls
     question: On what date did Axis Bank hold its Q2 FY27 earnings call?
     answerable: true
@@ -2164,7 +2172,7 @@ items:
     ordered: false
     notes: From the transcript or the call notice.
   - id: sql-r3-c04
-    split: test
+    split: dev
     family: calls
     question: How many days after the end of Q2 FY27 did Infosys hold its earnings call?
     answerable: true
@@ -2176,7 +2184,7 @@ items:
     ordered: false
     notes: Calendar days from the quarter's last day to the call date.
   - id: sql-r3-c05
-    split: test
+    split: dev
     family: calls
     question: Which Nifty 50 companies have no Q2 FY27 earnings call listed?
     answerable: true
@@ -2189,7 +2197,7 @@ items:
     ordered: false
     notes: Every Nifty 50 company without a Q2 FY27 row in earnings_calls.
   - id: sql-r3-c06
-    split: test
+    split: dev
     family: calls
     question: How many of Reliance's earnings calls have a stored transcript?
     answerable: true
@@ -2201,7 +2209,7 @@ items:
     ordered: false
     notes: transcript_status stored.
   - id: sql-r3-c07
-    split: test
+    split: dev
     family: calls
     question: Which companies held their Q2 FY27 earnings calls on the earliest date, and when was it?
     answerable: true
@@ -2214,7 +2222,7 @@ items:
     ordered: false
     notes: Every company whose call fell on the first date (a tie keeps them all).
   - id: sql-r3-c08
-    split: test
+    split: dev
     family: calls
     question: When was HCL Technologies' Q2 FY27 call transcript filed with the exchange?
     answerable: true
@@ -2226,7 +2234,7 @@ items:
     ordered: false
     notes: filed_at, an instant (compared in UTC).
   - id: sql-r3-c09
-    split: test
+    split: dev
     family: calls
     question: Which companies have given guidance on capital expenditure?
     answerable: true
@@ -2238,16 +2246,16 @@ items:
     ordered: false
     notes: metric capex; each company once. Empty on dev while the extraction is hidden there.
   - id: sql-r3-c10
-    split: test
+    split: dev
     family: calls
     question: What questions did analysts ask on Infosys's latest earnings call?
     answerable: false
     cross_currency: false
     ordered: false
     notes: What was asked on a call is transcript text, which the views never hold.
-  # ---------------------------------------------------------------- round 3 test split: cross-currency
+  # ---------------------------------------------------------------- round 3 items (dev since round 4): cross-currency
   - id: sql-r3-x01
-    split: test
+    split: dev
     family: cross_currency
     question: How do Nestlé India's and Coca-Cola's latest annual revenues compare?
     answerable: true
@@ -2262,7 +2270,7 @@ items:
     ordered: false
     notes: Each company's latest annual revenue in its own currency, never ranked against the other.
   - id: sql-r3-x02
-    split: test
+    split: dev
     family: cross_currency
     question: Which has the lower price-to-book ratio, ICICI Bank or JPMorgan Chase?
     answerable: true
@@ -2274,7 +2282,7 @@ items:
     ordered: false
     notes: Price to book is currency-neutral, so the two may be compared.
   - id: sql-r3-x03
-    split: test
+    split: dev
     family: cross_currency
     question: Which five companies on the site have the highest dividend yield, highest first?
     answerable: true
@@ -2288,7 +2296,7 @@ items:
     ordered: true
     notes: Yields are currency-neutral and may be ranked across markets.
   - id: sql-r3-x04
-    split: test
+    split: dev
     family: cross_currency
     question: What is the median share price of the companies on the site?
     answerable: true
@@ -2300,7 +2308,7 @@ items:
     ordered: false
     notes: One median per market in its own currency, compared at two decimals; a median across INR and USD prices fails.
   - id: sql-r3-x05
-    split: test
+    split: dev
     family: cross_currency
     question: How much more is Apple worth than Reliance by market capitalisation?
     answerable: true
@@ -2312,7 +2320,7 @@ items:
     ordered: false
     notes: A difference of USD and INR amounts is never computed; each market value in its own currency.
   - id: sql-r3-x06
-    split: test
+    split: dev
     family: cross_currency
     question: Which fell more on its worst day in 2025, the Nifty 50 or the S&P 500?
     answerable: true
@@ -2330,7 +2338,7 @@ items:
     ordered: false
     notes: Each index's largest one-day fall in 2025 against its own previous close, in percent (currency-neutral); the two levels are never compared. Compared at two decimals.
   - id: sql-r3-x07
-    split: test
+    split: dev
     family: cross_currency
     question: Compare the five-year revenue growth of Infosys and IBM.
     answerable: true
@@ -2342,7 +2350,7 @@ items:
     ordered: false
     notes: Compound annual growth is currency-neutral.
   - id: sql-r3-x08
-    split: test
+    split: dev
     family: cross_currency
     question: Rank the companies on the site by market capitalisation within each market.
     answerable: true
@@ -2354,7 +2362,7 @@ items:
     ordered: false
     notes: A rank within India and within the US (1 = the largest); market values in INR and USD are never ranked together. Only the rank is checked; a model may add the market and the value with its currency.
   - id: sql-r3-x09
-    split: test
+    split: dev
     family: cross_currency
     question: Add up the latest annual dividends paid by ITC and Coca-Cola.
     answerable: true
@@ -2368,3 +2376,701 @@ items:
     cross_currency: true
     ordered: false
     notes: INR and USD amounts are never added; each company's latest annual dividends paid in its own currency.
+  # ---------------------------------------------------------------- round 4 test split (17 Nov 2026, #587): module 1
+  # Written for K-10's round 4 from the views' column and view comments alone (read on dev, 17 Nov 2026, 17:25 IST), before
+  # this session read any prompt or round 3's model output, and before any model saw them (Spec 07 N5; Anand's answer A of
+  # 17 Nov 2026, 15:33 IST, on #587). Committed before any other round 4 change; their golds ran on dev (counts only, on #587)
+  # before any model run.
+  - id: sql-r4-m01
+    split: test
+    family: module1
+    question: What was the Fed's target range after its last decision of 2023?
+    answerable: true
+    gold_sql: |
+      select fed_target_lower_pct, fed_target_upper_pct
+      from policy_meetings
+      where bank = 'Fed' and status = 'held' and meeting_date >= date '2023-01-01' and meeting_date < date '2024-01-01'
+      order by meeting_date desc
+      limit 1
+    cross_currency: false
+    ordered: false
+    notes: Both bounds, percent, after the year's last held decision.
+  - id: sql-r4-m02
+    split: test
+    family: module1
+    question: How many times did the RBI raise the repo rate in 2022, and by how many basis points in all?
+    answerable: true
+    gold_sql: |
+      select count(*) as hikes, sum(policy_rate_change_bps) as total_bps
+      from policy_meetings
+      where bank = 'RBI' and status = 'held' and policy_rate_change_bps > 0
+        and meeting_date >= date '2022-01-01' and meeting_date < date '2023-01-01'
+    cross_currency: false
+    ordered: false
+    notes: Every held decision of 2022 that raised the repo rate (the unscheduled May 2022 one among them), and their sum in basis points.
+  - id: sql-r4-m03
+    split: test
+    family: module1
+    question: What was the Nifty 50's close on the day of each RBI decision in 2025?
+    answerable: true
+    gold_sql: |
+      select p.meeting_date, m.value
+      from policy_meetings p
+      join market_daily m on m.series_key = 'yf.^NSEI' and m.date = p.meeting_date
+      where p.bank = 'RBI' and p.status = 'held' and p.meeting_date >= date '2025-01-01' and p.meeting_date < date '2026-01-01'
+    cross_currency: false
+    ordered: false
+    notes: The Nifty 50's end-of-day close dated the decision day, in index points.
+  - id: sql-r4-m04
+    split: test
+    family: module1
+    question: How many members voted at the FOMC's December 2024 meeting?
+    answerable: true
+    gold_sql: |
+      select count(*) as voters
+      from policy_votes
+      where bank = 'Fed' and meeting_date >= date '2024-12-01' and meeting_date < date '2025-01-01'
+    cross_currency: false
+    ordered: false
+    notes: One row per voting member; to April 2026 the statement's voting line gives every voter a row.
+  - id: sql-r4-m05
+    split: test
+    family: module1
+    question: What CPI inflation did the RBI project for the full year 2025-26 at each meeting that projected it?
+    answerable: true
+    gold_sql: |
+      select meeting_date, value_pct
+      from policy_projections
+      where variable = 'CPI inflation' and target_period = 'FY 2025-26'
+    cross_currency: false
+    ordered: false
+    notes: The full-year projections only (target_period FY 2025-26, April 2025 to March 2026), not the quarterly ones; percent.
+  - id: sql-r4-m06
+    split: test
+    family: module1
+    question: What was the highest US 2-year Treasury yield in 2023?
+    answerable: true
+    gold_sql: |
+      select max(value) as highest_yield
+      from market_daily
+      where series_key = 'fred.DGS2' and date >= date '2023-01-01' and date < date '2024-01-01'
+    cross_currency: false
+    ordered: false
+    notes: The year's highest daily observation, percent.
+  - id: sql-r4-m07
+    split: test
+    family: module1
+    question: How many FOMC decisions since 2019 left the policy rate unchanged?
+    answerable: true
+    gold_sql: |
+      select count(*) as holds
+      from policy_meetings
+      where bank = 'Fed' and status = 'held' and policy_rate_change_bps = 0 and meeting_date >= date '2019-01-01'
+    cross_currency: false
+    ordered: false
+    notes: Held decisions from 1 January 2019 with a zero change; scheduled meetings have no decision yet.
+  - id: sql-r4-m08
+    split: test
+    family: module1
+    question: What is the latest value of the broad US dollar index, and its date?
+    answerable: true
+    gold_sql: |
+      select date, value
+      from market_daily
+      where series_key = 'fred.DTWEXBGS'
+      order by date desc
+      limit 1
+    cross_currency: false
+    ordered: false
+    notes: The latest observation of fred.DTWEXBGS.
+  - id: sql-r4-m09
+    split: test
+    family: module1
+    question: Which Fed decision since 2019 moved the US 2-year yield the most on the day, in either direction?
+    answerable: true
+    gold_sql: |
+      select meeting_date, us_2y_change_bps
+      from policy_meetings
+      where bank = 'Fed' and status = 'held' and us_2y_change_bps is not null and meeting_date >= date '2019-01-01'
+      order by abs(us_2y_change_bps) desc
+      limit 1
+    cross_currency: false
+    ordered: false
+    notes: The largest one-day change by size, shown signed (basis points). One decision holds that size on dev (no tie).
+  - id: sql-r4-m10
+    split: test
+    family: module1
+    question: List every edition of the India country risk premium with its value.
+    answerable: true
+    gold_sql: |
+      select date, value
+      from market_daily
+      where series_key = 'damodaran.IND_CRP'
+    cross_currency: false
+    ordered: false
+    notes: One row per edition, dated by the edition; percent.
+  - id: sql-r4-m11
+    split: test
+    family: module1
+    question: What was the US unemployment rate last month?
+    answerable: false
+    cross_currency: false
+    ordered: false
+    notes: No view holds unemployment (market_daily's series are listed in its comment).
+  # ---------------------------------------------------------------- round 4 test split: equity
+  - id: sql-r4-e01
+    split: test
+    family: equity
+    question: Which Nifty 50 companies have a return on equity below 10%?
+    answerable: true
+    gold_sql: |
+      select company, roe
+      from company_valuations
+      where market = 'IN' and roe < 0.1
+    cross_currency: false
+    ordered: false
+    notes: roe is a fraction, so 10% is 0.1.
+  - id: sql-r4-e02
+    split: test
+    family: equity
+    question: What is Larsen & Toubro's EV/sales ratio?
+    answerable: true
+    gold_sql: |
+      select ev_sales
+      from company_valuations
+      where nse_symbol = 'LT'
+    cross_currency: false
+    ordered: false
+    notes: Enterprise value over trailing-twelve-month revenue, at the latest snapshot.
+  - id: sql-r4-e03
+    split: test
+    family: equity
+    question: Which three Nifty 50 companies have the highest return on equity, highest first?
+    answerable: true
+    gold_sql: |
+      select company, roe
+      from company_valuations
+      where market = 'IN' and roe is not null
+      order by roe desc
+      limit 3
+    cross_currency: false
+    ordered: true
+    notes: Among the companies with an ROE; highest first.
+  - id: sql-r4-e04
+    split: test
+    family: equity
+    question: How many Nifty 50 companies have their share prices taken from BSE?
+    answerable: true
+    gold_sql: |
+      select count(*) as companies
+      from companies
+      where market = 'IN' and price_exchange = 'BSE'
+    cross_currency: false
+    ordered: false
+    notes: price_exchange BSE.
+  - id: sql-r4-e05
+    split: test
+    family: equity
+    question: What were Axis Bank's standalone advances at its latest balance-sheet date?
+    answerable: true
+    gold_sql: |
+      select advances
+      from company_financials
+      where nse_symbol = 'AXISBANK' and basis = 'standalone' and period_kind = 'instant' and advances is not null
+      order by period_end desc
+      limit 1
+    cross_currency: false
+    ordered: false
+    notes: A balance-sheet line (period_kind instant), full rupees; the latest balance sheet that carries it.
+  - id: sql-r4-e06
+    split: test
+    family: equity
+    question: What is the median price-to-book ratio of the Nifty 50's lenders?
+    answerable: true
+    gold_sql: |
+      select round(percentile_cont(0.5) within group (order by pb)::numeric, 4) as median_pb
+      from company_valuations
+      where market = 'IN' and valuation_family = 'lender'
+    cross_currency: false
+    ordered: false
+    notes: The lenders are valuation_family lender. Compared at four decimals.
+  - id: sql-r4-e07
+    split: test
+    family: equity
+    question: What was HCL Technologies' consolidated revenue in the financial year to March 2025?
+    answerable: true
+    gold_sql: |
+      select revenue
+      from company_financials
+      where nse_symbol = 'HCLTECH' and basis = 'consolidated' and period_kind = 'year' and period_end = date '2025-03-31'
+    cross_currency: false
+    ordered: false
+    notes: Revenue from operations, full rupees. (Written for Wipro, which isn't in the Nifty 50 on dev; changed before any model run.)
+  - id: sql-r4-e08
+    split: test
+    family: equity
+    question: What was Bharti Airtel's consolidated profit attributable to owners in each of its last two financial years?
+    answerable: true
+    gold_sql: |
+      select period_end, pat_owners
+      from company_financials
+      where nse_symbol = 'BHARTIARTL' and basis = 'consolidated' and period_kind = 'year' and pat_owners is not null
+      order by period_end desc
+      limit 2
+    cross_currency: false
+    ordered: false
+    notes: Profit attributable to owners of the parent, full rupees.
+  - id: sql-r4-e09
+    split: test
+    family: equity
+    question: Which Nifty 50 companies have a debt-to-equity ratio above 1?
+    answerable: true
+    gold_sql: |
+      select company, debt_to_equity
+      from company_valuations
+      where market = 'IN' and debt_to_equity > 1
+    cross_currency: false
+    ordered: false
+    notes: A multiple.
+  - id: sql-r4-e10
+    split: test
+    family: equity
+    question: List the Nifty 50's pharmaceutical companies with their return on equity.
+    answerable: true
+    gold_sql: |
+      select v.company, v.roe
+      from company_valuations v
+      join companies c on c.nse_symbol = v.nse_symbol
+      where c.peer_group = 'Pharmaceuticals'
+    cross_currency: false
+    ordered: false
+    notes: The Pharmaceuticals peer group; roe a fraction.
+  - id: sql-r4-e11
+    split: test
+    family: equity
+    question: What is the total market capitalisation of the Nifty 50's IT services companies?
+    answerable: true
+    gold_sql: |
+      select sum(v.market_cap) as total_market_cap
+      from company_valuations v
+      join companies c on c.nse_symbol = v.nse_symbol
+      where c.peer_group = 'IT services'
+    cross_currency: false
+    ordered: false
+    notes: The IT services peer group (one market, so one currency); rupees.
+  - id: sql-r4-e12
+    split: test
+    family: equity
+    question: Which company in the Nifty 50's fast-moving consumer goods peer group has the lowest trailing P/E?
+    answerable: true
+    gold_sql: |
+      select v.company
+      from company_valuations v
+      join companies c on c.nse_symbol = v.nse_symbol
+      where c.peer_group = 'Fast-moving consumer goods' and v.pe_ttm is not null
+      order by v.pe_ttm
+      limit 1
+    cross_currency: false
+    ordered: false
+    notes: Among the group's companies with a trailing P/E (no tie on dev).
+  - id: sql-r4-e13
+    split: test
+    family: equity
+    question: How many Nifty 50 companies trade at a trailing P/E above 40?
+    answerable: true
+    gold_sql: |
+      select count(*) as companies
+      from company_valuations
+      where market = 'IN' and pe_ttm > 40
+    cross_currency: false
+    ordered: false
+    notes: pe_ttm is null where profit is not positive, so those never count.
+  - id: sql-r4-e14
+    split: test
+    family: equity
+    question: What was Asian Paints' consolidated employee cost in the financial year to March 2026?
+    answerable: true
+    gold_sql: |
+      select employee_cost
+      from company_financials
+      where nse_symbol = 'ASIANPAINT' and basis = 'consolidated' and period_kind = 'year' and period_end = date '2026-03-31'
+    cross_currency: false
+    ordered: false
+    notes: Employee benefit expense, full rupees.
+  - id: sql-r4-e15
+    split: test
+    family: equity
+    question: What were Bajaj Finance's consolidated total assets at 31 March 2026?
+    answerable: true
+    gold_sql: |
+      select total_assets
+      from company_financials
+      where nse_symbol = 'BAJFINANCE' and basis = 'consolidated' and period_kind = 'instant' and period_end = date '2026-03-31'
+    cross_currency: false
+    ordered: false
+    notes: The balance sheet at that date (period_kind instant), full rupees.
+  - id: sql-r4-e16
+    split: test
+    family: equity
+    question: Which Nifty 50 companies have a promoter holding below 30%?
+    answerable: true
+    gold_sql: |
+      select company, promoter_pct
+      from company_valuations
+      where market = 'IN' and promoter_pct < 30
+    cross_currency: false
+    ordered: false
+    notes: promoter_pct is in percent (0 to 100); a company with no promoter (0) counts.
+  - id: sql-r4-e17
+    split: test
+    family: equity
+    question: What is the average dividend yield of the Nifty 50's IT services companies?
+    answerable: true
+    gold_sql: |
+      select round(avg(v.dividend_yield), 4) as avg_dividend_yield
+      from company_valuations v
+      join companies c on c.nse_symbol = v.nse_symbol
+      where c.peer_group = 'IT services'
+    cross_currency: false
+    ordered: false
+    notes: The IT services peer group; a fraction, compared at four decimals.
+  - id: sql-r4-e18
+    split: test
+    family: equity
+    question: What is ITC's one-year price return?
+    answerable: true
+    gold_sql: |
+      select return_1y
+      from company_valuations
+      where nse_symbol = 'ITC'
+    cross_currency: false
+    ordered: false
+    notes: Excluding dividends, a fraction.
+  - id: sql-r4-e19
+    split: test
+    family: equity
+    question: Which company in the Nifty 50's Banks peer group has the largest market capitalisation?
+    answerable: true
+    gold_sql: |
+      select v.company
+      from company_valuations v
+      join companies c on c.nse_symbol = v.nse_symbol
+      where c.peer_group = 'Banks' and v.market_cap is not null
+      order by v.market_cap desc
+      limit 1
+    cross_currency: false
+    ordered: false
+    notes: Within one peer group (one currency).
+  - id: sql-r4-e20
+    split: test
+    family: equity
+    question: How many Nifty 50 companies filed a consolidated BRSR for FY 2025-26?
+    answerable: true
+    gold_sql: |
+      select count(*) as companies
+      from value_chain
+      where fiscal_year = 'FY 2025-26' and boundary = 'consolidated'
+    cross_currency: false
+    ordered: false
+    notes: One value_chain row per company and fiscal year; its boundary consolidated.
+  - id: sql-r4-e21
+    split: test
+    family: equity
+    question: What was Sun Pharma's consolidated profit before tax in each of its last two quarters?
+    answerable: true
+    gold_sql: |
+      select period_end, pbt
+      from company_financials
+      where nse_symbol = 'SUNPHARMA' and basis = 'consolidated' and period_kind = 'quarter' and pbt is not null
+      order by period_end desc
+      limit 2
+    cross_currency: false
+    ordered: false
+    notes: Profit before tax, full rupees.
+  - id: sql-r4-e22
+    split: test
+    family: equity
+    question: What is HDFC Bank's latest share price, and on what date?
+    answerable: true
+    gold_sql: |
+      select price, price_date
+      from company_valuations
+      where nse_symbol = 'HDFCBANK'
+    cross_currency: false
+    ordered: false
+    notes: The latest close at the weekly snapshot, rupees, with its trading date.
+  - id: sql-r4-e23
+    split: test
+    family: equity
+    question: What target price do analysts give for Infosys?
+    answerable: false
+    cross_currency: false
+    ordered: false
+    notes: No view holds analysts' targets, and the site gives none.
+  - id: sql-r4-e24
+    split: test
+    family: equity
+    question: How many cars did Maruti Suzuki sell last quarter?
+    answerable: false
+    cross_currency: false
+    ordered: false
+    notes: No view holds unit volumes (company_financials holds money lines).
+  - id: sql-r4-e25
+    split: test
+    family: equity
+    question: Which Nifty 50 company will grow its profit the fastest next year?
+    answerable: false
+    cross_currency: false
+    ordered: false
+    notes: A forecast; the views hold filed and market figures only.
+  # ---------------------------------------------------------------- round 4 test split: calls and guidance
+  - id: sql-r4-c01
+    split: test
+    family: calls
+    question: When did ITC hold its Q1 FY27 earnings call?
+    answerable: true
+    gold_sql: |
+      select call_date
+      from earnings_calls
+      where nse_symbol = 'ITC' and fiscal_quarter = 'Q1 FY27'
+    cross_currency: false
+    ordered: false
+    notes: From the transcript or the call notice.
+  - id: sql-r4-c02
+    split: test
+    family: calls
+    question: How many of the Q2 FY27 earnings calls listed were held in November 2026?
+    answerable: true
+    gold_sql: |
+      select count(*) as calls
+      from earnings_calls
+      where fiscal_quarter = 'Q2 FY27' and call_date >= date '2026-11-01' and call_date < date '2026-12-01'
+    cross_currency: false
+    ordered: false
+    notes: Q2 FY27 calls whose call date falls in November 2026.
+  - id: sql-r4-c03
+    split: test
+    family: calls
+    question: Which companies' Q4 FY25 call transcripts could not be read?
+    answerable: true
+    gold_sql: |
+      select company
+      from earnings_calls
+      where fiscal_quarter = 'Q4 FY25' and transcript_status = 'unreadable'
+    cross_currency: false
+    ordered: false
+    notes: transcript_status unreadable.
+  - id: sql-r4-c04
+    split: test
+    family: calls
+    question: On average, how many days after the quarter's end were the Q1 FY27 earnings calls held?
+    answerable: true
+    gold_sql: |
+      select round(avg(call_date - quarter_end), 1) as avg_days
+      from earnings_calls
+      where fiscal_quarter = 'Q1 FY27' and call_date is not null
+    cross_currency: false
+    ordered: false
+    notes: Calendar days from the quarter's last day to the call date, averaged over the calls with a date; compared at one decimal.
+  - id: sql-r4-c05
+    split: test
+    family: calls
+    question: Which companies' Q2 FY27 call transcripts were filed on BSE rather than NSE?
+    answerable: true
+    gold_sql: |
+      select company
+      from earnings_calls
+      where fiscal_quarter = 'Q2 FY27' and exchange = 'BSE'
+    cross_currency: false
+    ordered: false
+    notes: exchange BSE.
+  - id: sql-r4-c06
+    split: test
+    family: calls
+    question: List HDFC Bank's earnings calls with their fiscal quarter and call date.
+    answerable: true
+    gold_sql: |
+      select fiscal_quarter, call_date
+      from earnings_calls
+      where nse_symbol = 'HDFCBANK'
+    cross_currency: false
+    ordered: false
+    notes: Every listed call of the company.
+  - id: sql-r4-c07
+    split: test
+    family: calls
+    question: Which companies held their Q1 FY27 earnings calls on the latest date, and when was it?
+    answerable: true
+    gold_sql: |
+      select company, call_date
+      from earnings_calls
+      where fiscal_quarter = 'Q1 FY27'
+        and call_date = (select max(call_date) from earnings_calls where fiscal_quarter = 'Q1 FY27')
+    cross_currency: false
+    ordered: false
+    notes: Every company whose call fell on the last date (a tie keeps them all; one company on dev).
+  - id: sql-r4-c08
+    split: test
+    family: calls
+    question: How many revenue growth targets have companies stated on their earnings calls?
+    answerable: true
+    gold_sql: |
+      select count(*) as targets
+      from call_guidance
+      where metric = 'revenue_growth'
+    cross_currency: false
+    ordered: false
+    notes: metric revenue_growth; a target stated again on a later call counts once per call. Zero on dev while the extraction is hidden there.
+  - id: sql-r4-c09
+    split: test
+    family: calls
+    question: For each fiscal quarter, how many listed earnings calls have a stored transcript?
+    answerable: true
+    gold_sql: |
+      select fiscal_quarter, count(*) as calls
+      from earnings_calls
+      where transcript_status = 'stored'
+      group by fiscal_quarter
+    cross_currency: false
+    ordered: false
+    notes: transcript_status stored, grouped by fiscal quarter; a quarter with none has no row.
+  - id: sql-r4-c10
+    split: test
+    family: calls
+    question: Read me the opening remarks from TCS's Q2 FY27 earnings call.
+    answerable: false
+    cross_currency: false
+    ordered: false
+    notes: A call's words are transcript text, which the views never hold.
+  # ---------------------------------------------------------------- round 4 test split: cross-currency
+  - id: sql-r4-x01
+    split: test
+    family: cross_currency
+    question: How does Infosys's profit after tax for its latest financial year compare with Microsoft's?
+    answerable: true
+    gold_sql: |
+      select company, currency, pat
+      from (select company, currency, pat, period_end, max(period_end) over (partition by company) as latest
+            from company_financials
+            where basis = 'consolidated' and period_kind = 'year' and pat is not null
+              and (nse_symbol = 'INFY' or ticker = 'MSFT')) t
+      where period_end = latest
+    cross_currency: true
+    ordered: false
+    notes: Each company's latest annual profit for the period in its own currency; never a difference or ratio of the two.
+  - id: sql-r4-x02
+    split: test
+    family: cross_currency
+    question: Which trades at a higher trailing P/E, Asian Paints or Home Depot?
+    answerable: true
+    gold_sql: |
+      select company, pe_ttm
+      from company_valuations
+      where nse_symbol = 'ASIANPAINT' or ticker = 'HD'
+    cross_currency: true
+    ordered: false
+    notes: A multiple is currency-neutral, so the two may be compared.
+  - id: sql-r4-x03
+    split: test
+    family: cross_currency
+    question: What is the average one-year price return of the companies in each market?
+    answerable: true
+    gold_sql: |
+      select market, round(avg(return_1y), 4) as avg_return_1y
+      from company_valuations
+      group by market
+    cross_currency: true
+    ordered: false
+    notes: A return is a fraction (currency-neutral); one average per market, compared at four decimals.
+  - id: sql-r4-x04
+    split: test
+    family: cross_currency
+    question: Which company on the site has the largest market capitalisation?
+    answerable: true
+    gold_sql: |
+      select company
+      from (select company, rank() over (partition by market order by market_cap desc) as r
+            from company_valuations
+            where market_cap is not null) t
+      where r = 1
+    cross_currency: true
+    ordered: false
+    notes: INR and USD market values are never ranked together, so the largest in each market. Only the company is checked.
+  - id: sql-r4-x05
+    split: test
+    family: cross_currency
+    question: What is the combined latest annual revenue of TCS and Salesforce?
+    answerable: true
+    gold_sql: |
+      select company, currency, revenue
+      from (select company, currency, revenue, period_end, max(period_end) over (partition by company) as latest
+            from company_financials
+            where basis = 'consolidated' and period_kind = 'year' and revenue is not null
+              and (nse_symbol = 'TCS' or ticker = 'CRM')) t
+      where period_end = latest
+    cross_currency: true
+    ordered: false
+    notes: INR and USD amounts are never added; each company's latest annual revenue in its own currency.
+  - id: sql-r4-x06
+    split: test
+    family: cross_currency
+    question: By what percent did the Sensex and the Dow change from their last close of 2024 to their last close of 2025?
+    answerable: true
+    gold_sql: |
+      with c as (
+        select series_name, date, value
+        from market_daily
+        where series_key in ('yf.^BSESN', 'yf.^DJI') and date >= date '2024-12-01' and date < date '2026-01-01'
+      ), e as (
+        select series_name, max(case when date < date '2025-01-01' then date end) as d0, max(date) as d1
+        from c
+        group by series_name
+      )
+      select e.series_name, round(100 * (c1.value / c0.value - 1), 2) as change_pct
+      from e
+      join c c0 on c0.series_name = e.series_name and c0.date = e.d0
+      join c c1 on c1.series_name = e.series_name and c1.date = e.d1
+    cross_currency: true
+    ordered: false
+    notes: Each index's percent change against its own close (currency-neutral); the two levels are never compared. Compared at two decimals.
+  - id: sql-r4-x07
+    split: test
+    family: cross_currency
+    question: Which has the higher EBIT margin, Larsen & Toubro or Caterpillar?
+    answerable: true
+    gold_sql: |
+      select company, ebit_margin
+      from company_valuations
+      where nse_symbol = 'LT' or ticker = 'CAT'
+    cross_currency: true
+    ordered: false
+    notes: A margin is currency-neutral, so the two may be compared.
+  - id: sql-r4-x08
+    split: test
+    family: cross_currency
+    question: Which five companies on the site trade at the highest EV/sales, highest first?
+    answerable: true
+    gold_sql: |
+      select company, ev_sales
+      from company_valuations
+      where ev_sales is not null
+      order by ev_sales desc
+      limit 5
+    cross_currency: true
+    ordered: true
+    notes: A multiple is currency-neutral and may be ranked across markets (no tie on dev).
+  - id: sql-r4-x09
+    split: test
+    family: cross_currency
+    question: How does Bharti Airtel's capital expenditure in its latest financial year compare with Verizon's?
+    answerable: true
+    gold_sql: |
+      select company, currency, capex
+      from (select company, currency, capex, period_end, max(period_end) over (partition by company) as latest
+            from company_financials
+            where basis = 'consolidated' and period_kind = 'year' and capex is not null
+              and (nse_symbol = 'BHARTIARTL' or ticker = 'VZ')) t
+      where period_end = latest
+    cross_currency: true
+    ordered: false
+    notes: Each company's latest annual capital expenditure in its own currency; never a difference or ratio of the two.
