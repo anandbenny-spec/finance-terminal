@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import random
 import re
 import uuid
@@ -66,9 +67,37 @@ def good_diff(docs: list[tuple[str, str]]) -> list[dict]:
     return bullets((added[:2] + removed[:1] + added[2:] + removed[1:])[:3])
 
 
-def good_diff_json(docs: list[tuple[str, str]], mode: str = "ok") -> dict:
+_MUST_HEAD = "Each of these changes must be reported"
+_MUST_SIDE = re.compile(r'(Previous|New|Removed|Added)(?: \([^)]*\))?: "(.*?)"(?=\s+New: "|\s*$)')
+
+
+def _listed(instruction: str, old: str, new: str) -> list[list[tuple[str, str]]]:
+    """From v28 (#445, round 25): the changes the instruction lists to report, each as its sides' (document, first sentence),
+    the sentence found in its document from the words the list shows."""
+    if _MUST_HEAD not in instruction:
+        return []
+    out = []
+    for line in instruction.split(_MUST_HEAD, 1)[1].splitlines()[1:]:
+        if not line.startswith("- "):
+            break
+        sides = []
+        for label, shown in _MUST_SIDE.findall(line):
+            doc, text = ("previous", old) if label in ("Previous", "Removed") else ("new", new)
+            head = " ".join(shown.removesuffix(" …").split())
+            found = next((text[s:e] for s, e in sentence_spans(text)
+                          if " ".join(text[s:e].split()).startswith(head) or head.startswith(" ".join(text[s:e].split()))),
+                         None)
+            if found is not None:
+                sides.append((doc, found))
+        if sides:
+            out.append(sides)
+    return out
+
+
+def good_diff_json(docs: list[tuple[str, str]], mode: str = "ok", instruction: str = "") -> dict:
     """A statement_diff_summary reply on the json route (v11 on, #445): up to three sentences that differ, each a bullet that
-    quotes it (without its full stop) and names its document. 'uncited': every quote is words neither statement holds."""
+    quotes it (without its full stop) and names its document. 'uncited': every quote is words neither statement holds. From
+    v28, the changes the instruction lists come first, each a bullet quoting its sides' sentences, as the prompt asks."""
     (_, old), (_, new) = docs
     olds = {old[s:e] for s, e in sentence_spans(old)}
     news = {new[s:e] for s, e in sentence_spans(new)}
@@ -76,6 +105,26 @@ def good_diff_json(docs: list[tuple[str, str]], mode: str = "ok") -> dict:
     removed = [("previous", old[s:e]) for s, e in sentence_spans(old) if old[s:e] not in news]
     rows = (added[:2] + removed[:1] + added[2:] + removed[1:])[:3]
     out = []
+    listed = _listed(instruction, old, new)
+    groups = [listed[i::5] for i in range(min(5, len(listed)))]     # more than five: two or three changes to a bullet
+    for group in groups:
+        texts, quotes = [], []
+        for sides in group:
+            qs = [(doc, sentence.strip().rstrip(".")) for doc, sentence in sides]
+            if len(qs) == 2 and len(shared := os.path.commonprefix([qs[0][1].split(), qs[1][1].split()])) >= 8:
+                tail = " ".join(qs[1][1].split()[len(shared):]).removeprefix("and ")  # the words the new one adds, so the
+                qs[1] = ("new", tail)                                                 # bullet doesn't repeat itself
+            said = ", and ".join(f'the {"new statement says" if d == "new" else "previous statement said"} "{q}"'
+                                 for d, q in qs)
+            texts.append(said[0].upper() + said[1:] + ".")
+            quotes += [{"document": d, "text": "words that are in neither statement" if mode == "uncited" else q}
+                       for d, q in qs]
+        out.append({"text": " ".join(texts), "quotes": quotes})
+    taken = {q for sides in listed for _, q in sides}
+    room = max(0, 3 - len(out))                         # with a list, its bullets first, then others up to three
+    rows = [r for r in rows if r[1] not in taken][:room]
+    if len(out) == 1 and not rows and len(listed[0]) == 2:
+        out, rows = [], [(d, sentence) for d, sentence in listed[0]]   # two bullets at least: a side to a bullet
     for doc, sentence in rows:
         q = sentence.strip().rstrip(".")
         # "says" and "said", not "adds" and "drops": from v17 (#445, round 16) a sentence the fixtures reword isn't "added"
@@ -209,14 +258,14 @@ class FakeClaude:
                        model=body.get("model") or "claude-haiku-5-5")
 
     def _message(self, body: dict, mode: str) -> dict:
-        docs, _ = documents_of(body)
+        docs, instruction = documents_of(body)
         if (schema := schema_of(body)) is not None:
             kind = next(iter(schema["properties"]))
             if self.answer is not None:
                 got = self.answer(body)
             else:
                 got = (good_stance(docs) if kind == "stance"
-                       else good_diff_json(docs, mode) if kind == "bullets" and len(docs) == 2
+                       else good_diff_json(docs, mode, instruction) if kind == "bullets" and len(docs) == 2
                        else {"projections": []})
             got = "Here is the stance: neutral" if mode == "not_json" else got
             self.answered.append((kind, got))

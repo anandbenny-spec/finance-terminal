@@ -106,11 +106,11 @@ class Ticker:
 def answers(projections=None, stance=None):
     """The fake's JSON answers: the stance (default: the sentence that says what the MPC decided) and the projections."""
     def answer(body):
-        docs, _ = documents_of(body)
+        docs, instruction = documents_of(body)
         if "projections" in schema_of(body)["properties"]:
             return {"projections": projections if projections is not None else []}
         if "bullets" in schema_of(body)["properties"]:             # the What changed summary's json route (#445, v11 on)
-            return good_diff_json(docs)
+            return good_diff_json(docs, instruction=instruction)  # v28 on: with the changes the instruction lists
         return stance(docs) if callable(stance) else stance or good_stance(docs)
     return answer
 

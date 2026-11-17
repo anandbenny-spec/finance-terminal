@@ -148,7 +148,11 @@ verdict, a v1 bullet's removed and added sentences are one change, and a change 
 own is shown (`summaries.DIFF_V1_PAIRS_FROM`; the v1 citations are read with their bullets). v27 is v26's text again, marking
 round 24's (Anand, 16 Nov 2026, 22:50 IST, rounds 23 and 24 open; after round 23's verdict): every change the target's v1
 output cites is shown, and a sentence one document alone has sits beside what v1 compares it with
-(`summaries.DIFF_V1_ALL_FROM`).
+(`summaries.DIFF_V1_ALL_FROM`). v28 is v27 plus four rules (Anand, 17 Nov 2026, about 14:10 IST, rounds 25 and 26 open; after
+round 24's verdict): the changes every output must report (the decision, the vote's split, the stance and guidance, the
+committee's projections, and every change the target's v1 output cites, read in `_diff_work`) are listed in the request, a
+reply that leaves one out, or quotes a side of a change of the stance without its words on the stance, is retried with the
+reason before the second model is asked, and the fallback shows every one of them (`summaries.DIFF_MUST_FROM`).
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -224,7 +228,9 @@ from ft.policy import rbi_resolution
 # v15 (Anand's pick of 13 Nov 2026, before 17:36 IST, after round 13): v14's text, with two false positives fixed
 # (summaries.DIFF_FP_FIX_FROM). v16 (Anand's decision of 14 Nov 2026, about 00:38 IST, after the judge failed round 14): v15's
 # text, with the grammar-fit, run-on and neighbour checks (summaries.DIFF_FIT_FROM).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v27", "stance_extraction": "v2",
+# v28 (Anand's decision of 17 Nov 2026, about 14:10 IST, after round 24's verdict): v27 plus four rules, the changes to report
+# listed in the request and checked (summaries.DIFF_MUST_FROM).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v28", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
@@ -272,6 +278,16 @@ class Work:
     prompt: object | None = field(default=None, repr=False)   # its own prompt, where its version isn't the current one
     # statement_diff_summary from v17: the second model's check of a reply whose bullets all passed (`AiBatch._verify`)
     verify: Callable[[Request, Checked], None] | None = field(default=None, repr=False)
+    # statement_diff_summary from v28: the target's v1 output's citations (document, start, end, bullet), and the changes
+    # every output must report, read from them and the redline once (`musts`)
+    v1: list | None = field(default=None, repr=False)
+    _musts: list | None = field(default=None, repr=False)
+
+    def musts(self) -> list:
+        """The changes this target's output must report (`summaries.must_changes`), read once."""
+        if self._musts is None:
+            self._musts = summaries.must_changes(self.segments, self.base, self.doc, self.v1 or [])
+        return self._musts
 
     @property
     def target(self) -> str:
@@ -286,7 +302,8 @@ class Work:
         if self.task == "doc_summary":
             return summaries.doc_summary_request(self.doc, prompt, note=note)
         if self.task == "statement_diff_summary":
-            return summaries.diff_summary_request(self.doc, self.base, self.segments, prompt, note=note)
+            must = self.musts() if _vnum(prompt.version) >= summaries.DIFF_MUST_FROM else None
+            return summaries.diff_summary_request(self.doc, self.base, self.segments, prompt, note=note, must=must)
         if self.task == "stance_extraction":
             return extraction.stance_request(self.doc, prompt, _schema(self.task, prompt.version), note=note)
         return extraction.projection_request(self.doc, self.sentences, prompt, _schema(self.task, prompt.version),
@@ -319,6 +336,8 @@ class Work:
                 old_all, new_all = summaries.sentence_spans(self.segments)       # the neighbour check (v16 on)
                 c = summaries.check_diff_json(answer, req.sources, changed, version=req.prompt.version,
                                               sentences={self.base.document_id: old_all, self.doc.document_id: new_all})
+                if c.ok and _vnum(req.prompt.version) >= summaries.DIFF_MUST_FROM:     # v28 on: the changes to report
+                    c.problems += summaries.must_problems(c, self.musts(), self.base, self.doc)
                 if c.ok and _vnum(req.prompt.version) >= summaries.DIFF_VERIFY_FROM:   # v17 on: the second model
                     if self.verify is None:
                         c.problems.append("not checked by a second model: no check was set up for this target")
@@ -546,7 +565,29 @@ class AiBatch(BatchSteps, Task):
             w.verify = lambda req, c, w=w: self._verify(w, req, c)
             work.append(w)
         self._pin(db, work)
+        if work:                                               # from v28: the v1 outputs' citations (`Work.musts`)
+            v1 = self._v1_citations(db, [w.document_id for w in work])
+            for w in work:
+                w.v1 = v1.get(w.document_id, [])
         return work
+
+    @staticmethod
+    def _v1_citations(db, ids: list[int]) -> dict[int, list[tuple[int, int, int, int]]]:
+        """Each document's v1 diff summary's citations as (document, start, end, bullet index), the output the fallback
+        reads (`_store_fallback`): its lowest-id v1 output that is published or superseded."""
+        out: dict[int, list[tuple[int, int, int, int]]] = {}
+        for doc_id, *cite in db.execute(
+                """select o.document_id, c.document_id, c.char_start, c.char_end,
+                          coalesce((regexp_match(c.claim_path, '^/bullets/(\\d+)'))[1]::int, -1)
+                     from core.ai_citation c
+                     join core.ai_output o on o.id = c.ai_output_id
+                    where o.id in (select min(x.id) from core.ai_output x
+                                    where x.task = 'statement_diff_summary' and x.document_id = any(%s) and x.scope = ''
+                                      and x.prompt_version = 'v1' and x.status in ('published', 'superseded')
+                                    group by x.document_id)
+                    order by o.document_id, c.citation_no""", (ids,)).fetchall():
+            out.setdefault(doc_id, []).append(tuple(cite))
+        return out
 
     def _pin(self, db, work: list[Work]) -> None:
         """Each target of a `PINNED_TASKS` task keeps the prompt version it was answered with (module docstring): the
@@ -991,6 +1032,8 @@ class AiBatch(BatchSteps, Task):
             later["v1_pairs"] = True
         if version >= summaries.DIFF_V1_ALL_FROM:
             later["v1_all"] = True
+        if version >= summaries.DIFF_MUST_FROM:
+            later["must"] = True
         bullets = summaries.fallback_bullets(w.segments, w.base, w.doc, prefer, packed=version >= summaries.DIFF_PACK_FROM,
                                              restated=version >= summaries.DIFF_RESTATED_FROM, **later)
         if not bullets:
