@@ -80,7 +80,7 @@ BULLETS = {"doc_summary": (3, 6), "statement_diff_summary": (2, 5)}
 # the model's own sentences, and CLAUDE.md §6 steps up to Sonnet where an evaluation shows Haiku falls short (as call_tone's
 # Sonnet round, #175). The task's effort and max_tokens stay. A version that isn't here runs on Haiku, so v1 to v6 are unchanged.
 DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11": SONNET, "v12": SONNET,
-                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET, "v23": SONNET, "v24": SONNET, "v25": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
+                 "v13": SONNET, "v14": SONNET, "v15": SONNET, "v16": SONNET, "v17": SONNET, "v18": SONNET, "v19": SONNET, "v20": SONNET, "v21": SONNET, "v22": SONNET, "v23": SONNET, "v24": SONNET, "v25": SONNET, "v26": SONNET}   # v8: v7's text, marking the copies rule's revision (round 7); v9: v8 plus three rules
 # (round 8); v10: v9 plus a rule on citation carriers (round 9); v11: the json route (round 10); v12: v11 plus a rule, with
 # two more checks (round 11); v13: v12 plus two rules, with two more checks (round 12); v14: v13 plus two rules, with one
 # more check and a wider same-claim check (round 13); v15: v14's text, with two false positives fixed (round 14); v16: v15's
@@ -89,12 +89,12 @@ DIFF_MODEL_OF = {"v7": SONNET, "v8": SONNET, "v9": SONNET, "v10": SONNET, "v11":
 # text again, marking the third run's (a narrower "adds" check, the fallback's trivial changes and repeated sentences).
 # v20 to v22: v19's text again, marking rounds 17 to 19's revisions; v23: v22's text, marking round 20's packed fallback
 # (`DIFF_PACK_FROM`); v24: v23's text, marking round 21's (`DIFF_RESTATED_FROM`); v25: v24's text, marking round 22's
-# (`DIFF_COUNTERPART_FROM`).
+# (`DIFF_COUNTERPART_FROM`); v26: v25's text, marking round 23's (`DIFF_KIND_JOIN_FROM`, `DIFF_V1_PAIRS_FROM`).
 # The effort of a version that doesn't run at the task's (low): v10 runs at medium (round 9, 13 Nov 2026), so Sonnet plans
 # its bullets; at low it wrote words only to hold a citation ("Previous new") in round 8.
 DIFF_EFFORT_OF = {"v10": "medium", "v11": "medium", "v12": "medium", "v13": "medium", "v14": "medium", "v15": "medium",
                   "v16": "medium", "v17": "medium", "v18": "medium", "v19": "medium", "v20": "medium", "v21": "medium", "v22": "medium", "v23": "medium", "v24": "medium",
-                  "v25": "medium"}
+                  "v25": "medium", "v26": "medium"}
 # From v11 (#445, round 10; Anand's decision of 13 Nov 2026, by 07:18 IST, after rounds 6 to 9 on the citations route kept
 # showing words written only to hold a citation): the json route, as call_summary v6. The reply is v11.schema.json's JSON and
 # our code places the quotes (`check_diff_json`), so the model has no text to carry a citation with.
@@ -220,6 +220,26 @@ DIFF_RESTATED_FROM = 24
 #   ("continue with the neutral monetary policy stance …", mpc-2025-04-09) instead of quoting it as a sentence.
 # Fallbacks of v24 or earlier keep their rules.
 DIFF_COUNTERPART_FROM = 25
+# From v26 (#445, round 23; Anand's decision of 17 Nov 2026, 07:06 IST): v25's text, and one of v25's rules in
+# `_counterparts` (`kinds`), from round 22's pre-check:
+# - a sentence joins another's change (split in two, or two merged) only when it is of that change's kind (`_kind`, on both
+#   sides' text): round 22's mpc-2022-09-30 joined "Dr. Ashima Goyal voted to increase the repo rate by 35 basis points." (a
+#   dissent) to the change of the vote on the policy repo rate (a decision), and the fallback's one decision change per output
+#   then left the dissent out;
+# Fallbacks of v25 or earlier keep their rules.
+DIFF_KIND_JOIN_FROM = 26
+# Also from v26 (#445, round 23; round 22's verdict, 17 Nov 2026, 08:26 IST: mpc-2022-09-30 and mpc-2020-08-06 failed rule (c)),
+# two rules that read the target's v1 output's citations by bullet (`fallback_bullets`' `v1_pairs`):
+# - v1's counterparts: where one v1 bullet cites a sentence the previous document alone has and a sentence the new one alone
+#   has, and each is a change of its own here, on one topic (the redline's), they are one change, before and after, so neither
+#   side is shown without the other (mpc-2020-08-06: the May guidance "the policy space … needs to be used now rather than
+#   later" with August's "Accordingly, the MPC decides to stay on hold …", and the inflation and growth outlooks). Its kind is
+#   that of the sentences v1 cites;
+# - v1's own changes of the decision's kind: a change v1 cites in a bullet other than the shown decision's, and that isn't a
+#   restatement of it (a rate figure the decision doesn't give, or a vote), is shown, not left out as a second decision: a
+#   vote with the dissents (mpc-2022-09-30: the vote on the policy repo rate, from "unanimously voted" to five members, beside
+#   Dr. Goyal's 35 basis points), anything else as the stance (the guidance above).
+DIFF_V1_PAIRS_FROM = 26
 
 
 def diff_json(version: str) -> bool:
@@ -1989,7 +2009,7 @@ class _One:
     text: str
 
 
-def _counterparts(segments: dict, old: Doc, new: Doc, kind_of) -> list[list]:
+def _counterparts(segments: dict, old: Doc, new: Doc, kind_of, *, kinds: bool = False) -> list[list]:
     """v25's changes from the redline, as [old spans, new spans] (see DIFF_COUNTERPART_FROM).
     - The redline's own changed pairs stand. A pair whose sides aren't on one subject (`_same_topic`) is two changes, each
       alone; a pair whose side ends with a colon (a list's lead-in) joins the next pair (its first item).
@@ -2158,6 +2178,8 @@ def _counterparts(segments: dict, old: Doc, new: Doc, kind_of) -> list[list]:
                         continue                       # an opening joins only a side whose other side opens too
                     if any(regions_differ(x.text, y.text) for y in change[1 - side]):
                         continue                       # another economy
+                    if kinds and kind_of(x.text) != kind_of(" ".join(y.text for y in change[0] + change[1])):
+                        continue                       # from v26: another kind (a dissent beside a vote) stays its own
                     theirs = set().union(*(_subject(y.text) for y in change[1 - side]))
                     ours = set().union(*(_subject(y.text) for y in have))
                     if len(mine_s & theirs) / len(mine_s) < SUBJECT_SAME or len((mine_s & theirs) - ours) < 2:
@@ -2192,16 +2214,59 @@ def _counterparts(segments: dict, old: Doc, new: Doc, kind_of) -> list[list]:
     return out
 
 
+def _v1_bullets(v1: list[tuple[int, ...]]) -> dict[int, list[tuple[int, int, int]]]:
+    """The v1 output's citations by its bullet's index (from v26, a citation's fourth item; one without it is left out)."""
+    out: dict[int, list[tuple[int, int, int]]] = {}
+    for c in v1:
+        if len(c) > 3 and isinstance(c[3], int) and c[3] >= 0:
+            out.setdefault(c[3], []).append((c[0], c[1], c[2]))
+    return out
+
+
+def _hits(spans, doc_id: int, cites: list[tuple[int, int, int]]) -> bool:
+    """Whether one of `cites` (document id, start, end) overlaps one of `spans` in document `doc_id`."""
+    return any(d == doc_id and a < e and s < b for s, e in spans for d, a, b in cites)
+
+
+def _v1_counterparts(segments: dict, old: Doc, new: Doc, changes: list[list], v1: list[tuple[int, ...]],
+                     said: dict[int, str]) -> None:
+    """From v26 (`DIFF_V1_PAIRS_FROM`): where one v1 bullet cites a sentence of exactly one change that only the previous
+    document has and of exactly one that only the new one has, both on one topic (the redline's, where both have one), the two
+    are one change, in place in `changes`. `said` gets the merged change's sentences that v1 cites, by its id: its kind."""
+    topic: dict[tuple[int, int], str | None] = {}
+    for p in segments.get("pairs", []):
+        for side, key in ((0, "old"), (1, "new")):
+            for s, _ in p.get(key) or []:
+                topic[(side, s)] = p.get("topic")
+    for _, cites in sorted(_v1_bullets(v1).items()):
+        olds = [p for p in changes if p[0] and not p[1] and _hits(p[0], old.document_id, cites)]
+        news = [p for p in changes if p[1] and not p[0] and _hits(p[1], new.document_id, cites)]
+        if len(olds) != 1 or len(news) != 1:
+            continue
+        o, n = olds[0], news[0]
+        a, b = topic.get((0, min(o[0])[0])), topic.get((1, min(n[1])[0]))
+        if a and b and a != b:
+            continue                                   # another part of the document
+        o[1] = n[1]
+        changes[:] = [c for c in changes if c is not n]
+        said[id(o)] = " ".join([old.text[s:e] for s, e in o[0] if _hits([(s, e)], old.document_id, cites)]
+                               + [new.text[s:e] for s, e in o[1] if _hits([(s, e)], new.document_id, cites)])
+
+
 def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str, str]], hi: int = 5, *,
                      packed: bool = False, restated: bool = False, counterparts: bool = False,
-                     v1: list[tuple[int, int, int]] | None = None) -> list[Bullet]:
+                     v1: list[tuple[int, ...]] | None = None, kinds: bool = False,
+                     v1_pairs: bool = False) -> list[Bullet]:
     """The fallback's bullets (see above): `prefer` holds a rejected reply's quotes as (document, text), in its order.
     `packed` (from v23, `DIFF_PACK_FROM`): the balance sheet's words rank before the stance's, and a bullet carries up to
     FALLBACK_PER_BULLET changes of one kind (`_pack`). `restated` (from v24, `DIFF_RESTATED_FROM`; with `packed`): a change
     of the decision's other than the one shown that also states the stance is the stance. `counterparts` (from v25,
     `DIFF_COUNTERPART_FROM`; with `packed` and `restated`): changes paired only with their counterparts (`_counterparts`),
-    the changes `v1` cites first (the target's v1 output's citations, as (document id, start, end)), a minor change last
-    (`_minor`), quotations without RBI paragraph numbers and list items labelled as such."""
+    the changes `v1` cites first (the target's v1 output's citations, as (document id, start, end), from v26 with the v1
+    bullet's index as a fourth), a minor change last (`_minor`), quotations without RBI paragraph numbers and list items
+    labelled as such. `kinds` (from v26, `DIFF_KIND_JOIN_FROM`; with `counterparts`): `_counterparts`' joining rule of round
+    23. `v1_pairs` (from v26, `DIFF_V1_PAIRS_FROM`; with `counterparts`): v1's counterparts are one change, and v1's own
+    changes of the decision's kind are shown (`_v1_counterparts`, and below)."""
     def kind_of(text: str) -> int:
         return _kind(text, packed=packed)
 
@@ -2209,8 +2274,11 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
         return " ".join(text[s:e] for s, e in spans)
 
     pairs: list[list] = []
+    v1_said: dict[int, str] = {}                       # from v26: a change v1's counterparts made: the sentences v1 cites
     if counterparts:
-        pairs = _counterparts(segments, old, new, kind_of)
+        pairs = _counterparts(segments, old, new, kind_of, kinds=kinds)
+        if v1_pairs:
+            _v1_counterparts(segments, old, new, pairs, v1 or [], v1_said)
     for p in [] if counterparts else segments.get("pairs", []):
         kind = p.get("kind")
         if kind not in ("changed", "added", "removed"):
@@ -2270,7 +2338,7 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
                 return k
         return len(prefer)
 
-    kind = {id(p): kind_of(words(p[0], old.text) + " " + words(p[1], new.text)) for p in unique}
+    kind = {id(p): kind_of(v1_said.get(id(p)) or words(p[0], old.text) + " " + words(p[1], new.text)) for p in unique}
     preferred = {id(p): first_preferred(p) for p in unique}
 
     def where(p) -> tuple[int, int]:
@@ -2317,11 +2385,37 @@ def fallback_bullets(segments: dict, old: Doc, new: Doc, prefer: list[tuple[str,
         # From v25: the changes the target's v1 output cites first, and a minor change last (rule (c), change by change).
         def cited(p) -> bool:
             return any(d == doc and a < e and s < b for doc, spans in ((old.document_id, p[0]), (new.document_id, p[1]))
-                       for s, e in spans for d, a, b in v1 or ())
+                       for s, e in spans for d, a, b, *_ in v1 or ())
         first = {id(p) for p in unique if cited(p)}
         last = {id(p) for p in unique if p[0] and p[1] and _minor(words(p[0], old.text), words(p[1], new.text))}
         later = {id(p) for p in unique if not (p[0] and p[1])}       # a sentence alone, after the pairs
         tier = {id(p): 0 if id(p) in first else 3 if id(p) in last else 2 if id(p) in later else 1 for p in unique}
+        if v1_pairs:
+            # From v26: a change v1 cites in a bullet of its own, of the decision's kind but not the decision shown nor a
+            # restatement of it (the same rate figures, and no vote), is shown: a vote with the dissents, else as the stance.
+            decision = FALLBACK_KINDS.index("decision")
+            order = sorted(unique, key=lambda p: (kind[id(p)], tier[id(p)], says[id(p)], rate[id(p)], preferred[id(p)],
+                                                  where(p)))
+            shown = next((p for p in order if kind[id(p)] == decision), None)
+            bullets_of = _v1_bullets(v1 or [])
+
+            def of(p) -> set[int]:
+                return {k for k, cites in bullets_of.items()
+                        if _hits(p[0], old.document_id, cites) or _hits(p[1], new.document_id, cites)}
+
+            def figures(p) -> set[str]:
+                side = words(p[1], new.text) if p[1] else words(p[0], old.text)
+                return {" ".join(x.lower().split()) for x in _K_FIGURE_RATE.findall(side)}
+
+            for p in unique:
+                if shown is None or kind[id(p)] != decision or p is shown or not of(p) or of(p) & of(shown):
+                    continue
+                text = v1_said.get(id(p)) or words(p[0], old.text) + " " + words(p[1], new.text)
+                vote = bool(_K_VOTE.search(text))
+                if not vote and figures(p) and figures(p) == figures(shown):
+                    continue                           # the decision again (an RBI resolution says it twice)
+                kind[id(p)] = FALLBACK_KINDS.index("dissent" if vote else "stance")
+                says[id(p)], rate[id(p)] = 0, 0
         by_kind = sorted(unique, key=lambda p: (kind[id(p)], tier[id(p)], says[id(p)], rate[id(p)], preferred[id(p)],
                                                 where(p)))
         after = sorted(unique, key=lambda p: (tier[id(p)], preferred[id(p)], kind[id(p)], where(p)))
