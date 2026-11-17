@@ -47,6 +47,18 @@ STORE_TIMEOUT_S = 5.0
 CLIENT_TIMEOUT_S, CLIENT_RETRIES, CLIENT_MAX_WAIT_S = 30.0, 1, 5.0      # a visitor waits: short timeouts, one retry
 READER_CONNECT_TIMEOUT_S = 5
 MAX_BODY_CHARS = 4_000
+PAGE_COLUMNS = ("item_type", "subtype", "slug", "title", "parent_slug")
+# 0054's functions: each one's arguments, by name, with their types (the SQL store casts to them).
+FUNCTIONS: dict[str, tuple[tuple[str, str], ...]] = {
+    "cmdbar_state": (),
+    "cmdbar_count": (("p_bucket", "text"), ("p_window_start", "timestamptz")),
+    "cmdbar_cache_get": (("p_question_sha", "text"),),
+    "cmdbar_cache_put": (("p_question_sha", "text"), ("p_question", "text"), ("p_route", "text"), ("p_answer", "jsonb"),
+                         ("p_data_version", "text"), ("p_expires_at", "timestamptz")),
+    "cmdbar_cache_hit": (("p_question_sha", "text"),),
+    "cmdbar_log": (("p_row", "jsonb"),),
+    "cmdbar_examples": (),
+}
 
 router = APIRouter(prefix="/api/cmdbar")
 
@@ -90,8 +102,80 @@ def _when(v) -> datetime | None:
     return t if t.tzinfo else t.replace(tzinfo=UTC)
 
 
-class RpcCmdbarStore:
-    """The `api.cmdbar_*` functions as RPC (`/rest/v1/rpc/<fn>`, schema `api`) and two `api` views, with the secret key."""
+class FunctionStore:
+    """The route's store over 0054's `api.cmdbar_*` functions and the `api.task_freshness` and `api.search_index` views: each
+    answer's shape is checked here, so the deployed store (`RpcCmdbarStore`) and the tests' (`SqlCmdbarStore`) read the same
+    way. Anything off its shape raises StoreError (the route reads a failed switch as "paused" and a failed cache as a miss)."""
+
+    def _rpc(self, fn: str, args: dict, *, empty_ok: bool = False):
+        raise NotImplementedError
+
+    def _freshness_rows(self) -> list:
+        raise NotImplementedError
+
+    def _page_rows(self, slug: str) -> list:
+        raise NotImplementedError
+
+    def state(self) -> route_mod.State:
+        return parse_state(self._rpc("cmdbar_state", {}))
+
+    def count(self, bucket: str, window_start: datetime) -> int:
+        n = self._rpc("cmdbar_count", {"p_bucket": bucket, "p_window_start": window_start.astimezone(UTC).isoformat()})
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise route_mod.StoreError("cmdbar_count returned an unexpected value")
+        return n
+
+    def cache_get(self, sha: bytes) -> route_mod.CacheEntry | None:
+        got = self._rpc("cmdbar_cache_get", {"p_question_sha": sha.hex()})
+        if got is None:
+            return None
+        if not isinstance(got, dict) or not isinstance(got.get("answer"), dict) \
+                or not isinstance(got.get("route"), str) or not isinstance(got.get("data_version"), str):
+            raise route_mod.StoreError("cmdbar_cache_get returned an unexpected value")
+        return route_mod.CacheEntry(got["route"], got["answer"], got["data_version"])
+
+    def cache_put(self, sha: bytes, question: str, route: str, answer: dict, data_version: str,
+                  expires_at: datetime) -> None:
+        self._rpc("cmdbar_cache_put", {"p_question_sha": sha.hex(), "p_question": question, "p_route": route,
+                                       "p_answer": answer, "p_data_version": data_version,
+                                       "p_expires_at": expires_at.astimezone(UTC).isoformat()}, empty_ok=True)
+
+    def cache_hit(self, sha: bytes) -> None:
+        self._rpc("cmdbar_cache_hit", {"p_question_sha": sha.hex()}, empty_ok=True)
+
+    def log(self, row: LogRow) -> None:
+        self._rpc("cmdbar_log", {"p_row": row.as_json()}, empty_ok=True)
+
+    def freshness(self) -> dict[str, datetime]:
+        rows = self._freshness_rows()
+        if not isinstance(rows, list) or len(rows) >= 1000:            # 1,000 is the Data API's cap: never read short
+            raise route_mod.StoreError("task_freshness: unexpected or truncated answer")
+        try:
+            return {r["task_key"]: _when(r.get("last_success_at")) for r in rows}
+        except (KeyError, TypeError, ValueError, AttributeError):
+            raise route_mod.StoreError("task_freshness: unusable row") from None
+
+    def page(self, slug: str) -> dict | None:
+        rows = self._page_rows(slug)
+        if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+            raise route_mod.StoreError("search_index: unexpected answer")
+        if not rows:
+            return None
+        return {k: rows[0].get(k) for k in PAGE_COLUMNS}
+
+    def examples(self) -> list[dict]:
+        rows = self._rpc("cmdbar_examples", {})
+        if not isinstance(rows, list):
+            raise route_mod.StoreError("cmdbar_examples returned an unexpected value")
+        return rows
+
+    def close(self) -> None:
+        pass
+
+
+class RpcCmdbarStore(FunctionStore):
+    """What the deployed route uses: the functions as RPC (`/rest/v1/rpc/<fn>`, schema `api`) and the two views through the Data
+    API, with the secret key."""
 
     def __init__(self, supabase_url: str, key: str, client: httpx.Client | None = None):
         self.url, self.key = supabase_url.rstrip("/"), key
@@ -129,63 +213,46 @@ class RpcCmdbarStore:
             raise route_mod.StoreError(f"{view}: Data API unreachable: {type(e).__name__}") from None
         return self._answer(view, resp)
 
-    def state(self) -> route_mod.State:
-        return parse_state(self._rpc("cmdbar_state", {}))
+    def _freshness_rows(self) -> list:
+        return self._get("task_freshness", {"select": "task_key,last_success_at", "limit": "1000"})
 
-    def count(self, bucket: str, window_start: datetime) -> int:
-        n = self._rpc("cmdbar_count", {"p_bucket": bucket, "p_window_start": window_start.astimezone(UTC).isoformat()})
-        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
-            raise route_mod.StoreError("cmdbar_count returned an unexpected value")
-        return n
-
-    def cache_get(self, sha: bytes) -> route_mod.CacheEntry | None:
-        got = self._rpc("cmdbar_cache_get", {"p_question_sha": sha.hex()})
-        if got is None:
-            return None
-        if not isinstance(got, dict) or not isinstance(got.get("answer"), dict) \
-                or not isinstance(got.get("route"), str) or not isinstance(got.get("data_version"), str):
-            raise route_mod.StoreError("cmdbar_cache_get returned an unexpected value")
-        return route_mod.CacheEntry(got["route"], got["answer"], got["data_version"])
-
-    def cache_put(self, sha: bytes, question: str, route: str, answer: dict, data_version: str,
-                  expires_at: datetime) -> None:
-        self._rpc("cmdbar_cache_put", {"p_question_sha": sha.hex(), "p_question": question, "p_route": route,
-                                       "p_answer": answer, "p_data_version": data_version,
-                                       "p_expires_at": expires_at.astimezone(UTC).isoformat()}, empty_ok=True)
-
-    def cache_hit(self, sha: bytes) -> None:
-        self._rpc("cmdbar_cache_hit", {"p_question_sha": sha.hex()}, empty_ok=True)
-
-    def log(self, row: LogRow) -> None:
-        self._rpc("cmdbar_log", {"p_row": row.as_json()}, empty_ok=True)
-
-    def freshness(self) -> dict[str, datetime]:
-        rows = self._get("task_freshness", {"select": "task_key,last_success_at", "limit": "1000"})
-        if not isinstance(rows, list) or len(rows) >= 1000:            # 1,000 is the Data API's cap: never read short
-            raise route_mod.StoreError("task_freshness: unexpected or truncated answer")
-        try:
-            return {r["task_key"]: _when(r.get("last_success_at")) for r in rows}
-        except (KeyError, TypeError, ValueError):
-            raise route_mod.StoreError("task_freshness: unusable row") from None
-
-    def page(self, slug: str) -> dict | None:
-        rows = self._get("search_index", {"select": "item_type,subtype,slug,title,parent_slug", "slug": f"eq.{slug}",
-                                          "limit": "1"})
-        if not isinstance(rows, list):
-            raise route_mod.StoreError("search_index: unexpected answer")
-        if not rows:
-            return None
-        r = rows[0]
-        return {k: r.get(k) for k in ("item_type", "subtype", "slug", "title", "parent_slug")}
-
-    def examples(self) -> list[dict]:
-        rows = self._rpc("cmdbar_examples", {})
-        if not isinstance(rows, list):
-            raise route_mod.StoreError("cmdbar_examples returned an unexpected value")
-        return rows
+    def _page_rows(self, slug: str) -> list:
+        return self._get("search_index", {"select": ",".join(PAGE_COLUMNS), "slug": f"eq.{slug}", "limit": "1"})
 
     def close(self) -> None:
         self.client.close()
+
+
+class SqlCmdbarStore(FunctionStore):
+    """The same functions and views over one psycopg connection that holds `service_role` (the tests, against the test database;
+    as `ft.api.refresh.SqlRefreshStore`). Each call is its own transaction."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def _rpc(self, fn: str, args: dict, *, empty_ok: bool = False):
+        if fn not in FUNCTIONS or set(args) != {name for name, _ in FUNCTIONS[fn]}:
+            raise route_mod.StoreError(f"{fn}: unknown function or arguments")
+        params = ", ".join(f"{name} => %s::{typ}" for name, typ in FUNCTIONS[fn])
+        values = [json.dumps(args[name]) if typ == "jsonb" else args[name] for name, typ in FUNCTIONS[fn]]
+        import psycopg
+        try:
+            with self.conn.transaction():
+                got = self.conn.execute(f"select api.{fn}({params})::text", values).fetchone()[0]
+        except psycopg.Error as e:
+            raise route_mod.StoreError(f"{fn}: {type(e).__name__}") from None
+        return None if got in (None, "") else json.loads(got)
+
+    def _freshness_rows(self) -> list:
+        with self.conn.transaction():
+            rows = self.conn.execute("select task_key, last_success_at from api.task_freshness limit 1000").fetchall()
+        return [{"task_key": k, "last_success_at": t.isoformat() if t else None} for k, t in rows]
+
+    def _page_rows(self, slug: str) -> list:
+        with self.conn.transaction():
+            rows = self.conn.execute(f"select {', '.join(PAGE_COLUMNS)} from api.search_index where slug = %s limit 1",
+                                     (slug,)).fetchall()
+        return [dict(zip(PAGE_COLUMNS, r, strict=True)) for r in rows]
 
 
 # ---------------------------------------------------------------------------------------------- the live dependencies

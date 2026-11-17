@@ -235,3 +235,8 @@ us.snapshot:
   run_after: [us.valuation]
   overdue_after: 10 days
   uses_nse: false
+cmdbar.log_retention:
+  description: Deletes logged AI questions after 90 days and expired cached answers (database only)
+  workflows: {daily: every 16 hours}
+  overdue_after: 3 days
+  uses_nse: false
