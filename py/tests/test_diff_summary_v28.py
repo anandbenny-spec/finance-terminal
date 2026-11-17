@@ -127,7 +127,7 @@ def test_v28_is_v27s_text_plus_four_rules_and_is_current():
     for rule in ("the instruction may list the changes that must each be reported", "under 80 words",
                  'not that it held the rate at "unchanged at 5.25 per cent"', "quote what each document says about the stance"):
         assert rule in v28.text and rule not in v27.text, rule
-    assert PROMPT_VERSION["statement_diff_summary"] == "v28" and summaries.DIFF_MUST_FROM == 28
+    assert PROMPT_VERSION["statement_diff_summary"] == "v29" and summaries.DIFF_MUST_FROM == 28
     assert summaries.DIFF_MODEL_OF["v28"] == summaries.DIFF_MODEL_OF["v27"]
     assert summaries.DIFF_EFFORT_OF["v28"] == summaries.DIFF_EFFORT_OF["v27"]
     s27, s28 = load_schema("statement_diff_summary", "v27"), load_schema("statement_diff_summary", "v28")

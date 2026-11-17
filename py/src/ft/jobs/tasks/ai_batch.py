@@ -152,7 +152,10 @@ output cites is shown, and a sentence one document alone has sits beside what v1
 round 24's verdict): the changes every output must report (the decision, the vote's split, the stance and guidance, the
 committee's projections, and every change the target's v1 output cites, read in `_diff_work`) are listed in the request, a
 reply that leaves one out, or quotes a side of a change of the stance without its words on the stance, is retried with the
-reason before the second model is asked, and the fallback shows every one of them (`summaries.DIFF_MUST_FROM`).
+reason before the second model is asked, and the fallback shows every one of them (`summaries.DIFF_MUST_FROM`). v29 is v28
+plus one sentence (Anand, 17 Nov 2026, about 14:10 IST: round 26 adds only what round 25's verdict names): each item of a
+list of decisions inside a listed change is reported and checked, and the fallback reads a corridor rate's sentence with its
+other side and places the changes v1 cites before v28's own (`summaries.DIFF_ROOM_FROM`).
 
 **Embeddings:** `voyage-4`, 512 dimensions as halfvec (model key 'voyage-4@512'), with a context line ("Fed · FOMC
 statement · 28 Oct 2026 · …") added at embedding time only, so citations still point into the stored text. A missing
@@ -230,7 +233,9 @@ from ft.policy import rbi_resolution
 # text, with the grammar-fit, run-on and neighbour checks (summaries.DIFF_FIT_FROM).
 # v28 (Anand's decision of 17 Nov 2026, about 14:10 IST, after round 24's verdict): v27 plus four rules, the changes to report
 # listed in the request and checked (summaries.DIFF_MUST_FROM).
-PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v28", "stance_extraction": "v2",
+# v29 (the same decision; round 25's verdict, 17 Nov 2026, 18:19 IST): v28 plus one sentence, the items of a list of decisions
+# checked, and the fallback's room (summaries.DIFF_ROOM_FROM).
+PROMPT_VERSION = {"doc_summary": "v1", "statement_diff_summary": "v29", "stance_extraction": "v2",
                   "projection_extraction": "v1"}
 COPIES_FROM = 4                              # statement_diff_summary's replies from v4 on are checked with drop_copies
 QUOTES_FROM = 7                              # ... and from v7 on with check_quotes (summaries.quote_problem)
@@ -281,13 +286,17 @@ class Work:
     # statement_diff_summary from v28: the target's v1 output's citations (document, start, end, bullet), and the changes
     # every output must report, read from them and the redline once (`musts`)
     v1: list | None = field(default=None, repr=False)
-    _musts: list | None = field(default=None, repr=False)
+    _musts: dict | None = field(default=None, repr=False)
 
-    def musts(self) -> list:
-        """The changes this target's output must report (`summaries.must_changes`), read once."""
+    def musts(self, version: int = summaries.DIFF_MUST_FROM) -> list:
+        """The changes this target's output must report (`summaries.must_changes`), read once for each reading: v28's, and
+        from v29 (`summaries.DIFF_ROOM_FROM`) v29's."""
+        room = version >= summaries.DIFF_ROOM_FROM
         if self._musts is None:
-            self._musts = summaries.must_changes(self.segments, self.base, self.doc, self.v1 or [])
-        return self._musts
+            self._musts = {}
+        if room not in self._musts:
+            self._musts[room] = summaries.must_changes(self.segments, self.base, self.doc, self.v1 or [], room=room)
+        return self._musts[room]
 
     @property
     def target(self) -> str:
@@ -302,7 +311,7 @@ class Work:
         if self.task == "doc_summary":
             return summaries.doc_summary_request(self.doc, prompt, note=note)
         if self.task == "statement_diff_summary":
-            must = self.musts() if _vnum(prompt.version) >= summaries.DIFF_MUST_FROM else None
+            must = self.musts(_vnum(prompt.version)) if _vnum(prompt.version) >= summaries.DIFF_MUST_FROM else None
             return summaries.diff_summary_request(self.doc, self.base, self.segments, prompt, note=note, must=must)
         if self.task == "stance_extraction":
             return extraction.stance_request(self.doc, prompt, _schema(self.task, prompt.version), note=note)
@@ -337,7 +346,9 @@ class Work:
                 c = summaries.check_diff_json(answer, req.sources, changed, version=req.prompt.version,
                                               sentences={self.base.document_id: old_all, self.doc.document_id: new_all})
                 if c.ok and _vnum(req.prompt.version) >= summaries.DIFF_MUST_FROM:     # v28 on: the changes to report
-                    c.problems += summaries.must_problems(c, self.musts(), self.base, self.doc)
+                    v = _vnum(req.prompt.version)
+                    c.problems += summaries.must_problems(c, self.musts(v), self.base, self.doc,
+                                                          room=v >= summaries.DIFF_ROOM_FROM)
                 if c.ok and _vnum(req.prompt.version) >= summaries.DIFF_VERIFY_FROM:   # v17 on: the second model
                     if self.verify is None:
                         c.problems.append("not checked by a second model: no check was set up for this target")
@@ -1034,6 +1045,8 @@ class AiBatch(BatchSteps, Task):
             later["v1_all"] = True
         if version >= summaries.DIFF_MUST_FROM:
             later["must"] = True
+        if version >= summaries.DIFF_ROOM_FROM:
+            later["room"] = True
         bullets = summaries.fallback_bullets(w.segments, w.base, w.doc, prefer, packed=version >= summaries.DIFF_PACK_FROM,
                                              restated=version >= summaries.DIFF_RESTATED_FROM, **later)
         if not bullets:
