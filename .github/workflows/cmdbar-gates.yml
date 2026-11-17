@@ -67,7 +67,8 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: py/uv.lock
-      - run: uv sync --locked
+      # the jobs extra: `examples` runs a job task, whose run opens the job runner's fetcher (curl_cffi), as daily does
+      - run: uv sync --locked --extra jobs
       - name: Gate run
         run: |
           if [ "$SET" = "examples" ]; then

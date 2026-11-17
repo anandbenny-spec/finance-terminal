@@ -321,6 +321,7 @@ def test_the_workflows_wire_the_trial_and_the_reader_secret():
     gates = (ROOT / ".github" / "workflows" / "cmdbar-gates.yml").read_text()
     assert "options: [cmdbar_sql, cmdbar_router, retrieval, examples]" in gates
     assert "python -m ft.jobs.tasks.cmdbar_examples --target dev" in gates
+    assert "- run: uv sync --locked --extra jobs" in gates               # the runner's fetcher needs curl_cffi (dev run 1, #588)
     daily = (ROOT / ".github" / "workflows" / "daily.yml").read_text()
     assert ("SQL_READER_DATABASE_URL: ${{ env.FT_TARGET == 'production' && secrets.SQL_READER_DATABASE_URL || "
             "env.FT_TARGET == 'dev' && secrets.DEV_SQL_READER_DATABASE_URL || '' }}") in daily
