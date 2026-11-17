@@ -2827,15 +2827,15 @@ items:
   - id: sql-r4-c01
     split: test
     family: calls
-    question: When did ITC hold its Q1 FY27 earnings call?
+    question: When did UltraTech Cement hold its Q1 FY27 earnings call?
     answerable: true
     gold_sql: |
       select call_date
       from earnings_calls
-      where nse_symbol = 'ITC' and fiscal_quarter = 'Q1 FY27'
+      where nse_symbol = 'ULTRACEMCO' and fiscal_quarter = 'Q1 FY27'
     cross_currency: false
     ordered: false
-    notes: From the transcript or the call notice.
+    notes: From the transcript or the call notice. (Written for ITC, which has no listed call on dev, so its gold was empty; changed before any model run.)
   - id: sql-r4-c02
     split: test
     family: calls
@@ -2851,15 +2851,14 @@ items:
   - id: sql-r4-c03
     split: test
     family: calls
-    question: Which companies' Q4 FY25 call transcripts could not be read?
+    question: How many earnings calls does the site list in all, and how many of them have a stored transcript?
     answerable: true
     gold_sql: |
-      select company
+      select count(*) as calls, sum(case when transcript_status = 'stored' then 1 else 0 end) as stored
       from earnings_calls
-      where fiscal_quarter = 'Q4 FY25' and transcript_status = 'unreadable'
     cross_currency: false
     ordered: false
-    notes: transcript_status unreadable.
+    notes: Every listed call, and those with transcript_status stored. (Written as Q4 FY25's unreadable transcripts, whose gold was empty on dev, where no transcript is unreadable; changed before any model run.)
   - id: sql-r4-c04
     split: test
     family: calls
@@ -2875,15 +2874,15 @@ items:
   - id: sql-r4-c05
     split: test
     family: calls
-    question: Which companies' Q2 FY27 call transcripts were filed on BSE rather than NSE?
+    question: How many of the listed earnings calls have no known call date?
     answerable: true
     gold_sql: |
-      select company
+      select count(*) as calls
       from earnings_calls
-      where fiscal_quarter = 'Q2 FY27' and exchange = 'BSE'
+      where call_date is null
     cross_currency: false
     ordered: false
-    notes: exchange BSE.
+    notes: call_date null (neither the transcript nor the call notice states it). (Written as Q2 FY27's transcripts filed on BSE, whose gold was empty on dev, where every listed transcript came through NSE; changed before any model run.)
   - id: sql-r4-c06
     split: test
     family: calls
