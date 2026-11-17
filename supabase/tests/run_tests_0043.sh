@@ -1,4 +1,5 @@
 #!/bin/bash
+# 0057 appended api.company_financials.filing_date: F1-F4 compare every other column (to_jsonb minus that key), as before; run_tests_0057.sh checks the new one.
 # Tests for 0043 (api.company_financials and api.value_chain filter by company before they compute; issue #469, #465's
 # recommendation 2). Run after the other scripts on the same fresh database. One transaction builds seven companies, keeps 0041's
 # company_financials body and 0034's value_chain body as throwaway views (public.vc43_old_cf, public.vc43_old_vc, security_invoker
@@ -205,8 +206,8 @@ select 'SETUP|' || (select count(*) from equity.financials x join core.entity e 
 
 ------------------------------------------------------------------ same rows, in full, both ways, owner and anon, gates hidden and shown
 update core.field_policy set status = 'hidden' where field_key in ('equity.ebit_derived', 'equity.brsr_values');
-select 'F1|' || (select count(*) from (select * from api.company_financials except select * from public.vc43_old_cf) x) || ':'
-            || (select count(*) from (select * from public.vc43_old_cf except select * from api.company_financials) x) || ':'
+select 'F1|' || (select count(*) from (select to_jsonb(n) - 'filing_date' from api.company_financials n except select to_jsonb(o) from public.vc43_old_cf o) x) || ':'
+            || (select count(*) from (select to_jsonb(o) from public.vc43_old_cf o except select to_jsonb(n) - 'filing_date' from api.company_financials n) x) || ':'
             || (select count(*) from api.company_financials where slug like 'vc43%') || ':'
             || (select count(*) from public.vc43_old_cf where slug like 'vc43%');
 select 'V1|' || (select count(*) from (select * from api.value_chain except select * from public.vc43_old_vc) x) || ':'
@@ -214,8 +215,8 @@ select 'V1|' || (select count(*) from (select * from api.value_chain except sele
             || (select count(*) from api.value_chain where company_slug like 'vc43%') || ':'
             || (select count(*) from public.vc43_old_vc where company_slug like 'vc43%');
 set role anon;
-select 'F3|' || (select count(*) from (select * from api.company_financials except select * from public.vc43_old_cf) x) || ':'
-            || (select count(*) from (select * from public.vc43_old_cf except select * from api.company_financials) x) || ':'
+select 'F3|' || (select count(*) from (select to_jsonb(n) - 'filing_date' from api.company_financials n except select to_jsonb(o) from public.vc43_old_cf o) x) || ':'
+            || (select count(*) from (select to_jsonb(o) from public.vc43_old_cf o except select to_jsonb(n) - 'filing_date' from api.company_financials n) x) || ':'
             || (select count(*) from api.company_financials where slug like 'vc43%') || ':'
             || (select count(*) from public.vc43_old_cf where slug like 'vc43%');
 select 'V3|' || (select count(*) from (select * from api.value_chain except select * from public.vc43_old_vc) x) || ':'
@@ -224,8 +225,8 @@ select 'V3|' || (select count(*) from (select * from api.value_chain except sele
             || (select count(*) from public.vc43_old_vc where company_slug like 'vc43%');
 reset role;
 update core.field_policy set status = 'shown' where field_key in ('equity.ebit_derived', 'equity.brsr_values');
-select 'F2|' || (select count(*) from (select * from api.company_financials except select * from public.vc43_old_cf) x) || ':'
-            || (select count(*) from (select * from public.vc43_old_cf except select * from api.company_financials) x) || ':'
+select 'F2|' || (select count(*) from (select to_jsonb(n) - 'filing_date' from api.company_financials n except select to_jsonb(o) from public.vc43_old_cf o) x) || ':'
+            || (select count(*) from (select to_jsonb(o) from public.vc43_old_cf o except select to_jsonb(n) - 'filing_date' from api.company_financials n) x) || ':'
             || (select count(*) from api.company_financials where slug like 'vc43%') || ':'
             || (select count(*) from public.vc43_old_cf where slug like 'vc43%');
 select 'V2|' || (select count(*) from (select * from api.value_chain except select * from public.vc43_old_vc) x) || ':'
@@ -233,8 +234,8 @@ select 'V2|' || (select count(*) from (select * from api.value_chain except sele
             || (select count(*) from api.value_chain where company_slug like 'vc43%') || ':'
             || (select count(*) from public.vc43_old_vc where company_slug like 'vc43%');
 set role anon;
-select 'F4|' || (select count(*) from (select * from api.company_financials except select * from public.vc43_old_cf) x) || ':'
-            || (select count(*) from (select * from public.vc43_old_cf except select * from api.company_financials) x) || ':'
+select 'F4|' || (select count(*) from (select to_jsonb(n) - 'filing_date' from api.company_financials n except select to_jsonb(o) from public.vc43_old_cf o) x) || ':'
+            || (select count(*) from (select to_jsonb(o) from public.vc43_old_cf o except select to_jsonb(n) - 'filing_date' from api.company_financials n) x) || ':'
             || (select count(*) from api.company_financials where slug like 'vc43%') || ':'
             || (select count(*) from public.vc43_old_cf where slug like 'vc43%');
 select 'V4|' || (select count(*) from (select * from api.value_chain except select * from public.vc43_old_vc) x) || ':'
