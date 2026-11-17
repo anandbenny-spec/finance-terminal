@@ -10,7 +10,8 @@ through the route's own code (`ft/cmdbar`) on dev and scores it with the rules S
 each question goes through `ft.cmdbar.documents.answer_documents`, the document route's own code (`voyage-4-lite`,
 `search_chunks` over Fed and RBI policy documents only with `k => 8`, then the cited answer), with no router filters (as the set
 says); the item's expected passage (its document and character span) is scored against the passages retrieval returned, and the
-answer's cited sentences are counted beside it.
+answer's cited sentences are counted beside it. `--query-model voyage-4` (K-10, #587) embeds the questions with `voyage-4` instead,
+for Architecture 03 §0's comparison ("the better of the two ships"): recorded beside the route's run, never as the gate.
 
 **Scoring** (Spec 07 §6):
 - `cmdbar_sql`, result-set match: the model's rows equal the gold's as multisets of tuples on the gold's columns; each gold column
@@ -62,7 +63,7 @@ from pglast import ast, parse_sql, stream
 from pglast.parser import ParseError
 
 from ft.ai import sqlguard
-from ft.ai.client import CONFIG, MILLION, AIError, Client, Embedder, Request, price_entry
+from ft.ai.client import CONFIG, MILLION, QUERY_MODEL, AIError, Client, Embedder, Request, price_entry
 from ft.cmdbar import documents as documents_mod
 from ft.cmdbar import router as router_mod
 from ft.cmdbar import sql as sql_mod
@@ -70,6 +71,7 @@ from ft.cmdbar import summary as summary_mod
 
 SETS_DIR = CONFIG / "eval" / "sets"
 SETS = ("cmdbar_sql", "cmdbar_router", "retrieval")
+QUERY_MODELS = ("voyage-4-lite", "voyage-4")   # the route's questions model, and Architecture 03 §0's comparison
 SPLITS = ("dev", "test")
 DEFAULT_MAX_COST = Decimal("0.50")
 SUMMARY_INPUT_TOKENS_EST = 2_500          # a summary request with 50 rows of a wide view, over-estimated
@@ -532,6 +534,19 @@ def annotation(title: str, payload) -> str:
     return f"::notice title={title}::{esc}"
 
 
+class QueryModel:
+    """The retrieval set's questions embedded with another Voyage 4 model, for Architecture 03 §0's comparison ("the retrieval
+    evaluation also runs `voyage-4` questions: the better of the two ships"). It wraps an `Embedder` and changes only the
+    question's model: the dimension, input type and retries are the Embedder's. The route itself always embeds questions with
+    `QUERY_MODEL` (`voyage-4-lite`); only this runner uses the wrapper."""
+
+    def __init__(self, embedder: Embedder, model: str):
+        self._embedder, self.model = embedder, model
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embedder._embed([text], self.model, "query").embeddings[0]
+
+
 def _connect_writer(dsn: str):
     import psycopg
     conn = psycopg.connect(dsn, autocommit=True, application_name="ft-cmdbar-gates")
@@ -548,7 +563,11 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
     p.add_argument("--items", default="", help="only these item ids of the split (comma or space separated)")
     p.add_argument("--send", action="store_true", help="answer the items (spends); without it: the price and the golds only")
     p.add_argument("--max-cost", type=Decimal, default=DEFAULT_MAX_COST, help="stop before spend could pass this (USD)")
+    p.add_argument("--query-model", choices=QUERY_MODELS, default=QUERY_MODEL,
+                   help="retrieval only: the Voyage model for the questions (the route's is voyage-4-lite)")
     args = p.parse_args(argv)
+    if args.query_model != QUERY_MODEL and args.set != "retrieval":
+        p.error("--query-model applies to the retrieval set only")
     ids = [x for x in args.items.replace(",", " ").split() if x]
     try:
         items = load_items(args.set, args.split, ids or None)
@@ -583,6 +602,7 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
         if args.set == "retrieval":
             try:
                 info["search_chunks_executable"] = bool(reader.select(SEARCH_EXECUTABLE_SQL).rows[0][0])
+                info["query_model"] = args.query_model
             except (sql_mod.QueryError, sql_mod.ReaderDown) as e:
                 out(f"::error title=sql_reader::could not check search_chunks as sql_reader ({type(e).__name__})")
                 return 1
@@ -614,6 +634,8 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
         voyage = embedder
         if args.set == "retrieval" and voyage is None:
             voyage = Embedder(env["VOYAGE_API_KEY"].strip())
+        if args.set == "retrieval" and args.query_model != QUERY_MODEL:
+            voyage = QueryModel(voyage, args.query_model)
         results: list[ItemResult] = []
         spent, stopped = Decimal(0), False
         for it in items:
@@ -660,7 +682,7 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
             metrics = retrieval_metrics(results)
             met = retrieval_rule_met(metrics)
             prompt_version, model = documents_mod.PROMPT_VERSION, documents_mod.MODEL
-            metrics |= {"embedding_model": "voyage-4-lite", "k": documents_mod.K, "banks": list(documents_mod.BANKS),
+            metrics |= {"embedding_model": args.query_model, "k": documents_mod.K, "banks": list(documents_mod.BANKS),
                         "doc_types": list(documents_mod.DOC_TYPES)}
 
             def expected_of(r: ItemResult) -> dict:
@@ -675,12 +697,15 @@ def main(argv: list[str] | None = None, *, env=None, out=print, client=None, rea
                 it = next(i for i in items if i["id"] == r.id)
                 return {"route": it["route"], **({"filters": it["filters"]} if it.get("filters") else {})}
         complete = not stopped and len(results) == len(items)
-        passed = args.split == "test" and met and complete
+        comparison = args.set == "retrieval" and args.query_model != QUERY_MODEL     # not the route's model: never the gate
+        passed = args.split == "test" and met and complete and not comparison
         metrics |= {"split": args.split, "gate_rule": GATE[args.set], "rule_met": met, "complete": complete,
                     "stopped_by_budget": stopped, "cost_usd": f"{spent:.6f}", "set_file_sha256": info["set_file_sha256"],
                     "mean_ms": int(sum(r.ms for r in results) / len(results)) if results else 0,
                     "max_ms": max((r.ms for r in results), default=0)}
         notes = ("dev split: prompt work, not the gate (Spec 07 N5)" if args.split == "dev"
+                 else f"test split: questions embedded with {args.query_model}, a comparison beside the route's {QUERY_MODEL}, "
+                      "not the gate (Architecture 03 §0)" if comparison
                  else "test split: the gate run (Spec 07 §6)")
         conn = writer or _connect_writer(env["JOB_DATABASE_URL"].strip())
         try:
