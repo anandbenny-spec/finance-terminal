@@ -15,7 +15,7 @@ import { GatedSlot } from "@/components/cmdbar/CommandBarSlot";
 import { CommandBarSlotView, HIDDEN_SLOT_CLASS } from "@/components/cmdbar/SlotView";
 import { TopBar } from "@/components/shell/TopBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { CANT_TEXT, ERROR_TEXT, NOT_FOUND_TEXT, PAUSED_TEXT, PLACEHOLDER, documentAnswer, parseAnswer, type Answer } from "@/lib/cmdbar";
+import { CANT_TEXT, ERROR_TEXT, LATEST_NOT_FOUND_TEXT, NOT_FOUND_TEXT, PAUSED_TEXT, PLACEHOLDER, documentAnswer, parseAnswer, type Answer } from "@/lib/cmdbar";
 import { MINUS } from "@/lib/format";
 
 const html = (node: ReactNode) => renderToStaticMarkup(<TooltipProvider>{node}</TooltipProvider>);
@@ -89,6 +89,12 @@ describe("the answer states, in Design 01 §4.6's words", () => {
   it("Not found in the documents", () => {
     expect(text(view({ state: "not_found", summary: NOT_FOUND_TEXT }))).toBe(NOT_FOUND_TEXT);
   });
+  it("Not found in the latest meeting's documents (K-13), with that meeting's page; never other words from the route", () => {
+    const out = view({ state: "not_found", route: "document", summary: LATEST_NOT_FOUND_TEXT, pages: [{ href: "/policy/rbi/2026-10-07", title: "The RBI's latest meeting" }] as never });
+    expect(text(out)).toBe(`${LATEST_NOT_FOUND_TEXT} The RBI's latest meeting`);
+    expect(out).toContain('href="/policy/rbi/2026-10-07"');
+    expect(text(view({ state: "not_found", summary: "Something the route never says" }))).toBe(NOT_FOUND_TEXT);
+  });
   it("a page: the link the index names, no AI text", () => {
     const out = view({ state: "page", route: "page", pages: [{ item_type: "event", subtype: "policy_meeting", slug: "fomc-2026-09-17", title: "FOMC meeting", parent_slug: "fed" }] as never });
     expect(out).toContain('href="/policy/fed/2026-09-17"');
@@ -124,6 +130,13 @@ describe("a data answer (Design 01 §4.6)", () => {
     expect(out).toContain("SELECT decision_date, change_bps\nFROM semantic.policy_meetings\nLIMIT 200");
     expect(t).toContain("Copy SQL");
     expect(t).toMatch(/semantic\.policy_meetings · 2\.4 s$/);
+  });
+  it("shows its source lines (K-13): 'Source: NSE' on Indian company figures, before the view and time", () => {
+    const out = view({ ...DATA, sources: ["Source: NSE"] });
+    expect(text(out)).toMatch(/Source: NSE semantic\.policy_meetings · 2\.4 s$/);
+    const us = text(view({ ...DATA, sources: ["Source: S&P Dow Jones Indices LLC, via Yahoo Finance", "© S&P Dow Jones Indices LLC"] }));
+    expect(us).toContain("Source: S&P Dow Jones Indices LLC, via Yahoo Finance · © S&P Dow Jones Indices LLC");
+    expect(text(view(DATA))).not.toContain("Source:");
   });
   it("shows the plain row count unmarked when no AI line passed its check", () => {
     const out = view({ ...DATA, summary: "1 row" });

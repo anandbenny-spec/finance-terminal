@@ -21,7 +21,8 @@ words) as it starts. `ft.api.cmdbar` streams both as newline-delimited JSON.
 (each `{name, kind}`), `rows` (numbers as exact decimal strings, dates as ISO 8601), `sql` (the re-printed query that ran: "Show
 SQL"), `citations` and `documents` (a document answer's: one entry per kept sentence, `{"text", "refs": [{"document",
 "char_start", "char_end", "quote"}]}`, and the cited documents, an RBI one by its name, date and press-release number, never its
-link: `ft.cmdbar.documents`), `view` (the views it read), `pages` (the page found, or the suggested pages), `ms` and `state`
+link: `ft.cmdbar.documents`), `view` (the views it read), `sources` (a data answer's source lines, K-13: `ft.cmdbar.sources`;
+`[]` otherwise), `pages` (the page found, the suggested pages, or a "latest" question's latest meeting), `ms` and `state`
 (`answered`, `page`, `cant_answer`, `not_found`, `paused` or `limit`). Never a raw error, an error class, a run id or a
 task name (`CLAUDE.md` §4): those go to the log row or, for the store's own failures, to the server log as a class name.
 
@@ -45,6 +46,7 @@ from ft.ai.client import AIUnavailable, CallError, Embedder, Failed
 from ft.cmdbar import cache, limits
 from ft.cmdbar import documents as documents_mod
 from ft.cmdbar import router as router_mod
+from ft.cmdbar import sources as sources_mod
 from ft.cmdbar import sql as sql_mod
 from ft.cmdbar.log import LogRow
 
@@ -60,7 +62,8 @@ UNDERSTANDING, WRITING_SQL, SEARCHING = "Understanding the question…", "Writin
 SUGGESTED_PAGES = ({"href": "/policy", "title": "Fed vs RBI"}, {"href": "/screener", "title": "Screener"},
                    {"href": "/earnings", "title": "Earnings calls"})          # live pages (web/lib/shell/nav.ts)
 STATES = ("answered", "page", "cant_answer", "not_found", "paused", "limit")
-FINAL_KEYS = ("route", "summary", "columns", "rows", "sql", "citations", "documents", "view", "pages", "ms", "state")
+FINAL_KEYS = ("route", "summary", "columns", "rows", "sql", "citations", "documents", "view", "sources", "pages", "ms",
+              "state")
 PROMPT_TTL_S = 600.0                    # the views' descriptions are re-read from their COMMENTs every 10 minutes
 
 
@@ -120,13 +123,14 @@ def missing_secrets(env: Mapping[str, str]) -> list[str]:
 
 # ---------------------------------------------------------------------------------------------- the final object
 def final(state: str, *, route: str | None = None, summary: str | None = None, columns=(), rows=(), sql: str | None = None,
-          citations=(), documents=(), view: str | None = None, pages=(), ms: int = 0) -> dict:
-    """The route's final object (Spec 07 §4's answer shape, with `pages` for the page found or the suggestions)."""
+          citations=(), documents=(), view: str | None = None, sources=(), pages=(), ms: int = 0) -> dict:
+    """The route's final object (Spec 07 §4's answer shape, with `pages` for the page found or the suggestions, and `sources`:
+    a data answer's source lines, `ft.cmdbar.sources`, K-13)."""
     if state not in STATES:
         raise ValueError(f"unknown state {state!r}")
     return {"route": route, "summary": summary, "columns": list(columns), "rows": list(rows), "sql": sql,
             "citations": [dict(c) for c in citations], "documents": [dict(d) for d in documents], "view": view,
-            "pages": [dict(p) for p in pages], "ms": ms, "state": state}
+            "sources": [str(x) for x in sources], "pages": [dict(p) for p in pages], "ms": ms, "state": state}
 
 
 def _kind(v) -> str | None:
@@ -298,7 +302,7 @@ def _limited(a: _Ask, question: str, now: datetime, st: State, emit) -> dict:
 
     # Step 3: the cache.
     sha = cache.key(question)
-    hit = _cached(a, sha)
+    hit = _cached(a, sha, question)
     if hit is not None:
         return hit
 
@@ -318,12 +322,14 @@ def _limited(a: _Ask, question: str, now: datetime, st: State, emit) -> dict:
     return out
 
 
-def _cached(a: _Ask, sha: bytes) -> dict | None:
+def _cached(a: _Ask, sha: bytes, question: str = "") -> dict | None:
     try:
         entry = a.store.cache_get(sha)
         if entry is None or not isinstance(entry.answer, dict) or entry.answer.get("state") not in STATES:
             return None
         if entry.data_version != cache.answer_version(entry.answer, a.freshness()):
+            return None
+        if stored_before_latest_check(entry.answer, question):
             return None
     except Exception as e:                               # noqa: BLE001 - an unreadable cache is a miss
         _note("cache get", e)
@@ -332,13 +338,19 @@ def _cached(a: _Ask, sha: bytes) -> dict | None:
         a.store.cache_hit(sha)
     except Exception as e:                               # noqa: BLE001
         _note("cache hit", e)
-    out = {k: entry.answer.get(k) for k in FINAL_KEYS}
+    out = sources_mod.fill({k: entry.answer.get(k) for k in FINAL_KEYS})   # an entry stored before K-13 has no sources
     out["ms"] = a.ms()
     a.row.route, a.row.cache_hit, a.row.answered = entry.route, True, out["state"] in ("answered", "page")
     a.row.generated_sql = out.get("sql")
     if isinstance(out.get("rows"), list) and out.get("sql"):
         a.row.rows_returned = len(out["rows"])
     return out
+
+
+def stored_before_latest_check(answer: dict, question: str) -> bool:
+    """A cached document answer to a "latest" question stored before K-13's check (#630): every answer since carries `sources`, so
+    one without it predates the check and is a miss (asked again, through the check), never served."""
+    return answer.get("route") == "document" and "sources" not in answer and documents_mod.asks_latest(question)
 
 
 def _store(a: _Ask, sha: bytes, question: str, out: dict, now: datetime) -> None:
@@ -431,7 +443,7 @@ def _dispatch(a: _Ask, question: str, emit) -> tuple[dict, bool]:
         columns, rows = table(ans.columns, ans.rows)
         view = ", ".join(cache.views_read(ans.sql)) or None
         return final("answered", route="data", summary=ans.summary, columns=columns, rows=rows, sql=ans.sql, view=view,
-                     ms=a.ms()), True
+                     sources=sources_mod.lines(ans.sql, columns, rows), ms=a.ms()), True
     if ans.state == "unanswerable":                      # the model said the views can't answer it
         return final("cant_answer", route="data", summary=CANT_TEXT, pages=SUGGESTED_PAGES, ms=a.ms()), True
     return final("cant_answer", route="data", summary=CANT_TEXT, pages=SUGGESTED_PAGES, ms=a.ms()), False
@@ -459,7 +471,7 @@ def _documents(a: _Ask, client, question: str, r: router_mod.Route, emit) -> tup
         return final("cant_answer", route="document", summary=CANT_TEXT, pages=SUGGESTED_PAGES, ms=a.ms()), False
     try:
         ans = documents_mod.answer_documents(client, embedder, reader, question, date_from=r.filters.date_from,
-                                             date_to=r.filters.date_to, clock=deps.clock)
+                                             date_to=r.filters.date_to, banks=r.filters.banks, clock=deps.clock)
     except AIUnavailable:
         row.error_class = "ai_unavailable"
         return final("paused", summary=PAUSED_TEXT, ms=a.ms()), False
@@ -477,6 +489,6 @@ def _documents(a: _Ask, client, question: str, r: router_mod.Route, emit) -> tup
         row.answered = True
         return final("answered", route="document", summary=ans.summary, citations=ans.citations, documents=ans.documents,
                      ms=a.ms()), True
-    if ans.state == "not_found":
-        return final("not_found", route="document", summary=NOT_FOUND_TEXT, ms=a.ms()), False
+    if ans.state == "not_found":                         # nothing cited, or (K-13) not from the latest meeting's documents
+        return final("not_found", route="document", summary=ans.summary or NOT_FOUND_TEXT, pages=ans.pages, ms=a.ms()), False
     return final("cant_answer", route="document", summary=CANT_TEXT, pages=SUGGESTED_PAGES, ms=a.ms()), False

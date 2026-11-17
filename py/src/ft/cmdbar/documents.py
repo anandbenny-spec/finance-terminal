@@ -26,6 +26,19 @@ the RBI's documents, answered only from cited passages of them.
      number (from its title: `policy.rbi_documents` stores it there) and **never a link to RBI's pages** (`CLAUDE.md` §1); a Fed
      document carries its link.
 
+4. **"Latest" questions** (K-13, #630; `CLAUDE.md` §1: right, labelled or absent). A question asking for the latest one
+   (`asks_latest`: "latest", "most recent", "newest", and "last" only next to a document or meeting word, never "last year") is
+   answered only from the latest meeting's documents. The bank is the router's, else the one the question names (`banks_named`),
+   else the cited documents'; its latest meeting with its documents stored is the newest held meeting with a policy rate in
+   `semantic.policy_meetings` (the rate is parsed from the stored statement or resolution), read through `sql_reader`
+   (`latest_meeting`).
+   - **The date floor:** when the bank is known before the search and the router set no dates, the search starts at that
+     meeting's date (`date_from`), so the passages are the latest documents' (the banks and document types stay fixed).
+   - **The check, after the model** (`check_latest`): an answer is kept only if, for each bank, at least one cited document is from
+     that meeting (its event's date, or released on or after it). Otherwise it becomes "not found" with
+     `LATEST_NOT_FOUND_TEXT` and that meeting's page in `pages`, so older text is never shown as the latest. The prompt doesn't
+     change.
+
 **What the route returns** (`ft.cmdbar.route`): `summary` is the kept sentences joined; `citations` is one entry per kept
 sentence, `{"text", "refs": [{"document", "char_start", "char_end", "quote"}]}` (sliced here, by code point, so the page never
 slices: `CLAUDE.md` §3), where `document` indexes `documents`; `documents` is the cited documents in the order first cited.
@@ -92,6 +105,21 @@ _WORD = re.compile(r"\w")
 _MARKER = re.compile(r"^(?:[-*•–—]|\d{1,2}[.)])\s+")
 _SLUG_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})$")
 
+# "Latest" questions (K-13, #630). "last" counts only next to a document or meeting word ("its last policy meeting"), never in
+# "last year" or "when did the RBI last cut" (a data question).
+LATEST_NOT_FOUND_TEXT = "Not found in the latest meeting's stored documents."
+_LATEST = re.compile(r"\b(?:latest|most\s+recent|newest)\b", re.IGNORECASE)
+_LAST = re.compile(r"\blast\s+(?:(?:policy|monetary|mpc|fomc|fed|rbi|rate|scheduled|bi-monthly)\s+){0,2}"
+                   r"(?:meetings?|resolutions?|statements?|minutes|decisions?|reviews?|press\s+conferences?|announcements?"
+                   r"|projections?|policy)\b", re.IGNORECASE)
+_BANK_WORDS = {"fed": re.compile(r"\b(?:fed|fomc|federal\s+reserve)\b", re.IGNORECASE),
+               "rbi": re.compile(r"\b(?:rbi|mpc|reserve\s+bank\s+of\s+india)\b", re.IGNORECASE)}
+LATEST_SQL = """
+select meeting_date from semantic.policy_meetings
+where bank = %s and status = 'held' and policy_rate_pct is not null and meeting_date <= current_date
+order by meeting_date desc limit 1
+"""
+
 SEARCH_SQL = """
 select document_id, chunk_no, char_start, char_end, section, speaker, body, doc_type, title, entity_slug, event_slug,
        published_at, source_url, score
@@ -148,6 +176,62 @@ def search(reader: sql_mod.Reader, embedding, question: str, *, date_from: date 
                     float(r[13]) if r[13] is not None else None) for r in res.rows]
     kept = [c for c in chunks if c.is_policy]
     return kept, len(chunks) - len(kept)
+
+
+# ---------------------------------------------------------------------------------------------- "latest" questions (K-13)
+def asks_latest(question: str | None) -> bool:
+    """Whether a question asks for the latest document or meeting."""
+    q = question or ""
+    return bool(_LATEST.search(q) or _LAST.search(q))
+
+
+def banks_named(question: str | None) -> tuple[str, ...]:
+    """The banks a question names, in BANKS' order."""
+    return tuple(b for b in BANKS if _BANK_WORDS[b].search(question or ""))
+
+
+def latest_meeting(reader: sql_mod.Reader, bank: str) -> date | None:
+    """A bank's latest held meeting with its decision stored (a policy rate, parsed from the stored statement or resolution), as
+    `sql_reader` reads `semantic.policy_meetings`. None if it has none. QueryError or ReaderDown on failure."""
+    res = reader.select(LATEST_SQL, (BANK_NAME[bank],))
+    v = res.rows[0][0] if res.rows and res.rows[0] else None
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    try:
+        return date.fromisoformat(v) if isinstance(v, str) else None
+    except ValueError:
+        return None
+
+
+def meeting_page(bank: str, day: date) -> dict:
+    """The meeting's page on this site (`web/lib/policy/decisions.ts`'s `meetingHref`), named without a date (the page formats
+    dates: `web/lib/format.ts`)."""
+    return {"href": f"/policy/{bank}/{day.isoformat()}", "title": f"The {BANK_NAME[bank]}'s latest meeting"}
+
+
+def _from(doc: dict, day: date) -> bool:
+    """A cited document is from the meeting on `day`: its event's date is that day, or it was released on or after it."""
+    ev = _slug_day(doc.get("event_slug"))
+    try:
+        released = date.fromisoformat(doc["date"]) if isinstance(doc.get("date"), str) else None
+    except ValueError:
+        released = None
+    return ev == day or (released is not None and released >= day)
+
+
+def check_latest(ans: DocAnswer, latest: dict[str, date | None], banks: tuple[str, ...]) -> list[str]:
+    """The banks whose latest meeting no cited document is from (an unknown latest meeting counts as not cited: fails closed).
+    If any, the answer becomes "not found in the latest meeting's documents", with those meetings' pages."""
+    missing = [b for b in banks
+               if latest.get(b) is None or not any(d.get("bank") == BANK_NAME[b] and _from(d, latest[b]) for d in ans.documents)]
+    if missing:
+        ans.state, ans.summary = "not_found", LATEST_NOT_FOUND_TEXT
+        ans.citations, ans.documents = [], []
+        ans.pages = [meeting_page(b, latest[b]) for b in missing if latest.get(b) is not None]
+        ans.error_class = ans.error_class or "latest: older documents"
+    return missing
 
 
 # ---------------------------------------------------------------------------------------------- the request
@@ -285,6 +369,9 @@ class DocAnswer:
     error_class: str | None = None
     ms: int = 0
     searches: int = 0                                         # search_chunks calls: 2 when a timed-out first one was retried
+    pages: list[dict] = field(default_factory=list)           # "not found" for a latest question: the latest meeting's page
+    latest: dict = field(default_factory=dict)                # a latest question's banks: their latest meeting's date (K-13)
+    floor: date | None = None                                 # the date floor the search used for a latest question
 
     @property
     def kept(self) -> list[Sentence]:
@@ -333,17 +420,34 @@ def assemble(ans: DocAnswer) -> None:
 
 
 def answer_documents(client, embedder, reader: sql_mod.Reader, question: str, *, date_from: date | None = None,
-                     date_to: date | None = None, version: str = PROMPT_VERSION,
+                     date_to: date | None = None, banks: tuple[str, ...] = (), version: str = PROMPT_VERSION,
                      clock: Callable[[], float] = time.monotonic) -> DocAnswer:
     """One document question, end to end. AIUnavailable (no key or no credit, Voyage's or Claude's) passes through for the
-    route's paused state; every other failure is a `cant_answer` with its class."""
+    route's paused state; every other failure is a `cant_answer` with its class. `banks`: the router's (only BANKS' count), for a
+    latest question's meeting (K-13); the search's banks stay this module's."""
     t0 = clock()
     q = clean_question(question)
     ans = DocAnswer("cant_answer")
+    latest_q = asks_latest(q)
+    scope = tuple(b for b in BANKS if b in (banks or ())) or banks_named(q)
 
     def done() -> DocAnswer:
         ans.ms = int((clock() - t0) * 1000)
         return ans
+
+    def look_up(wanted) -> bool:
+        """The latest meeting of each bank in `wanted` not yet read; False (with the error class set) if the read failed."""
+        try:
+            for b in wanted:
+                if b not in ans.latest:
+                    ans.latest[b] = latest_meeting(reader, b)
+        except sql_mod.QueryError as e:
+            ans.state, ans.error_class = "cant_answer", f"database: {e.kind}"
+            return False
+        except sql_mod.ReaderDown:
+            ans.state, ans.error_class = "cant_answer", "database_unavailable"
+            return False
+        return True
     try:
         vector = embedder.embed_query(q)
     except AIUnavailable:
@@ -351,6 +455,12 @@ def answer_documents(client, embedder, reader: sql_mod.Reader, question: str, *,
     except CallError as e:
         ans.error_class = f"embedding: {e.kind}"
         return done()
+    if latest_q and scope:
+        if not look_up(scope):
+            return done()
+        days = [ans.latest[b] for b in scope]
+        if date_from is None and date_to is None and all(days):
+            date_from = ans.floor = min(days)
     while True:
         ans.searches += 1
         try:
@@ -368,6 +478,8 @@ def answer_documents(client, embedder, reader: sql_mod.Reader, question: str, *,
         ans.error_class = "retrieval: foreign document"           # logged; the answer goes on without those rows
     if not ans.chunks:
         ans.state = "not_found"
+        if ans.floor is not None:                                 # nothing stored from the latest meeting on
+            check_latest(ans, ans.latest, scope)
         return done()
     try:
         reply = client.send(request(q, ans.chunks, version=version))
@@ -383,4 +495,10 @@ def answer_documents(client, embedder, reader: sql_mod.Reader, question: str, *,
     ans.bill(reply)
     ans.sentences, ans.mapping = check(reply, ans.chunks)
     assemble(ans)
+    if latest_q and ans.state == "answered":
+        cited = scope or tuple(b for b in BANKS if any(d.get("bank") == BANK_NAME[b] for d in ans.documents))
+        if not look_up(cited):
+            ans.citations, ans.documents, ans.summary = [], [], None
+            return done()
+        check_latest(ans, ans.latest, cited)
     return done()
