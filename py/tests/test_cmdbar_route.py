@@ -514,3 +514,116 @@ def test_the_examples_route_is_empty_when_the_store_fails_or_isnt_set():
         finally:
             app.dependency_overrides.clear()
         assert resp.status_code == 200 and resp.json() == {"examples": []}
+
+
+# ------------------------------------------------------------------ 0054 on the test database (K-05 part 2)
+@pytest.fixture
+def service():
+    import psycopg
+    from conftest import dsn
+    conn = psycopg.connect(dsn("postgres"), autocommit=True)
+    conn.execute("set role service_role")                # the role the Vercel routes hold (Arch 01 §1.9)
+    yield conn
+    conn.close()
+
+
+def _admin():
+    import psycopg
+    from conftest import dsn
+    return psycopg.connect(dsn("postgres"), autocommit=True)
+
+
+@pytest.mark.db
+def test_the_stores_functions_are_0054s_with_their_argument_names_and_types():
+    with _admin() as db:
+        got = {r[0]: r[1] for r in db.execute(
+            """select p.proname, coalesce(array_to_string(array(
+                        select a.n || ' ' || format_type(a.t, null)
+                          from unnest(p.proargnames, p.proargtypes::oid[]) with ordinality a(n, t, i) order by a.i), ','), '')
+                 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                where n.nspname = 'api' and p.proname like 'cmdbar\\_%'""").fetchall()}
+    want = {fn: ",".join(f"{name} {typ.replace('timestamptz', 'timestamp with time zone')}" for name, typ in args)
+            for fn, args in api.FUNCTIONS.items()}
+    assert got == want
+
+
+@pytest.mark.db
+def test_the_route_runs_end_to_end_through_0054_and_stays_paused_while_the_switch_is_off(service):
+    import uuid
+    question = f"When did the RBI last cut, test {uuid.uuid4().hex[:12]}?"
+    store = api.SqlCmdbarStore(service)
+    now = datetime.now(UTC)
+    vhash = limits.visitor_hash(ENV["CMDBAR_SALT"], IP, UA, now)
+
+    def harness():
+        h = Harness(store=store, now=now)
+        h.store = store
+        return h
+    try:
+        h = harness()
+        out = h.ask(question)                             # 0052 left the switch off
+        assert out["state"] == "paused" and h.fake.requests == [] and h.built["reader"] == 0
+        with _admin() as db:
+            assert db.execute("select count(*) from ops.cmdbar_log where visitor_hash = %s", (vhash,)).fetchone()[0] == 0
+            db.execute("update ops.setting set value = 'true'::jsonb where key = 'cmdbar_ai_enabled'")
+        h = harness()
+        out = h.ask(question)
+        assert out["state"] == "answered" and out["summary"] == SUMMARY and len(h.fake.requests) == 3
+        again = harness()
+        assert again.ask(question)["state"] == "answered" and again.fake.requests == []      # the cache, through 0054
+        with _admin() as db:
+            rows = db.execute("""select cache_hit, answered, route, rows_returned, generated_sql is not null, cost_usd > 0
+                                   from ops.cmdbar_log where visitor_hash = %s order by id""", (vhash,)).fetchall()
+            assert rows == [(False, True, "data", 1, True, True), (True, True, "data", 1, True, False)]
+            assert db.execute("select count from ops.cmdbar_usage where bucket = %s and window_start = %s",
+                              (limits.visitor_bucket(vhash), limits.hour_start(now))).fetchone()[0] == 2
+            assert db.execute("select hits from ops.cmdbar_cache where question_sha = %s",
+                              (cache.key(question),)).fetchone()[0] == 1
+    finally:
+        with _admin() as db:
+            db.execute("update ops.setting set value = 'false'::jsonb where key = 'cmdbar_ai_enabled'")
+            db.execute("delete from ops.cmdbar_log where visitor_hash = %s", (vhash,))
+            db.execute("delete from ops.cmdbar_usage where bucket in (%s, 'global') and window_start >= now() - interval '2 days'",
+                       (limits.visitor_bucket(vhash),))
+            db.execute("delete from ops.cmdbar_cache where question_sha = %s", (cache.key(question),))
+    with _admin() as db:
+        assert db.execute("select value from ops.setting where key = 'cmdbar_ai_enabled'").fetchone()[0] is False
+
+
+@pytest.mark.db
+def test_the_retention_task_deletes_log_rows_after_90_days_and_expired_cache_entries_as_job_writer():
+    import psycopg
+    from conftest import dsn
+
+    from ft.jobs.tasks.cmdbar_log_retention import CmdbarLogRetention, Run
+    h = "d" * 64
+    with _admin() as db:
+        db.execute("""insert into ops.cmdbar_log (at, visitor_hash, question, answered) values
+                        (now() - interval '91 days', %(h)s, 'r54 old', true), (now() - interval '89 days', %(h)s, 'r54 kept', true)""",
+                   {"h": h})
+        db.execute("""insert into ops.cmdbar_cache (question_sha, question, route, answer, data_version, expires_at) values
+                        (%s, 'r54 expired', 'data', '{}', 'v', now() - interval '1 minute'),
+                        (%s, 'r54 live', 'data', '{}', 'v', now() + interval '1 hour')""", (b"\x0e" * 32, b"\x0f" * 32))
+    try:
+        task = CmdbarLogRetention()
+        with psycopg.connect(dsn("job_writer")) as jw, jw.transaction():
+            run = Run(datetime.now(UTC))
+            assert task.load(jw, run, None) >= 2
+            checks = {c.name: c for c in task.checks(jw, run, None)}
+        assert checks["log_kept"].passed and checks["cache_kept"].passed and not checks["deleted"].blocking
+        with _admin() as db:
+            assert [r[0] for r in db.execute("select question from ops.cmdbar_log where visitor_hash = %s", (h,))] == ["r54 kept"]
+            assert [r[0] for r in db.execute("select question from ops.cmdbar_cache where question like 'r54 %'")] == ["r54 live"]
+    finally:
+        with _admin() as db:
+            db.execute("delete from ops.cmdbar_log where visitor_hash = %s", (h,))
+            db.execute("delete from ops.cmdbar_cache where question like 'r54 %'")
+
+
+def test_the_retention_task_is_registered_and_in_daily():
+    from ft.jobs import config
+    from ft.jobs.tasks import registry
+    from ft.jobs.tasks.cmdbar_log_retention import KEEP_DAYS, CmdbarLogRetention
+    t = config.load()["cmdbar.log_retention"]
+    assert registry()["cmdbar.log_retention"] is CmdbarLogRetention and KEEP_DAYS == 90
+    assert "daily" in t.workflows and t.enabled and not t.uses_nse and not t.visitor_refreshable

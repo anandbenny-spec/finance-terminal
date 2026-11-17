@@ -21,7 +21,7 @@ def test_repo_config_loads():
                           "equity.call_transcripts", "equity.call_text", "equity.calls_ai", "equity.rate_reactions",
                           "equity.results_reactions", "equity.valuation", "equity.snapshot", "equity.guidance_scores", "equity.call_scores",
                           "us.universe", "us.prices", "us.corporate_actions", "us.filings", "us.valuation_inputs",
-                          "us.metrics", "us.beta", "us.valuation", "us.snapshot"}
+                          "us.metrics", "us.beta", "us.valuation", "us.snapshot", "cmdbar.log_retention"}
     # the due-rule names are kept as tasks.yaml writes them (Prompt 01 A2)
     # a daily rule may add the decision-day catch-up (#158: `every 16 hours or fomc_catch_up`; test_catch_up_rules.py)
     assert tasks["policy.fed_documents"].rules == {"daily": "every 16 hours or fomc_catch_up", "watch": "fomc_decision_day"}
@@ -99,7 +99,7 @@ def test_build_tasks_configures_registered_classes_and_names_the_rest(tmp_path):
     fed = tasks[0]
     assert fed.workflows == ("daily", "watch") and fed.rules["watch"] == "fomc_decision_day"
     assert fed.run_after == ("policy.calendar",) and fed.min_interval == timedelta(hours=16)
-    assert sorted(missing) == ["crypto.coingecko_markets", "equity.beta", "equity.brsr", "equity.call_scores", "equity.call_text", "equity.call_transcripts", "equity.calls_ai", "equity.corporate_actions",
+    assert sorted(missing) == ["cmdbar.log_retention", "crypto.coingecko_markets", "equity.beta", "equity.brsr", "equity.call_scores", "equity.call_text", "equity.call_transcripts", "equity.calls_ai", "equity.corporate_actions",
                                "equity.filings", "equity.guidance_scores", "equity.kpi_tables",
                                "equity.metrics", "equity.prices", "equity.rate_reactions", "equity.related_parties", "equity.results_reactions", "equity.segment_changes",
                                "equity.shareholding", "equity.snapshot", "equity.statements", "equity.universe",
