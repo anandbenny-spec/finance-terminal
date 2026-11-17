@@ -17,7 +17,7 @@ an empty list.
 **The store** (`RpcCmdbarStore`): `ops` isn't in the Data API and `service_role` can't log in to Postgres, so the route calls
 `api.cmdbar_*` functions as RPC with the secret key (0016's pattern, Anand's option B on #8: `security definer`, executable by
 `service_role` only), and reads `api.task_freshness` and `api.search_index` through the Data API with the same key. The
-functions are K-05's part 2 (a migration Spec 07 didn't name, held for Anand on #583). Until they exist every RPC answers 404,
+functions are migration 0054 `cmdbar_route` (K-05's part 2, #583; Anand, 17 Nov 2026). Until they exist every RPC answers 404,
 so the switch reads as "paused" and the examples list is empty.
 """
 from __future__ import annotations

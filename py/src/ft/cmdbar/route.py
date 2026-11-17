@@ -24,8 +24,8 @@ task name (`CLAUDE.md` §4): those go to the log row or, for the store's own fai
 
 **The database:** `ops` isn't in the Data API (`CLAUDE.md` §4) and `service_role` can't log in to Postgres, so the deployed route
 reaches `ops` through `api.cmdbar_*` functions called as RPC with the secret key (0016's pattern, Anand's option B on #8): the
-`Store` protocol here, `RpcCmdbarStore` in `ft.api.cmdbar`. Those functions need a migration that Spec 07 didn't name: K-05's
-part 2 (#583), held for Anand. Until it lands every store call fails, and the route answers "paused".
+`Store` protocol here, `RpcCmdbarStore` in `ft.api.cmdbar`. Those functions are migration 0054 `cmdbar_route` (K-05's part 2,
+#583; approved by Anand, 17 Nov 2026). Until it reaches a database every store call fails there, and the route answers "paused".
 """
 from __future__ import annotations
 
