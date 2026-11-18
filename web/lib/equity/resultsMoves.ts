@@ -14,7 +14,7 @@ export const RESULTS_NOT_A_FORECAST = "Moves after results, not a forecast";
 export const RESULTS_TASKS = ["equity.results_reactions"] as const satisfies readonly TaskKey[];
 
 /** A linked results filing always has its two windows (a left-out one has its reason), so no rows means no filing is linked. */
-export const NO_RESULTS_LINK = "No results filing from 2025 is linked to this call, so there is no move to show.";
+export const NO_RESULTS_LINK = "No results filing is linked to this call, so there is no move to show.";
 
 export type LeftOutReason = NonNullable<ResultsMoveRow["left_out_reason"]>;
 

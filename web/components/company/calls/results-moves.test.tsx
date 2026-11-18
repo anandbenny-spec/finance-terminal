@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CompanyView } from "@/components/company/CompanyView";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { LEFT_OUT_TEXT, RESULTS_NOT_A_FORECAST, latestCloseShown, leftOutLine, moveLines, releaseNote, resultsSources, rowsOfCall } from "@/lib/equity/resultsMoves";
+import { LEFT_OUT_TEXT, NO_RESULTS_LINK, RESULTS_NOT_A_FORECAST, latestCloseShown, leftOutLine, moveLines, releaseNote, resultsSources, rowsOfCall } from "@/lib/equity/resultsMoves";
 import type { FieldPolicyRow, ResultsMoveRow } from "@/lib/queries/api";
 import { readCallsTab, type CallsTabData } from "@/lib/queries/calls";
 import { bannedCallWordsIn } from "@/tests/banned-words";
@@ -132,7 +132,12 @@ describe("shown", () => {
   });
 
   it("says no filing is linked when the call has none", () => {
-    expect(text(html(withRows([])))).toContain("No results filing from 2025 is linked to this call");
+    expect(text(html(withRows([])))).toContain("No results filing is linked to this call, so there is no move to show.");
+  });
+
+  it("names no year in the no-filing sentence, which a 2026 call (SBI's Q2 FY27) would contradict (#638)", () => {
+    expect(NO_RESULTS_LINK).not.toMatch(/\b(19|20)\d{2}\b/);
+    expect(text(html(withRows([])))).not.toMatch(/from 20\d{2}/);
   });
 
   it("holds back only this panel when its read failed", () => {
