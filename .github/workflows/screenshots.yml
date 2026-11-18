@@ -1,0 +1,74 @@
+# README screenshots (#200 part 2; Anand's decision of 18 Nov 2026, 00:18 IST): a runner opens six public pages of the
+# live site as an anonymous visitor, 1440 x 900, and commits the PNGs to docs/img/ on a claude/ branch.
+# Manual only. No secret, no key, no admin page, no write to production: it reads public pages. The branch input reaches
+# the script through the environment, never pasted into a run line (CLAUDE.md §4). The log shows page names, statuses
+# and file sizes only. A page whose HTML holds an error state is never committed.
+name: screenshots
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to commit the pictures to (must start with claude/)
+        required: true
+        type: string
+permissions:
+  contents: write
+concurrency:
+  group: screenshots
+  cancel-in-progress: false
+jobs:
+  shoot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      INPUT_BRANCH: ${{ inputs.branch }}
+      BASE: https://finance-terminal-phi.vercel.app
+    steps:
+      - name: Check the branch name
+        run: |
+          case "$INPUT_BRANCH" in
+            claude/*) ;;
+            *) echo "::error title=screenshots::the branch must start with claude/"; exit 1 ;;
+          esac
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Take the six pictures
+        run: |
+          set -u
+          mkdir -p docs/img
+          chrome=$(command -v google-chrome || command -v google-chrome-stable)
+          shoot() {
+            name="$1"; path="$2"; ok=0
+            for try in 1 2 3; do
+              status=$(curl -sS -o page.html -w '%{http_code}' --max-time 30 "${BASE}${path}") || status=000
+              if [ "$status" = "200" ] && ! grep -q -e "Couldn't load" -e "Update delayed" page.html; then ok=1; break; fi
+              echo "${name}: try ${try}, status ${status}, not ready"
+              [ "$try" -lt 3 ] && sleep 15
+            done
+            if [ "$ok" != 1 ]; then echo "::error title=screenshots::${name} did not load cleanly"; exit 1; fi
+            "$chrome" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1440,900 \
+              --force-device-scale-factor=1 --virtual-time-budget=20000 \
+              --screenshot="docs/img/${name}.png" "${BASE}${path}" >/dev/null 2>&1
+            # the page can change between the check and the picture: check the HTML again, then keep or fail
+            status=$(curl -sS -o page.html -w '%{http_code}' --max-time 30 "${BASE}${path}") || status=000
+            if [ "$status" != "200" ] || grep -q -e "Couldn't load" -e "Update delayed" page.html; then
+              echo "::error title=screenshots::${name} showed an error state"; exit 1
+            fi
+            echo "${name}: status ${status}, $(stat -c %s "docs/img/${name}.png") bytes"
+          }
+          shoot 01-front-page /
+          shoot 02-fomc-what-changed /policy/fed/2026-10-28/changes
+          shoot 03-screener /screener
+          shoot 04-valuation /companies/reliance/valuation
+          shoot 05-earnings-calls /companies/hdfcbank/calls
+          shoot 06-accuracy /accuracy
+          rm -f page.html
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/img/*.png
+          git diff --cached --quiet && { echo "no picture changed"; exit 0; }
+          git commit -m "#200: README screenshots from the live site"
+          git push origin "HEAD:refs/heads/${INPUT_BRANCH}"
