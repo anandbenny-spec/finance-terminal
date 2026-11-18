@@ -38,8 +38,9 @@ jobs:
           set -u
           mkdir -p docs/img
           chrome=$(command -v google-chrome || command -v google-chrome-stable)
+          node --version >/dev/null
           shoot() {
-            name="$1"; path="$2"; ok=0
+            name="$1"; path="$2"; anchor="${3:-}"; ok=0
             for try in 1 2 3; do
               status=$(curl -sS -o page.html -w '%{http_code}' --max-time 30 "${BASE}${path}") || status=000
               if [ "$status" = "200" ] && ! grep -q -e "Couldn't load" -e "Update delayed" page.html; then ok=1; break; fi
@@ -47,9 +48,7 @@ jobs:
               [ "$try" -lt 3 ] && sleep 15
             done
             if [ "$ok" != 1 ]; then echo "::error title=screenshots::${name} did not load cleanly"; exit 1; fi
-            "$chrome" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1440,900 \
-              --force-device-scale-factor=1 --virtual-time-budget=20000 \
-              --screenshot="docs/img/${name}.png" "${BASE}${path}" >/dev/null 2>&1
+            CHROME_BIN="$chrome" node --experimental-websocket .github/scripts/shoot.mjs "${BASE}${path}" "docs/img/${name}.png" "${anchor:-}"
             # the page can change between the check and the picture: check the HTML again, then keep or fail
             status=$(curl -sS -o page.html -w '%{http_code}' --max-time 30 "${BASE}${path}") || status=000
             if [ "$status" != "200" ] || grep -q -e "Couldn't load" -e "Update delayed" page.html; then
@@ -61,7 +60,7 @@ jobs:
           shoot 02-fomc-what-changed /policy/fed/2026-10-28/changes
           shoot 03-screener /screener
           shoot 04-valuation /companies/reliance/valuation
-          shoot 05-earnings-calls /companies/hdfcbank/calls#panel-call-guidance   # scrolls to the guidance and figures tables, with their page links
+          shoot 05-earnings-calls /companies/hdfcbank/calls panel-call-guidance   # scrolls to the guidance and figures tables, with their page links
           shoot 06-accuracy /accuracy
           rm -f page.html
       - name: Commit and push
