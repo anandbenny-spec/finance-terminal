@@ -61,7 +61,7 @@ jobs:
           shoot 02-fomc-what-changed /policy/fed/2026-10-28/changes
           shoot 03-screener /screener
           shoot 04-valuation /companies/reliance/valuation
-          shoot 05-earnings-calls /companies/hdfcbank/calls
+          shoot 05-earnings-calls /companies/hdfcbank/calls#panel-call-guidance   # scrolls to the guidance and figures tables, with their page links
           shoot 06-accuracy /accuracy
           rm -f page.html
       - name: Commit and push
