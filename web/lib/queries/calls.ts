@@ -365,11 +365,24 @@ export async function readCallsTab(db: Db, slug: string, call: string | undefine
 const LIST_COLUMNS =
   "company_slug, company_name, short_name, call_slug, fiscal_label, call_date, filed_at, exchange, route, status, summary_state, roles_partial, window_from, window_to";
 
-/** Every company's row of api.earnings_latest (about 50), read whole against the exact count (CLAUDE.md §6). */
+/**
+ * Each India company's row of api.earnings_latest (the Nifty 50), read whole against the exact count (CLAUDE.md §6).
+ * The view builds a row for every published company, so since the Dow 30 were published (#407) it also holds 30 US rows with
+ * no call. US calls are out of scope (Spec 02A.1 §1) and the discovery never searched US filings, so a US row's "No transcript
+ * found" would state something untrue (#636): only the slugs api.companies gives with market 'IN' are kept. Both reads run
+ * together; if either fails, the list fails whole.
+ */
 export async function readEarningsList(db: Db): Promise<EarningsListRow[]> {
-  return readAll<EarningsListRow>("api.earnings_latest", (from, to) =>
-    db.from("earnings_latest").select(LIST_COLUMNS, { count: "exact" }).order("company_slug").range(from, to),
-  );
+  const [india, rows] = await Promise.all([
+    readAll<{ slug: string }>("api.companies (market IN)", (from, to) =>
+      db.from("companies").select("slug", { count: "exact" }).eq("market", "IN").order("slug").range(from, to),
+    ),
+    readAll<EarningsListRow>("api.earnings_latest", (from, to) =>
+      db.from("earnings_latest").select(LIST_COLUMNS, { count: "exact" }).order("company_slug").range(from, to),
+    ),
+  ]);
+  const slugs = new Set(india.map((c) => c.slug));
+  return rows.filter((r) => slugs.has(r.company_slug));
 }
 
 export type EarningsListData = { ok: true; readAt: string; rows: EarningsListRow[] } | { ok: false; readAt: string };
