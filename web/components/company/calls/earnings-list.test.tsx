@@ -118,7 +118,9 @@ describe("the states", () => {
 describe("the read", () => {
   const store = (n: number): Row[] => Array.from({ length: n }, (_, i) => ({ company_slug: "co-" + String(i).padStart(4, "0"), company_name: "Co " + i, short_name: null, call_slug: null, fiscal_label: null, call_date: null, filed_at: null, exchange: null, route: null, status: "none_found", summary_state: null, roles_partial: null, window_from: null, window_to: null }));
   it("reads every row whole against the exact count, past one request's cap", async () => {
-    const { db, seen } = fakeClient({ earnings_latest: store(1200) });
+    // Every row is an India company's (#636: the list keeps only the slugs api.companies gives with market 'IN'), so all 1,200 stay.
+    const companies: Row[] = store(1200).map((r) => ({ slug: r.company_slug, market: "IN" }));
+    const { db, seen } = fakeClient({ earnings_latest: store(1200), companies });
     const got = await readEarningsList(db);
     expect(got).toHaveLength(1200);
     expect(seen.every((s) => s.countExact)).toBe(true);
