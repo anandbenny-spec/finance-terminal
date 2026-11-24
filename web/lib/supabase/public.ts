@@ -24,6 +24,8 @@ let requestSeq = 0;
  */
 export const distinctFetch: typeof fetch = (input, init) => {
   const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  const preparation = process.env.CALLS_PREPARATION_REQUEST_ID;
+  if (preparation) headers.set("x-calls-preparation", preparation);
   headers.set("x-ft-attempt", Date.now().toString(36) + "-" + (requestSeq++).toString(36));
   return fetch(input, Object.assign({}, init, { headers }));
 };
@@ -65,12 +67,17 @@ export function limiterState(): { inFlight: number; waiting: number } {
  */
 export const limitedFetch: typeof fetch = async (input, init) => {
   await acquire();
+  const preparation = process.env.CALLS_PREPARATION_REQUEST_ID;
+  const view = preparation ? new URL(input instanceof Request ? input.url : input.toString()).pathname : null;
+  let status = 0;
   try {
     const res = await distinctFetch(input, init);
+    status = res.status;
     const body = await res.arrayBuffer();
     return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
   } finally {
     release();
+    if (preparation) console.info(JSON.stringify({ phase: "calls-data-read", requestId: preparation, view, status }));
   }
 };
 
