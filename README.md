@@ -23,10 +23,10 @@ are not part of this repo.
 
 ## What is built
 
-**Fed vs RBI policy tracker.** Every Fed (FOMC) and RBI (MPC) decision on one page: where rates stand, the latest
-decisions side by side, and the history. Each meeting has its own page with the statement or resolution, a redline of
-what changed against the previous one, the minutes, the vote, and how markets moved around the decision. Decision days
-are picked up by a watcher that polls for the statement, so a decision appears without anyone pressing a button.
+**Fed vs RBI policy tracker.** The tracker puts every Fed (FOMC) and RBI (MPC) decision since 2019 on one page, with
+current rates and the latest decisions side by side. Each meeting has its own page with the statement or resolution,
+a redline of what changed against the previous one, the minutes, the vote, and how markets moved around the decision.
+On decision days a watcher polls for the statement, so a decision appears without anyone pressing a button.
 
 **Nifty 50 screener and valuation.** A screener over the 50 companies with labelled columns and the snapshot's date,
 and a page per company: overview, financials parsed from results filings, a valuation tab, and the company's
@@ -60,7 +60,7 @@ AI writes short summaries and extracts structured facts from documents. It is ne
 - **Human oversight.** A named person decides what is published; the owner is accountable for it.
 - **It degrades, it doesn't break.** The AI work is precomputed in batches and stored, and the site makes no live AI
   call for a visitor. With no key or no credit left, the AI steps skip with a recorded reason, nothing is lost, and the
-  pages show labelled states such as "AI summary not generated yet".
+  pages show labelled states such as "Summary not generated yet".
 - **Spend is capped.** One wrapper makes every model call, with a monthly budget switch and no repeated requests for an
   unchanged input.
 
