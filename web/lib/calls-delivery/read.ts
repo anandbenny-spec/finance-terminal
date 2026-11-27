@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { Client } from "pg";
+import { installReadTrace } from "./trace";
 import { defaultPath, preparedRequest } from "./paths.mjs";
 
 const headers = {
@@ -23,6 +24,11 @@ interface Artifact {
 }
 
 export async function servePrepared(request: Request): Promise<Response> {
+  const requestId = request.headers.get("x-vercel-id") ?? randomUUID();
+  return installReadTrace().run({ requestId, phase: "visitor" }, () => readResponse(request, requestId));
+}
+
+async function readResponse(request: Request, requestId: string): Promise<Response> {
   const url = new URL(request.url);
   const target = preparedRequest(url.pathname, request.headers);
   if (!target) return new Response(null, { status: 404, headers });
@@ -32,9 +38,9 @@ export async function servePrepared(request: Request): Promise<Response> {
 
   const build = process.env.CALLS_BUILD_ID;
   const connectionString = process.env.CALLS_READER_DATABASE_URL;
-  const requestId = request.headers.get("x-vercel-id") ?? randomUUID();
   const context = { phase: "calls-visitor", requestId, build, path: target.path, variant: target.variant };
 
+  console.info(JSON.stringify({ ...context, event: "arrival" }));
   try {
     if (!build || !connectionString) throw new Error("not configured");
     const db = new Client({

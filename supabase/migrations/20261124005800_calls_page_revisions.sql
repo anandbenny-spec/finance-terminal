@@ -30,6 +30,7 @@ create table calls_delivery.manifest (
   discovery_revision bigint,
   company_exists boolean not null,
   render_token bigint not null,
+  valid_until timestamptz not null,
   completed_at timestamptz not null default clock_timestamp(),
   primary key (build_id, scope)
 );
@@ -52,7 +53,22 @@ from calls_delivery.manifest m
 join calls_delivery.revision r on r.scope = m.scope and r.revision = m.revision
 join calls_delivery.revision shared on shared.scope = '@shared' and shared.revision = m.shared_revision
 join calls_delivery.revision list on list.scope = '@earnings'
-where m.discovery_revision is null or m.discovery_revision = list.revision;
+where (m.discovery_revision is null or m.discovery_revision = list.revision)
+  and m.valid_until > statement_timestamp();
+
+-- Sample before rendering. Crossing a time boundary withdraws even a manifest
+-- whose source rows have not changed. Only the worker reads these dependencies.
+create view calls_delivery.next_deadline as
+select least(
+  (select min(last_success_at + stale_after) from core.task_freshness
+    where status = 'ok' and last_success_at + stale_after > statement_timestamp()),
+  (select min(occurs_at + interval '14 days') from core.event
+    where event_type = 'results_filing' and is_published
+      and occurs_at + interval '14 days' > statement_timestamp()),
+  (current_date + 1)::timestamptz,
+  (date_trunc('day', statement_timestamp() at time zone 'Asia/Kolkata') + interval '1 day') at time zone 'Asia/Kolkata'
+) as valid_until;
+grant select on calls_delivery.next_deadline to calls_artifact_worker;
 
 create view calls_delivery.current_response as
 select r.*, m.revision, m.shared_revision, m.render_token, m.completed_at
@@ -177,6 +193,9 @@ begin
     when 'citation' then
       company_ids := company_ids || array(
         select calls_delivery.owners(null, null, (row_data->>'ai_output_id')::bigint));
+    when 'corporate_action' then
+      company_ids := company_ids || array(
+        select entity_id from core.event where id = (row_data->>'event_id')::bigint);
     when 'event_child' then
       company_ids := array_append(company_ids, company_id) || array(
         select calls_delivery.owners((row_data->>'event_id')::bigint, null, null));
@@ -234,7 +253,8 @@ begin
     ('equity.peer_group', 'peer'),
     ('equity.index_membership', 'shared'),
     ('equity.price_daily', 'header'),
-    ('equity.corporate_action', 'event_child'),
+    ('equity.corporate_action', 'corporate_action'),
+    ('equity.adjustment_factor', 'header'),
     ('equity.filing', 'header'),
     ('equity.earnings_call', 'call'),
     ('equity.guidance', 'call'),

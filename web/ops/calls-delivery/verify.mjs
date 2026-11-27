@@ -9,6 +9,8 @@ import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { gunzipSync } from "node:zlib";
 import { Client } from "pg";
+import { validateEarningsList } from "./render.mjs";
+import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
 
 function localUrl(setting, protocol, user) {
@@ -252,7 +254,16 @@ try {
     headers: { ...rsc, "Next-Router-Segment-Prefetch": evidenceSegment }, expect: /fixture evidence quote/, expectRsc: true,
   });
   await request("older default segment", fixture, { headers: { ...rsc, "Next-Router-Segment-Prefetch": "/_tree" }, expectRsc: true });
-  await request("earnings newest", list, { expect: /Q2 FY27/ });
+  const earnings = await request("earnings newest", list, { expect: /Q2 FY27/ });
+  const { parse } = createRequire(import.meta.url)("next/dist/compiled/node-html-parser");
+  const listDoc = parse(earnings.body);
+  const listOracle = await withAnonymous("select * from api.earnings_latest where company_slug in (select slug from api.companies where market='IN')");
+  validateEarningsList(listDoc, listOracle);
+  const withChange = (change) => listOracle.map((row) => row.company_slug === "calls-fixture" ? { ...row, ...change } : row);
+  assert.throws(() => validateEarningsList(listDoc, withChange({ fiscal_label: "Q1 FY27" })), /incorrect earnings list row/);
+  assert.throws(() => validateEarningsList(listDoc, withChange({ status: "none_found" })), /incorrect earnings list row/);
+  assert.throws(() => validateEarningsList(listDoc, listOracle.slice(1)), /incomplete earnings list/);
+  check("Earnings validation rejects stale quarter, stale status and a roster mismatch");
   await request("empty call list", empty, { expect: /No transcript found/ });
   const legacy = await fetch(origin + "/companies/calls-fixture?tab=calls&call=q1-fy27", { redirect: "manual" });
   assert.equal(legacy.status, 307);
@@ -396,6 +407,56 @@ try {
   check("SIGKILL interrupted an active render, the replacement waited for the old deadline and reconciled the durable queue");
 
   await stop(worker);
+  // These changes belong only to the disposable database. Check both owners
+  // and the unaffected control, before starting the next worker.
+  await db.query(`
+    insert into core.event(event_type,entity_id,slug,title,starts_on,status,source_id,is_published)
+    select 'corporate_action',e.id,'verify-split','Fixture split','2026-11-25','effective',s.id,true
+    from core.entity e,core.source s where e.slug='calls-fixture' and s.key='nse';
+    insert into equity.corporate_action(event_id,kind,ex_date,subject,exchange)
+    select id,'split','2026-11-25','Fixture split','NSE' from core.event where slug='verify-split';
+  `);
+  const scopeRev = async (scope) => (await db.query("select revision from calls_delivery.revision where scope=$1", [scope])).rows[0].revision;
+  const controlRev = await scopeRev("calls-control");
+  const beforeAction = await scopeRev("calls-fixture");
+  await db.query("update equity.corporate_action set ex_date='2026-11-26' where subject='Fixture split'");
+  const afterAction = await scopeRev("calls-fixture");
+  assert.notEqual(beforeAction, afterAction);
+  await db.query(`insert into equity.adjustment_factor(event_id, entity_id, ex_date, method, status)
+    select id,entity_id,'2026-11-26','reviewed','held' from core.event where slug='verify-split'`);
+  assert.notEqual(await scopeRev("calls-fixture"), afterAction);
+  assert.equal(await scopeRev("calls-control"), controlRev);
+  check("Corporate-action corrections and adjustment factors advance only the owning company revision");
+
+  await db.query(`insert into core.task_freshness(task_key,label,status,last_success_at,stale_after)
+    select key,'Fixture clock','ok',clock_timestamp(),interval '10 seconds' from ops.task order by key limit 1
+    on conflict(task_key) do update set label=excluded.label,status='ok',
+      last_success_at=excluded.last_success_at,stale_after=excluded.stale_after`);
+  worker = startWorker("clock");
+  await allReady();
+  await stop(worker);
+  const clock = await db.query(`select m.valid_until = t.last_success_at + t.stale_after as matches
+    from calls_delivery.current_manifest m,core.task_freshness t
+    where m.build_id=$1 and m.scope='@earnings' and t.label='Fixture clock'`, [build]);
+  assert.equal(clock.rows[0]?.matches, true);
+  await until(async () => (await withAnonymous("select status from api.task_freshness where label='Fixture clock'"))[0]?.status === "stale");
+  await firstWithdrawn("clock deadline without a write");
+  worker = startWorker("clock rebuild");
+  await allReady();
+  await request("clock rebuilt", quarter, { expect: /fixture evidence quote/ });
+  await stop(worker);
+  check("Crossing a freshness deadline withdraws HTML and navigation without a write and queues replacements");
+
+  const outbound = evidence.events.filter((e) => e.phase === "calls-api-outbound" && e.process !== "build");
+  const workIds = new Set(evidence.events.filter((e) => ["plan-start", "render-start"].includes(e.event)).map((e) => e.requestId));
+  assert(outbound.length > 0 && outbound.every((e) => e.origin === "preparation" && workIds.has(e.requestId)));
+  // A cold, ordinary page on the same reader process provides an independent
+  // transport control. The guard never needs to make a deliberate Data API call.
+  const beforeProbe = dataReads;
+  await fetch(origin + "/companies/calls-fixture/financials").then((r) => r.arrayBuffer());
+  assert(dataReads > beforeProbe);
+  await until(() => evidence.events.some((e) => e.process === "reader" && e.phase === "calls-api-outbound" && e.origin === "unattributed"));
+  check("Transport tracing detects a real public-server read and attributes guarded visits zero Data API reads");
   assert.equal(evidence.maxActiveRenders, 1);
   const allPrepIds = new Set(evidence.events.filter((e) => e.event === "render-start").map((e) => e.requestId));
   const data = evidence.events.filter((e) => e.phase === "calls-data-read");

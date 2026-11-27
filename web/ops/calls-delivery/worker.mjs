@@ -2,6 +2,7 @@
 import { Client } from "pg";
 import { Worker } from "node:worker_threads";
 import { setTimeout as delay } from "node:timers/promises";
+import { installReadTrace } from "../../lib/calls-delivery/trace.ts";
 import { anonymousApi, planScope, startRenderer } from "./render.mjs";
 import { claimWorker, extendAttempt, finishAttempt, pendingScopes, publish, releaseWorker, startAttempt } from "./queue.mjs";
 
@@ -57,11 +58,16 @@ async function runPending() {
     const retry = retries.get(row.scope);
     return !retry || retry.key !== taskKey(row) || retry.at <= Date.now();
   });
-  const token = task && (await startAttempt(db, leaseMs));
-  if (!task || !token) return false;
+  const attempt = task && (await startAttempt(db, leaseMs));
+  if (!attempt) return false;
+  const { token, valid_until: validUntil } = attempt;
 
   try {
-    const plan = await guarded(token, () => planScope(read, task.scope));
+    const planId = `${build}/${token}:plan`;
+    log("plan-start", { token, scope: task.scope, requestId: planId });
+    const plan = await guarded(token, () => installReadTrace().run(
+      { requestId: planId, phase: "preparation" }, () => planScope(read, task.scope),
+    ));
     const parts = [];
     for (const [path, expected] of plan.routes) {
       if (stopping) return true;
@@ -71,7 +77,7 @@ async function runPending() {
         process.env.CALLS_PREPARATION_REQUEST_ID = requestId;
         log("render-start", { token, path, requestId });
         try {
-          return await renderer.render(path, expected);
+          return await renderer.render(path, expected, requestId);
         } finally {
           delete process.env.CALLS_PREPARATION_REQUEST_ID;
           log("render-end", { token, path, requestId, elapsedMs: Math.round(performance.now() - started) });
@@ -79,7 +85,7 @@ async function runPending() {
       }));
     }
     if (stopping) return true;
-    const installed = await guarded(token, () => publish(db, build, task, token, { ...plan, parts }));
+    const installed = await guarded(token, () => publish(db, build, task, token, { ...plan, parts, validUntil }));
     log(installed ? "publish" : "superseded", {
       token, scope: task.scope, revision: task.revision, sharedRevision: task.shared_revision,
       paths: plan.routes.length, bytes: parts.reduce((size, part) => size + part.body.length, 0),

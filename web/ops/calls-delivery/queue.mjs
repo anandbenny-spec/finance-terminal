@@ -14,9 +14,9 @@ export async function startAttempt(db, leaseMs) {
     update calls_delivery.render_slot
     set token = token + 1, expires_at = clock_timestamp() + $1::double precision * interval '1 millisecond'
     where expires_at <= clock_timestamp()
-    returning token
+    returning token, (select valid_until::text from calls_delivery.next_deadline) as valid_until
   `, [leaseMs]);
-  return rows[0]?.token;
+  return rows[0];
 }
 
 export async function extendAttempt(db, token, leaseMs) {
@@ -41,6 +41,7 @@ export async function pendingScopes(db, buildId) {
     left join calls_delivery.manifest m on m.build_id = $1 and m.scope = r.scope
     where r.scope <> '@shared' and shared.scope = '@shared' and list.scope = '@earnings'
       and (m.revision is distinct from r.revision or m.shared_revision is distinct from shared.revision
+           or m.valid_until <= statement_timestamp()
            or (m.discovery_revision is not null and m.discovery_revision <> list.revision))
     order by r.changed_at, r.scope
   `, [buildId]);
@@ -60,8 +61,8 @@ export async function publish(db, buildId, task, token, result) {
     `, [[...expected.keys()]]);
     const slot = await db.query(`
       select token from calls_delivery.render_slot
-      where token = $1 and expires_at > clock_timestamp() for update
-    `, [token]);
+      where token = $1 and expires_at > clock_timestamp() and $2::timestamptz > clock_timestamp() for update
+    `, [token, result.validUntil]);
     if (slot.rowCount !== 1 || rows.length !== expected.size || rows.some((r) => expected.get(r.scope) !== r.revision)) {
       await db.query("rollback");
       return false;
@@ -70,9 +71,9 @@ export async function publish(db, buildId, task, token, result) {
     await db.query("delete from calls_delivery.manifest where build_id = $1 and scope = $2", [buildId, task.scope]);
     await db.query(`
       insert into calls_delivery.manifest
-        (build_id, scope, revision, shared_revision, discovery_revision, company_exists, render_token)
-      values ($1, $2, $3, $4, $5, $6, $7)
-    `, [buildId, task.scope, task.revision, task.shared_revision, result.discovery ? task.list_revision : null, result.exists, token]);
+        (build_id, scope, revision, shared_revision, discovery_revision, company_exists, render_token, valid_until)
+      values ($1, $2, $3, $4, $5, $6, $7, $8)
+    `, [buildId, task.scope, task.revision, task.shared_revision, result.discovery ? task.list_revision : null, result.exists, token, result.validUntil]);
     await db.query(`
       insert into calls_delivery.response (build_id, scope, path, variant, selected_call, digest, body)
       select $1, $2, input.path, input.variant, input.selected_call, input.digest, input.body

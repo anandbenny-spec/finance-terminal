@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import { once } from "node:events";
 import { gzipSync } from "node:zlib";
 import { defaultPath } from "../../lib/calls-delivery/paths.mjs";
+import { installReadTrace } from "../../lib/calls-delivery/trace.ts";
+import { listStatusText } from "../../lib/equity/earnings-status.ts";
 import Capture from "./capture.cjs";
 
 const require = createRequire(import.meta.url);
@@ -32,13 +34,14 @@ export async function startRenderer(buildId) {
       res.writeHead(404).end();
       return;
     }
-    handle(req, res).catch(() => res.destroy());
+    const requestId = req.headers["x-calls-render-id"];
+    installReadTrace().run({ requestId, phase: "preparation" }, () => handle(req, res)).catch(() => res.destroy());
   });
   return {
-    async render(path, expected) {
+    async render(path, expected, requestId) {
       Capture.entry = undefined;
       const response = await fetch(`http://127.0.0.1:${port}${path}`, {
-        headers: { "x-calls-prepare": secret, "x-prerender-revalidate": preview.previewModeId },
+        headers: { "x-calls-prepare": secret, "x-calls-render-id": requestId, "x-prerender-revalidate": preview.previewModeId },
         redirect: "error",
       });
       const body = Buffer.from(await response.arrayBuffer());
@@ -72,15 +75,27 @@ export async function startRenderer(buildId) {
   };
 }
 
-function validatePage(doc, path, { company, calls, selected, list }) {
-  if (list) {
-    const links = new Set(doc.querySelectorAll("table a").map((link) => link.getAttribute("href")));
-    if (!doc.querySelector("#panel-earnings") || list.some((item) => !links.has(defaultPath(item.company_slug))) ||
-        (list.length === 0 && !doc.text.includes("No companies are listed yet."))) {
-      throw Error("incomplete earnings list");
-    }
-    return;
+export function validateEarningsList(doc, list) {
+  const panel = doc.querySelector('section[aria-labelledby="panel-earnings"]');
+  const rows = panel?.querySelectorAll("tbody tr") ?? [];
+  const expected = new Map(list.map((item) => [defaultPath(item.company_slug), item]));
+  if (!panel || rows.length !== list.length || (!list.length && !panel.text.includes("No companies are listed yet."))) {
+    throw Error("incomplete earnings list");
   }
+  for (const row of rows) {
+    const cells = row.querySelectorAll("td");
+    const href = cells[0]?.querySelector("a")?.getAttribute("href");
+    const item = expected.get(href);
+    if (!item || cells[1]?.querySelector("span")?.text.trim() !== listStatusText(item) ||
+        cells[2]?.text.trim() !== (item.fiscal_label ?? "Not available")) {
+      throw Error("incorrect earnings list row");
+    }
+    expected.delete(href);
+  }
+}
+
+function validatePage(doc, path, { company, calls, selected, list }) {
+  if (list) return validateEarningsList(doc, list);
 
   const base = defaultPath(company.slug);
   const headings = doc.querySelectorAll("h1").map((element) => element.text.trim());
@@ -145,7 +160,7 @@ export async function planScope(read, scope) {
   if (scope === "@earnings") {
     const [companies, latest] = await Promise.all([
       read("companies", { select: "slug", market: "eq.IN", order: "slug" }),
-      read("earnings_latest", { select: "company_slug,call_slug,fiscal_label", order: "company_slug" }),
+      read("earnings_latest", { select: "company_slug,call_slug,fiscal_label,status,summary_state,roles_partial", order: "company_slug" }),
     ]);
     const india = new Set(companies.map((c) => c.slug));
     const list = latest.filter((row) => india.has(row.company_slug));
