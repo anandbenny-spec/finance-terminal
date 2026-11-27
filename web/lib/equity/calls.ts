@@ -2,6 +2,8 @@
 // Every figure is a row an `api` view returned (api.earnings_calls, api.call_figures, api.citation_pages); the words for a
 // status are Spec 02B §5.2's, quoted on the card. Nothing here computes a number. Words never used here (Spec 02B §8):
 // tests/banned-words.ts scans the tab's own text for them.
+import { SUMMARY_HELD, SUMMARY_NOT_YET, WEBSITE, SCANNED, NO_TRANSCRIPT } from "./earnings-status";
+export { SUMMARY_HELD, SUMMARY_NOT_YET, WEBSITE, SCANNED, NO_TRANSCRIPT, SUMMARY_AND_FIGURES, listStatusText } from "./earnings-status";
 import { dateInZone, formatDate, formatFraction, formatStatedValue } from "@/lib/format";
 import { pageLink, toCitation, wholeQuote, type Citation, type CitationPage } from "@/lib/policy/ai";
 import type { AiCitationRow, AiOutputRow, CallFigureRow, CitationPageRow, EarningsCallRow, EarningsListRow } from "@/lib/queries/api";
@@ -22,13 +24,8 @@ export function newestFirst(calls: readonly EarningsCallRow[]): EarningsCallRow[
   return [...calls].sort((a, b) => (b.period_end ?? "").localeCompare(a.period_end ?? "") || (b.filed_at ?? "").localeCompare(a.filed_at ?? ""));
 }
 
-export const SUMMARY_HELD = "AI summary held back until it passes review";
-export const SUMMARY_NOT_YET = "Summary not generated yet";
 /** The line under each summary block's heading (Anand, 10 Nov 2026): the bullet is a reading, the quote under it is the fact. */
 export const SUMMARY_LABEL = "AI paraphrase; the quote is the speaker's words.";
-export const WEBSITE = "Transcript on the company's website";
-export const SCANNED = "Transcript is a scanned image; not analysed";
-export const NO_TRANSCRIPT = "No transcript found";
 export const AI_EXTRACTED = "AI-extracted";
 export const AS_STATED = "As stated by management on the call";
 export const UNKNOWN_ROLE_HEADING = "Said by participants whose role couldn't be read";
@@ -181,21 +178,7 @@ export function figureSets(rows: readonly CallFigureRow[], citations: readonly A
 // ---------------------------------------------------------------------------------------------------------------
 // The /earnings list (2B-20, #183; Spec 02B §13.7; 02B.1 C6)
 
-export const SUMMARY_AND_FIGURES = "Summary and figures";
 const WEBSITE_ROUTES = ["company_link", "curated_link"];
-
-/** A list row's status in words (Spec 02B §13.7), plus " · roles partly read" on a role-held default call. */
-export function listStatusText(r: Pick<EarningsListRow, "status" | "summary_state" | "roles_partial">): string {
-  let text: string;
-  if (r.status === "none_found") return NO_TRANSCRIPT;
-  if (r.status === "on_company_website") text = WEBSITE;
-  else if (r.status === "unreadable") text = SCANNED;
-  else if (r.status !== "stored") text = "Transcript not analysed";
-  else if (r.summary_state === "available") text = SUMMARY_AND_FIGURES;
-  else if (r.summary_state === "held_back") text = SUMMARY_HELD;
-  else text = SUMMARY_NOT_YET;
-  return r.roles_partial ? text + " · roles partly read" : text;
-}
 
 /** For a "No transcript found" row: the window the view returned, never a fixed date. */
 export function noTranscriptNote(r: Pick<EarningsListRow, "status" | "window_from">): string | null {

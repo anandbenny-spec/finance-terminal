@@ -2,7 +2,7 @@
 // view answers 404 from the page itself, before a read: an unknown tab, `overview` (the Overview is the bare slug),
 // `value-chain` (its own static route), a view the tab doesn't take, a third segment. An unknown company answers 404 too,
 // and a read that can't tell is the error state. The page reads no query string, so it is built ahead and cached.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const exists = vi.fn<(slug: string) => Promise<boolean | null>>();
 const name = vi.fn<(slug: string) => Promise<string | null>>();
@@ -22,9 +22,12 @@ const NOT_FOUND = { digest: expect.stringContaining("404") };
 
 describe("the company tab routes", () => {
   beforeEach(() => {
+    vi.stubEnv("CALLS_PRIVATE_RENDERER", "1");
     exists.mockReset().mockResolvedValue(true);
     readPage.mockReset().mockResolvedValue({ ok: false });
   });
+
+  afterEach(() => vi.unstubAllEnvs());
 
   it.each([
     [["financials"], "financials", undefined],
@@ -54,6 +57,14 @@ describe("the company tab routes", () => {
     [[]],
   ])("answers 404 for %j before any read", async (path) => {
     await expect(route.default(props("tcs", path))).rejects.toMatchObject(NOT_FOUND);
+    expect(exists).not.toHaveBeenCalled();
+    expect(readPage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Calls renderer inaccessible to a public server", async () => {
+    vi.stubEnv("CALLS_PRIVATE_RENDERER", undefined);
+    await expect(route.default(props("tcs", ["calls", "q2-fy27"]))).rejects.toMatchObject(NOT_FOUND);
+    expect(await route.generateMetadata(props("tcs", ["calls"]))).toEqual({});
     expect(exists).not.toHaveBeenCalled();
     expect(readPage).not.toHaveBeenCalled();
   });

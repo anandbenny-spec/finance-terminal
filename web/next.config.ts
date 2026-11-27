@@ -1,7 +1,14 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Flight headers and .rsc/segment paths must reach the prepared response reader.
+  skipProxyUrlNormalize: true,
+  generateBuildId: async () => process.env.CALLS_BUILD_ID ?? null,
+  ...(process.env.CALLS_PRIVATE_RENDERER === "1" ? {
+    cacheHandler: path.resolve("ops/calls-delivery/capture.cjs"),
+    cacheHandlers: { default: path.resolve("ops/calls-delivery/fresh-cache.cjs") },
+  } : {}),
   cacheComponents: true,
   partialPrefetching: true,
   // Cache profiles for every `'use cache'` read (#263, 3 Nov 2026). They refresh like the built-in `minutes` and `hours`

@@ -13,6 +13,7 @@ export const metadata: Metadata = {
 };
 
 export default async function EarningsPage() {
+  if (process.env.CALLS_PRIVATE_RENDERER !== "1") return null;
   const [data, fresh] = await Promise.all([readEarningsListPage(), readFreshness()]);
   return <EarningsList data={data} freshness={fresh.ok ? fresh.tasks : null} />;
 }

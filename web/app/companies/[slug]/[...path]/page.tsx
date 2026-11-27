@@ -18,12 +18,14 @@ export function generateStaticParams(): { slug: string; path: string[] }[] {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug, path } = await params;
-  return pathParam(path) ? companyMetadata(slug) : { title: "Company · Finance Terminal" };
+  const target = pathParam(path);
+  if (target?.tab === "calls" && process.env.CALLS_PRIVATE_RENDERER !== "1") return {};
+  return target ? companyMetadata(slug) : { title: "Company · Finance Terminal" };
 }
 
 export default async function Page({ params }: Props) {
   const { slug, path } = await params;
   const target = pathParam(path);
-  if (!target) notFound();
+  if (!target || (target.tab === "calls" && process.env.CALLS_PRIVATE_RENDERER !== "1")) notFound();
   return renderCompany(slug, target.tab, target.view);
 }
