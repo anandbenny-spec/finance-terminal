@@ -11,6 +11,16 @@ are not part of this repo.
 
 **Informational only, not investment advice.** Nothing here is a recommendation to buy or sell anything.
 
+## Screenshots
+
+| Home | FOMC statement changes |
+|---|---|
+| [![Front page with the market tape and latest Fed and RBI statement changes](docs/img/01-front-page.png)](docs/img/01-front-page.png) | [![FOMC What changed tab with a cited summary of statement changes](docs/img/02-fomc-what-changed.png)](docs/img/02-fomc-what-changed.png) |
+| **Nifty 50 screener** | **Reliance Industries valuation** |
+| [![Nifty 50 screener with company rows and the snapshot date](docs/img/03-screener.png)](docs/img/03-screener.png) | [![Reliance Industries Valuation tab showing the reverse DCF](docs/img/04-valuation.png)](docs/img/04-valuation.png) |
+| **HDFC Bank earnings calls** | **Accuracy** |
+| [![HDFC Bank guidance and figures tables with links to source PDF pages](docs/img/05-earnings-calls.png)](docs/img/05-earnings-calls.png) | [![Accuracy dashboard showing data-quality checks and AI evaluation measures](docs/img/06-accuracy.png)](docs/img/06-accuracy.png) |
+
 ## What is built
 
 **Fed vs RBI policy tracker.** Every Fed (FOMC) and RBI (MPC) decision on one page: where rates stand, the latest
@@ -25,9 +35,11 @@ implied return on equity for lenders) with every assumption listed with its date
 no upside and no buy or sell view. The screener and valuation also cover the Dow 30, in dollars, from SEC EDGAR filings
 and Yahoo Finance prices, and never compare a US company with an Indian one.
 
-**Earnings calls.** For each Nifty 50 company's latest quarterly call: a cited summary, and the figures and guidance
-management stated, each with its quote and a link to the page of the source PDF it came from. A list page shows every
-company's latest call. Guidance is recorded against what the company later delivered.
+**Earnings calls.** The list shows each Nifty 50 company's latest call. Where published, the Calls tab shows management's
+figures and guidance with quotes and links to the source PDF pages, plus labelled AI-scored tone. The summary panel
+reads “AI summary held back until it passes review”. The guidance record shows each target's outcome as delivered,
+missed, pending, or not scored with a reason, alongside the filed actual when available. The aggregate guidance hit
+rate is held back while the extraction is checked for completeness.
 
 **Accuracy and methodology pages.** `/accuracy` shows the project's own data-quality and AI-quality measures, and
 `/methodology` explains how figures and AI text are made, checked and traced, and what the site cannot do.
@@ -103,8 +115,8 @@ most, cached, never exported, and removed at once if NSE objects.
 ## Limitations
 
 Figures stay in their reporting currency and are never compared across currencies. Index levels are end-of-day.
-Valuation and rankings are informational. AI text can be incomplete, and a missing summary means nothing passed the
-checks. The full list is on the site's `/methodology` page.
+Valuation and rankings are informational. AI coverage can be incomplete. The site labels summaries that are held back
+or still to be generated. See the full [methodology and limitations](https://finance-terminal-phi.vercel.app/methodology).
 
 ## Tech stack
 
