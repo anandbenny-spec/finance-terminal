@@ -11,12 +11,22 @@ are not part of this repo.
 
 **Informational only, not investment advice.** Nothing here is a recommendation to buy or sell anything.
 
+## Screenshots
+
+| Home | FOMC statement changes |
+|---|---|
+| [![Front page with the market tape and latest Fed and RBI statement changes](docs/img/01-front-page.png)](docs/img/01-front-page.png) | [![FOMC What changed tab with a cited summary of statement changes](docs/img/02-fomc-what-changed.png)](docs/img/02-fomc-what-changed.png) |
+| **Nifty 50 screener** | **Reliance Industries valuation** |
+| [![Nifty 50 screener with company rows and the snapshot date](docs/img/03-screener.png)](docs/img/03-screener.png) | [![Reliance Industries Valuation tab showing the reverse DCF](docs/img/04-valuation.png)](docs/img/04-valuation.png) |
+| **HDFC Bank earnings calls** | **Accuracy** |
+| [![HDFC Bank guidance and figures tables with links to source PDF pages](docs/img/05-earnings-calls.png)](docs/img/05-earnings-calls.png) | [![Accuracy dashboard showing data-quality checks and AI evaluation measures](docs/img/06-accuracy.png)](docs/img/06-accuracy.png) |
+
 ## What is built
 
-**Fed vs RBI policy tracker.** Every Fed (FOMC) and RBI (MPC) decision on one page: where rates stand, the latest
-decisions side by side, and the history. Each meeting has its own page with the statement or resolution, a redline of
-what changed against the previous one, the minutes, the vote, and how markets moved around the decision. Decision days
-are picked up by a watcher that polls for the statement, so a decision appears without anyone pressing a button.
+**Fed vs RBI policy tracker.** The tracker puts every Fed (FOMC) and RBI (MPC) decision since 2019 on one page, with
+current rates and the latest decisions side by side. Each meeting has its own page with the statement or resolution,
+a redline of what changed against the previous one, the minutes, the vote, and how markets moved around the decision.
+On decision days a watcher polls for the statement, so a decision appears without anyone pressing a button.
 
 **Nifty 50 screener and valuation.** A screener over the 50 companies with labelled columns and the snapshot's date,
 and a page per company: overview, financials parsed from results filings, a valuation tab, and the company's
@@ -25,9 +35,11 @@ implied return on equity for lenders) with every assumption listed with its date
 no upside and no buy or sell view. The screener and valuation also cover the Dow 30, in dollars, from SEC EDGAR filings
 and Yahoo Finance prices, and never compare a US company with an Indian one.
 
-**Earnings calls.** For each Nifty 50 company's latest quarterly call: a cited summary, and the figures and guidance
-management stated, each with its quote and a link to the page of the source PDF it came from. A list page shows every
-company's latest call. Guidance is recorded against what the company later delivered.
+**Earnings calls.** The list shows each Nifty 50 company's latest call. Where published, the Calls tab shows management's
+figures and guidance with quotes and links to the source PDF pages, plus labelled AI-scored tone. For summaries held
+for review, the panel reads “AI summary held back until it passes review”. The guidance record shows each target's
+outcome as delivered, missed, pending, or not scored with a reason, alongside the filed actual when available. The
+aggregate guidance hit rate is held back while the extraction is checked for completeness.
 
 **Accuracy and methodology pages.** `/accuracy` shows the project's own data-quality and AI-quality measures, and
 `/methodology` explains how figures and AI text are made, checked and traced, and what the site cannot do.
@@ -39,7 +51,7 @@ AI writes short summaries and extracts structured facts from documents. It is ne
 - **Cited or dropped.** Every claim must carry a citation into the stored source text; a claim without a verified
   citation is dropped, and the database refuses to publish an uncited output. Quotes shown to a visitor are rebuilt
   from the stored text, never taken from the model's own words.
-- **Numbers only from the passage.** AI text may contain only numbers that appear in the passage it cites or in the
+- **Numbers only from the source.** AI text may contain only numbers that appear in its cited passages or in the
   rows the database returned.
 - **Gates before anything is shown.** Model outputs are measured against hand-checked sets, with the pass rule fixed
   before any run. A field produced by a model stays hidden by default (a field with no published policy is hidden)
@@ -48,7 +60,7 @@ AI writes short summaries and extracts structured facts from documents. It is ne
 - **Human oversight.** A named person decides what is published; the owner is accountable for it.
 - **It degrades, it doesn't break.** The AI work is precomputed in batches and stored, and the site makes no live AI
   call for a visitor. With no key or no credit left, the AI steps skip with a recorded reason, nothing is lost, and the
-  pages show labelled states such as "AI summary not generated yet".
+  pages show labelled states such as "Summary not generated yet".
 - **Spend is capped.** One wrapper makes every model call, with a monthly budget switch and no repeated requests for an
   unchanged input.
 
@@ -103,8 +115,8 @@ most, cached, never exported, and removed at once if NSE objects.
 ## Limitations
 
 Figures stay in their reporting currency and are never compared across currencies. Index levels are end-of-day.
-Valuation and rankings are informational. AI text can be incomplete, and a missing summary means nothing passed the
-checks. The full list is on the site's `/methodology` page.
+Valuation and rankings are informational. AI coverage can be incomplete. The site labels summaries that are held back
+or still to be generated. See the full [methodology and limitations](https://finance-terminal-phi.vercel.app/methodology).
 
 ## Tech stack
 
