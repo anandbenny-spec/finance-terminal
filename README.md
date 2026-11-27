@@ -36,10 +36,10 @@ no upside and no buy or sell view. The screener and valuation also cover the Dow
 and Yahoo Finance prices, and never compare a US company with an Indian one.
 
 **Earnings calls.** The list shows each Nifty 50 company's latest call. Where published, the Calls tab shows management's
-figures and guidance with quotes and links to the source PDF pages, plus labelled AI-scored tone. The summary panel
-reads “AI summary held back until it passes review”. The guidance record shows each target's outcome as delivered,
-missed, pending, or not scored with a reason, alongside the filed actual when available. The aggregate guidance hit
-rate is held back while the extraction is checked for completeness.
+figures and guidance with quotes and links to the source PDF pages, plus labelled AI-scored tone. For summaries held
+for review, the panel reads “AI summary held back until it passes review”. The guidance record shows each target's
+outcome as delivered, missed, pending, or not scored with a reason, alongside the filed actual when available. The
+aggregate guidance hit rate is held back while the extraction is checked for completeness.
 
 **Accuracy and methodology pages.** `/accuracy` shows the project's own data-quality and AI-quality measures, and
 `/methodology` explains how figures and AI text are made, checked and traced, and what the site cannot do.
@@ -51,7 +51,7 @@ AI writes short summaries and extracts structured facts from documents. It is ne
 - **Cited or dropped.** Every claim must carry a citation into the stored source text; a claim without a verified
   citation is dropped, and the database refuses to publish an uncited output. Quotes shown to a visitor are rebuilt
   from the stored text, never taken from the model's own words.
-- **Numbers only from the passage.** AI text may contain only numbers that appear in the passage it cites or in the
+- **Numbers only from the source.** AI text may contain only numbers that appear in its cited passages or in the
   rows the database returned.
 - **Gates before anything is shown.** Model outputs are measured against hand-checked sets, with the pass rule fixed
   before any run. A field produced by a model stays hidden by default (a field with no published policy is hidden)
