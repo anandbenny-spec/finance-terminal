@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1, pinned by SHA
         with:
           ref: ${{ inputs.branch }}
-      - name: Capture five pages and retain the verified valuation
+      - name: Frame the Screener and Earnings Calls tables
         run: |
           set -u
           mkdir -p docs/img
@@ -56,13 +56,8 @@ jobs:
             fi
             echo "${name}: status ${status}, $(stat -c %s "docs/img/${name}.png") bytes"
           }
-          shoot 01-front-page /
-          shoot 02-fomc-what-changed /policy/fed/2026-10-28/changes
-          shoot 03-screener /screener
-          # Keep the clean earlier Reliance capture while the live valuation reports Update delayed.
-          test -s docs/img/04-valuation.png
-          shoot 05-earnings-calls /companies/hdfcbank/calls panel-call-guidance   # scrolls to the guidance and figures tables, with their page links
-          shoot 06-accuracy /accuracy
+          shoot 03-screener /screener screener-table
+          shoot 05-earnings-calls /companies/hdfcbank/calls panel-call-guidance
           rm -f page.html
       - name: Commit and push
         run: |

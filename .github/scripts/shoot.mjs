@@ -39,7 +39,7 @@ try {
   await sleep(12000); // the page loads its data in the browser: give it time
   if (anchor) {
     const r = await send("Runtime.evaluate", {
-      expression: `(() => { const e = document.getElementById(${JSON.stringify(anchor)}); if (!e) return false; e.scrollIntoView({ block: "start" }); return true; })()`,
+      expression: `(() => { const e = document.getElementById(${JSON.stringify(anchor)}); if (!e) return false; e.style.scrollMarginTop = "112px"; e.scrollIntoView({ block: "start", behavior: "instant" }); return true; })()`,
       returnByValue: true,
     });
     if (r.result?.result?.value !== true) throw new Error("anchor not found");
