@@ -13,18 +13,19 @@ Use the fallback for the state shown on the day.
 | 3 | 0:30 | Sidebar → **FOMC: what changed** | “The cited summary calls out what changed. Scroll down for the sentence-by-sentence redline. The meeting also has tabs for minutes and market reaction.” | If the summary is held back, show the redline. “The redline is computed directly from the two statements.” |
 | 4 | 0:50 | Under **What changed**, click the first numbered citation chip | “This opens the passage behind the claim. The quote comes from the stored statement, and every number in a summary bullet must appear in the passage it cites.” | If there are no citation chips, open **Statement**. “The official text is there to read while the summary is unavailable.” |
 | 5 | 1:05 | Sidebar → **Screener** (India view) | “The Nifty 50 screener dates its snapshot and labels trailing, derived and proxy figures. Each market has its own currency.” | “A field policy can hide an individual column while the rest of the screener stays usable.” |
-| 6 | 1:20 | In the screener, open **HDFC Bank Ltd.** → **Valuation** | “For a bank, the model shows what return on equity the price implies. The assumptions list their dates and sources.” | If delivered return is **Held**, point to its reason. If the model is held back, show the available inputs and their sources. For “Update delayed”, point to the last checked date. |
-| 7 | 1:35 | Same company → **Earnings calls**. Scroll to **Guidance given on this call** and **Figures management stated** | “These tables link management’s guidance and figures to pages in the source PDF. The guidance record compares each target with filed results.” | “AI summary held back until it passes review” means review is still required. “Summary not generated yet” means there is no summary to show. For “Transcript on the company's website,” point to **Official source**. |
-| 8 | 1:50 | Sidebar → **Accuracy** | “The site publishes data-quality checks and AI evaluation results. The footer links to Methodology and limitations.” | If a measure is empty, read its reason. If the counts are still loading, open **Methodology and limitations**. |
+| 6 | 1:17 | In the screener, open **HDFC Bank Ltd.** → **Valuation** | “For a bank, the model shows what return on equity the price implies. The assumptions list their dates and sources.” | If delivered return is **Held**, point to its reason. If the model is held back, show the available inputs and their sources. For “Update delayed”, point to the last checked date. |
+| 7 | 1:30 | Same company → **Earnings calls**. Scroll to **Guidance given on this call** and **Figures management stated** | “These tables link management’s guidance and figures to pages in the source PDF. The guidance record compares each target with filed results.” | “AI summary held back until it passes review” means review is still required. “Summary not generated yet” means there is no summary to show. For “Transcript on the company's website,” point to **Official source**. |
+| 8 | 1:45 | Sidebar → **Accuracy** | “The site publishes data-quality checks and AI evaluation results. The footer links to Methodology and limitations.” | If a measure is empty, read its reason. If the counts are still loading, open **Methodology and limitations**. |
 
-## Close (2:00)
+## Close (1:55)
 
-"Stack: Next.js on Vercel, Python jobs on GitHub Actions, Supabase Postgres with row-level security. The whole
-pipeline runs on its own with no Claude subscription, and the AI degrades to labelled states if the key or credit goes."
-Point to `README.md` and `docs/OPERATIONS.md` for the architecture and the runbook.
+“The README links to the architecture and operations runbook.”
 
 ## If asked
 
+- **How does it run?** Next.js on Vercel, Python jobs on GitHub Actions, and Supabase Postgres with row-level security.
+  The pipeline runs without a Claude subscription. If the AI key or credit runs out, affected outputs show labelled
+  states. See `README.md` and `docs/OPERATIONS.md`.
 - **Where does the data come from?** The About and privacy page lists every source with its source line. Every figure
   names its owner; the project is non-commercial and exports no data.
 - **Can the AI make a number up?** It can't publish one: numbers must appear in the cited passage or the returned rows,
